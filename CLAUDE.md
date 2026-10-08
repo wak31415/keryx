@@ -19,7 +19,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - The steps to a first working call, as the Mac app's setup wizard walks them:
   `uv run keryx setup plan [--json]` (a report, so it exits 0; it asks what `doctor` asks, and
   a migration still to run is its first step), `uv run keryx setup mark STEP [--json]` (an
-  optional step skipped, or `pin` left to the first call; an unknown step exits 2),
+  optional step skipped, `pin` left to the first call, or a `deferrable` step — `phone`,
+  `service` — left for later, `deferred: true` on it in the plan; an unknown step exits 2),
   `uv run keryx setup profile [--json]` (the wizard's "About you" questions as data, in its
   order), `setup profile --preview|--apply [--json]` (the answers, one JSON object on stdin
   — never a terminal — composed and written by the wizard's own code in `setup/profile.py`:
@@ -60,7 +61,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `config options KEY [--json]` (the models or voices a setting can take, read live from
   OpenAI, Anthropic, Codex, a server of the owner's or the Twilio account when it can be,
   else Keryx's own list with `error` saying why — exit 0 either way;
-  `keryx/config/options.py`), `config verify KEY [--stdin] [--pair] [--json]` (whether
+  `keryx/config/options.py`; `ASSISTANT_NAME`'s are the personas with their voices,
+  `free_form` since any name of the owner's is one), `config verify KEY [--stdin] [--pair] [--json]` (whether
   OPENAI_API_KEY, ANTHROPIC_API_KEY, CODEX_API_KEY or TWILIO_AUTH_TOKEN — with the saved SID,
   or with `--stdin --pair` the SID and token on two lines, neither saved, an SID not `AC` and
   32 hex exiting 2 before Twilio is asked — works, before it is saved: `--stdin` checks the
@@ -86,7 +88,11 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   PATH, as `doctor` finds them, its unit, and `reachable`: whether Keryx answers at
   `https://PUBLIC_HOST/health` within 3 s, null with no hostname, false with `error` for one
   that is not a hostname; `install_url`, cloudflared's download page while neither is
-  installed, else null). The numbers are the owner's own, shown to the owner, and never
+  installed, else null; `hostname`, the public hostname the tunnel's own config already
+  names for Keryx — the hostname of cloudflared's ingress rule, or the reserved domain of
+  ngrok's tunnel (v2) or endpoint (v3), whose upstream is Keryx's port on this machine;
+  a rule for anything else, or an upstream's own URL, is never taken — read from disk only, never the network, null when none, and nothing else of
+  those files ever leaves, since they can hold the tunnel's token). The numbers are the owner's own, shown to the owner, and never
   logged but as `mask_number`
 - Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
   `~/.jarvis` and a checkout `.env`: `uv run keryx migrate [--dry-run] [--yes]` (stops the
@@ -103,6 +109,11 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run keryx auth status [--json] [--smoke]`, `uv run keryx auth
+  smoke claude|codex|local [--json]` (`auth status --smoke`'s one real task on one agent —
+  `agents.run_smoke`, as the service — told as it runs, `setup/smoke_stream.py`: refused as
+  an `error` while it is not installed or not signed in; `--json` is a `step` (`dispatch`,
+  then `answering`), then one of `done` (`ok`, `summary`, `detail`), `error`, `cancelled`;
+  exit 0 passed, 1 failed or refused, 2 no such agent, 130 stopped), `uv run keryx auth
   logout gmail|google-workspace [--json]` (the owner's alone: removes the tokens that one
   sign-in stored — never the OAuth client file, never the other sign-in)
 - The same sign-ins from the Mac app: `uv run keryx auth login NAME [--client-file PATH]
@@ -169,13 +180,37 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `scripts/install-launchd.sh [--uninstall]` on macOS; `--llm` / `--voice` install the local
   model servers' units instead (`keryx models serve llm|voice`)
 - The same without a terminal (the Mac app): `uv run keryx service [--json]` (`manager`, and
-  each of `agent`, `tunnel`, `llm`, `voice` installed and active — asked, never changed;
+  each of `agent`, `tunnel`, `llm`, `voice`, `voice_llm` installed and active — asked,
+  never changed;
   `keryx/units.py`), `service install [--json]` and `service uninstall [--llm] [--voice]
   [--json]` (runs the checkout's installer with those flags: `{"ok", "message"}`; exit 1 with
   the script's last error line, 2 with no checkout or service manager). `service install
   --llm|--voice` is refused, exit 2 (`{"ok": false, "message"}` with `--json`): `models
   start` and `voice use here` own those units — install, start, check, and the unit removed
-  again when the server does not come up — so none is installed bare to restart for ever
+  again when the server does not come up — so none is installed bare to restart for ever.
+  `service stop|start [--all] [--json]` (the owner's alone, exit 2 under the service; the
+  app's Quit and its launch) stop Keryx *and its tunnel* — which serves nothing else — and
+  keep them from starting at login, without removing a unit file, so no installer runs and
+  macOS raises no "Background Items Added": a pending restart is settled first of all,
+  then *every* unit is disabled (launchd `disable`, systemd `disable`) before any is
+  stopped (`bootout`, `stop`), so a stop cut short in its slow half still starts nothing at
+  login; a start is the inverse, every unit enabled first (a disabled launchd job refuses
+  `bootstrap`), then `bootstrap`, or `kickstart` for one still loaded. A failed bootout,
+  bootstrap or kickstart is forgiven only while launchd holds what was asked, a failed
+  disable or enable only while `print-disabled` / `is-enabled` shows it. `--all` is every unit
+  in `units.NAMES`, so a unit added there later is included — started servers first, each
+  after the ones it reads from (`units.STARTS_AFTER`: the voice after the model server and
+  the voice LLM's), then the tunnel, Keryx last, and stopped the other way round; a unit
+  not installed is left
+  alone, and starting a Keryx that is not installed is refused before anything runs. `{"ok",
+  "message", "detail", "units": [{"kind", "unit", "state"}]}`, `state` one of `running`,
+  `stopped`, `not-installed`, `failed`; exit 0, 1 when a unit failed (what the manager said,
+  redacted, in `detail`), 2 refused. A unit counts as installed when it is loaded *or* its
+  unit file is on disk (`restart.service.is_present`), in `service --json`, `status
+  --json`, `doctor` and the setup plan alike: a stopped launchd job is unknown to launchd,
+  and still installed — `doctor`'s "Background process" says "installed, not running",
+  failed, fix `service:start`, so the app starts it rather than reinstall it.
+  `is_installed` keeps meaning loaded, for `restart` and `migrate`, which act on the job
 - Models on this machine: `uv run keryx models list [--json]` (the catalog against this
   machine's GPU and memory, the recommended one marked, and the local voices; `--json` adds
   `servers`, the model and voice servers' units and whether they answer, asked on loopback
@@ -356,7 +391,7 @@ remember:
 - **setup** — `setup/` is `keryx setup` and `keryx auth`: `wizard` (section order, what is
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
   `issues`, `plugins`, `profile`, `project_context`) and `sections` for the small ones,
-  `auth_stream` (`auth login --json`), `terminal` (the pty it drives Claude's sign-in
+  `auth_stream` (`auth login --json`), `smoke_stream` (`auth smoke`), `terminal` (the pty it drives Claude's sign-in
   behind), `child_env` (a re-export: `keryx/child_env.py` is every login and operational
   child's environment, scrubbed of Keryx's secrets), `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
   the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
@@ -423,9 +458,9 @@ remember:
   windows, by window id. `tests/test_macos_contract.py` holds the JSON contract — the keys
   the Swift decoders require from each command, with their JSON types, and the events,
   ending and exit codes of its streams (`models pull`, `voice use here`, `voice download`,
-  `models start` and the four `auth login NAME`, each `--json`; `voice llm shared|here|
-  remote` and `models start --voice-llm` wait in `AWAITING` until the app names them, and
-  `AWAITING_KEYS` checks keys it has yet to name) — so
+  `models start`, the four `auth login NAME` and `auth smoke NAME`, each `--json`; `voice llm
+  shared|here|remote` and `models start --voice-llm` wait in `AWAITING` until the app names
+  them, and `AWAITING_KEYS` checks keys it has yet to name) — so
   renaming a field fails pytest, not the app at runtime.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line.
@@ -749,7 +784,7 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `memory seed`, `setup`, `setup mark`, `setup profile --apply`, `setup project-context
   --explore|--folder|--apply`, `pin set`, `config lock|unlock`, `migrate`,
   `plugins install|remove|set`, `models use`, `voice use` (before any install, handshake or
-  save), `voice download`, `models start|stop`, `service install|uninstall`, `phone
+  save), `voice download`, `models start|stop`, `service install|uninstall|stop|start`, `phone
   webhooks --apply` (before Twilio is asked anything) — refuse
   outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
@@ -771,7 +806,10 @@ after the Mac app has shown the same two addresses and had the same yes. `keryx 
 (`setup/plan.py` over `wizard.section_statuses`), so the two cannot drift: decide a section's
 status in the wizard, and the plan follows. `walked` there only ever settles an optional step,
 or `pin` (the owner's "let the first call set it"); a required step is done by its checks,
-and `setup mark` refuses one. A soft warning never holds a step or `ready` back, a hard
+and `setup mark` refuses one — except a `deferrable` one (the phone, the service: a Mac that
+may never get a phone), which walking leaves *deferred*: still not done, so `ready` stays
+false (the app's "Nearly Ready"), but no longer holding back what waits for it. A blank
+owner name holds nothing back either: the wizard takes it as "the owner". A soft warning never holds a step or `ready` back, a hard
 failure no step owns is the service's (no hard failure beside `ready: true`), and the plan
 always answers — exit 0, a document — whatever the settings.
 
@@ -846,6 +884,23 @@ that way, and keep every failure path landing somewhere a human can find it
 `XPC_SERVICE_NAME` (launchd), never from `systemctl` being on PATH, so a hand-started copy
 refuses rather than restart the installed one. Only `keryx restart` and `doctor`, which run
 outside the unit, ask whether it is installed.
+
+A Keryx the owner stopped (`keryx service stop`) is neither half's to bring back. Every
+write to `restart.json` is made under a cross-process `flock` beside it
+(`config.files.private_lock`), as a compare-and-swap where the state matters
+(`RestartStore.create`, `update_if_pending`, `clear_if_pending`, `record_failure`), and
+never without it: a lock still held after `LOCK_TIMEOUT_S` (5 s — its holders keep it for
+milliseconds) raises `RecordLocked`, the write is not made, a restart is abandoned and
+recorded as failed once it can be, and the async paths wait for it in a thread, never on
+the voice service's loop. The stop settles a `pending` record as `stopped` before it boots
+anything out — or, with none, leaves a `stopped` marker that refuses a new restart until
+`service start` or Keryx's own start clears it — so the watchdog, which acts only on
+`pending`, rings nobody about a service that was meant to stay down; a stop that cannot
+settle still stops, and says so; and
+`keryx restart` refuses while `restart.service.is_stopped` (the unit file on disk, launchd
+holding it unloaded or systemd holding it disabled and inactive), leaving a `refused` record
+for `restart --status`, rather than start what the owner stopped or ask launchd to kickstart
+a job it has unloaded.
 
 "Did it load the change" is answered from `state_dir/running-version`, stamped by `mark_running()`
 at the top of `keryx serve` — *not* from `current_version()` at request time. The checkout moves

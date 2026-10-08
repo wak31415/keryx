@@ -965,6 +965,124 @@ def test_a_restart_command_that_fails_says_so_and_keeps_the_record(restart_setti
     assert "exited 3" in record.error
 
 
+def test_a_restart_while_keryx_is_stopped_is_refused_and_on_record(
+    restart_settings, ran, monkeypatch
+):
+    """`keryx service stop` boots the job out and keeps its plist: nothing to restart, and
+    a kickstart of a job launchd has unloaded must not be what finds that out."""
+    calls, _ = ran
+    target = ServiceTarget("launchd", "dev.keryx.agent")
+    monkeypatch.setattr("keryx.cli.candidate_target", lambda settings: target)
+    plist = Path.home() / "Library" / "LaunchAgents" / "dev.keryx.agent.plist"
+    plist.parent.mkdir(parents=True)
+    plist.write_text("<plist/>")  # on disk, and (the suite's own probe) not loaded
+
+    result = runner.invoke(app, ["restart", "--reason", "new code"])
+
+    assert result.exit_code == 1 and calls == []
+    assert "Keryx is stopped" in result.stderr and "keryx service start" in result.stderr
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
+    assert (record.state, record.reason, record.watchdog) == ("refused", "new code", "")
+    status = runner.invoke(app, ["restart", "--status"])
+    assert "refused" in status.output and "Keryx is stopped" in status.output
+
+
+def test_a_restart_of_a_job_launchd_has_never_heard_of_ends_on_record(
+    restart_settings, ran, monkeypatch
+):
+    """Unloaded and no plist either: `kickstart -k` answers at once (113), and that lands
+    as the record's failure, never a wait."""
+    calls, done = ran
+    done.returncode = 113
+    target = ServiceTarget("launchd", "dev.keryx.agent")
+    monkeypatch.setattr("keryx.cli.resolve_target", lambda settings, **_: target)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls[0][:3] == ["launchctl", "kickstart", "-k"]
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
+    assert record.state == "failed" and "exited 113" in record.error
+
+
+def test_a_stop_while_the_cli_arms_its_watchdog_stops_the_restart(
+    restart_settings, ran, monkeypatch
+):
+    calls, _ = ran
+    store = RestartStore(restart_settings.state_dir / RECORD_NAME)
+
+    def armed_as_the_owner_stops(settings, target):
+        store.settle_stopped()
+        return "detached (pid 4321)"
+
+    monkeypatch.setattr("keryx.cli._arm_watchdog", armed_as_the_owner_stops)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls == []
+    assert "was not restarted" in result.stderr
+    record = store.load()
+    assert (record.state, record.watchdog) == ("stopped", "")
+
+
+def test_a_stop_just_before_the_cli_hands_over_stops_the_restart(
+    restart_settings, ran, monkeypatch
+):
+    calls, _ = ran
+    store = RestartStore(restart_settings.state_dir / RECORD_NAME)
+    real = RestartStore.is_pending
+
+    def stopped_first(self, requested_at, record=None):
+        if record is None:  # the last look before the hand-over
+            self.settle_stopped()  # another process's stop, landing just before it
+        return real(self, requested_at, record)
+
+    monkeypatch.setattr(RestartStore, "is_pending", stopped_first)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls == []
+    assert store.load().state == "stopped"
+
+
+def test_a_restart_while_the_owners_stop_stands_is_refused_before_anything(
+    restart_settings, ran
+):
+    """Not stopped by the manager's lights yet (the stop is still booting it out), but the
+    stop's marker is on the record: nothing is handed over."""
+    calls, _ = ran
+    store = RestartStore(restart_settings.state_dir / RECORD_NAME)
+    store.settle_stopped()
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls == []
+    assert "was not restarted" in result.stderr
+    assert store.load().state == "stopped"
+
+
+def test_a_restart_whose_record_stays_locked_is_abandoned_and_recorded(
+    restart_settings, ran, monkeypatch
+):
+    from keryx.restart.store import RecordLocked
+
+    calls, _ = ran
+
+    def locked(self, record):
+        raise RecordLocked("restart.json.lock was held for 5s")
+
+    monkeypatch.setattr(RestartStore, "create", locked)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls == []
+    assert "abandoned" in result.stderr
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
+    assert (record.state, record.error) == ("failed",
+                                            "its record stayed locked, so it was not restarted")
+    status = runner.invoke(app, ["restart", "--status"])
+    assert "stayed locked" in status.output
+
+
 def test_restart_status_with_nothing_on_record(restart_settings):
     result = runner.invoke(app, ["restart", "--status"])
 

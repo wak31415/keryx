@@ -9,8 +9,9 @@ and tells) and `keryx phone`, whose `--json` the Mac app reads:
 - `apply_webhooks` — the write. It is the one write either makes to anything outside the
   machine, and both make it only after the owner has seen both addresses and said yes, at
   the terminal or in the app; `keryx phone webhooks --apply` is the owner's alone;
-- `tunnel_report` — which tunnel this machine has, its unit, and whether Keryx answers
-  through `PUBLIC_HOST`.
+- `tunnel_report` — which tunnel this machine has, its unit, whether Keryx answers
+  through `PUBLIC_HOST`, and the public hostname the tunnel's own config already names
+  (`tunnel_hostname`), for the app to offer as `PUBLIC_HOST`.
 
 A phone number here is the owner's own, shown to the owner; in a log line it is only ever
 `mask_number`'s shape. A failure is one sentence of cause — a status code or an exception's
@@ -22,11 +23,14 @@ import logging
 import re
 import shutil
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from keryx.config import Settings
+from keryx.config.files import xdg_home
 from keryx.config.options import TIMEOUT_S
 from keryx.doctor import STATUS_PATH, TUNNEL_BINARIES, VOICE_PATH
 from keryx.logging_util import mask_number
@@ -305,4 +309,200 @@ def tunnel_report(
         "reachable": reachable,
         "error": bad,
         "install_url": CLOUDFLARED_DOWNLOADS if binary is None else None,
+        "hostname": tunnel_hostname(settings, kind),
     }
+
+
+# --- the hostname the tunnel already knows -----------------------------------------------
+
+#: Where cloudflared looks for its config outside `HOME`, as cloudflared itself does.
+CLOUDFLARED_SYSTEM_DIRS: tuple[Path, ...] = (
+    Path("/etc/cloudflared"), Path("/usr/local/etc/cloudflared"),
+)
+#: A tunnel's config is a few lines: anything larger is not one, and is not read.
+MAX_TUNNEL_CONFIG_BYTES = 1 << 20
+#: A `key: value` (or `key:`) in a YAML block: a key, then a colon at the end or before a
+#: space, so a URL's `https://` is never taken for one.
+_YAML_PAIR = re.compile(r"""^(?P<key>"[^"]*"|'[^']*'|[^\s"'#-][^:]*?|-[^\s:][^:]*?)"""
+                        r"\s*:(?:\s+(?P<value>.*))?$")
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def tunnel_hostname(settings: Settings, kind: str | None) -> str | None:
+    """The public hostname the tunnel's own config names for Keryx, or None: the hostname
+    of cloudflared's ingress rule whose service is Keryx's port on this machine, or the
+    reserved domain of the ngrok tunnel (v2) or endpoint (v3) whose upstream is. A rule or
+    tunnel for anything else — a blog on another port — is never taken, and neither is an
+    upstream's own URL; with none for Keryx's port, None. The tunnel found (`kind`) is asked
+    first, then the other. Only reads, never the network, and never raises: a config that
+    will not read is None. Only a hostname ever leaves — these files can hold a token."""
+    order = sorted(TUNNEL_BINARIES, key=lambda name: name != kind)
+    for name in order:
+        read = _cloudflared_hostname if name == "cloudflared" else _ngrok_hostname
+        for path in _tunnel_configs(name):
+            try:
+                text = _config_text(path)
+                found = read(text, settings.port) if text is not None else None
+            except Exception:  # never the report's failure: a hostname is only a suggestion
+                found = None
+            if found:
+                return found
+    return None
+
+
+def _tunnel_configs(name: str) -> list[Path]:
+    """Where `name` keeps its config, in the order it looks."""
+    home = Path.home()
+    if name == "cloudflared":
+        dirs = [home / ".cloudflared", home / ".cloudflare-warp", home / "cloudflare-warp",
+                *CLOUDFLARED_SYSTEM_DIRS]
+        return [folder / file for folder in dirs for file in ("config.yml", "config.yaml")]
+    return [xdg_home("config") / "ngrok" / "ngrok.yml",
+            home / "Library" / "Application Support" / "ngrok" / "ngrok.yml",
+            home / ".ngrok2" / "ngrok.yml"]
+
+
+def _config_text(path: Path) -> str | None:
+    try:
+        if not path.is_file() or path.stat().st_size > MAX_TUNNEL_CONFIG_BYTES:
+            return None
+        return path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _yaml(text: str) -> Any:
+    """A block-style YAML document as dicts, lists and strings: enough for a tunnel's
+    config, which is keys, lists of rules and scalars. A flow-style value (`[…]`, `{…}`)
+    stays one string, and a line that is no part of a block raises `ValueError`."""
+    lines: list[tuple[int, str]] = []
+    for raw in text.splitlines():
+        content = _uncommented(raw).rstrip()
+        if content.strip() and content.strip() not in ("---", "..."):
+            lines.append((len(content) - len(content.lstrip(" ")), content.strip()))
+    if not lines:
+        return None
+    return _yaml_node(lines, 0, lines[0][0])[0]
+
+
+def _uncommented(line: str) -> str:
+    """`line` without its comment: a `#` at its start or after a space, outside quotes."""
+    quote = None
+    for index, char in enumerate(line):
+        if quote:
+            quote = None if char == quote else quote
+        elif char in ("'", '"'):
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+    return line
+
+
+def _is_item(content: str) -> bool:
+    return content == "-" or content.startswith("- ")
+
+
+def _yaml_node(lines: list[tuple[int, str]], at: int, indent: int) -> tuple[Any, int]:
+    if _is_item(lines[at][1]):
+        return _yaml_list(lines, at, indent)
+    return _yaml_map(lines, at, indent)
+
+
+def _yaml_map(lines: list[tuple[int, str]], at: int, indent: int) -> tuple[Any, int]:
+    found: dict[str, Any] = {}
+    while at < len(lines) and lines[at][0] == indent and not _is_item(lines[at][1]):
+        pair = _YAML_PAIR.match(lines[at][1])
+        if pair is None:
+            raise ValueError("not a block mapping")
+        key, value = _scalar(pair.group("key")), pair.group("value")
+        at += 1
+        nested = at < len(lines) and (lines[at][0] > indent
+                                      or (lines[at][0] == indent and _is_item(lines[at][1])))
+        if value is None and nested:
+            found[key], at = _yaml_node(lines, at, lines[at][0])
+        else:
+            found[key] = None if value is None else _scalar(value)
+    return found, at
+
+
+def _yaml_list(lines: list[tuple[int, str]], at: int, indent: int) -> tuple[Any, int]:
+    found: list[Any] = []
+    while at < len(lines) and lines[at][0] == indent and _is_item(lines[at][1]):
+        rest = lines[at][1][1:].lstrip()
+        if not rest:
+            at += 1
+            nested = at < len(lines) and lines[at][0] > indent
+            item, at = _yaml_node(lines, at, lines[at][0]) if nested else (None, at)
+        elif _is_item(rest) or _YAML_PAIR.match(rest):
+            # The item's own block starts where its text does: `- key: value` is a mapping
+            # whose next keys line up under `key`.
+            column = indent + len(lines[at][1]) - len(rest)
+            lines = [*lines[:at], (column, rest), *lines[at + 1:]]
+            item, at = _yaml_node(lines, at, column)
+        else:
+            item, at = _scalar(rest), at + 1
+        found.append(item)
+    return found, at
+
+
+def _scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+def _upstream_port(value: Any) -> int | None:
+    """The port a tunnel hands its traffic to on this machine — `8080`, `localhost:8080`,
+    `http://127.0.0.1:8080` — or None for anything that is not this machine."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return int(value)
+    try:
+        parts = urlparse(value if "://" in value else f"tcp://{value}")
+        port = parts.port or {"http": 80, "https": 443}.get(parts.scheme)
+    except ValueError:  # a port out of range
+        return None
+    return port if parts.hostname in _LOOPBACK else None
+
+
+def _bare(value: str) -> str | None:
+    """`value` as a bare public hostname, lower-cased, or None when it is not one."""
+    host = value.strip().lower()
+    return host if host and hostname_problem(host) is None else None
+
+
+def _cloudflared_hostname(text: str, port: int) -> str | None:
+    """The hostname of the ingress rule whose service is Keryx's port."""
+    config = _yaml(text)
+    rules = config.get("ingress") if isinstance(config, dict) else None
+    for rule in rules if isinstance(rules, list) else []:
+        if isinstance(rule, dict) and _upstream_port(rule.get("service")) == port:
+            if host := _bare(str(rule.get("hostname") or "")):
+                return host
+    return None
+
+
+def _ngrok_hostname(text: str, port: int) -> str | None:
+    """The reserved domain of the tunnel (v2: `tunnels`, its `addr`, its `domain` or older
+    `hostname`) or endpoint (v3: `endpoints`, its `upstream.url`, its own `url`) that hands
+    its traffic to Keryx's port. An upstream's URL is where the traffic goes, never the
+    public name, so it is only ever matched against the port."""
+    config = _yaml(text)
+    if not isinstance(config, dict):
+        return None
+    tunnels = config.get("tunnels")
+    for tunnel in tunnels.values() if isinstance(tunnels, dict) else []:
+        if isinstance(tunnel, dict) and _upstream_port(tunnel.get("addr")) == port:
+            for key in ("domain", "hostname"):
+                if host := _bare(str(tunnel.get(key) or "")):
+                    return host
+    endpoints = config.get("endpoints")
+    for endpoint in endpoints if isinstance(endpoints, list) else []:
+        upstream = endpoint.get("upstream") if isinstance(endpoint, dict) else None
+        if isinstance(upstream, dict) and _upstream_port(upstream.get("url")) == port:
+            if host := _bare(str(endpoint.get("url") or "").removeprefix("https://")):
+                return host
+    return None

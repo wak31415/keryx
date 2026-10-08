@@ -11,7 +11,8 @@ a broken promise to the app's decoder — and this module is the only place it i
   it: `secret:` for one kept in `secrets.toml`, `setting:` for any other.
 - `plugin:<name>` — a plugin in `plugins.PLUGINS`; `integration:<id>` — an account in
   `integrations --json`.
-- The rest are screens of their own (`ACTIONS`): the PIN, the background service, the
+- The rest are screens of their own (`ACTIONS`): the PIN, the background service
+  installed or (`service:start`, after `keryx service stop`) started again, the
   model server started or a model chosen, the voice here or its speech models downloaded,
   the Twilio account, its webhooks, the tunnel, and the migration from Jarvis.
 """
@@ -23,8 +24,8 @@ from keryx.config.settings import is_secret
 SIGNINS = ("claude", "codex", "gmail", "google-workspace")
 #: The ids that take no argument.
 ACTIONS = frozenset({
-    "pin", "service:install", "models:start", "models:choose", "voice:here", "voice:download",
-    "phone:account", "phone:webhooks", "phone:tunnel", "migrate",
+    "pin", "service:install", "service:start", "models:start", "models:choose", "voice:here",
+    "voice:download", "phone:account", "phone:webhooks", "phone:tunnel", "migrate",
 })
 #: The ids that take an argument, `signin:` aside (its arguments are `SIGNINS`).
 PREFIXES = ("secret:", "setting:", "plugin:", "integration:")

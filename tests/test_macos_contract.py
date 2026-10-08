@@ -96,9 +96,14 @@ VOICE_LLM_HERE = "voice llm here NAME --json"
 VOICE_LLM_REMOTE = "voice llm remote URL --json"
 VOICE_LLM_START = "models start --voice-llm --json"
 VOICE_LLMS = (VOICE_LLM_SHARED, VOICE_LLM_HERE, VOICE_LLM_REMOTE, VOICE_LLM_START)
+#: One agent's smoke test, told as it runs: NAME is claude, codex or local.
+AUTH_SMOKE = "auth smoke NAME --json"
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
 STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values(), MIGRATE,
-           PROJECT_CONTEXT, *VOICE_LLMS)
+           PROJECT_CONTEXT, *VOICE_LLMS, AUTH_SMOKE)
+#: Keryx stopped without being removed, and started again: the app's Quit, and its launch.
+SERVICE_CONTROL = ("service stop --json", "service stop --all --json", "service start --json",
+                   "service start --all --json")
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -115,12 +120,16 @@ COMMANDS = {
     "phone tunnel --json", "plugins list --json", "tools --json", "plugins hosts --json",
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
     "migrate --json", "setup project-context --describe --json",
-    "setup project-context --apply --json",
+    "setup project-context --apply --json", "config options ASSISTANT_NAME --json",
+    "setup mark phone --json", *SERVICE_CONTROL,
 }
 #: The command lines and streams the CLI prints that the app has yet to name. Each is
 #: checked once the contract names it; until then the cross-checks let it be missing, and
 #: nothing more — a contract that names what the CLI does not print still fails them.
-AWAITING: set[str] = {*VOICE_LLMS}
+AWAITING: set[str] = {
+    *VOICE_LLMS, "config options ASSISTANT_NAME --json", "setup mark phone --json",
+    AUTH_SMOKE, *SERVICE_CONTROL,
+}
 #: Keys a command prints that the app has yet to name, by path, with the types the
 #: contract will give them: checked here until it does, and by the contract once it does.
 AWAITING_KEYS = {
@@ -131,6 +140,9 @@ AWAITING_KEYS = {
         "pipelines": {"openai": "array", "here": "array", "server": "array"},
     },
 }
+#: The fix ids the CLI can send that the app has yet to name: `service:start`, for a Keryx
+#: `keryx service stop` stopped (`doctor`'s "installed, not running").
+AWAITING_FIX_IDS = {"service:start"}
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
 STDIN = {"pin set --json": "482915\n482915\n", "config verify KEY --json": "sk-typed\n"}
@@ -520,8 +532,13 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
         requested_at=now.isoformat(), state="failed", error="launchctl exited 5",
     ))
 
-    # The phone: a Twilio account that answers. The tunnel's hostname answers nothing.
+    # The phone: a Twilio account that answers. The tunnel's hostname answers nothing, and
+    # cloudflared's own config names it.
     monkeypatch.setattr(phone, "rest_admin", TwilioAccount())
+    tunnel_config = Path.home() / ".cloudflared" / "config.yml"
+    tunnel_config.parent.mkdir(parents=True)
+    tunnel_config.write_text("ingress:\n  - hostname: keryx.example.com\n"
+                             f"    service: http://localhost:{settings.port}\n")
     # A plugin on, for the plugin commands to change and turn off.
     plugins.install(settings, "check_billing")
     # An ssh host cluster_stats could ask, its master up: `ssh` itself is never run.
@@ -554,7 +571,13 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     model.parent.mkdir(parents=True, exist_ok=True)
     with model.open("wb") as out:
         out.truncate(MODEL.size)
-    # The service commands: every unit installed, the tunnel stopped, the installers faked.
+    # The service commands: every unit installed, the tunnel stopped, the installers faked,
+    # and every launch agent's plist on disk for `service stop|start` to act on — whose
+    # `launchctl` is the same faked runner.
+    agents = Path.home() / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    for label in units.NAMES["launchd"].values():
+        (agents / f"{label}.plist").write_text("<plist/>")
     monkeypatch.setattr(units, "status", partial(
         units.status, installed=lambda target: True,
         active=lambda target: target.unit != "dev.keryx.tunnel"))
@@ -582,7 +605,10 @@ def test_the_contract_names_every_stream_the_app_reads_as_json_lines():
 
 
 def test_what_awaits_the_contract_is_something_the_cli_prints():
+    from keryx import fixes
+
     assert set(AWAITING) <= COMMANDS | set(STREAMS)
+    assert AWAITING_FIX_IDS <= fixes.ACTIONS
 
 
 @pytest.mark.parametrize("command", sorted(COMMANDS))
@@ -654,6 +680,8 @@ def test_the_seed_makes_the_values_the_contract_checks_real_ones(seeded):
     assert voice_status["here"]["program"] == S2S
     assert voice_status["here"]["words_model"] == MODEL.key
     assert voice_server["saved"]["VOICE_BASE_URL"] == f"{VOICE_SERVER}/v1"
+    tunnel = json.loads(runner.invoke(app, ["phone", "tunnel", "--json"]).stdout)
+    assert tunnel["hostname"] == "keryx.example.com"
 
 
 # --- the stream: models pull --json ------------------------------------------------------
@@ -1361,6 +1389,84 @@ def test_a_voice_llm_stream_ends_once_whatever_the_contract_says(
         keeps_its_promise(contract()["streams"][command], events, ending, result.exit_code)
 
 
+# --- the stream: auth smoke NAME --json --------------------------------------------------
+
+
+def _smoke_agent(monkeypatch, result: RunResult, *, signed_in: bool = True):
+    """Claude signed in (or not), and `setup.agents.run_smoke` faked: progress, `result`."""
+    import dataclasses
+
+    from keryx.agents.registry import BACKENDS
+
+    spec = BACKENDS["claude"]
+    monkeypatch.setitem(BACKENDS, "claude", dataclasses.replace(
+        spec, auth=dataclasses.replace(spec.auth, stored_login=lambda: signed_in)))
+
+    async def run(settings, agent, *, on_progress=None):
+        on_progress("SPOKEN_SUMMARY: ready")
+        return result
+
+    monkeypatch.setattr("keryx.setup.agents.run_smoke", run)
+
+
+def _smoke_passed(monkeypatch, settings):
+    _smoke_agent(monkeypatch, RunResult(ok=True, spoken_summary="ready"))
+    return ["claude"]
+
+
+def _smoke_failed(monkeypatch, settings):
+    _smoke_agent(monkeypatch, RunResult(ok=False, error="no answer within 300s"))
+    return ["claude"]
+
+
+def _smoke_signed_out(monkeypatch, settings):
+    _smoke_agent(monkeypatch, RunResult(ok=True, spoken_summary="ready"), signed_in=False)
+    return ["claude"]
+
+
+def _smoke_nobody(monkeypatch, settings):
+    return ["gemini"]
+
+
+def _smoke_cancelled(monkeypatch, settings):
+    _smoke_agent(monkeypatch, RunResult(ok=True, spoken_summary="ready"))
+
+    async def interrupted(settings, agent, *, on_progress=None):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr("keryx.setup.agents.run_smoke", interrupted)
+    return ["claude"]
+
+
+#: Each way the smoke test ends: how to arrange it (the agent named), its ending, its exit
+#: code, and whether a step was told first.
+SMOKES = [(_smoke_passed, "done", 0, True), (_smoke_failed, "done", 1, True),
+          (_smoke_signed_out, "error", 1, False), (_smoke_nobody, "error", 2, False),
+          (_smoke_cancelled, "cancelled", 130, True)]
+
+
+def test_the_smoke_tests_below_reach_every_event_the_contract_names():
+    stream = awaited_stream(AUTH_SMOKE)
+
+    assert {ending for _, ending, _, _ in SMOKES} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), SMOKES)
+def test_a_smoke_test_ends_once_whatever_the_contract_says(
+    seeded, monkeypatch, arrange, ending, code, stepped
+):
+    (name,) = arrange(monkeypatch, seeded)
+
+    result = runner.invoke(app, AUTH_SMOKE.replace("NAME", name).split())
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert ends_once(events) == ending and result.exit_code == code, events
+    assert (events[0]["event"] == "step") is stepped
+    if AUTH_SMOKE in contract()["streams"]:
+        keeps_its_promise(contract()["streams"][AUTH_SMOKE], events, ending, result.exit_code)
+
+
 # --- the fix ids: one vocabulary, on both sides -------------------------------------------
 
 
@@ -1372,7 +1478,10 @@ def test_the_app_knows_exactly_the_fix_ids_the_cli_can_send():
     ids = contract().get("fix_ids")
     if ids is None:
         pytest.skip("the contract does not name the fix ids yet")
-    assert set(ids["actions"]) == set(fixes.ACTIONS)
+    # An id the app has yet to name may be missing from the contract, and nothing more.
+    named = set(ids["actions"])
+    assert named <= set(fixes.ACTIONS), f"not sent by the CLI: {sorted(named - fixes.ACTIONS)}"
+    assert set(fixes.ACTIONS) - AWAITING_FIX_IDS <= named
     assert set(ids["signins"]) == set(fixes.SIGNINS)
     assert set(ids["prefixes"]) == set(fixes.PREFIXES)
 

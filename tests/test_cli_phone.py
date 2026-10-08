@@ -3,6 +3,7 @@
 
 import json
 import shutil
+from pathlib import Path
 
 import httpx
 import pytest
@@ -242,6 +243,7 @@ def test_tunnel_json(account, monkeypatch):
     assert json.loads(result.stdout) == {
         "kind": "ngrok", "binary": "/opt/homebrew/bin/ngrok", "public_host": HOST,
         "unit_installed": True, "reachable": True, "error": None, "install_url": None,
+        "hostname": None,
     }
     assert asked == [f"https://{HOST}/health"]
 
@@ -258,6 +260,21 @@ def test_tunnel_as_text(account, monkeypatch):
     assert "no tunnel on PATH" in result.output
     assert phone.CLOUDFLARED_DOWNLOADS in result.output
     assert f"{HOST} does not answer as Keryx" in result.output
+    assert "its config names" not in result.output
+
+
+def test_tunnel_as_text_names_the_hostname_its_config_does(account, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(units, "status", lambda settings: {
+        "manager": None, "units": {"tunnel": {"installed": False, "active": False}}})
+    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: httpx.Response(502))
+    config = Path.home() / ".ngrok2" / "ngrok.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text("tunnels:\n  keryx:\n    addr: 8080\n    domain: keryx.ngrok.app\n")
+
+    result = run("tunnel")
+
+    assert "its config names: keryx.ngrok.app" in result.output
 
 
 def test_tunnel_says_a_public_host_that_is_not_a_hostname(account, monkeypatch):

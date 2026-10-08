@@ -38,7 +38,13 @@ from keryx.notify.deliver import safe_send_sms
 from keryx.notify.twilio_out import TwilioOut, say_twiml
 from keryx.restart.health import health_probe
 from keryx.restart.logscan import LogErrors, errors_since
-from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore, format_duration
+from keryx.restart.store import (
+    RECORD_NAME,
+    RecordLocked,
+    RestartRecord,
+    RestartStore,
+    format_duration,
+)
 
 log = logging.getLogger("keryx.restart_watch")
 
@@ -163,10 +169,24 @@ async def _alert(
 
     # Recorded before anything is sent, and before the service can come up late: a record
     # left `pending` would have a Keryx that starts an hour from now ring them about a
-    # restart they have already been told died.
-    record.state = "failed"
-    record.error = "restarted but never confirmed it" if up else "never came back"
-    store.save(record)
+    # restart they have already been told died. Only while it is still pending, under the
+    # record's lock: an owner who stopped Keryx meanwhile has settled it, and is not rung.
+    error = "restarted but never confirmed it" if up else "never came back"
+
+    def failed(current: RestartRecord) -> None:
+        current.state, current.error = "failed", error
+
+    try:
+        written = await asyncio.to_thread(store.update_if_pending, record.requested_at, failed)
+    except RecordLocked as error:
+        # Whatever holds it is changing the record — an owner's stop, most likely — and an
+        # alert sent without first marking it failed could be sent again by a late start.
+        log.error("could not mark the restart failed, so not alerting: %s", error)
+        return MUTE
+    if not written:
+        log.info("the restart was settled meanwhile; nobody to tell")
+        return REPORTED
+    record.state, record.error = "failed", error
 
     texted = await _text(twilio, settings, record, body)
     headline = STUCK_SPOKEN if up else DOWN_SPOKEN

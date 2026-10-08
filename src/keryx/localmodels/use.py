@@ -187,8 +187,9 @@ def unit_installed(
     platform: str = sys.platform,
     is_installed: Callable[[ServiceTarget], bool] | None = None,
 ) -> bool:
-    """Whether the service manager knows the `kind` ("llm", "voice" or "voice_llm")
-    server's unit."""
+    """Whether the `kind` ("llm", "voice" or "voice_llm") server's unit is installed: its
+    manager has it loaded, or its unit file is on disk — a server `keryx service stop
+    --all` booted out is installed and stopped, as `service --json` says it."""
     if platform == "darwin":
         manager = "launchd"
     elif platform.startswith("linux"):
@@ -196,5 +197,5 @@ def unit_installed(
     else:
         return False
     # Late-bound through the module, as `keryx.status` binds it.
-    ask = is_installed or service.is_installed
+    ask = is_installed or service.is_present
     return ask(ServiceTarget(manager, UNITS[manager][kind]))

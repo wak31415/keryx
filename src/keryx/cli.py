@@ -101,17 +101,19 @@ from keryx.restart.service import (
     UNSUPPORTED_HINT,
     ServiceTarget,
     candidate_target,
+    is_stopped,
     resolve_target,
     spawn_watchdog,
     watch_command,
 )
-from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
+from keryx.restart.store import RECORD_NAME, STOPPED, RecordLocked, RestartRecord, RestartStore
+from keryx.restart.store import REFUSED as RESTART_REFUSED
 from keryx.restart.version import loaded_version, mark_running, mark_startup_logs
 from keryx.restart.watchdog import watch
 from keryx.server import create_app
 from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
-from keryx.setup import auth_stream, migrate_stream, profile, project_stream
+from keryx.setup import auth_stream, migrate_stream, profile, project_stream, smoke_stream
 from keryx.setup import pin as pin_flow
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
@@ -572,6 +574,29 @@ def _run_on_signals(callback) -> None:
 # --- restart ---------------------------------------------------------------
 
 
+#: Why `keryx restart` refuses while Keryx is stopped.
+STOPPED_REFUSAL = ("Keryx is stopped (`keryx service stop`), so there is nothing running to "
+                   "restart; `keryx service start` starts it")
+
+
+#: Why `keryx restart` stops before handing over: its record was settled meanwhile.
+OVERTAKEN = "Keryx was stopped while the restart was being set up, so it was not restarted"
+
+
+def _restart_write(store: RestartStore, write: Callable[..., Any], *args: Any) -> Any:
+    """One of the store's writes. When the record stays locked nothing is written, and the
+    restart is abandoned before anything is handed over: said, and recorded as its failure
+    once the lock can be had (`keryx restart --status`), exit 1."""
+    try:
+        return write(*args)
+    except RecordLocked as error:
+        typer.echo(f"the restart was abandoned: the restart record stayed locked ({error})",
+                   err=True)
+        with contextlib.suppress(RecordLocked):
+            store.record_failure("its record stayed locked, so it was not restarted")
+        raise typer.Exit(1) from None
+
+
 def _restart_store(settings: Settings) -> RestartStore:
     return RestartStore(settings.state_dir / RECORD_NAME)
 
@@ -597,6 +622,19 @@ def restart(
     if status:
         _echo_restart_status(store)
         return
+
+    # Stopped by `keryx service stop` is not a service to restart: a restart would start a
+    # Keryx the owner stopped (systemd), or ask launchd for a job it has unloaded. Said, and
+    # left on the record, where `keryx restart --status` finds it.
+    stopped = candidate_target(settings)
+    if stopped is not None and is_stopped(stopped):
+        _restart_write(store, store.save, RestartRecord(
+            requested_at=datetime.now(UTC).isoformat(), reason=reason.strip(),
+            origin_channel="cli", target=stopped.describe(), state=RESTART_REFUSED,
+            error=STOPPED_REFUSAL,
+        ))
+        typer.echo(f"the restart was refused: {STOPPED_REFUSAL}", err=True)
+        raise typer.Exit(1)
 
     # From a terminal, never from inside the unit: the installed service is the target.
     target = resolve_target(settings, from_outside=True)
@@ -625,26 +663,44 @@ def restart(
         version=loaded_version(settings.state_dir),
         log_marks=log_marks(settings.state_dir),
     )
-    if not store.save(record):
-        typer.echo(f"could not write {store.path}: the restart would go unconfirmed")
+    # Refused while the owner's stop stands (its record says `stopped`): a restart then would
+    # bring back what they stopped.
+    if not _restart_write(store, store.create, record):
+        stopped_now = (store.load() or RestartRecord()).state == STOPPED
+        typer.echo(f"the restart was refused: {OVERTAKEN}" if stopped_now else
+                   f"could not write {store.path}: the restart would go unconfirmed", err=True)
         raise typer.Exit(1)
 
+    asked = record.requested_at
     if number:
         # The same watch the voice path arms, for the same reason: this command prints a
         # promise that keryx will call back, and nothing else would notice if it never
-        # came back to make the call.
-        record.watchdog = _arm_watchdog(settings, target)
-        store.save(record)
-        typer.echo(f"watchdog: {record.watchdog}")
+        # came back to make the call. Written only onto the record still pending: never
+        # back over a `keryx service stop` that settled it meanwhile.
+        watchdog = _arm_watchdog(settings, target)
+        if not _restart_write(store, store.update_if_pending, asked,
+                              lambda current: setattr(current, "watchdog", watchdog)):
+            typer.echo(f"the restart was refused: {OVERTAKEN}", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"watchdog: {watchdog}")
 
     command = target.command()
+    # The last look before the hand-over. The lock is not held across it: a `systemctl
+    # restart` lasts as long as Keryx takes to stop, and the lock's holders keep it for
+    # milliseconds.
+    if not store.is_pending(asked):
+        typer.echo(f"the restart was refused: {OVERTAKEN}", err=True)
+        raise typer.Exit(1)
     typer.echo(" ".join(command))
     code = subprocess.run(command, check=False).returncode
     if code != 0:
-        record.state = "failed"
-        record.error = f"{command[0]} exited {code}"
-        store.save(record)
-        typer.echo(f"the restart failed: {record.error}")
+        error = f"{command[0]} exited {code}"
+
+        def failed(current: RestartRecord) -> None:
+            current.state, current.error = "failed", error
+
+        _restart_write(store, store.update_if_pending, asked, failed)
+        typer.echo(f"the restart failed: {error}")
         raise typer.Exit(1)
 
     if number:
@@ -1822,6 +1878,70 @@ def _install_units(
         typer.echo(outcome.message)
 
 
+#: What `service stop|start` is, refused to the service.
+CONTROL_THE_SERVICES = "stop or start Keryx's services"
+ALL_UNITS_HELP = "The model servers too: every unit Keryx installs, not only itself and its tunnel."
+
+
+@service_app.command("stop")
+def service_stop(
+    every: Annotated[bool, typer.Option("--all", help=ALL_UNITS_HELP)] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Stop Keryx and its tunnel, and keep them from starting at login, without removing
+    them: `keryx service start` starts them again. A restart in flight is settled as
+    stopped by the owner first, so its watchdog rings nobody. Exit 0 stopped (or nothing to
+    stop), 1 when a unit would not stop, 2 refused."""
+    _control_units("stop", every=every, as_json=as_json)
+
+
+@service_app.command("start")
+def service_start(
+    every: Annotated[bool, typer.Option("--all", help=ALL_UNITS_HELP)] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
+) -> None:
+    """Let Keryx and its tunnel start at login again, and start them — with --all, every
+    model server that is installed, first. Idempotent. Exit 0 running, 1 when a unit would
+    not start, 2 refused (Keryx not installed, no service manager)."""
+    _control_units("start", every=every, as_json=as_json)
+
+
+def _control_units(action: str, *, every: bool, as_json: bool) -> None:
+    """`service stop|start`: one document on stdout with --json on every path."""
+
+    def said(outcome: units.Control) -> None:
+        if as_json:
+            typer.echo(json.dumps(outcome.as_dict(), indent=2))
+            return
+        typer.echo(outcome.message, err=not outcome.ok)
+        if outcome.detail:
+            typer.echo(outcome.detail, err=True)
+        for row in outcome.units:
+            typer.echo(f"{row['kind']:<7} {row['unit']:<22} {row['state']}")
+
+    if refusal := _owner_refusal(CONTROL_THE_SERVICES):
+        said(units.Control(False, 2, refusal, None, []))
+        raise typer.Exit(2)
+
+    def refuse(message: str, *, detail: str | None = None) -> None:
+        said(units.Control(False, 1, message, detail, []))
+
+    # A stop reads nothing a migration moves, and must work whatever is left to move; a
+    # start would hand the manager a `keryx serve` that refuses to run until it has.
+    settings = _configure_readonly(refuse=refuse if as_json else None,
+                                   migrated=action == "start")
+    store = _restart_store(settings)
+    outcome = units.control(settings, action, every=every, settle=store.settle_stopped)
+    if action == "start" and outcome.ok:
+        # Running again: the stop's marker goes, so restarts may be asked for once more. A
+        # record that stays locked keeps it until Keryx's own start clears it.
+        with contextlib.suppress(RecordLocked):
+            store.clear_stopped()
+    said(outcome)
+    if outcome.code != 0:
+        raise typer.Exit(outcome.code)
+
+
 @plugins_app.command("list")
 def plugins_list(
     as_json: Annotated[bool, typer.Option("--json", help=PLUGINS_JSON_HELP)] = False,
@@ -2382,7 +2502,8 @@ def setup_mark(
     step: Annotated[str, typer.Argument(help="The step, by its id in `keryx setup plan`.")],
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
-    """Record a step as walked: an optional one skipped, or the PIN left to the first call."""
+    """Record a step as walked: an optional one skipped, the PIN left to the first call, or
+    the phone or the service left for later (still not done, so not ready: "deferred")."""
     _owner_only("mark a setup step")
     try:
         settings = _load_settings_optional()
@@ -2404,7 +2525,8 @@ def setup_mark(
         typer.echo(f"nothing is marked: {store.config_path} cannot be read ({error}); "
                    "fix it by hand", err=True)
         raise typer.Exit(1) from None
-    typer.echo(json.dumps(marked) if as_json else f"{marked['id']}: walked")
+    said = "left for later" if marked["deferred"] else "walked"
+    typer.echo(json.dumps(marked) if as_json else f"{marked['id']}: {said}")
 
 
 #: What the Mac app's answers come as: one JSON object on stdin, never typed at a terminal.
@@ -2671,7 +2793,8 @@ def config_options(
     key: Annotated[str, typer.Argument(help="A setting with a list of values, by name.")],
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
 ) -> None:
-    """The values a setting can take, found now: the models a provider lists, the voices.
+    """The values a setting can take, found now: the models a provider lists, the voices,
+    the assistant's built-in names.
 
     A list that cannot be read falls back to the values Keryx knows, and says why; that is
     still a success. `keryx config list --json` marks the settings that have one.
@@ -3292,6 +3415,28 @@ def auth_status_command(
         raise typer.Exit(1)
 
 
+@auth_app.command("smoke")
+def auth_smoke(
+    name: Annotated[str, typer.Argument(help="claude, codex or local.")],
+    as_json: Annotated[bool, typer.Option("--json", help="JSON lines for the Mac app: each "
+                                          "step, then how it ended.")] = False,
+) -> None:
+    """One real task on one coding agent — the smoke test `auth status --smoke` runs on
+    each — told as it runs. Exit 0 when it said it is ready, 1 when it did not (or could not
+    be asked: not installed, not signed in), 2 for no such agent, 130 when stopped."""
+    if as_json:
+        events: smoke_stream.SmokeEvents = smoke_stream.SmokeEvents(typer.echo)
+    else:
+        events = smoke_stream.SmokeText(typer.echo, lambda line: typer.echo(line, err=True))
+
+    def run() -> int:
+        settings = _configure_readonly(refuse=events.error)
+        return smoke_stream.stream(settings, name, events)
+
+    with pull.terminate_as_interrupt():
+        raise typer.Exit(events.guard(run))
+
+
 @auth_app.command("logout")
 def auth_logout(
     name: Annotated[str, typer.Argument(help="gmail or google-workspace.")],
@@ -3397,8 +3542,9 @@ def phone_webhooks(
 def phone_tunnel(
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,
 ) -> None:
-    """The tunnel that puts this machine in front of Twilio: its program, its service, and
-    whether Keryx answers at https://PUBLIC_HOST/health. Only reads."""
+    """The tunnel that puts this machine in front of Twilio: its program, its service,
+    whether Keryx answers at https://PUBLIC_HOST/health, and the hostname the tunnel's own
+    config names. Only reads."""
     report = phone.tunnel_report(_configure_readonly())
     if as_json:
         typer.echo(json.dumps(report, indent=2))
@@ -3407,6 +3553,8 @@ def phone_tunnel(
     if report["install_url"]:
         typer.echo(f"get cloudflared from {report['install_url']} (or `brew install cloudflared`)")
     typer.echo(f"its service: {'installed' if report['unit_installed'] else 'not installed'}")
+    if report["hostname"]:
+        typer.echo(f"its config names: {report['hostname']}")
     host = report["public_host"]
     if report["error"]:
         typer.echo(report["error"])

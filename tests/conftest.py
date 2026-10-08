@@ -81,6 +81,8 @@ def _isolated_env(monkeypatch, tmp_path):
     monkeypatch.setenv("KERYX_HOME", str(tmp_path / "keryx-home"))
     for name in (*ACTOR_ENVS, LEGACY_HOME_ENV):
         monkeypatch.delenv(name, raising=False)
+    # cloudflared's system-wide config directories are outside `HOME`: none in a test.
+    monkeypatch.setattr("keryx.phone.CLOUDFLARED_SYSTEM_DIRS", ())
     # The Claude CLI's own directory is derived from `HOME` unless this moves it.
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     # And the working directory: a `.env` in the checkout the suite runs from is what
@@ -135,6 +137,7 @@ def _outside_any_service(monkeypatch):
     """
     monkeypatch.setattr("keryx.restart.service.runs_under", lambda target, **_: False)
     monkeypatch.setattr("keryx.restart.service.is_installed", lambda target, **_: False)
+    monkeypatch.setattr("keryx.restart.service.is_enabled", lambda target, **_: None)
 
 
 @pytest.fixture

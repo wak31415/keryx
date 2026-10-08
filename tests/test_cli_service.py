@@ -1,9 +1,11 @@
 """`keryx service` and `keryx models start|stop`: the units and the model server, from the
 command line the Mac app runs — every service manager, installer and server faked."""
 
+import asyncio
 import json
 import os
 import signal
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -198,6 +200,206 @@ def test_the_help_points_the_model_servers_elsewhere():
     assert result.exit_code == 0
     assert "keryx models start" in result.stdout and "keryx voice use here" in result.stdout
     assert "keryx voice llm here" in result.stdout
+
+
+# --- keryx service stop|start --------------------------------------------------------------
+
+
+def on_disk(*labels):
+    agents = Path.home() / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True, exist_ok=True)
+    for label in labels:
+        (agents / f"{label}.plist").write_text("<plist/>")
+
+
+def test_service_stop_json_keeps_the_plists_and_disables_them(machine):
+    machine.installed = {"dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm"}
+    on_disk("dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm")
+
+    result = runner.invoke(app, ["service", "stop", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document == {
+        "ok": True, "message": units.STOPPED_MAIN, "detail": None,
+        "units": [{"kind": "agent", "unit": "dev.keryx.agent", "state": "stopped"},
+                  {"kind": "tunnel", "unit": "dev.keryx.tunnel", "state": "stopped"}],
+    }
+    uid = os.getuid()
+    # Both disabled before either is booted out.
+    assert machine.scripts == [["launchctl", "disable", f"gui/{uid}/dev.keryx.agent"],
+                               ["launchctl", "disable", f"gui/{uid}/dev.keryx.tunnel"],
+                               ["launchctl", "bootout", f"gui/{uid}/dev.keryx.agent"],
+                               ["launchctl", "bootout", f"gui/{uid}/dev.keryx.tunnel"]]
+    assert not any("dev.keryx.llm" in argv[-1] for argv in machine.scripts)
+    assert (Path.home() / "Library" / "LaunchAgents" / "dev.keryx.agent.plist").exists()
+
+
+def test_service_stop_all_stops_the_model_servers_too(machine):
+    machine.installed = {"dev.keryx.agent", "dev.keryx.llm", "dev.keryx.voice",
+                         "dev.keryx.voice-llm"}
+
+    result = runner.invoke(app, ["service", "stop", "--all", "--json"])
+
+    assert result.exit_code == 0, result.output
+    states = {row["kind"]: row["state"] for row in json.loads(result.stdout)["units"]}
+    assert states == {"agent": "stopped", "tunnel": "not-installed", "llm": "stopped",
+                      "voice": "stopped", "voice_llm": "stopped"}
+    disabled = [argv[-1].rsplit("/", 1)[-1] for argv in machine.scripts if argv[1] == "disable"]
+    assert "dev.keryx.voice-llm" in disabled
+
+
+def test_service_stop_settles_a_restart_in_flight_so_the_watchdog_rings_nobody(
+    machine, monkeypatch
+):
+    from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
+    from keryx.restart.watchdog import REPORTED, watch
+
+    machine.installed = {"dev.keryx.agent"}
+    settings = Settings()
+    store = RestartStore(settings.state_dir / RECORD_NAME)
+    store.save(RestartRecord(requested_at="2026-10-07T09:00:00+00:00", reason="new code",
+                             number="+15550000001"))
+    settled_before = []
+    run = machine.run_captured
+
+    def bootout_sees(argv):
+        if argv[1] == "bootout":
+            settled_before.append(store.load().state)
+        return run(argv)
+
+    monkeypatch.setattr(units, "run_captured", bootout_sees)
+
+    result = runner.invoke(app, ["service", "stop", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert settled_before == ["stopped"]  # settled before the job was booted out
+    record = store.load()
+    assert (record.state, record.error) == ("stopped",
+                                            "Keryx was stopped by its owner before it came back")
+
+    class NoPhone:
+        configured = False
+
+    async def no_sleep(seconds):
+        raise AssertionError("a settled restart is not waited on")
+
+    outcome = asyncio.run(watch(settings, store=store, twilio=NoPhone(), sleep=no_sleep))
+    assert outcome == REPORTED
+
+
+def test_service_start_all_json_starts_what_is_installed(machine):
+    on_disk("dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.voice", "dev.keryx.voice-llm")
+
+    result = runner.invoke(app, ["service", "start", "--all", "--json"])
+
+    assert result.exit_code == 0, result.output
+    document = json.loads(result.stdout)
+    assert document["ok"] is True and document["message"] == units.RUNNING_ALL
+    assert {row["kind"]: row["state"] for row in document["units"]} == {
+        "agent": "running", "tunnel": "running", "llm": "not-installed", "voice": "running",
+        "voice_llm": "running"}
+    verbs = [argv[1] for argv in machine.scripts]
+    assert verbs == ["enable"] * 4 + ["bootstrap"] * 4
+    started = [argv[-1].rsplit("/", 1)[-1] for argv in machine.scripts if argv[1] == "bootstrap"]
+    assert started == ["dev.keryx.voice-llm.plist", "dev.keryx.voice.plist",
+                       "dev.keryx.tunnel.plist", "dev.keryx.agent.plist"]
+
+
+def test_a_stop_leaves_its_marker_and_a_start_takes_it_away(machine):
+    from keryx.restart.store import RECORD_NAME, RestartStore
+
+    machine.installed = {"dev.keryx.agent"}
+    store = RestartStore(Settings().state_dir / RECORD_NAME)
+
+    assert runner.invoke(app, ["service", "stop", "--json"]).exit_code == 0
+    assert store.load().state == "stopped"  # a restart asked for now is refused
+
+    assert runner.invoke(app, ["service", "start", "--json"]).exit_code == 0
+    assert store.load() is None
+
+
+def test_a_stop_whose_record_stays_locked_is_said_after_stopping(machine, monkeypatch):
+    from keryx.restart.store import RestartStore
+
+    machine.installed = {"dev.keryx.agent"}
+    monkeypatch.setattr(RestartStore, "settle_stopped", lambda self: "locked")
+
+    result = runner.invoke(app, ["service", "stop", "--json"])
+
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert (document["ok"], document["message"]) == (False, units.NOT_SETTLED)
+    assert [argv[1] for argv in machine.scripts] == ["disable", "bootout"]
+    assert for_the_app(document["message"])
+
+
+def test_service_start_with_nothing_installed_is_refused(machine):
+    result = runner.invoke(app, ["service", "start", "--json"])
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["message"] == units.NOT_INSTALLED_YET
+    assert machine.scripts == []
+
+
+def test_a_unit_that_will_not_stop_exits_1_with_what_launchctl_said(machine):
+    machine.installed = {"dev.keryx.agent"}
+    machine.captured = (5, "", "Boot-out failed: 5: Input/output error")
+
+    result = runner.invoke(app, ["service", "stop", "--json"])
+
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert document["ok"] is False and "Input/output error" in document["detail"]
+    assert for_the_app(document["message"])
+
+
+def test_service_stop_in_words(machine):
+    machine.installed = {"dev.keryx.agent"}
+
+    result = runner.invoke(app, ["service", "stop"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [units.STOPPED_MAIN,
+                                          "agent   dev.keryx.agent        stopped",
+                                          "tunnel  dev.keryx.tunnel       not-installed"]
+
+
+@pytest.mark.parametrize("variable", ["KERYX_ACTOR", "JARVIS_ACTOR"])
+@pytest.mark.parametrize("verb", ["stop", "start"])
+def test_stop_and_start_are_the_owners_alone(machine, monkeypatch, variable, verb):
+    monkeypatch.setenv(variable, "service")
+    machine.installed = {"dev.keryx.agent"}
+
+    result = runner.invoke(app, ["service", verb, "--all", "--json"])
+
+    assert result.exit_code == 2 and machine.scripts == []
+    document = json.loads(result.stdout)
+    assert document["ok"] is False and "only the owner may" in document["message"]
+    assert document["units"] == []
+
+
+def test_a_migration_still_to_run_refuses_a_start_and_not_a_stop(machine):
+    old = Path.home() / ".local" / "share" / "jarvis"
+    old.mkdir(parents=True)
+    (old / "memory.md").write_text("# Memory\n")
+    machine.installed = {"dev.keryx.agent"}
+
+    started = runner.invoke(app, ["service", "start", "--json"])
+
+    assert started.exit_code == 2 and machine.scripts == []
+    document = json.loads(started.stdout)
+    assert document["ok"] is False and "migrate" in document["message"]
+    assert runner.invoke(app, ["service", "stop", "--json"]).exit_code == 0
+
+
+@pytest.mark.parametrize("message", [
+    units.STOPPED_MAIN, units.STOPPED_ALL, units.RUNNING_MAIN, units.RUNNING_ALL,
+    units.SERVERS_STOPPED, units.NOTHING_TO_STOP, units.NOT_INSTALLED_YET,
+    *units.COULD_NOT.values(), units.NO_MANAGER,
+])
+def test_every_sentence_is_for_a_person(message):
+    assert for_the_app(message)
 
 
 @pytest.mark.parametrize("argv", [["service", "install"], ["service", "uninstall", "--llm"],

@@ -353,7 +353,17 @@ async def test_the_hourly_cap_stops_it_ringing_again(broker, twilio, clock, tmp_
 
 
 async def test_quiet_hours_are_honoured(broker, twilio, tmp_path, monkeypatch, hooks):
-    broker._settings.approval_quiet_hours = "00:00-23:59"
+    """At a fixed noon inside an 11:00-13:00 window: never the real clock, which made a
+    whole-day window fail in the minute around midnight."""
+    from datetime import datetime
+
+    class Noon(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 2, 12, 0, tzinfo=tz)
+
+    monkeypatch.setattr("keryx.approvals.broker.datetime", Noon)
+    broker._settings.approval_quiet_hours = "11:00-13:00"
     await hooks.raise_request(permission_event(cwd=str(tmp_path / "roots" / "myproject")))
     await asyncio.sleep(0.2)
     assert twilio.calls == []

@@ -78,9 +78,12 @@ def default_probes() -> StatusProbes:
     """The real ones. Asked from outside the unit, as `keryx restart` asks: the app is
     never the service, so an installed unit is the answer."""
     return StatusProbes(
-        target=lambda settings: resolve_target(settings, from_outside=True),
+        # Installed is loaded or its unit file on disk, as `keryx service --json` and
+        # `doctor` say it: a Keryx its owner stopped is installed and not active.
+        target=lambda settings: resolve_target(settings, from_outside=True,
+                                               installed=service.is_present),
         # Late-bound through the module, as `resolve_target` binds them.
-        installed=lambda target: service.is_installed(target),
+        installed=lambda target: service.is_present(target),
         active=lambda target: service.is_active(target),
         health=lambda settings: health_probe(settings, timeout=HEALTH_TIMEOUT_S),
         running_version=lambda settings: running_version(settings.state_dir),

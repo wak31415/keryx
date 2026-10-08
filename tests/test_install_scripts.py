@@ -388,7 +388,8 @@ def test_one_local_server_alone_and_its_removal(machine):
 
     run("install-systemd.sh", machine, "--uninstall", "--voice")
     assert not (units / "keryx-voice.service").exists()
-    assert "disable --now keryx-voice.service" in machine["calls"].read_text()
+    assert "disable keryx-voice.service" in machine["calls"].read_text()
+    assert "stop keryx-voice.service" in machine["calls"].read_text()
     assert "keryx.service" not in machine["calls"].read_text().replace("keryx-voice.service", "")
 
 
@@ -424,7 +425,10 @@ def test_the_voice_llms_own_unit_runs_keryx_models_serve_voice_llm_under_systemd
 
     run("install-systemd.sh", machine, "--voice-llm", "--uninstall")
     assert not (units / "keryx-voice-llm.service").exists()
-    assert "disable --now keryx-voice-llm.service" in machine["calls"].read_text()
+    calls = machine["calls"].read_text()
+    # Disabled before it is stopped, as every unit an uninstall takes away.
+    assert calls.index("disable keryx-voice-llm.service") < calls.index(
+        "stop keryx-voice-llm.service")
 
 
 @pytest.mark.parametrize("script", ["install-systemd.sh", "install-launchd.sh"])
@@ -489,3 +493,114 @@ def test_an_unknown_installer_flag_is_refused(machine):
     )
     assert result.returncode == 2 and "--llm" in result.stderr
     assert "--voice-llm" in result.stderr
+
+
+# --- removing the launch agents, and loading them again ------------------------------------
+
+
+def launchctl_seeing_plists(machine, tmp_path) -> Path:
+    """A `launchctl` stub that, at each `bootout`, also notes which plists are still there."""
+    seen = tmp_path / "seen.log"
+    agents = machine["home"] / "Library" / "LaunchAgents"
+    stub = tmp_path / "bin" / "launchctl"
+    stub.write_text(
+        "#!/bin/sh\n"
+        f'echo "launchctl $*" >> "{machine["calls"]}"\n'
+        f'if [ "$1" = bootout ]; then ls "{agents}" >> "{seen}" 2>/dev/null; '
+        f'echo "--" >> "{seen}"; fi\n'
+        "exit 0\n"
+    )
+    stub.chmod(0o755)
+    return seen
+
+
+def test_an_uninstall_removes_each_plist_before_booting_it_out(machine, tmp_path):
+    """bootout waits up to a job's ExitTimeOut; an uninstall cut short there must not leave
+    a RunAtLoad/KeepAlive plist behind to start at the next login."""
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+    run("install-launchd.sh", machine)
+    seen = launchctl_seeing_plists(machine, tmp_path)
+
+    result = run("install-launchd.sh", machine, "--uninstall")
+
+    at_each_bootout = seen.read_text().split("--\n")[:-1]
+    assert len(at_each_bootout) == 2
+    # Both gone before the first bootout: a cut at the agent's leaves the tunnel's gone too.
+    assert "dev.keryx.agent.plist" not in at_each_bootout[0]
+    assert "dev.keryx.tunnel.plist" not in at_each_bootout[0]
+    assert "removed dev.keryx.agent" in result.stdout
+
+
+def test_an_uninstall_cut_short_is_finished_by_the_next(machine, tmp_path):
+    """The plist gone but the job perhaps still loaded: a second run still boots it out."""
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+    machine["calls"].write_text("")
+
+    result = run("install-launchd.sh", machine, "--uninstall")
+
+    calls = machine["calls"].read_text()
+    assert "launchctl bootout gui/" in calls and "dev.keryx.agent" in calls
+    assert "removed" not in result.stdout  # nothing was on disk to remove
+
+
+def test_an_install_enables_each_agent_before_bootstrapping_it(machine):
+    """`keryx service stop` disables the job, and launchd refuses to bootstrap a disabled
+    one: an install after a stop must enable it first."""
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+
+    run("install-launchd.sh", machine)
+    run("install-launchd.sh", machine, "--llm", "--voice", "--voice-llm")
+
+    calls = [line.split()[:2] + line.split()[-1:]
+             for line in machine["calls"].read_text().splitlines()
+             if line.startswith("launchctl ") and line.split()[1] in ("enable", "bootstrap")]
+    for label in ("dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice",
+                  "dev.keryx.voice-llm"):
+        # By the label exactly: dev.keryx.voice is a prefix of dev.keryx.voice-llm.
+        mine = [call[1] for call in calls
+                if call[-1].rsplit("/", 1)[-1].removesuffix(".plist") == label]
+        assert mine == ["enable", "bootstrap"], (label, calls)
+
+
+def test_the_helpers_stop_fast_and_keryx_gets_a_minute_to_close_its_sessions(machine):
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+
+    run("install-launchd.sh", machine)
+    run("install-launchd.sh", machine, "--llm", "--voice", "--voice-llm")
+
+    agents = machine["home"] / "Library" / "LaunchAgents"
+    loaded = {label: plistlib.loads((agents / f"{label}.plist").read_bytes())
+              for label in ("dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm",
+                            "dev.keryx.voice", "dev.keryx.voice-llm")}
+    # Explicit, not launchd's own default: above the 25 s one session's close is given.
+    assert loaded["dev.keryx.agent"]["ExitTimeOut"] == 60
+    for label in ("dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice", "dev.keryx.voice-llm"):
+        assert loaded[label]["ExitTimeOut"] == 10, label
+
+
+def test_the_systemd_units_stop_within_the_same_limits(machine):
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+
+    run("install-systemd.sh", machine)
+    run("install-systemd.sh", machine, "--llm", "--voice", "--voice-llm")
+
+    units = machine["home"] / ".config" / "systemd" / "user"
+    limits = {}
+    for name in ("keryx", "cloudflared", "keryx-llm", "keryx-voice", "keryx-voice-llm"):
+        lines = (units / f"{name}.service").read_text().splitlines()
+        limits[name] = next(line for line in lines if line.startswith("TimeoutStopSec="))
+    assert limits == {"keryx": "TimeoutStopSec=60", "cloudflared": "TimeoutStopSec=10",
+                      "keryx-llm": "TimeoutStopSec=10", "keryx-voice": "TimeoutStopSec=10",
+                      "keryx-voice-llm": "TimeoutStopSec=10"}
+
+
+def test_a_systemd_uninstall_disables_every_unit_before_stopping_any(machine):
+    configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
+    run("install-systemd.sh", machine)
+    machine["calls"].write_text("")
+
+    run("install-systemd.sh", machine, "--uninstall")
+
+    verbs = [line.split()[2] for line in machine["calls"].read_text().splitlines()
+             if line.startswith("systemctl --user ") and line.split()[2] in ("disable", "stop")]
+    assert verbs == ["disable", "disable", "stop", "stop"]

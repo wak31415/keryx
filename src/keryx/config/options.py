@@ -31,7 +31,7 @@ from keryx.config.settings import Settings, field_for
 from keryx.endpoints import Endpoint, probe
 from keryx.localmodels.catalog import MODELS, VOICES, ModelEntry, fits
 from keryx.localmodels.hardware import Hardware
-from keryx.persona import PERSONAS
+from keryx.persona import PERSONAS, Persona
 
 #: How long any one source may take: the owner is holding a dropdown open.
 TIMEOUT_S = 5.0
@@ -382,6 +382,20 @@ def realtime_voices(settings: Settings, sources: Sources) -> Found:
     return Found([Option("", "The assistant's own voice"), *voices], "builtin", False)
 
 
+def assistant_names(settings: Settings, sources: Sources) -> Found:
+    """The built-in personas, each with the voice it brings (`OPENAI_VOICE` set beats it).
+    Free-form: any name of the owner's is one, and the setting's own rule refuses a coding
+    agent's."""
+    default = _default("assistant_name")
+
+    def detail(persona: Persona) -> str:
+        voice = f"{persona.voice.capitalize()} voice"
+        return f"Keryx's default · the {voice}" if persona.name == default else f"The {voice}"
+
+    return Found([Option(persona.name, persona.name, detail(persona))
+                  for persona in PERSONAS.values()], "builtin", False)
+
+
 def _aliased(models: dict[str, str], label: Callable[[str, str], str]) -> list[Option]:
     return [Option(model, label(alias, model), alias) for alias, model in models.items()]
 
@@ -532,6 +546,7 @@ PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
     "OPENAI_TRANSCRIPTION_MODEL": transcription_models,
     "OPENAI_WEB_SEARCH_MODEL": web_search_models,
     "OPENAI_VOICE": realtime_voices,
+    "ASSISTANT_NAME": assistant_names,
     "CLAUDE_MODEL": claude_models,
     "CODEX_MODEL": codex_models,
     "LOCAL_AGENT_MODEL": local_agent_models,

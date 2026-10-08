@@ -351,3 +351,16 @@ def test_a_platform_with_no_service_manager_has_no_unit():
 ])
 def test_the_agents_model_is_sized_only_when_it_runs_here(settings, update, gb):
     assert use.agent_memory_gb(settings.model_copy(update=update)) == gb
+
+
+def test_a_server_stopped_with_keryx_is_still_installed():
+    """`keryx service stop --all` boots the voice LLM's server out and keeps its plist: it
+    is installed and stopped, not gone, as `service --json` says."""
+    from keryx.restart.service import unit_file
+
+    plist = unit_file(ServiceTarget("launchd", "dev.keryx.voice-llm"))
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    plist.write_text("<plist/>")
+
+    assert use.unit_installed("voice_llm", platform="darwin") is True  # loaded: no
+    assert use.unit_installed("voice", platform="darwin") is False

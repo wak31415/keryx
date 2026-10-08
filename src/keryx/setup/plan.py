@@ -19,6 +19,13 @@ The states, for the app's decoder:
   a voice whose own checks pass is not working while the local server it runs on is not.
 - **needed**: a required step with something missing; **optional**: one that is not.
 
+A required step that is `deferrable` — the phone and the service, for a Mac that may never
+get a phone — can be left for later (`setup mark`, or the wizard's section walked and left):
+it is then `deferred`, and keeps its state and `why`, so `ready` stays false ("Nearly
+Ready": everything but that). What waits for it does not wait any longer, so everything but
+the phone can still be finished. A deferred step that fails is failed, not deferred, and
+one whose checks pass is done.
+
 A required step is held back only by what it needs (`Step`'s two soft flags): every hard
 check, and of the soft ones only those the step names — so a warning, like a voice server
 over http on the LAN, stays visible in `checks` and holds nothing back, neither the step
@@ -54,7 +61,7 @@ MARKS = {DONE: "✓", NEEDED: "○", FAILED: "✗", BLOCKED: "…", OPTIONAL: "�
 #: The PIN check's name in `doctor`, which the `pin` step takes from the owner section.
 PIN_CHECK = "PIN"
 #: The check `service` adds: is the installed unit running?
-RUNNING_CHECK = "service running"
+RUNNING_CHECK = "Keryx running"
 
 
 @dataclass(frozen=True)
@@ -68,26 +75,31 @@ class Step:
     after: tuple[str, ...] = ()
     #: Whether a soft check that is merely missing holds the step back. Not for the voice
     #: (an OpenAI key beside a voice of your own buys web search alone), the agents (one
-    #: that is not the default only narrows what can be asked for by name), nor the local
-    #: models (a model named for an agent that is not the default).
+    #: that is not the default only narrows what can be asked for by name), the local
+    #: models (a model named for an agent that is not the default), nor the owner (a blank
+    #: name is the wizard's "the owner", and calls work; the allowlist is a hard check).
     soft_missing_counts: bool = True
     #: Whether a soft check that failed holds the step back. Most are warnings that leave
     #: calls working (a voice server over http on the LAN); the phone's webhook pointing
-    #: elsewhere and a PIN file that is no PIN are not.
+    #: elsewhere, a PIN file that is no PIN and a Keryx stopped by its owner are not.
     soft_failed_counts: bool = False
     #: Why it is not done, when the wizard holds it back with no check to say so.
     offer: str = ""
+    #: A required step the owner may leave for later (`setup mark`): still not done, so
+    #: `ready` stays false, but no longer holding back the steps that wait for it.
+    deferrable: bool = False
 
 
 STEPS: tuple[Step, ...] = (
     Step("migrate", "Migration", "import", required=True),
     Step("voice", "Voice", "voice", required=True, soft_missing_counts=False),
     Step("agents", "Coding agents", "agents", required=True, soft_missing_counts=False),
-    Step("owner", "Owner", "owner", required=True),
+    Step("owner", "Owner", "owner", required=True, soft_missing_counts=False),
     Step("pin", "PIN", "owner", required=True, soft_failed_counts=True),
-    Step("phone", "Phone", "phone", required=True, after=("owner",), soft_failed_counts=True),
+    Step("phone", "Phone", "phone", required=True, after=("owner",), soft_failed_counts=True,
+         deferrable=True),
     Step("service", "Background service", "service", required=True,
-         after=("phone", "voice", "agents")),
+         after=("phone", "voice", "agents"), deferrable=True, soft_failed_counts=True),
     Step("local", "Local models", "local", soft_missing_counts=False,
          offer="Optional: the voice and the coding agent can run on this Mac."),
     Step("google", "Google", "google"),
@@ -104,9 +116,9 @@ _BY_ID = {step.id: step for step in STEPS}
 
 def _service_active(settings: Settings) -> bool:
     """Whether the installed unit is running, asked from outside as `keryx status` asks."""
-    from keryx.restart.service import is_active, resolve_target
+    from keryx.restart.service import is_active, is_present, resolve_target
 
-    target = resolve_target(settings, from_outside=True)
+    target = resolve_target(settings, from_outside=True, installed=is_present)
     return target is not None and is_active(target)
 
 
@@ -155,19 +167,27 @@ def build_plan(
         if status == WIZARD_DONE
         or (status != WIZARD_FAILED and was_walked and (not required or step.id == "pin"))
     }
+    put_off = {
+        step.id
+        for step, _own, _counted, _required, status, was_walked in rows
+        if step.deferrable and was_walked and status != WIZARD_FAILED
+    }
     blocked_by = {step.id: _blockers(step, local, present) for step, *_ in rows}
     done: dict[str, bool] = {}
 
     def is_done(key: str) -> bool:
-        # Settled by its own checks, and everything it waits for done too (acyclic).
+        # Settled by its own checks, and everything it waits for done or left for later
+        # (acyclic).
         if key not in done:
-            done[key] = key in settled and all(is_done(b) for b in blocked_by[key])
+            done[key] = key in settled and all(is_done(b) or b in put_off
+                                               for b in blocked_by[key])
         return done[key]
 
     steps = []
     for step, own, counted, required, status, was_walked in rows:
         blockers = blocked_by[step.id]
-        waiting = [_BY_ID[key] for key in STEP_IDS if key in blockers and not is_done(key)]
+        waiting = [_BY_ID[key] for key in STEP_IDS
+                   if key in blockers and not is_done(key) and key not in put_off]
         if status == WIZARD_FAILED:
             state, why, fix = FAILED, _why(counted, "failed", step), _fix(counted, "failed")
         elif waiting:
@@ -186,6 +206,8 @@ def build_plan(
             "why": why,
             "blocked_by": blockers,
             "walked": was_walked,
+            "deferrable": step.deferrable,
+            "deferred": step.id in put_off and state != DONE,
             "fix": fix,
             "checks": [
                 {"title": check_title(check.name), "state": check.state,
@@ -307,18 +329,19 @@ class StepRefused(ValueError):
 
 
 def mark_step(store: ConfigStore, step_id: str) -> dict[str, Any]:
-    """Record `step_id` as walked: an optional step skipped, or the PIN left to the first
-    call. Raises StepRefused for a step that is not one, or a required one other than the
-    PIN, which only its checks can settle."""
+    """Record `step_id` as walked: an optional step skipped, the PIN left to the first call,
+    or a deferrable step (the phone, the service) left for later — `deferred` says which.
+    Raises StepRefused for a step that is not one, or a required one other than these,
+    which only its checks can settle."""
     step = _BY_ID.get(step_id)
     if step is None:
         raise StepRefused(
             f"there is no setup step called {step_id}; the steps: {', '.join(STEP_IDS)}"
         )
-    if step.required and step.id != "pin":
+    if step.required and step.id != "pin" and not step.deferrable:
         raise StepRefused(f"{step.title} is required; finish it in the app")
     store.mark_walked(_mark_key(step))
-    return {"id": step.id, "walked": True}
+    return {"id": step.id, "walked": True, "deferred": step.deferrable}
 
 
 def failed_plan(problem: str) -> dict[str, Any]:
@@ -334,6 +357,8 @@ def failed_plan(problem: str) -> dict[str, Any]:
             "why": why,
             "blocked_by": [],
             "walked": False,
+            "deferrable": step.deferrable,
+            "deferred": False,
             "fix": None,
             "checks": [{"title": "Settings", "state": "failed", "detail": problem,
                         "fix": None}],
@@ -346,11 +371,19 @@ def failed_plan(problem: str) -> dict[str, Any]:
 
 def format_plan(plan: dict[str, Any]) -> list[str]:
     """`keryx setup plan` without `--json`: a headline, then the steps as a checklist."""
-    left = sum(1 for step in plan["steps"] if step["required"] and step["state"] != DONE)
-    lines = ["Ready for a first call." if plan["ready"] else
-             f"Not ready: {left} required step{'s' * (left != 1)} left before the first call."]
+    left = [step for step in plan["steps"] if step["required"] and step["state"] != DONE]
+    if plan["ready"]:
+        headline = "Ready for a first call."
+    elif left and all(step["deferred"] for step in left):
+        headline = f"Nearly ready: {_and([step['title'] for step in left])} is left for later."
+    else:
+        headline = (f"Not ready: {len(left)} required step{'s' * (len(left) != 1)} left "
+                    "before the first call.")
+    lines = [headline]
     for step in plan["steps"]:
         title = step["title"] + ("" if step["required"] else " (optional)")
+        if step["deferred"]:
+            title += " (set up later)"
         why = f" — {step['why']}" if step["why"] else ""
         lines.append(f"{MARKS[step['state']]}  {title}{why}")
     return lines

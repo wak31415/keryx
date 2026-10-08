@@ -21,9 +21,12 @@ umask's mode.
 """
 
 import contextlib
+import fcntl
 import os
 import tempfile
+import time
 import tomllib
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -234,6 +237,34 @@ def write_private(path: Path, text: str) -> Path:
             os.unlink(temporary)
         raise
     return secure_file(path)
+
+
+@contextlib.contextmanager
+def private_lock(
+    path: Path, timeout: float, *, poll: float = 0.05,
+    sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+) -> Iterator[bool]:
+    """Hold an exclusive `flock` on `path` (created 0600, in an 0700 directory) for the
+    block, across processes: True once held. After `timeout` without it — a holder that
+    hangs — the block runs anyway, given False: the lock orders writers, and must never be
+    what stops one. The kernel lets it go when the process ends, however it ends."""
+    secure_dir(path.parent)
+    handle = os.open(path, os.O_RDWR | os.O_CREAT, DATA_FILE_MODE)
+    try:
+        deadline = clock() + timeout
+        held = False
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except BlockingIOError:
+                if clock() >= deadline:
+                    break
+                sleep(poll)
+        yield held
+    finally:
+        os.close(handle)  # releases the lock with the descriptor
 
 
 def read_toml(path: Path) -> dict[str, Any]:

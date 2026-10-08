@@ -27,8 +27,16 @@ UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SERVICES=(keryx cloudflared)
 
 uninstall() {
+  # Every unit disabled first, then each stopped, then the files deleted: a stop can wait
+  # (up to its TimeoutStopSec), and an uninstall cut short there must leave nothing — the
+  # later units included — that starts at login. A second run finishes what it began.
   for name in "${SERVICES[@]}"; do
-    systemctl --user disable --now "$name.service" 2>/dev/null || true
+    systemctl --user disable "$name.service" 2>/dev/null || true
+  done
+  for name in "${SERVICES[@]}"; do
+    systemctl --user stop "$name.service" 2>/dev/null || true
+  done
+  for name in "${SERVICES[@]}"; do
     rm -f "$UNITS/$name.service"
     echo "removed $name.service"
   done

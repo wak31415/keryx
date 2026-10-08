@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from keryx.config import Settings
-from keryx.config.files import HOME_ENV, XDG_HOMES
+from keryx.config.files import HOME_ENV, XDG_HOMES, xdg_home
 
 log = logging.getLogger("keryx.restart")
 
@@ -96,8 +96,36 @@ class ServiceTarget:
         """Start it again after `stop_command`."""
         if self.manager == "systemd":
             return ["systemctl", "--user", "start", self.unit]
-        plist = Path.home() / "Library" / "LaunchAgents" / f"{self.unit}.plist"
-        return ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
+        return ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(unit_file(self))]
+
+    def kickstart_command(self) -> list[str]:
+        """Start it if it is loaded and not running; nothing if it runs (no `-k`). systemd
+        has no loaded-but-stopped of its own, so there it is `start_command`."""
+        if self.manager == "systemd":
+            return self.start_command()
+        return ["launchctl", "kickstart", f"gui/{os.getuid()}/{self.unit}"]
+
+    def disable_command(self) -> list[str]:
+        """Keep it from starting at login — and, on launchd, from being bootstrapped at all
+        — until `enable_command`: what `keryx service stop` leaves behind it."""
+        if self.manager == "systemd":
+            return ["systemctl", "--user", "disable", self.unit]
+        return ["launchctl", "disable", f"gui/{os.getuid()}/{self.unit}"]
+
+    def enable_command(self) -> list[str]:
+        """Undo `disable_command`. A disabled launchd job refuses `bootstrap`, so this comes
+        first, before any start."""
+        if self.manager == "systemd":
+            return ["systemctl", "--user", "enable", self.unit]
+        return ["launchctl", "enable", f"gui/{os.getuid()}/{self.unit}"]
+
+
+def unit_file(target: ServiceTarget) -> Path:
+    """Where the installers write `target`'s unit: its plist in `~/Library/LaunchAgents`, or
+    its unit file under the XDG configuration directory's `systemd/user`."""
+    if target.manager == "systemd":
+        return xdg_home("config") / "systemd" / "user" / target.unit
+    return Path.home() / "Library" / "LaunchAgents" / f"{target.unit}.plist"
 
 
 def resolve_target(
@@ -221,6 +249,63 @@ def is_installed(
     if result.returncode != 0:
         return False
     return target.manager != "systemd" or result.stdout.strip() == "loaded"
+
+
+def is_stopped(
+    target: ServiceTarget, *, run: Callable[..., object] = subprocess.run
+) -> bool:
+    """Installed, but stopped and kept from starting — what `keryx service stop` leaves:
+    its unit file on disk while launchd has it unloaded, or systemd has it disabled and
+    not running. Asks; changes nothing. A probe that cannot answer is "not stopped", so a
+    restart goes on being attempted as before."""
+    if not unit_file(target).is_file():
+        return False
+    if target.manager != "systemd":
+        return not is_installed(target, run=run)
+    return _enablement(target, run) is False and not is_active(target, run=run)
+
+
+def is_present(target: ServiceTarget) -> bool:
+    """Installed, as `doctor`, `keryx status` and the setup plan mean it: the manager has
+    it loaded, or its unit file is where its installer put it — a job `keryx service stop`
+    booted out is still installed, only stopped. `is_installed` keeps meaning loaded, for
+    `keryx restart` and `keryx migrate`, which act on the job itself."""
+    return is_installed(target) or unit_file(target).is_file()
+
+
+def is_enabled(
+    target: ServiceTarget, *, run: Callable[..., object] = subprocess.run
+) -> bool | None:
+    """Whether the unit may start at login (and, on launchd, be bootstrapped): launchd's
+    `print-disabled` list, systemd's `is-enabled`. None when it cannot be told. Asks;
+    changes nothing."""
+    return _enablement(target, run)
+
+
+#: One line of `launchctl print-disabled`: `"dev.keryx.agent" => disabled` (older macOS
+#: says `=> true` for disabled, `=> false` for enabled).
+_DISABLED_LINE = re.compile(r'^\s*"(?P<label>[^"]+)"\s*=>\s*(?P<state>\w+)', re.M)
+
+
+def _enablement(target: ServiceTarget, run: Callable[..., object]) -> bool | None:
+    if target.manager == "systemd":
+        command = ["systemctl", "--user", "is-enabled", target.unit]
+    else:
+        command = ["launchctl", "print-disabled", f"gui/{os.getuid()}"]
+    try:
+        result = run(command, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    said = result.stdout or ""
+    if target.manager == "systemd":
+        state = said.strip()
+        return True if state.startswith("enabled") else False if state == "disabled" else None
+    if result.returncode != 0:
+        return None
+    for line in _DISABLED_LINE.finditer(said):
+        if line.group("label") == target.unit:
+            return line.group("state") not in ("disabled", "true")
+    return True  # not listed: launchd's default, and the installers set no `Disabled`
 
 
 def is_active(

@@ -29,6 +29,8 @@ from keryx.setup.wizard import from_checks
 
 REQUIRED = ["voice", "agents", "owner", "pin", "phone", "service"]
 OPTIONALS = ["local", "google", "plugins", "issues", "profile", "projects"]
+#: The required steps the owner may leave for later: a Mac that never gets a phone.
+DEFERRABLE = {"phone", "service"}
 
 
 def _signed_in(monkeypatch, ready: bool) -> None:
@@ -90,7 +92,7 @@ def set_up(make_ctx, monkeypatch, signed_in):
                         if name == "cloudflared" else None)
     monkeypatch.setattr(
         "keryx.doctor.service_manager_check",
-        lambda settings: Check("service manager", True, "launchd dev.keryx.agent",
+        lambda settings: Check("background process", True, "launchd dev.keryx.agent",
                                severity="soft", section="service"),
     )
 
@@ -120,7 +122,9 @@ def test_a_fresh_machine_needs_every_required_step(plan_of, signed_out):
 def test_every_step_has_the_shape_the_app_decodes(plan_of, signed_out):
     for step in plan_of()["steps"]:
         assert set(step) == {"id", "title", "required", "state", "why", "blocked_by",
-                             "walked", "fix", "checks"}
+                             "walked", "deferrable", "deferred", "fix", "checks"}
+        assert step["deferrable"] is (step["id"] in DEFERRABLE)
+        assert step["deferred"] is False
         assert step["title"] and isinstance(step["blocked_by"], list)
         assert (step["why"] is None) == (step["state"] == DONE)
         for check in step["checks"]:
@@ -133,8 +137,20 @@ def test_a_set_up_machine_is_ready(plan_of, set_up):
     assert {key: states(plan)[key] for key in REQUIRED} == dict.fromkeys(REQUIRED, DONE)
     assert plan["ready"] is True
     assert steps(plan)["service"]["checks"][-1] == {
-        "title": "Service running", "state": "ok", "detail": "running", "fix": None
+        "title": "Keryx running", "state": "ok", "detail": "running", "fix": None
     }
+
+
+def test_a_blank_owner_name_holds_neither_the_owner_nor_ready(plan_of, set_up):
+    ConfigStore().unset(["OWNER_NAME"])  # the wizard's "the owner"
+
+    plan = plan_of()
+
+    owner = steps(plan)["owner"]
+    assert (owner["state"], owner["why"], plan["ready"]) == (DONE, None, True)
+    # Still said, so the checklist can offer it: it just holds nothing back.
+    assert {"title": "Owner name", "state": "missing"}.items() <= next(
+        check for check in owner["checks"] if check["title"] == "Owner name").items()
 
 
 def test_a_service_installed_and_stopped_failed(plan_of, set_up):
@@ -142,8 +158,23 @@ def test_a_service_installed_and_stopped_failed(plan_of, set_up):
 
     service = steps(plan)["service"]
     assert service["state"] == FAILED and plan["ready"] is False
-    assert service["why"] == "Service running: installed, but not running."
+    assert service["why"] == "Keryx running: installed, but not running."
     assert service["fix"] == service["checks"][-1]["fix"] == "service:install"
+
+
+def test_a_keryx_its_owner_stopped_is_failed_with_start_as_its_fix(plan_of, set_up,
+                                                                    monkeypatch):
+    stopped = Check("background process", False, "dev.keryx.agent is installed, not running",
+                    severity="soft", section="service", fix="service:start")
+    monkeypatch.setattr("keryx.doctor.service_manager_check", lambda settings: stopped)
+
+    plan = plan_of(active=False)
+
+    service = steps(plan)["service"]
+    assert (service["state"], service["fix"], plan["ready"]) == (FAILED, "service:start", False)
+    assert service["why"] == "Background process: dev.keryx.agent is installed, not running."
+    # Not "install": the running check, whose fix that is, is not added beside it.
+    assert [check["title"] for check in service["checks"]].count("Keryx running") == 0
 
 
 def test_a_pin_left_to_the_first_call_is_done(plan_of, signed_out):
@@ -419,11 +450,18 @@ def test_a_ready_checklist_says_so(plan_of, set_up):
 
 
 def test_mark_records_the_step_as_walked():
-    assert mark_step(ConfigStore(), "google") == {"id": "google", "walked": True}
+    assert mark_step(ConfigStore(), "google") == {"id": "google", "walked": True,
+                                                  "deferred": False}
     assert "google" in ConfigStore().walked_sections()
 
 
-@pytest.mark.parametrize("step", ["migrate", "voice", "agents", "owner", "phone", "service"])
+@pytest.mark.parametrize("step", sorted(DEFERRABLE))
+def test_mark_leaves_a_deferrable_step_for_later(step):
+    assert mark_step(ConfigStore(), step) == {"id": step, "walked": True, "deferred": True}
+    assert step in ConfigStore().walked_sections()
+
+
+@pytest.mark.parametrize("step", ["migrate", "voice", "agents", "owner"])
 def test_mark_refuses_a_required_step(step):
     with pytest.raises(ValueError, match="is required; finish it in the app"):
         mark_step(ConfigStore(), step)
@@ -432,8 +470,79 @@ def test_mark_refuses_a_required_step(step):
 
 
 def test_the_pin_is_the_one_required_step_that_may_be_marked(plan_of, signed_out):
-    assert mark_step(ConfigStore(), "pin") == {"id": "pin", "walked": True}
+    assert mark_step(ConfigStore(), "pin") == {"id": "pin", "walked": True, "deferred": False}
     assert steps(plan_of())["pin"]["state"] == DONE
+
+
+@pytest.fixture
+def no_phone(set_up):
+    """Everything set up but the phone: no Twilio account yet."""
+    ConfigStore().unset(["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_NUMBER"])
+
+
+def test_a_phone_left_for_later_is_deferred_and_still_not_ready(plan_of, no_phone):
+    before = steps(plan_of())
+    assert (before["phone"]["state"], before["phone"]["deferred"]) == (NEEDED, False)
+    assert before["service"]["state"] == BLOCKED
+
+    mark_step(ConfigStore(), "phone")
+    plan = plan_of()
+
+    phone, service = steps(plan)["phone"], steps(plan)["service"]
+    # Still needed, and why: "Nearly Ready" — the checklist says "set up later" instead.
+    assert (phone["state"], phone["deferred"], phone["walked"]) == (NEEDED, True, True)
+    assert phone["why"].startswith("Twilio credentials: ")
+    assert plan["ready"] is False
+    # What waits for it does not: everything but the phone can be finished.
+    assert (service["state"], service["deferred"], service["blocked_by"]) == (
+        DONE, False, ["phone", "voice", "agents"])
+
+
+def test_a_service_left_for_later_is_deferred(plan_of, set_up):
+    not_installed = Check("service unit", False, "not installed", section="service",
+                          unset=True)
+    assert steps(plan_of(first=[not_installed]))["service"]["deferred"] is False
+
+    mark_step(ConfigStore(), "service")
+    plan = plan_of(first=[not_installed])
+
+    service = steps(plan)["service"]
+    assert (service["state"], service["deferred"], plan["ready"]) == (NEEDED, True, False)
+
+
+def test_a_deferred_step_that_fails_is_failed_not_deferred(plan_of, set_up):
+    mark_step(ConfigStore(), "phone")
+    elsewhere = Check("Twilio webhook", False, "calls go to https://old.example.com/voice, "
+                      "not https://keryx.example.com/twilio/voice", severity="soft",
+                      section="phone", fix="phone:webhooks")
+
+    phone = steps(plan_of(extra=[elsewhere]))["phone"]
+
+    assert (phone["state"], phone["deferred"]) == (FAILED, False)
+
+
+def test_a_deferred_step_once_done_is_done(plan_of, set_up):
+    mark_step(ConfigStore(), "phone")
+
+    plan = plan_of()
+
+    assert (steps(plan)["phone"]["state"], steps(plan)["phone"]["deferred"]) == (DONE, False)
+    assert plan["ready"] is True
+
+
+def test_the_wizards_phone_section_walked_and_left_is_deferred_too(plan_of, no_phone):
+    ConfigStore().mark_walked("phone")  # `keryx setup` walked it, and the owner said later
+
+    assert steps(plan_of())["phone"]["deferred"] is True
+
+
+def test_a_checklist_with_only_deferred_steps_left_is_nearly_ready(plan_of, no_phone):
+    mark_step(ConfigStore(), "phone")
+
+    lines = format_plan(plan_of())
+
+    assert lines[0] == "Nearly ready: Phone is left for later."
+    assert any(line.startswith("○  Phone (set up later) — ") for line in lines)
 
 
 def test_an_unreadable_walked_list_is_an_empty_one(make_ctx, signed_out):
@@ -477,12 +586,15 @@ def test_the_service_is_asked_from_outside_whether_it_runs(monkeypatch, make_ctx
 
     target = ServiceTarget("launchd", "dev.keryx.agent")
     asked = []
-    monkeypatch.setattr("keryx.restart.service.resolve_target",
-                        lambda settings, from_outside: asked.append(from_outside) or target)
+    def resolve(settings, from_outside, installed):
+        asked.append((from_outside, installed.__name__))  # a stopped unit is still one
+        return target
+
+    monkeypatch.setattr("keryx.restart.service.resolve_target", resolve)
     monkeypatch.setattr("keryx.restart.service.is_active", lambda found: found is target)
 
     assert setup_plan._service_active(make_ctx([]).settings) is True
-    assert asked == [True]
+    assert asked == [(True, "is_present")]
 
     monkeypatch.setattr("keryx.restart.service.resolve_target", lambda settings, **_: None)
     assert setup_plan._service_active(make_ctx([]).settings) is False
@@ -493,7 +605,7 @@ def test_the_service_is_asked_from_outside_whether_it_runs(monkeypatch, make_ctx
 COMMAND_DETAILS = [
     ("model server", "llama-server is not installed — `keryx setup` installs it"),
     ("Codex agent", "not installed — uv sync --extra codex"),
-    ("service manager", "dev.keryx.agent is not installed (scripts/install-launchd.sh) — "
+    ("background process", "dev.keryx.agent is not installed (scripts/install-launchd.sh) — "
      "`keryx restart` and the voice's restart_service refuse"),
     ("send_to_slack", "off (optional) — `keryx setup` → Plugins, or `keryx plugins install "
      "send_to_slack`"),
