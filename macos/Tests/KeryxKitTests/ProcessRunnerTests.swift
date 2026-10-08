@@ -64,6 +64,66 @@ import Testing
         #expect(result.stderr.isEmpty)
     }
 
+    // MARK: - Detached (Quit's `service stop --all`)
+
+    /// `CommandRequest.detached`'s whole reason to exist: stdout and stderr are a file
+    /// each, never a pipe — checked from the child's own side (`stat -f %HT`, which a
+    /// pipe reports as "Fifo", a file as "Regular File"), so this is also a check that
+    /// nothing upstream still hands it a pipe by mistake.
+    @Test func aDetachedRunsOutputIsARegularFileNotAPipe() async throws {
+        let result = try await runner.run(.init(executable: "/bin/sh",
+            arguments: ["-c", "stat -f %HT /dev/fd/1; stat -f %HT /dev/fd/2 >&2"], detached: true))
+        #expect(result.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines) == "Regular File")
+        #expect(result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines) == "Regular File")
+    }
+
+    /// The bug this round fixes: a pipe's reader going away (the app quitting) leaves a
+    /// child that writes on after it — a log line, the final JSON reply — meeting a
+    /// closed pipe: SIGPIPE, or in Python's case `BrokenPipeError` on the very next
+    /// write. A file has no reader to lose. This never abandons the read the way Quit
+    /// does (that is `AppModel`'s `raced`, tested there); it proves the mechanism a
+    /// detached run actually uses — a file, read once the child has exited — copes with
+    /// more output than a pipe's buffer (64 KiB) and with a gap in the middle, neither of
+    /// which a live pipe reader would even be there for once the app had gone.
+    @Test func aDetachedChildThatKeepsWritingPastWhenAPipeReaderWouldHaveGoneStillCompletes() async throws {
+        let result = try await runner.run(.init(executable: "/bin/sh", arguments: ["-c",
+            "head -c 100000 /dev/zero | tr '\\0' a; sleep 0.3; head -c 100000 /dev/zero | tr '\\0' b; echo done"],
+            timeout: .seconds(10), detached: true))
+        #expect(result.exitCode == 0)
+        #expect(result.stdout.count == 200_005)
+        #expect(result.stdoutText.hasPrefix(String(repeating: "a", count: 100_000)))
+        #expect(result.stdoutText.contains(String(repeating: "b", count: 100_000)))
+        #expect(result.stdoutText.hasSuffix("done\n"))
+    }
+
+    /// `request.timeout` exists to kill a run taking too long; a detached run must never
+    /// be killed by the app that spawned it, so this timer is not armed for one — a
+    /// timeout shorter than the child's own sleep would otherwise throw `.timedOut`
+    /// (`timesOut()`, above), well before the child is done.
+    @Test func aDetachedRunIsNeverBoundedByItsOwnTimeout() async throws {
+        let result = try await runner.run(.init(executable: "/bin/sh",
+            arguments: ["-c", "sleep 0.3; echo done"], timeout: .milliseconds(100), detached: true))
+        #expect(result.exitCode == 0)
+        #expect(result.stdoutText == "done\n")
+    }
+
+    /// The output files are the app's own, under its temporary directory, and are
+    /// removed once read — nothing of a detached run's is left behind once it is done.
+    /// Checks exactly the two paths this run's own `ProcessRunner` made (the test hook,
+    /// same as `observingChild`), not the temporary directory's whole contents: this
+    /// suite's other `detached` tests share it and run concurrently, so a directory-wide
+    /// snapshot races.
+    @Test func aDetachedRunsOutputFilesAreRemovedOnceRead() async throws {
+        let made = Holder<(stdout: URL, stderr: URL)>()
+        let runner = ProcessRunner(observingChild: leftovers.add, observingOutputFiles: made.set)
+        let result = try await runner.run(.init(executable: "/bin/sh", arguments: ["-c", "echo hi"],
+                                                 detached: true))
+        #expect(result.stdoutText == "hi\n")
+        let files = try #require(made.value)
+        #expect(!FileManager.default.fileExists(atPath: files.stdout.path))
+        #expect(!FileManager.default.fileExists(atPath: files.stderr.path))
+    }
+
     @Test func aFinishedRunIsFreed() async throws {
         let probe = WeakProbe()
         let runner = ProcessRunner(observingCollector: { probe.object = $0 }, observingChild: leftovers.add)
@@ -571,6 +631,16 @@ private final class WeakProbe: @unchecked Sendable {
         }
         return object == nil
     }
+}
+
+/// One value, set at most once, from wherever a test hook calls back.
+private final class Holder<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: Value?
+
+    var value: Value? { lock.lock(); defer { lock.unlock() }; return _value }
+
+    func set(_ value: Value) { lock.lock(); _value = value; lock.unlock() }
 }
 
 /// The children a test's runners started, so the suite's `deinit` can stop whatever is

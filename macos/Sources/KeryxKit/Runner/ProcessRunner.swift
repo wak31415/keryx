@@ -19,6 +19,11 @@ public final class ProcessRunner: CommandRunner, Sendable {
     private let observeCollector: (@Sendable (AnyObject) -> Void)?
     /// A test hook: handed each child as it is spawned, for what was done to it.
     private let observeChild: (@Sendable (Child) -> Void)?
+    /// A test hook: handed a detached run's output file paths as soon as they are made, so
+    /// a test can check exactly those two paths afterward rather than the temporary
+    /// directory's whole contents — concurrent runs (this suite's own tests, every one
+    /// `detached`) share it, so a directory-wide snapshot races.
+    private let observeOutputFiles: (@Sendable ((stdout: URL, stderr: URL)) -> Void)?
     /// Between SIGTERM and SIGKILL.
     private let grace: Duration
     /// Where every child it spawns is listed until its group is closed.
@@ -30,17 +35,20 @@ public final class ProcessRunner: CommandRunner, Sendable {
     public init() {
         observeCollector = nil
         observeChild = nil
+        observeOutputFiles = nil
         grace = Self.defaultGrace
         registry = .shared
     }
 
     init(grace: Duration = ProcessRunner.defaultGrace, registry: ChildRegistry = .shared,
          observingCollector: (@Sendable (AnyObject) -> Void)? = nil,
-         observingChild: (@Sendable (Child) -> Void)? = nil) {
+         observingChild: (@Sendable (Child) -> Void)? = nil,
+         observingOutputFiles: (@Sendable ((stdout: URL, stderr: URL)) -> Void)? = nil) {
         self.grace = grace
         self.registry = registry
         observeCollector = observingCollector
         observeChild = observingChild
+        observeOutputFiles = observingOutputFiles
     }
 
     public func run(_ request: CommandRequest) async throws -> CommandResult {
@@ -51,21 +59,30 @@ public final class ProcessRunner: CommandRunner, Sendable {
                 let collector = RunCollector(continuation: continuation, grace: grace)
                 observeCollector?(collector)
 
+                let outputFiles = request.detached ? Self.makeOutputFiles() : nil
+                if let outputFiles { observeOutputFiles?(outputFiles) }
                 let spawned: Spawned
                 do {
                     spawned = try Child.spawn(request, stderr: .pipe, grace: grace,
-                                              registry: request.detached ? nil : registry)
+                                              registry: request.detached ? nil : registry,
+                                              outputFiles: outputFiles)
                 } catch {
+                    if let outputFiles { Self.removeOutputFiles(outputFiles) }
                     collector.launchFailed(error)
                     return
                 }
 
                 observeChild?(spawned.child)
                 collector.adopt(spawned.child)
+                if let outputFiles { collector.readFiles(outputFiles) }
                 spawned.child.onExit { [weak collector] status in collector?.exited(status) }
                 spawned.child.onGroupEnd { [weak collector] end in collector?.groupEnded(end) }
                 collector.start(reading: [spawned.stdout, spawned.stderr].compactMap { $0 })
-                if let timeout = request.timeout {
+                // A detached run is never bounded by this timer: it exists to kill a run
+                // that is taking too long, and a detached run must not be killed by the
+                // app that spawned it — the CLI finishes stopping Keryx's units on its own,
+                // however long that takes, past the app's own exit if it must.
+                if let timeout = request.timeout, !request.detached {
                     collector.arm(timeout)
                 }
                 // Cancelled already (before the spawn): stopped at once.
@@ -75,6 +92,22 @@ public final class ProcessRunner: CommandRunner, Sendable {
         } onCancel: {
             slot.stop()
         }
+    }
+
+    /// A fresh pair of paths for a detached run's stdout and stderr, under the app's own
+    /// temporary directory — never one of Keryx's: the app does not write Keryx's files.
+    /// Each is opened (`Child.spawn`'s `outputFile`) only once the child is actually
+    /// spawned, 0600 and owner-only from creation.
+    private static func makeOutputFiles() -> (stdout: URL, stderr: URL) {
+        let base = FileManager.default.temporaryDirectory
+        let id = UUID().uuidString
+        return (base.appendingPathComponent("dev.keryx.app.\(id).out"),
+                base.appendingPathComponent("dev.keryx.app.\(id).err"))
+    }
+
+    private static func removeOutputFiles(_ files: (stdout: URL, stderr: URL)) {
+        try? FileManager.default.removeItem(at: files.stdout)
+        try? FileManager.default.removeItem(at: files.stderr)
     }
 
     public func lines(_ request: CommandRequest) -> LineStream {
@@ -407,16 +440,23 @@ final class Child: @unchecked Sendable {
         waiting.forEach { $0(end) }
     }
 
-    /// Starts `request` in a new process group: stdout to a pipe; stderr to a pipe or to
-    /// `/dev/null`; stdin from a pipe when there is input to give (or `keepInput`), else
-    /// `/dev/null`; the
-    /// environment exactly as given (an empty one is empty, not the parent's); in the
-    /// working directory asked for; no other descriptor inherited; the signal mask and every
-    /// signal's disposition back to the defaults.
+    /// Starts `request` in a new process group: stdout to a pipe (or, with `outputFiles`,
+    /// a file of its own); stderr to a pipe, `/dev/null` or a file of its own; stdin from a
+    /// pipe when there is input to give (or `keepInput`), else `/dev/null`; the environment
+    /// exactly as given (an empty one is empty, not the parent's); in the working directory
+    /// asked for; no other descriptor inherited; the signal mask and every signal's
+    /// disposition back to the defaults.
     /// `keepInput`: stdin is a pipe even with no `request.stdin`, for the caller to write
     /// to and close (`InputWriter`).
+    /// `outputFiles`: stdout and stderr each go to a file instead of a pipe — a detached
+    /// run's, so a child writing on after the app that spawned it has gone (and so stopped
+    /// reading) never meets a closed pipe and SIGPIPE, or in Python's case `BrokenPipeError`
+    /// on the next write; a file has no reader to lose. `stderr` (the `Output`) is ignored
+    /// when this is given. `Spawned.stdout`/`.stderr` are `nil` either way: nothing here
+    /// reads the files back; the caller does, once the child has exited.
     static func spawn(_ request: CommandRequest, stderr: Output, grace: Duration,
-                      registry: ChildRegistry? = nil, keepInput: Bool = false) throws -> Spawned {
+                      registry: ChildRegistry? = nil, keepInput: Bool = false,
+                      outputFiles: (stdout: URL, stderr: URL)? = nil) throws -> Spawned {
         var opened: [Int32] = []
         func pipePair() throws -> (read: Int32, write: Int32) {
             var fds: [Int32] = [-1, -1]
@@ -425,13 +465,45 @@ final class Child: @unchecked Sendable {
             opened += fds
             return (fds[0], fds[1])
         }
+        // A fresh, owner-only file, truncated if (implausibly) already there. `open(2)`
+        // with `O_CREAT` is a variadic C call Swift cannot make directly; `FileManager`
+        // creates it with the mode given (never a `chmod` after, which would leave a
+        // window at whatever the umask gives it), and a `dup`'d descriptor outlives the
+        // `FileHandle` that opened it, which closes its own on return.
+        func outputFile(_ url: URL) throws -> Int32 {
+            guard FileManager.default.createFile(atPath: url.path, contents: nil,
+                                                  attributes: [.posixPermissions: 0o600]) else {
+                throw RunnerError.launchFailed("could not create \(url.path)")
+            }
+            guard let handle = FileHandle(forWritingAtPath: url.path) else {
+                throw RunnerError.launchFailed("could not open \(url.path)")
+            }
+            defer { try? handle.close() }
+            let fd = dup(handle.fileDescriptor)
+            guard fd >= 0 else { throw RunnerError.launchFailed(String(cString: strerror(errno))) }
+            opened.append(fd)
+            return fd
+        }
 
-        let out: (read: Int32, write: Int32)
-        var err: (read: Int32, write: Int32)?
+        let outWrite: Int32
+        var outRead: Int32?
+        var errWrite: Int32?
+        var errRead: Int32?
         var input: (read: Int32, write: Int32)?
         do {
-            out = try pipePair()
-            if stderr == .pipe { err = try pipePair() }
+            if let outputFiles {
+                outWrite = try outputFile(outputFiles.stdout)
+                errWrite = try outputFile(outputFiles.stderr)
+            } else {
+                let out = try pipePair()
+                outWrite = out.write
+                outRead = out.read
+                if stderr == .pipe {
+                    let err = try pipePair()
+                    errWrite = err.write
+                    errRead = err.read
+                }
+            }
             if request.stdin != nil || keepInput { input = try pipePair() }
         } catch {
             opened.forEach { close($0) }
@@ -446,11 +518,11 @@ final class Child: @unchecked Sendable {
         } else {
             posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
         }
-        posix_spawn_file_actions_adddup2(&actions, out.write, 1)
-        if let err {
-            posix_spawn_file_actions_adddup2(&actions, err.write, 2)
+        posix_spawn_file_actions_adddup2(&actions, outWrite, 1)
+        if let errWrite {
+            posix_spawn_file_actions_adddup2(&actions, errWrite, 2)
         } else if stderr == .merged {
-            posix_spawn_file_actions_adddup2(&actions, out.write, 2)
+            posix_spawn_file_actions_adddup2(&actions, outWrite, 2)
         } else {
             posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
         }
@@ -485,13 +557,14 @@ final class Child: @unchecked Sendable {
 
         var pid = pid_t()
         let result = posix_spawn(&pid, request.executable, &actions, &attributes, argv, envp)
-        // The child's ends are the child's now (or, on failure, nobody's).
-        close(out.write)
-        if let err { close(err.write) }
+        // The child's ends are the child's now (or, on failure, nobody's) — an output
+        // file's descriptor closes here too: the child has its own, from the dup2.
+        close(outWrite)
+        if let errWrite { close(errWrite) }
         if let input { close(input.read) }
         guard result == 0 else {
-            close(out.read)
-            if let err { close(err.read) }
+            if let outRead { close(outRead) }
+            if let errRead { close(errRead) }
             if let input { close(input.write) }
             throw RunnerError.launchFailed("\(request.executable): \(String(cString: strerror(result)))")
         }
@@ -512,7 +585,7 @@ final class Child: @unchecked Sendable {
         waiter.name = "dev.keryx.app.wait"
         waiter.stackSize = 64 * 1024
         waiter.start()
-        return Spawned(child: child, stdout: out.read, stderr: err?.read, stdin: input?.write)
+        return Spawned(child: child, stdout: outRead, stderr: errRead, stdin: input?.write)
     }
 
     /// An exit as `Process.terminationStatus` reports it: the exit code, or the number of
@@ -616,6 +689,9 @@ private final class RunCollector: @unchecked Sendable {
     private var timers: [DispatchWorkItem] = []
     private static let chunk = 65_536
     private var buffer = [UInt8](repeating: 0, count: RunCollector.chunk)
+    /// A detached run's output: on disk, not in `output` above (nothing here ever reads
+    /// its pipes — there are none). Read once, at `conclude`, and removed either way.
+    private var outputFiles: (stdout: URL, stderr: URL)?
 
     init(continuation: CheckedContinuation<CommandResult, Error>, grace: Duration) {
         self.continuation = continuation
@@ -625,6 +701,10 @@ private final class RunCollector: @unchecked Sendable {
 
     func adopt(_ child: Child) {
         queue.sync { self.child = child }
+    }
+
+    func readFiles(_ files: (stdout: URL, stderr: URL)) {
+        queue.sync { outputFiles = files }
     }
 
     /// `descriptors[0]` is stdout and `descriptors[1]` stderr. Each is closed by its
@@ -725,6 +805,11 @@ private final class RunCollector: @unchecked Sendable {
 
     private func concludeWithOutput() {
         guard let exitCode else { return }
+        if let outputFiles {
+            let stdout = (try? Data(contentsOf: outputFiles.stdout)) ?? Data()
+            let stderr = (try? Data(contentsOf: outputFiles.stderr)) ?? Data()
+            return conclude(.success(CommandResult(exitCode: exitCode, stdout: stdout, stderr: stderr)))
+        }
         conclude(.success(CommandResult(exitCode: exitCode, stdout: output[0], stderr: output[1])))
     }
 
@@ -739,7 +824,9 @@ private final class RunCollector: @unchecked Sendable {
     }
 
     /// The one way out. Cancelling a source that has already finished does nothing; one
-    /// still open is cancelled, and its cancel handler closes its descriptor.
+    /// still open is cancelled, and its cancel handler closes its descriptor. A detached
+    /// run's output files are removed here too, on every path — `concludeWithOutput` has
+    /// already read them by the time this runs; any other path never needed them.
     private func conclude(_ result: Result<CommandResult, Error>) {
         guard let continuation else { return }
         self.continuation = nil
@@ -748,6 +835,11 @@ private final class RunCollector: @unchecked Sendable {
         timers = []
         sources.forEach { $0.cancel() }
         sources = []
+        if let outputFiles {
+            try? FileManager.default.removeItem(at: outputFiles.stdout)
+            try? FileManager.default.removeItem(at: outputFiles.stderr)
+            self.outputFiles = nil
+        }
         running = nil
         continuation.resume(with: result)
     }
