@@ -24,17 +24,19 @@ struct KeryxApp: App {
             }
         }
 
-        // The Setup Assistant: opened from the menu, from the Overview, and by itself at
-        // launch while setup is not finished (`AppDelegate.openSetupIfNeeded`).
+        // The setup wizard: by itself once at launch while setup is not finished
+        // (`AppDelegate.openSetupIfNeeded`), from the menu's Run Setup Wizard… (review), and
+        // from the Overview's Setup Checklist (first run).
         Window("Set Up Keryx", id: KeryxWindow.setup) {
-            SetupAssistantView()
+            SetupWizardView()
                 .environment(delegate.model)
                 .environment(\.preferences, delegate.preferences)
                 .onAppear { delegate.windowDidAppear(.setup) }
                 .onDisappear { delegate.windowDidDisappear(.setup) }
         }
-        .defaultSize(width: 820, height: 600)
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
+        .defaultPosition(.center)
 
         MenuBarExtra {
             MenuBarMenu(delegate: delegate)
@@ -56,7 +58,7 @@ struct KeryxApp: App {
 
 enum KeryxWindow {
     static let main = KeryxWindowID.main
-    /// The Setup Assistant's window.
+    /// The setup wizard's window.
     static let setup = KeryxWindowID.setup
 }
 
@@ -96,7 +98,10 @@ private struct MenuBarMenu: View {
                 open()
             },
             quit: { NSApp.terminate(nil) },
-            openSetup: { open(KeryxWindow.setup) }))
+            openSetup: {
+                delegate.model.openSetupWizard(.review)
+                open(KeryxWindow.setup)
+            }))
     }
 
     private func open(_ id: String = KeryxWindow.main) {
@@ -120,7 +125,8 @@ private struct MenuBarLabel: View {
                     openWindow(id: KeryxWindow.main)
                     NSApp.activate()
                 }
-                delegate.openSetupWindow = {
+                delegate.openSetupWindow = { mode in
+                    delegate.model.openSetupWizard(mode)
                     openWindow(id: KeryxWindow.setup)
                     NSApp.activate()
                 }

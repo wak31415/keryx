@@ -16,7 +16,7 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Set a machine up: `uv run keryx setup [--all]` (the wizard: walks only the sections still
   missing, saves as it goes; needs a terminal). A coding agent: `uv run keryx setup
   --agent-instructions`, which prints the command-line path below
-- The steps to a first working call, as the Mac app's Setup Assistant shows them:
+- The steps to a first working call, as the Mac app's setup wizard walks them:
   `uv run keryx setup plan [--json]` (a report, so it exits 0; it asks what `doctor` asks, and
   a migration still to run is its first step), `uv run keryx setup mark STEP [--json]` (an
   optional step skipped, or `pin` left to the first call; an unknown step exits 2),
@@ -231,8 +231,9 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - The Mac app (`macos/`): `macos/scripts/test.sh` (the Swift tests; it adds the Command Line
   Tools' Testing framework path only when they are the developer directory),
   `macos/scripts/build-app.sh [--install]` (`macos/build/Keryx.app`, signed ad hoc;
-  `--install` replaces `/Applications/Keryx.app`), `macos/scripts/snapshots.sh [--offscreen]`
-  (every screen, light and dark, into `macos/build/snapshots/`), and
+  `--install` replaces `/Applications/Keryx.app`), `macos/scripts/snapshots.sh [--offscreen]
+  [--only PREFIX]` (every screen, or those whose id starts with PREFIX, light and dark, into
+  `macos/build/snapshots/`), and
   `swift macos/scripts/make-icon.swift` from the repository root (the two `.icns` in
   `macos/Resources`)
 

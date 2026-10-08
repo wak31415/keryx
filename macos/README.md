@@ -95,11 +95,19 @@ directories, it reaches that sandbox and nothing else.
 - **The menu bar**: the mark, with a dot when something needs you and a slash when Keryx is
   stopped or not found. The menu says which, and lists up to three sessions that are
   running or have results not yet told, the local model and any download. It has Open
-  Keryx, Restart Keryx, Pause Approval Calls, Settings, and Quit. The app has no Dock icon until a window is open.
+  Keryx, Run Setup Wizard…, Restart Keryx, Pause Approval Calls, Settings, and Quit. The app has no Dock icon until a window is open.
 - **Overview**: the service, calls in progress, the version running and whether a restart
-  would load a newer one, the last restart, and a restart button; what `keryx doctor` says
-  is still to set up, with Open Setup in Terminal; the approval calls switch and its
-  history; and where the assistant's memory is.
+  would load a newer one, the last restart, and a restart button; the Setup Checklist, what
+  `keryx doctor` says is still to set up, each with the button that mends it, and Set Up
+  Keryx…, which opens the setup wizard; the approval calls switch and its history; and where
+  the assistant's memory is.
+- **The setup wizard**: one frame at a time, from Welcome to You're Ready — moving Jarvis's
+  files when there are any, who the assistant works for, where the voice runs and who does
+  the work, the PIN, the phone line, then Checking, which finishes the downloads and installs
+  the background service. It opens by itself once at launch while Keryx is not ready for a
+  first call (Welcome's "Don't show this again" turns that off), skipping what is set; from
+  the menu it shows every frame prefilled. Its last frame offers what can wait: Google,
+  plugins, telling the assistant about yourself, briefs of your projects, issue reports.
 - **Sessions**: every agent session, newest first. Each one opens as a timeline: what you
   asked, the agent's steps, any follow-ups, and the result. A running one is read again
   every 10 seconds while it is on screen. The last 30 days' totals are under the list.
@@ -148,6 +156,11 @@ The app reads and changes Keryx through these commands:
   `keryx models use NAME [--default-agent] --json`
 - `keryx memory --json`
 - `keryx config list --json`, `keryx config set`, `keryx config unset`
+- `keryx setup plan --json`, `keryx setup mark STEP --json`
+- `keryx setup profile [--preview|--apply] --json` (the answers as one JSON object on stdin)
+- `keryx migrate --json`, and `keryx migrate --yes --json` (JSON lines)
+- `keryx setup project-context --describe --json`, `--explore|--folder PATH --json` (JSON
+  lines), and `--apply --json` (what is kept, on stdin)
 - `keryx restart`
 
 `tests/test_macos_contract.py` checks that each JSON command still prints the keys the
@@ -160,7 +173,8 @@ Swift decoders require, so renaming a field fails the Python tests rather than t
 | The menu bar: status, running and untold sessions, the local model, restart, pausing approval calls | Talking to the assistant at the Mac, once the local channel is merged |
 | Overview: the service, the setup checks, approval calls, the memory's location | Live updates in place of polling |
 | Sessions as a timeline, from what you asked to the result | Continuing a session from the app |
-| Local models: download, choose, start the server | The setup wizard in the app; today it opens in Terminal |
+| Local models: download, choose, start the server | A GGUF file of your own as the local model, from the setup wizard |
+| The setup wizard, from Welcome to a first call | The voice's own model, the pipelines and the agents' test task, once the CLI has them |
 | Every setting by its title, with secrets on stdin | Answering approvals from the Mac, which needs an owner ruling first |
 | Open at Login, and finding Keryx from its launchd service | Plugins |
 | Built from the checkout and signed ad hoc | A hosted relay sign-in |

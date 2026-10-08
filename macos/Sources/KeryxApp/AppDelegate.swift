@@ -25,10 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Opens the main window and brings the app forward. Handed over by the menu bar label,
     /// the one view alive for the app's whole life, as it appears.
     var openMainWindow: (() -> Void)?
-    /// Opens the Setup Assistant and brings the app forward; handed over as `openMainWindow` is.
-    var openSetupWindow: (() -> Void)?
+    /// Opens the setup wizard in a mode and brings the app forward; handed over as
+    /// `openMainWindow` is.
+    var openSetupWindow: ((SetupWizardMode) -> Void)?
     private var launchedAtLogin = false
-    /// The assistant has opened by itself this launch; it does so once at most.
+    /// The wizard has opened by itself this launch; it does so once at most.
     private var setupOpenedAtLaunch = false
     private var lastMenuRefresh: ContinuousClock.Instant?
 
@@ -59,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Once, after launch: opens the Setup Assistant while the plan says Keryx is not ready
+    /// Once, after launch: opens the setup wizard while the plan says Keryx is not ready
     /// for a first call — not at a login launch, which opens no window, and not once the
     /// owner has ticked "Don't show at launch".
     private func openSetupIfNeeded() async {
@@ -68,8 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard SetupLaunch.shouldOpen(plan: model.setupPlan.value, hidden: SetupLaunch.isHidden(),
                                      alreadyOpened: setupOpenedAtLaunch) else { return }
         setupOpenedAtLaunch = true
-        Log.app.info("Opening the Setup Assistant: setup is not finished")
-        openSetupWindow?()
+        Log.app.info("Opening the setup wizard: setup is not finished")
+        openSetupWindow?(.firstRun)
     }
 
     /// Finds Keryx and starts the status poll, then reads what the menu lists that the poll
@@ -135,6 +136,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let writeGrace: Duration = .seconds(5)
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Moving Jarvis's files is finished before anything else: killed part way, it would
+        // leave the service stopped and the files half moved.
+        if model.migrationRun.isRunning {
+            NSApp.activate()
+            let alert = NSAlert()
+            alert.messageText = Quitting.migratingTitle
+            alert.informativeText = Quitting.migratingDetail
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return .terminateCancel
+        }
         let children = ChildRegistry.shared
         guard model.isBusy || children.count > 0 || !model.writes.isEmpty else { return .terminateNow }
         Task { await quit(children) }

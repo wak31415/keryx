@@ -294,7 +294,7 @@ private struct SetupSection: View {
     @State private var fixing: SetupAction?
 
     var body: some View {
-        Section("Setup") {
+        Section("Setup Checklist") {
             if let doctor = model.doctor.value {
                 if doctor.ok {
                     Label {
@@ -336,7 +336,10 @@ private struct SetupSection: View {
         let open = doctor.checks.filter { !$0.ok }
         let passed = doctor.checks.filter(\.ok)
         LabeledContent {
-            Button("Set Up Keryx…") { openWindow(id: KeryxWindowID.setup) }
+            Button("Set Up Keryx…") {
+                model.openSetupWizard(.firstRun)
+                openWindow(id: KeryxWindowID.setup)
+            }
         } label: {
             Label {
                 Text(open.count == 1 ? "1 thing needs attention" : "\(open.count) things need attention")

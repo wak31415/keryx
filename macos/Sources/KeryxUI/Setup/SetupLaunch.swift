@@ -6,22 +6,23 @@ import SwiftUI
 public enum KeryxWindowID {
     /// The main window: the sidebar and its sections.
     public static let main = "main"
-    /// The Setup Assistant.
+    /// The setup wizard.
     public static let setup = "setup"
 }
 
-/// Whether the Setup Assistant opens by itself at launch: once per launch, while the plan
+/// Whether the setup wizard opens by itself at launch: once per launch, while the plan
 /// says Keryx is not ready for a first call, unless the owner has said not to.
 public enum SetupLaunch {
-    /// The app's own defaults key for "Don't show at launch".
+    /// The app's own defaults key for Welcome's "Don't show this again".
     public static let hiddenKey = "setupAssistantHiddenAtLaunch"
 
-    /// Open the assistant now: a plan has been read and is not ready, the owner has not
+    /// Open the wizard now: a plan has been read and is not ready, the owner has not
     /// turned it off, and it has not opened by itself already this launch. No plan (Keryx not
     /// found, or the plan failed to load) opens nothing: the main window says why.
     public static func shouldOpen(plan: SetupPlan?, hidden: Bool, alreadyOpened: Bool) -> Bool {
         guard let plan, !hidden, !alreadyOpened else { return false }
-        return !plan.ready
+        // Everything done but what was left for later is not a reason to ask again.
+        return !plan.ready && !plan.nearlyReady
     }
 
     /// Whether the owner has said not to open it at launch, in `defaults`.
