@@ -14,6 +14,16 @@ public struct SetupPlan: Codable, Sendable, Equatable {
 
     /// The required steps not yet done, in order.
     public var remaining: [SetupStep] { steps.filter { $0.required && $0.kind != .done } }
+
+    /// SEAM: the plan says which steps may be left for later (`deferrable`), as a CLI with
+    /// Task L does; `false` from one without it.
+    public var speaksOfDeferring: Bool { steps.contains { $0.deferrable != nil } }
+
+    /// Everything required is done but what was left for later (`deferred`): "Nearly
+    /// Ready". Always false from a CLI that cannot defer.
+    public var nearlyReady: Bool {
+        !ready && speaksOfDeferring && !remaining.isEmpty && remaining.allSatisfy { $0.deferred == true }
+    }
 }
 
 /// One step of the plan. Its ids are the CLI's: `voice`, `agents`, `owner`, `pin`,
@@ -37,11 +47,12 @@ public struct SetupStep: Codable, Sendable, Equatable, Identifiable {
     /// The app's action for the check `why` names (`FixAction`); `nil` once done, while it
     /// waits, or when the app has nothing to offer. Optional for an older CLI.
     public var fix: String?
-    /// SEAM (`setup plan --json`, not printed yet): the step may be left for later (`setup
-    /// mark phone|service`) without holding the rest of setup back. `nil` from a CLI without
-    /// it, which refuses to mark a required step other than the PIN.
+    /// SEAM (Task L, `setup plan --json`, not printed yet): the step may be left for later
+    /// (`setup mark phone|service`) — the phone and the service. `nil` from a CLI without it,
+    /// which refuses to mark a required step other than the PIN.
     public var deferrable: Bool?
-    /// SEAM: the owner chose to set it up later.
+    /// SEAM: the owner left it for later. It keeps its state and `why`, and `ready` stays
+    /// false; the steps that waited for it stop waiting.
     public var deferred: Bool?
 
     /// The state, when this build knows it.
@@ -67,10 +78,13 @@ public struct SetupCheck: Codable, Sendable, Equatable {
 public struct SetupMarkResult: Codable, Sendable, Equatable {
     public var id: String
     public var walked: Bool
+    /// SEAM (Task L, not printed yet): the step is now left for later (`setup mark phone`).
+    public var deferred: Bool?
 
-    public init(id: String, walked: Bool) {
+    public init(id: String, walked: Bool, deferred: Bool? = nil) {
         self.id = id
         self.walked = walked
+        self.deferred = deferred
     }
 }
 

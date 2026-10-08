@@ -176,6 +176,35 @@ import KeryxPreview
         #expect(client.piped.count == 2)
     }
 
+    // MARK: - Task L's seams
+
+    @Test func aPlanThatCanDeferIsNearlyReadyWhenAllThatIsLeftWasDeferred() {
+        var plan = PreviewData.setupPlanReady
+        #expect(!plan.speaksOfDeferring && !plan.nearlyReady, "today's CLI says nothing of deferring")
+        plan.ready = false
+        for index in plan.steps.indices {
+            plan.steps[index].deferrable = ["phone", "service"].contains(plan.steps[index].id)
+            plan.steps[index].deferred = false
+        }
+        guard let phone = plan.steps.firstIndex(where: { $0.id == "phone" }) else { return }
+        plan.steps[phone].state = "needed"
+        #expect(plan.speaksOfDeferring && !plan.nearlyReady, "still to do, not left for later")
+        plan.steps[phone].deferred = true
+        #expect(plan.nearlyReady)
+        let marked = try? JSON.decoder.decode(SetupMarkResult.self, from: Data(#"{"id": "phone", "walked": true, "deferred": true}"#.utf8))
+        #expect(marked?.deferred == true)
+    }
+
+    @Test func anAgentsTestTaskEndsWithItsVerdict() {
+        let failed = StreamEvent<AgentSmoked>.parse(
+            #"{"event": "done", "ok": false, "summary": "Claude couldn't run a test task.", "detail": "It said: no."}"#)
+        #expect(failed == .done(AgentSmoked(ok: false, summary: "Claude couldn't run a test task.", detail: "It said: no.")))
+        #expect(failed?.isTerminal == true)
+        #expect(StreamEvent<AgentSmoked>.parse(#"{"event": "done", "summary": "x"}"#) == nil)
+        #expect(CommandLog.describe(executable: "/x/keryx", arguments: ["auth", "smoke", "local", "--json"])
+            == "keryx auth smoke local --json")
+    }
+
     // MARK: - The log
 
     @Test func theLogNamesTheVerbsAndFlagsNeverAFolder() {

@@ -152,7 +152,7 @@ import KeryxPreview
         "ModelsReport.recommended", "ModelsReport.recommendedWithLocalVoice",
         "ModelsReport.voiceLlmRecommended", "ModelsReport.voiceLlmSeparate",
         "PhoneTunnel.hostname",
-        "SetupStep.deferrable", "SetupStep.deferred",
+        "SetupStep.deferrable", "SetupStep.deferred", "SetupMarkResult.deferred",
     ]
 
     /// A preview document (`Sources/KeryxPreview/Preview`), or `fixture:NAME` from this target's.
