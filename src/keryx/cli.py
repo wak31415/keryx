@@ -105,7 +105,7 @@ from keryx.restart.service import (
     spawn_watchdog,
     watch_command,
 )
-from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore
+from keryx.restart.store import RECORD_NAME, STOPPED, RecordLocked, RestartRecord, RestartStore
 from keryx.restart.store import REFUSED as RESTART_REFUSED
 from keryx.restart.version import loaded_version, mark_running, mark_startup_logs
 from keryx.restart.watchdog import watch
@@ -577,6 +577,20 @@ STOPPED_REFUSAL = ("Keryx is stopped (`keryx service stop`), so there is nothing
 OVERTAKEN = "Keryx was stopped while the restart was being set up, so it was not restarted"
 
 
+def _restart_write(store: RestartStore, write: Callable[..., Any], *args: Any) -> Any:
+    """One of the store's writes. When the record stays locked nothing is written, and the
+    restart is abandoned before anything is handed over: said, and recorded as its failure
+    once the lock can be had (`keryx restart --status`), exit 1."""
+    try:
+        return write(*args)
+    except RecordLocked as error:
+        typer.echo(f"the restart was abandoned: the restart record stayed locked ({error})",
+                   err=True)
+        with contextlib.suppress(RecordLocked):
+            store.record_failure("its record stayed locked, so it was not restarted")
+        raise typer.Exit(1) from None
+
+
 def _restart_store(settings: Settings) -> RestartStore:
     return RestartStore(settings.state_dir / RECORD_NAME)
 
@@ -608,7 +622,7 @@ def restart(
     # left on the record, where `keryx restart --status` finds it.
     stopped = candidate_target(settings)
     if stopped is not None and is_stopped(stopped):
-        store.save(RestartRecord(
+        _restart_write(store, store.save, RestartRecord(
             requested_at=datetime.now(UTC).isoformat(), reason=reason.strip(),
             origin_channel="cli", target=stopped.describe(), state=RESTART_REFUSED,
             error=STOPPED_REFUSAL,
@@ -643,8 +657,12 @@ def restart(
         version=loaded_version(settings.state_dir),
         log_marks=log_marks(settings.state_dir),
     )
-    if not store.save(record):
-        typer.echo(f"could not write {store.path}: the restart would go unconfirmed")
+    # Refused while the owner's stop stands (its record says `stopped`): a restart then would
+    # bring back what they stopped.
+    if not _restart_write(store, store.create, record):
+        stopped_now = (store.load() or RestartRecord()).state == STOPPED
+        typer.echo(f"the restart was refused: {OVERTAKEN}" if stopped_now else
+                   f"could not write {store.path}: the restart would go unconfirmed", err=True)
         raise typer.Exit(1)
 
     asked = record.requested_at
@@ -654,28 +672,28 @@ def restart(
         # came back to make the call. Written only onto the record still pending: never
         # back over a `keryx service stop` that settled it meanwhile.
         watchdog = _arm_watchdog(settings, target)
-        if not store.update_if_pending(asked, lambda current: setattr(current, "watchdog",
-                                                                      watchdog)):
+        if not _restart_write(store, store.update_if_pending, asked,
+                              lambda current: setattr(current, "watchdog", watchdog)):
             typer.echo(f"the restart was refused: {OVERTAKEN}", err=True)
             raise typer.Exit(1)
         typer.echo(f"watchdog: {watchdog}")
 
     command = target.command()
-    # The last look and the hand-over under the record's lock: a stop that comes now waits
-    # for the hand-over, then settles the record and stops the new process too.
-    with store.locked():
-        if not store.is_pending(asked):
-            typer.echo(f"the restart was refused: {OVERTAKEN}", err=True)
-            raise typer.Exit(1)
-        typer.echo(" ".join(command))
-        code = subprocess.run(command, check=False).returncode
+    # The last look before the hand-over. The lock is not held across it: a `systemctl
+    # restart` lasts as long as Keryx takes to stop, and the lock's holders keep it for
+    # milliseconds.
+    if not store.is_pending(asked):
+        typer.echo(f"the restart was refused: {OVERTAKEN}", err=True)
+        raise typer.Exit(1)
+    typer.echo(" ".join(command))
+    code = subprocess.run(command, check=False).returncode
     if code != 0:
         error = f"{command[0]} exited {code}"
 
         def failed(current: RestartRecord) -> None:
             current.state, current.error = "failed", error
 
-        store.update_if_pending(asked, failed)
+        _restart_write(store, store.update_if_pending, asked, failed)
         typer.echo(f"the restart failed: {error}")
         raise typer.Exit(1)
 
@@ -1737,6 +1755,11 @@ def _control_units(action: str, *, every: bool, as_json: bool) -> None:
                                    migrated=action == "start")
     store = _restart_store(settings)
     outcome = units.control(settings, action, every=every, settle=store.settle_stopped)
+    if action == "start" and outcome.ok:
+        # Running again: the stop's marker goes, so restarts may be asked for once more. A
+        # record that stays locked keeps it until Keryx's own start clears it.
+        with contextlib.suppress(RecordLocked):
+            store.clear_stopped()
     said(outcome)
     if outcome.code != 0:
         raise typer.Exit(outcome.code)

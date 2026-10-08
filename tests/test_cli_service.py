@@ -286,6 +286,34 @@ def test_service_start_all_json_starts_what_is_installed(machine):
     assert verbs == ["enable"] * 3 + ["bootstrap"] * 3
 
 
+def test_a_stop_leaves_its_marker_and_a_start_takes_it_away(machine):
+    from keryx.restart.store import RECORD_NAME, RestartStore
+
+    machine.installed = {"dev.keryx.agent"}
+    store = RestartStore(Settings().state_dir / RECORD_NAME)
+
+    assert runner.invoke(app, ["service", "stop", "--json"]).exit_code == 0
+    assert store.load().state == "stopped"  # a restart asked for now is refused
+
+    assert runner.invoke(app, ["service", "start", "--json"]).exit_code == 0
+    assert store.load() is None
+
+
+def test_a_stop_whose_record_stays_locked_is_said_after_stopping(machine, monkeypatch):
+    from keryx.restart.store import RestartStore
+
+    machine.installed = {"dev.keryx.agent"}
+    monkeypatch.setattr(RestartStore, "settle_stopped", lambda self: "locked")
+
+    result = runner.invoke(app, ["service", "stop", "--json"])
+
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert (document["ok"], document["message"]) == (False, units.NOT_SETTLED)
+    assert [argv[1] for argv in machine.scripts] == ["disable", "bootout"]
+    assert for_the_app(document["message"])
+
+
 def test_service_start_with_nothing_installed_is_refused(machine):
     result = runner.invoke(app, ["service", "start", "--json"])
 

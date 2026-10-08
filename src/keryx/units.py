@@ -171,6 +171,10 @@ NOT_INSTALLED_YET = "Keryx isn't installed as a background process yet."
 COULD_NOT = {"stop": "Not everything could be stopped.",
              "start": "Not everything could be started."}
 NO_MANAGER = "There's no service manager on this machine to run Keryx with."
+NOT_SETTLED = ("Keryx is stopped, but its restart record couldn't be updated: if a restart "
+               "was under way, you may still get a call saying Keryx didn't come back.")
+#: What a `settle` callback answers when it could not write: the record stayed locked.
+SETTLE_LOCKED = "locked"
 
 #: `(argv)` → `(exit code, stdout, stderr)`: `run_captured`'s shape.
 Runner = Callable[[Sequence[str]], tuple[int, str, str]]
@@ -210,7 +214,7 @@ def control(
     action: str,
     *,
     every: bool = False,
-    settle: Callable[[], object] | None = None,
+    settle: Callable[[], str] | None = None,
     platform: str | None = None,
     run: Runner | None = None,
     loaded: Callable[[ServiceTarget], bool] | None = None,
@@ -223,8 +227,10 @@ def control(
     without removing any unit file, so no installer runs and macOS asks nothing.
 
     A stop calls `settle` first of all — the restart in flight, told it was the owner —
-    before any probe or early return. Then two passes over the units installed: every one
-    disabled (a start: enabled), and only then each stopped (bootout) or started
+    before any probe or early return; when it answers `SETTLE_LOCKED` the units are
+    stopped all the same, and the stop is reported failed (`NOT_SETTLED`). Then two passes
+    over the units installed: every one disabled (a start: enabled), and only then each
+    stopped (bootout) or started
     (bootstrap, kickstart). So a stop cut short in its slow half, a bootout waiting on
     Keryx, has already kept every unit from starting at login.
 
@@ -235,8 +241,7 @@ def control(
     (`launchctl print-disabled`, `systemctl is-enabled`) does not show it. 1 when any unit
     failed, every failure in `detail`, redacted.
     """
-    if action == "stop" and settle is not None:
-        settle()
+    settled = settle() if action == "stop" and settle is not None else None
     found = manager(settings, platform or voice_setup.PLATFORM)
     if found is None:
         return Control(False, REFUSED, NO_MANAGER, None, [])
@@ -287,6 +292,11 @@ def control(
         detail = redact_known("; ".join(failures[kind] for kind in acting
                                         if kind in failures), settings)
         return Control(False, FAILED, COULD_NOT[action], detail, list(rows.values()))
+    if settled == SETTLE_LOCKED:
+        # Stopped all the same — disabled and booted out — but said: the watchdog of a
+        # restart in flight still reads `pending`.
+        return Control(False, FAILED, NOT_SETTLED, "the restart record stayed locked",
+                       list(rows.values()))
     servers = any(kind not in MAIN_KINDS for kind in acting)
     if not present["agent"]:
         message = SERVERS_STOPPED if servers else NOTHING_TO_STOP

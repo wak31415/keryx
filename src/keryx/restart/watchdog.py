@@ -38,7 +38,13 @@ from keryx.notify.deliver import safe_send_sms
 from keryx.notify.twilio_out import TwilioOut, say_twiml
 from keryx.restart.health import health_probe
 from keryx.restart.logscan import LogErrors, errors_since
-from keryx.restart.store import RECORD_NAME, RestartRecord, RestartStore, format_duration
+from keryx.restart.store import (
+    RECORD_NAME,
+    RecordLocked,
+    RestartRecord,
+    RestartStore,
+    format_duration,
+)
 
 log = logging.getLogger("keryx.restart_watch")
 
@@ -170,7 +176,14 @@ async def _alert(
     def failed(current: RestartRecord) -> None:
         current.state, current.error = "failed", error
 
-    if not store.update_if_pending(record.requested_at, failed):
+    try:
+        written = await asyncio.to_thread(store.update_if_pending, record.requested_at, failed)
+    except RecordLocked as error:
+        # Whatever holds it is changing the record — an owner's stop, most likely — and an
+        # alert sent without first marking it failed could be sent again by a late start.
+        log.error("could not mark the restart failed, so not alerting: %s", error)
+        return MUTE
+    if not written:
         log.info("the restart was settled meanwhile; nobody to tell")
         return REPORTED
     record.state, record.error = "failed", error

@@ -1032,10 +1032,9 @@ def test_a_stop_just_before_the_cli_hands_over_stops_the_restart(
     real = RestartStore.is_pending
 
     def stopped_first(self, requested_at, record=None):
-        current = self.load()
-        current.state = "stopped"  # another process's stop, already settled
-        self.save(current)
-        return real(self, requested_at)
+        if record is None:  # the last look before the hand-over
+            self.settle_stopped()  # another process's stop, landing just before it
+        return real(self, requested_at, record)
 
     monkeypatch.setattr(RestartStore, "is_pending", stopped_first)
 
@@ -1043,6 +1042,45 @@ def test_a_stop_just_before_the_cli_hands_over_stops_the_restart(
 
     assert result.exit_code == 1 and calls == []
     assert store.load().state == "stopped"
+
+
+def test_a_restart_while_the_owners_stop_stands_is_refused_before_anything(
+    restart_settings, ran
+):
+    """Not stopped by the manager's lights yet (the stop is still booting it out), but the
+    stop's marker is on the record: nothing is handed over."""
+    calls, _ = ran
+    store = RestartStore(restart_settings.state_dir / RECORD_NAME)
+    store.settle_stopped()
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls == []
+    assert "was not restarted" in result.stderr
+    assert store.load().state == "stopped"
+
+
+def test_a_restart_whose_record_stays_locked_is_abandoned_and_recorded(
+    restart_settings, ran, monkeypatch
+):
+    from keryx.restart.store import RecordLocked
+
+    calls, _ = ran
+
+    def locked(self, record):
+        raise RecordLocked("restart.json.lock was held for 5s")
+
+    monkeypatch.setattr(RestartStore, "create", locked)
+
+    result = runner.invoke(app, ["restart"])
+
+    assert result.exit_code == 1 and calls == []
+    assert "abandoned" in result.stderr
+    record = RestartStore(restart_settings.state_dir / RECORD_NAME).load()
+    assert (record.state, record.error) == ("failed",
+                                            "its record stayed locked, so it was not restarted")
+    status = runner.invoke(app, ["restart", "--status"])
+    assert "stayed locked" in status.output
 
 
 def test_restart_status_with_nothing_on_record(restart_settings):

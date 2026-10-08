@@ -25,17 +25,24 @@ log = logging.getLogger("keryx.restart")
 #: Where the two halves of a restart meet, under `state_dir`.
 RECORD_NAME = "restart.json"
 #: A restart the owner overtook by stopping Keryx (`keryx service stop`): no longer pending,
-#: so the watchdog rings nobody about a service that was meant to stay down.
+#: so the watchdog rings nobody about a service that was meant to stay down. With no restart
+#: in flight the stop leaves a record in this state all the same, as a marker that refuses
+#: a new restart until Keryx is started again (`clear_stopped`).
 STOPPED = "stopped"
 STOPPED_BY_OWNER = "Keryx was stopped by its owner before it came back"
+STOPPED_MARKER = "Keryx was stopped by its owner"
 #: A restart refused because Keryx is stopped: there is nothing running to restart.
 REFUSED = "refused"
-#: The lock that orders every change to a record across processes, beside it.
+#: The lock that orders every write to a record across processes, beside it.
 LOCK_SUFFIX = ".lock"
-#: How long a change waits for the lock. Long enough for a restart command to hand over
-#: (the lock is held across it: the systemd unit's own `TimeoutStopSec` and a start), and
-#: then the change goes ahead unlocked rather than never.
-LOCK_TIMEOUT_S = 90.0
+#: How long a write waits for the lock. Its holders keep it for the milliseconds a read
+#: and a write take, so a holder still there after this has hung: the write is not made
+#: (`RecordLocked`), never made unlocked.
+LOCK_TIMEOUT_S = 5.0
+
+#: What `settle_stopped` found: a restart settled, nothing in flight (a marker written), or
+#: the record locked past `LOCK_TIMEOUT_S`, so nothing could be settled.
+SETTLED, MARKED, LOCKED_OUT = "settled", "marked", "locked"  # `units.SETTLE_LOCKED`
 
 
 # --- the record that survives the restart -----------------------------------
@@ -92,19 +99,28 @@ class RestartRecord:
         return max((moment - asked).total_seconds(), 0.0)
 
 
-class RestartStore:
-    """The restart record on disk. Every method swallows I/O errors: this is a breadcrumb,
-    and losing it must never be what takes the service down."""
+class RecordLocked(Exception):
+    """The record's lock could not be had within `LOCK_TIMEOUT_S`: nothing was written."""
 
-    def __init__(self, path: Path) -> None:
+
+class RestartStore:
+    """The restart record on disk. Every write is made under the record's cross-process
+    lock, and those that depend on what the record says now (still pending? stopped?) are a
+    compare and a swap under it. I/O errors are swallowed — this is a breadcrumb, and losing
+    it must never be what takes the service down — but a lock that cannot be had raises
+    `RecordLocked`: the caller must know its write was not made."""
+
+    def __init__(self, path: Path, *, lock_timeout: float = LOCK_TIMEOUT_S) -> None:
         self._path = path
+        self._lock_timeout = lock_timeout
 
     @property
     def path(self) -> Path:
         return self._path
 
     def load(self) -> RestartRecord | None:
-        """The record, or None when there is none (or it is unreadable/corrupt)."""
+        """The record, or None when there is none (or it is unreadable/corrupt). Reads take
+        no lock: every write replaces the file whole."""
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -120,8 +136,129 @@ class RestartStore:
             log.warning("the restart record at %s has an unexpected shape", self._path)
             return None
 
+    @contextlib.contextmanager
+    def locked(self) -> Iterator[bool]:
+        """Hold the record's cross-process lock for the block. A hung holder raises
+        `RecordLocked` and runs nothing; a lock file that cannot be made (an I/O error,
+        swallowed like the rest) gives the block False, and it writes nothing."""
+        lock = self._path.with_name(self._path.name + LOCK_SUFFIX)
+        with contextlib.ExitStack() as stack:
+            try:
+                held = stack.enter_context(private_lock(lock, self._lock_timeout))
+            except OSError:
+                log.exception("could not lock the restart record at %s", self._path)
+                yield False
+                return
+            if not held:
+                raise RecordLocked(f"{lock} was held for {self._lock_timeout:g}s")
+            yield True
+
     def save(self, record: RestartRecord) -> bool:
-        """Write the record atomically, 0600 (it holds a phone number). False on failure."""
+        """Write the record, whatever is there: atomically, 0600 (it holds a phone
+        number), under the lock. False when it could not be written."""
+        with self.locked() as held:
+            if not held:
+                return False
+            return self._write(record)
+
+    def create(self, record: RestartRecord) -> bool:
+        """Write a new restart's record, unless Keryx is stopped (`STOPPED`, the owner's
+        stop): a restart asked for then must not bring back what they stopped. False when
+        refused, or not written."""
+        with self.locked() as held:
+            if not held:
+                return False
+            current = self.load()
+            if current is not None and current.state == STOPPED:
+                return False
+            return self._write(record)
+
+    def update_if_pending(self, requested_at: str,
+                          change: Callable[[RestartRecord], object]) -> bool:
+        """Apply `change` to the record and save it, only while it is still the pending
+        record asked for at `requested_at` — compared and written under the lock, so a stop
+        that settled it meanwhile is never written back over. False when it is not."""
+        with self.locked() as held:
+            if not held:
+                return False
+            current = self.load()
+            if not self.is_pending(requested_at, current):
+                return False
+            change(current)
+            return self._write(current)
+
+    def clear_if_pending(self, requested_at: str) -> bool:
+        """Remove the record once its restart is done with, only while it is still that
+        pending one: a stop that settled it keeps its record. False when it is not."""
+        with self.locked() as held:
+            if not held:
+                return False
+            if not self.is_pending(requested_at):
+                return False
+            return self._remove()
+
+    def record_failure(self, error: str) -> bool:
+        """Mark the record failed with `error` (making one when there is none), unless the
+        owner stopped Keryx meanwhile: their stop stands. False when it did not."""
+        with self.locked() as held:
+            if not held:
+                return False
+            record = self.load() or RestartRecord()
+            if record.state == STOPPED:
+                return False
+            record.state, record.error = "failed", error
+            return self._write(record)
+
+    def is_pending(self, requested_at: str, record: RestartRecord | None = None) -> bool:
+        """Whether the record (read now, unless handed in) is the restart asked for at
+        `requested_at`, and still pending."""
+        record = self.load() if record is None else record
+        return (record is not None and record.state == "pending"
+                and record.requested_at == requested_at)
+
+    def settle_stopped(self) -> str:
+        """Before the owner's stop: a pending restart marked as overtaken by it — the
+        watchdog acts only on `pending`, and would otherwise ring them that Keryx never came
+        back — or, with none in flight, the `STOPPED` marker that refuses a new one until
+        Keryx starts again. A record that says anything else is left as it is. `SETTLED`,
+        `MARKED`, or `LOCKED_OUT` when the lock could not be had and nothing was written."""
+        try:
+            with self.locked() as held:
+                if not held:
+                    return LOCKED_OUT
+                record = self.load()
+                if record is None:
+                    self._write(RestartRecord(requested_at=datetime.now(UTC).isoformat(),
+                                              origin_channel="owner", state=STOPPED,
+                                              error=STOPPED_MARKER))
+                    return MARKED
+                if record.state == "pending":
+                    record.state, record.error = STOPPED, STOPPED_BY_OWNER
+                    self._write(record)
+                    return SETTLED
+                return MARKED if record.state == STOPPED else SETTLED
+        except RecordLocked:
+            log.error("could not settle the restart record before the stop: it is locked")
+            return LOCKED_OUT
+
+    def clear_stopped(self) -> bool:
+        """Keryx is starting again: the stop's record (or a restart refused while it was
+        stopped) goes, so restarts are asked for again. Any other record is kept."""
+        with self.locked() as held:
+            if not held:
+                return False
+            record = self.load()
+            if record is None or record.state not in (STOPPED, REFUSED):
+                return False
+            return self._remove()
+
+    def clear(self) -> None:
+        """Remove the record, under the lock; a missing one is already cleared."""
+        with self.locked() as held:
+            if held:
+                self._remove()
+
+    def _write(self, record: RestartRecord) -> bool:
         try:
             write_private(self._path, json.dumps(dataclasses.asdict(record), indent=2))
             return True
@@ -129,57 +266,11 @@ class RestartStore:
             log.exception("could not write the restart record at %s", self._path)
             return False
 
-    @contextlib.contextmanager
-    def locked(self, timeout: float = LOCK_TIMEOUT_S) -> Iterator[bool]:
-        """Hold the record's cross-process lock for the block: every change that depends on
-        what the record says now — still pending? — is made inside one. True when held; a
-        lock that cannot be had (a hung holder, a file that cannot be made) still runs the
-        block, given False: this orders writers, and must never be what stops one."""
-        with contextlib.ExitStack() as stack:
-            try:
-                lock = self._path.with_name(self._path.name + LOCK_SUFFIX)
-                held = stack.enter_context(private_lock(lock, timeout))
-            except OSError:
-                log.warning("could not lock the restart record at %s; going on unlocked",
-                            self._path)
-                held = False
-            yield held
-
-    def update_if_pending(self, requested_at: str,
-                          change: Callable[[RestartRecord], object]) -> bool:
-        """Apply `change` to the record and save it, only while it is still the pending
-        record asked for at `requested_at` — compared and written under the lock, so a stop
-        that settled it meanwhile is never written back over. False when it is not."""
-        with self.locked():
-            current = self.load()
-            if not self.is_pending(requested_at, current):
-                return False
-            change(current)
-            return self.save(current)
-
-    def is_pending(self, requested_at: str, record: RestartRecord | None = None) -> bool:
-        """Whether the record (read now, unless handed in) is the restart asked for at
-        `requested_at`, and still pending. Ask it under `locked()` to act on the answer."""
-        record = self.load() if record is None else record
-        return (record is not None and record.state == "pending"
-                and record.requested_at == requested_at)
-
-    def settle_stopped(self) -> bool:
-        """A pending restart marked as overtaken by the owner's stop, before the stop: the
-        watchdog acts only on `pending`, and would otherwise ring them that Keryx never came
-        back. Under the lock, so a restart that is handing over finishes first and is then
-        stopped with the rest. True when there was one to settle."""
-        with self.locked():
-            record = self.load()
-            if record is None or record.state != "pending":
-                return False
-            record.state, record.error = STOPPED, STOPPED_BY_OWNER
-            return self.save(record)
-
-    def clear(self) -> None:
-        """Remove the record; a missing one is already cleared."""
+    def _remove(self) -> bool:
         with contextlib.suppress(OSError):
             self._path.unlink(missing_ok=True)
+            return True
+        return False
 
 
 # --- summary helpers --------------------------------------------------------

@@ -56,6 +56,7 @@ from keryx.restart.service import (
 from keryx.restart.store import (
     RECORD_NAME,
     STOPPED,
+    RecordLocked,
     RestartRecord,
     RestartStore,
     format_duration,
@@ -150,6 +151,10 @@ UNSUPPORTED_MESSAGE = (
     "you was not started by a service manager, so nothing would start it again."
 )
 ALREADY_PENDING_MESSAGE = "Tell them a restart is already scheduled for when this call ends."
+#: When the owner has stopped Keryx (`keryx service stop`) and the line is still up.
+STOPPED_MESSAGE = "Tell them Keryx is being stopped, so it was not restarted."
+#: Why a restart was abandoned when its record stayed locked.
+LOCKED_ERROR = "its record stayed locked, so it was not restarted"
 
 # --- the coordinator --------------------------------------------------------
 
@@ -232,15 +237,21 @@ class RestartCoordinator:
             task_id=task_id,
             log_marks=await asyncio.to_thread(marks, self._settings.state_dir),
         )
-        if not self._store.save(record):
+        created = await self._write(self._store.create, record)
+        if not created:
+            if created is False and self._stopped():
+                log.info("refusing a restart: the owner stopped Keryx")
+                return {"status": "failed", "message": STOPPED_MESSAGE}
             # Without the record the new process has no idea it should call anyone, and a
             # restart that goes quiet is worse than one that does not happen.
             return {"status": "failed", "message": "Tell them the restart could not be set up."}
+        asked = record.requested_at
 
         message = RESTARTING_MESSAGE if self._can_call_back(record) else NO_CALLBACK_MESSAGE
         if await self._blocker() is not None and not force:
             log.info("holding the restart until the line is clear")
-            self._deferred = asyncio.create_task(self._restart_when_quiet(target), name="restart")
+            self._deferred = asyncio.create_task(self._restart_when_quiet(target, asked),
+                                                 name="restart")
             return {"status": "deferred", "message": DEFERRED_MESSAGE, "target": target.describe()}
 
         self._deferred = asyncio.create_task(self._execute(target), name="restart")
@@ -255,10 +266,24 @@ class RestartCoordinator:
             and self._twilio.configured
         )
 
-    async def _restart_when_quiet(self, target: ServiceTarget) -> None:
+    async def _write(self, write: Callable[..., Any], *args: Any) -> Any:
+        """One of the store's writes, off the event loop — it may wait for the record's
+        lock — and its answer; None, said in the log (which `keryx restart --status` scans),
+        when the lock could not be had and nothing was written."""
+        try:
+            return await asyncio.to_thread(write, *args)
+        except RecordLocked as error:
+            log.error("the restart record could not be written: %s", error)
+            return None
+
+    def _stopped(self) -> bool:
+        record = self._store.load()
+        return record is not None and record.state == STOPPED
+
+    async def _restart_when_quiet(self, target: ServiceTarget, asked: str) -> None:
         """Wait for the machine to be idle, then restart. Give up rather than cut work off."""
         if not await self._wait_until_idle(DEFER_TIMEOUT_S):
-            self._store.clear()
+            await self._write(self._store.clear_if_pending, asked)
             return
         await self._execute(target)
 
@@ -319,26 +344,21 @@ class RestartCoordinator:
 
         Only while its record is still the pending one: `keryx service stop` settles it as
         `stopped`, and a restart that went ahead after that would start what the owner
-        stopped. The check and the hand-over are made under the record's lock, so a stop
-        that comes meanwhile waits for the hand-over and then stops the new process.
+        stopped. Looked at again just before the hand-over; the lock is not held across it,
+        since the hand-over can last as long as this process takes to stop.
         """
         asked = await self._arm_watchdog(target)
         if asked is None:
-            log.info("the restart is no longer pending (the owner stopped Keryx); not "
-                     "restarting")
+            return
+        if not self._store.is_pending(asked):
+            log.info("the restart was overtaken before it was handed over; not restarting")
             return
         command = target.command()
-        with self._store.locked():
-            if not self._store.is_pending(asked):
-                log.info("the restart was overtaken before it was handed over; not restarting")
-                return
-            log.info("restarting through %s: %s", target.manager, " ".join(command))
-            try:
-                code = await self._spawn(command)
-            except Exception as exc:  # a missing binary, a refused fork
-                code = exc
-        if isinstance(code, Exception):
-            await self._failed(f"{type(code).__name__}: {code}")
+        log.info("restarting through %s: %s", target.manager, " ".join(command))
+        try:
+            code = await self._spawn(command)
+        except Exception as exc:  # a missing binary, a refused fork
+            await self._failed(f"{type(exc).__name__}: {exc}")
             return
         if code and code > 0:
             await self._failed(f"{command[0]} exited {code}")
@@ -370,15 +390,23 @@ class RestartCoordinator:
         The record's `requested_at` when it is still the pending one, which is what the
         hand-over checks again; None when it is not — gone, or settled by an owner's stop —
         and then nothing is armed or written: a record written back here would undo the
-        stop, and the watchdog would ring about a Keryx that was meant to stay down.
+        stop, and the watchdog would ring about a Keryx that was meant to stay down. A lock
+        that cannot be had aborts the restart too, and lands as its failure.
         """
         record = self._store.load()
         if record is None or record.state != "pending":
+            log.info("the restart is no longer pending (the owner stopped Keryx); not "
+                     "restarting")
             return None
         watchdog = await asyncio.to_thread(self._arm, target)
-        if not self._store.update_if_pending(
-            record.requested_at, lambda current: setattr(current, "watchdog", watchdog)
-        ):
+        written = await self._write(
+            self._store.update_if_pending, record.requested_at,
+            lambda current: setattr(current, "watchdog", watchdog))
+        if written is None:
+            await self._failed(LOCKED_ERROR)
+            return None
+        if not written:
+            log.info("the restart was settled while its watchdog was armed; not restarting")
             return None
         return record.requested_at
 
@@ -405,14 +433,11 @@ class RestartCoordinator:
         on the phone Keryx would be ringing.
         """
         log.error("the restart failed: %s", error)
-        with self._store.locked():
-            record = self._store.load() or RestartRecord()
-            if record.state == STOPPED:
-                log.info("the owner stopped Keryx meanwhile: the failure is theirs to ignore")
-                return
-            record.state = "failed"
-            record.error = error
-            self._store.save(record)
+        await self._write(self._store.record_failure, error)
+        if self._stopped():
+            log.info("the owner stopped Keryx meanwhile: the failure is theirs to ignore")
+            return
+        record = self._store.load() or RestartRecord()
         spoken = f"The restart did not go through: {error}."
         if await self._announce(spoken):
             return
@@ -446,31 +471,43 @@ class RestartCoordinator:
         *,
         wait_ready: Callable[[], Awaitable[bool]] | None,
     ) -> None:
+        # Keryx is up, so a stop it was under is over: its marker goes, and restarts may be
+        # asked for again.
+        await self._write(self._store.clear_stopped)
         record = self._store.load()
         if record is None or record.state != "pending":
             return
+        asked = record.requested_at
         if record.attempts >= MAX_CALLBACK_ATTEMPTS:
             log.error(
                 "giving up on the restart call-back after %s attempts: the service is not "
                 "staying up long enough to place it",
                 record.attempts,
             )
-            record.state = "failed"
-            record.error = "the service restarted repeatedly before it could call back"
-            self._store.save(record)
-            await self._send_sms(record.number, FAILED_SMS.format(error=record.error))
+            error = "the service restarted repeatedly before it could call back"
+
+            def given_up(current: RestartRecord) -> None:
+                current.state, current.error = "failed", error
+
+            if await self._write(self._store.update_if_pending, asked, given_up):
+                await self._send_sms(record.number, FAILED_SMS.format(error=error))
             return
 
         # Counted before the call, not after: a process that dies mid-dial must not come
-        # back to a record that looks untouched and ring again, and again.
+        # back to a record that looks untouched and ring again, and again. Only onto the
+        # record still pending: a stop that settled it means nobody is waiting to be told.
         record.attempts += 1
-        self._store.save(record)
+        attempts = record.attempts
+        if not await self._write(self._store.update_if_pending, asked,
+                                 lambda current: setattr(current, "attempts", attempts)):
+            log.info("the restart record is no longer pending; no call-back")
+            return
 
         phone_up = bool(wait_ready and await wait_ready())
         status = await self.status_summary(record, phone_up=phone_up)
         log.info("restart confirmed: %s", status)
         if record.quiet:
-            self._store.clear()
+            await self._write(self._store.clear_if_pending, asked)
             return
         await self._deliver(record, status, phone_up=phone_up)
 
@@ -541,7 +578,7 @@ class RestartCoordinator:
     async def _deliver(self, record: RestartRecord, status: str, *, phone_up: bool) -> None:
         """Say it into a live session, else call, else text. Never rings into a live call."""
         if await self._announce(RESTART_ANNOUNCEMENT.format(status=status)):
-            self._store.clear()
+            await self._write(self._store.clear_if_pending, record.requested_at)
             return
         if self._sessions.live() and not await self._wait_for_quiet(QUIET_TIMEOUT_S):
             log.info("a session is live: texting the restart confirmation instead of calling")
@@ -559,7 +596,7 @@ class RestartCoordinator:
             body = RESTART_SMS.format(status=status)
             await self._finish(record, body, f"{type(exc).__name__}: {exc}")
             return
-        self._store.clear()
+        await self._write(self._store.clear_if_pending, record.requested_at)
 
     def _call_blocker(self, record: RestartRecord, *, phone_up: bool) -> str | None:
         """Why no call can be placed, or None when one can."""
@@ -636,11 +673,14 @@ class RestartCoordinator:
         """The fallback: text the confirmation, and keep the record if even that failed."""
         log.warning("not calling back about the restart: %s", why)
         if await self._send_sms(record.number, f"{body} (no call: {why})"):
-            self._store.clear()
+            await self._write(self._store.clear_if_pending, record.requested_at)
             return
-        record.state = "failed"
-        record.error = f"could not confirm the restart: {why}"
-        self._store.save(record)
+        error = f"could not confirm the restart: {why}"
+
+        def unconfirmed(current: RestartRecord) -> None:
+            current.state, current.error = "failed", error
+
+        await self._write(self._store.update_if_pending, record.requested_at, unconfirmed)
 
     # --- outbound plumbing --------------------------------------------------
 

@@ -788,9 +788,18 @@ that way, and keep every failure path landing somewhere a human can find it
 refuses rather than restart the installed one. Only `keryx restart` and `doctor`, which run
 outside the unit, ask whether it is installed.
 
-A Keryx the owner stopped (`keryx service stop`) is neither half's to bring back. The stop
-settles a `pending` record as `stopped` before it boots anything out, so the watchdog — which
-acts only on `pending` — rings nobody about a service that was meant to stay down; and
+A Keryx the owner stopped (`keryx service stop`) is neither half's to bring back. Every
+write to `restart.json` is made under a cross-process `flock` beside it
+(`config.files.private_lock`), as a compare-and-swap where the state matters
+(`RestartStore.create`, `update_if_pending`, `clear_if_pending`, `record_failure`), and
+never without it: a lock still held after `LOCK_TIMEOUT_S` (5 s — its holders keep it for
+milliseconds) raises `RecordLocked`, the write is not made, a restart is abandoned and
+recorded as failed once it can be, and the async paths wait for it in a thread, never on
+the voice service's loop. The stop settles a `pending` record as `stopped` before it boots
+anything out — or, with none, leaves a `stopped` marker that refuses a new restart until
+`service start` or Keryx's own start clears it — so the watchdog, which acts only on
+`pending`, rings nobody about a service that was meant to stay down; a stop that cannot
+settle still stops, and says so; and
 `keryx restart` refuses while `restart.service.is_stopped` (the unit file on disk, launchd
 holding it unloaded or systemd holding it disabled and inactive), leaving a `refused` record
 for `restart --status`, rather than start what the owner stopped or ask launchd to kickstart

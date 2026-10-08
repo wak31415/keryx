@@ -1864,12 +1864,9 @@ async def test_a_stop_after_arming_but_before_the_hand_over_aborts_it(tmp_path, 
     real = harness.store.is_pending
 
     def stopped_first(requested_at, record=None):
-        # The owner's stop landing just before the last look (written here without the
-        # lock, which this process already holds; the real stop is another process).
-        record = harness.store.load()
-        record.state = "stopped"
-        harness.store.save(record)
-        return real(requested_at)
+        if record is None:  # the last look before the hand-over, not the watchdog's write
+            harness.store.settle_stopped()  # the owner's stop lands just before it
+        return real(requested_at, record)
 
     monkeypatch.setattr(harness.store, "is_pending", stopped_first)
 
@@ -1922,10 +1919,146 @@ def test_the_lock_is_one_holder_at_a_time_and_a_hung_one_is_waited_out(tmp_path)
         assert again is True  # let go when the first block ended
 
 
-def test_a_lock_that_cannot_be_made_still_runs_the_change(tmp_path):
+def test_a_lock_that_cannot_be_made_writes_nothing(tmp_path):
     blocked = tmp_path / "file"
     blocked.write_text("not a directory")
     store = RestartStore(blocked / "restart.json")
 
     with store.locked() as held:
         assert held is False
+    assert store.update_if_pending("x", lambda record: None) is False
+    assert store.settle_stopped() == "locked"
+
+
+# --- every write through the lock, and none made without it ------------------------------
+
+
+def held_lock(store: RestartStore):
+    """The record's lock, held by "another process": another descriptor's flock."""
+    from keryx.config.files import private_lock
+
+    return private_lock(store.path.with_name(store.path.name + ".lock"), 1.0)
+
+
+def test_a_write_that_cannot_have_the_lock_is_not_made(tmp_path):
+    from keryx.restart.store import RecordLocked
+
+    store = RestartStore(tmp_path / "restart.json", lock_timeout=0.05)
+    asked = pending()
+    store.save(asked)
+    before = store.path.read_text()
+
+    with held_lock(store) as held:
+        assert held
+        for write in (lambda: store.save(pending(reason="other")),
+                      lambda: store.create(pending()),
+                      lambda: store.update_if_pending(asked.requested_at,
+                                                      lambda r: setattr(r, "state", "x")),
+                      lambda: store.clear_if_pending(asked.requested_at),
+                      lambda: store.record_failure("boom"),
+                      store.clear_stopped, store.clear):
+            with pytest.raises(RecordLocked):
+                write()
+        assert store.settle_stopped() == "locked"
+    assert store.path.read_text() == before  # nothing written, not even unlocked
+
+
+def test_the_lock_is_waited_for_seconds_not_a_minute():
+    from keryx.restart import store
+
+    assert store.LOCK_TIMEOUT_S <= 5.0
+
+
+def test_a_stop_with_nothing_in_flight_leaves_a_marker_that_refuses_a_restart(tmp_path):
+    store = RestartStore(tmp_path / "restart.json")
+
+    assert store.settle_stopped() == "marked"
+    assert store.load().state == "stopped"
+    assert store.create(pending()) is False  # nothing brings back what the owner stopped
+    assert store.clear_if_pending(store.load().requested_at) is False
+    assert store.clear_stopped() is True  # Keryx is starting again
+    assert store.create(pending()) is True
+
+
+def test_a_record_that_says_something_else_is_left_by_a_stop(tmp_path):
+    store = RestartStore(tmp_path / "restart.json")
+    store.save(pending(state="failed", error="launchctl exited 5"))
+
+    assert store.settle_stopped() == "settled"
+    assert (store.load().state, store.clear_stopped()) == ("failed", False)
+
+
+async def test_a_restart_asked_for_while_keryx_is_stopped_is_refused(harness):
+    harness.store.settle_stopped()
+
+    result = await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    assert result == {"status": "failed",
+                      "message": "Tell them Keryx is being stopped, so it was not restarted."}
+    assert harness.spawn.commands == [] and harness.record().state == "stopped"
+
+
+async def test_a_stop_while_the_call_back_is_counted_is_never_written_over(harness, monkeypatch):
+    harness.store.save(pending(number=CALLER))
+    real = harness.store.update_if_pending
+
+    def stopped_first(requested_at, change):
+        harness.store.settle_stopped()  # the owner's stop, in another process
+        return real(requested_at, change)
+
+    monkeypatch.setattr(harness.store, "update_if_pending", stopped_first)
+
+    await harness.coordinator.resume(wait_ready=lambda: asyncio.sleep(0, True))
+
+    assert harness.record().state == "stopped"
+    assert harness.twilio.calls == [] and harness.twilio.sms == []
+
+
+async def test_a_new_process_clears_the_stop_it_was_under(harness):
+    harness.store.settle_stopped()
+
+    await harness.coordinator.resume()
+
+    assert harness.record() is None
+
+
+async def test_a_watchdog_write_that_cannot_have_the_lock_aborts_and_lands_as_a_failure(
+    harness, monkeypatch
+):
+    from keryx.restart.store import RecordLocked
+
+    def locked(*args):
+        raise RecordLocked("restart.json.lock was held for 5s")
+
+    monkeypatch.setattr(harness.store, "update_if_pending", locked)
+
+    await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    assert harness.spawn.commands == []  # nothing handed over without its record
+    record = harness.record()
+    assert (record.state, record.error) == ("failed",
+                                            "its record stayed locked, so it was not restarted")
+
+
+async def test_waiting_for_the_lock_never_stops_the_event_loop(tmp_path):
+    """The voice service runs on one loop: a write waiting for the record's lock waits off
+    it, and everything else — the calls — goes on meanwhile."""
+    harness = Harness(make_settings(tmp_path))
+    harness.store = RestartStore(harness.store.path, lock_timeout=0.4)
+    harness.coordinator._store = harness.store
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        for _ in range(30):
+            ticks += 1
+            await asyncio.sleep(0.01)
+
+    with held_lock(harness.store):
+        result, _ = await asyncio.gather(harness.coordinator.request(), ticker())
+
+    assert result["status"] == "failed"
+    assert ticks == 30  # the loop kept turning while the write waited
+    assert harness.record() is None and harness.spawn.commands == []

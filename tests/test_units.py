@@ -499,3 +499,14 @@ def test_a_stop_settles_the_restart_before_anything_else(manager):
 
     assert settled == [True]
     assert outcome.units == [] if manager == "none" else outcome.ok
+
+
+def test_a_stop_that_could_not_settle_the_record_stops_all_the_same_and_says_so():
+    launchd = Manager(loaded=MAIN)
+
+    outcome = launchd.control("stop", settle=lambda: units.SETTLE_LOCKED)
+
+    assert (outcome.ok, outcome.code, outcome.message) == (False, 1, units.NOT_SETTLED)
+    assert outcome.detail == "the restart record stayed locked"
+    assert states(outcome) == {"dev.keryx.agent": "stopped", "dev.keryx.tunnel": "stopped"}
+    assert launchd.loaded == set() and launchd.disabled == set(MAIN)

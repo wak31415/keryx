@@ -356,3 +356,21 @@ async def test_an_owner_who_stops_keryx_as_the_alert_is_made_is_not_rung(harness
     assert outcome == REPORTED
     assert harness.record().state == "stopped"
     assert not harness.twilio.sms and not harness.twilio.calls
+
+
+async def test_an_alert_whose_record_stays_locked_is_not_sent(harness, monkeypatch):
+    """Not marked failed means a late start could ring again: whatever holds the lock is
+    changing the record, most likely an owner's stop, and no alert goes unrecorded."""
+    from keryx.restart.store import RecordLocked
+    from keryx.restart.watchdog import MUTE
+
+    harness.store.save(pending())
+
+    def locked(*args):
+        raise RecordLocked("restart.json.lock was held for 5s")
+
+    monkeypatch.setattr(harness.store, "update_if_pending", locked)
+
+    assert await harness.run() == MUTE
+    assert not harness.twilio.sms and not harness.twilio.calls
+    assert harness.record().state == "pending"
