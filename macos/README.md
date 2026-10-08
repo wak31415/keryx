@@ -123,9 +123,10 @@ The app keeps a copy of the last launch agent plist it read (in its own preferen
 is where it finds Keryx, and reads that if the plist is gone (removed at a terminal); see
 below.
 
-A run with `KERYX_APP_ENVIRONMENT=inherit` (a sandbox) never starts or stops Keryx, whoever
-asks: its `keryx` reads the sandbox's settings, but the launch agents it would install are
-the real ones in `~/Library/LaunchAgents`.
+A run with `KERYX_APP_ENVIRONMENT=inherit` (a sandbox) never starts Keryx by itself: its
+`keryx` reads the sandbox's settings, but the launch agents are the real ones in
+`~/Library/LaunchAgents`. A click on a model, voice or voice LLM server still acts on them;
+the CLI refuses when they belong to another `KERYX_HOME`.
 
 ### Snapshots
 

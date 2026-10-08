@@ -154,6 +154,8 @@ check "a destination that is not a folder is not made" test ! -e "$WORK/missing"
 echo "build-app.sh arguments"
 check "every build-app.sh here installs into the test's own folder" \
   test "${KERYX_APP_DESTINATION:-}" = "$WORK/never"
+[ "${KERYX_APP_DESTINATION:-}" = "$WORK/never" ] || {
+  echo "refusing to run build-app.sh without a test destination" >&2; exit 1; }
 "$SCRIPTS/build-app.sh" --bogus >/dev/null 2>&1
 check "an unknown argument exits 2 before building" test $? -eq 2
 check "--help names --no-install" grep -q -- "--no-install" <("$SCRIPTS/build-app.sh" --help)

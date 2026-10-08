@@ -466,7 +466,9 @@ remember:
   them go untouched, while closing a window leaves them running: it is a regular Dock app, no
   `LSUIElement`. It never calls `launchctl`. The word "service" is never shown to the owner
   ("Answering calls", "Start Keryx", "in the background"; `OwnerWordingTests` greps for it).
-  A `KERYX_APP_ENVIRONMENT=inherit` run never starts or stops a unit. A voice LLM's remote
+  A `KERYX_APP_ENVIRONMENT=inherit` run never starts Keryx by itself; a click on a model, voice
+  or voice LLM server still acts on the real launch agents, which the CLI's foreign-units guard
+  refuses when they belong to another `KERYX_HOME`. A voice LLM's remote
   address and model typed and not yet checked are drafts in the app's own defaults, never
   Keryx's settings: only Check and Use writes `VOICE_LLM_*`. It strips
   `KERYX_ACTOR` and `JARVIS_ACTOR` (`Sanitise.environment`), because it is the owner at a
