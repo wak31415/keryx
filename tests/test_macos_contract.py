@@ -90,9 +90,11 @@ VOICE_DOWNLOAD = "voice download --json"
 MIGRATE = "migrate --yes --json"
 #: The project-context draft: `--explore` or `--folder PATH` is added to it.
 PROJECT_CONTEXT = "setup project-context --json"
+#: One agent's smoke test, told as it runs: NAME is claude, codex or local.
+AUTH_SMOKE = "auth smoke NAME --json"
 #: The command lines the app reads as JSON lines; the pull's is the one every contract has.
 STREAMS = (PULL, VOICE_HERE, MODELS_START, VOICE_DOWNLOAD, *AUTH_LOGINS.values(), MIGRATE,
-           PROJECT_CONTEXT)
+           PROJECT_CONTEXT, AUTH_SMOKE)
 #: The command lines the app reads as one JSON document.
 COMMANDS = {
     "status --json", "doctor --json", "tasks list --json", "tasks show ID --json",
@@ -119,7 +121,7 @@ AWAITING = {
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
     "migrate --json", MIGRATE, "setup project-context --describe --json",
     "setup project-context --apply --json", PROJECT_CONTEXT,
-    "config options ASSISTANT_NAME --json", "setup mark phone --json",
+    "config options ASSISTANT_NAME --json", "setup mark phone --json", AUTH_SMOKE,
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.
@@ -1236,6 +1238,84 @@ def test_a_draft_ends_once_whatever_the_contract_says(
     if PROJECT_CONTEXT in contract()["streams"]:
         keeps_its_promise(contract()["streams"][PROJECT_CONTEXT], events, ending,
                           result.exit_code)
+
+
+# --- the stream: auth smoke NAME --json --------------------------------------------------
+
+
+def _smoke_agent(monkeypatch, result: RunResult, *, signed_in: bool = True):
+    """Claude signed in (or not), and `setup.agents.run_smoke` faked: progress, `result`."""
+    import dataclasses
+
+    from keryx.agents.registry import BACKENDS
+
+    spec = BACKENDS["claude"]
+    monkeypatch.setitem(BACKENDS, "claude", dataclasses.replace(
+        spec, auth=dataclasses.replace(spec.auth, stored_login=lambda: signed_in)))
+
+    async def run(settings, agent, *, on_progress=None):
+        on_progress("SPOKEN_SUMMARY: ready")
+        return result
+
+    monkeypatch.setattr("keryx.setup.agents.run_smoke", run)
+
+
+def _smoke_passed(monkeypatch, settings):
+    _smoke_agent(monkeypatch, RunResult(ok=True, spoken_summary="ready"))
+    return ["claude"]
+
+
+def _smoke_failed(monkeypatch, settings):
+    _smoke_agent(monkeypatch, RunResult(ok=False, error="no answer within 300s"))
+    return ["claude"]
+
+
+def _smoke_signed_out(monkeypatch, settings):
+    _smoke_agent(monkeypatch, RunResult(ok=True, spoken_summary="ready"), signed_in=False)
+    return ["claude"]
+
+
+def _smoke_nobody(monkeypatch, settings):
+    return ["gemini"]
+
+
+def _smoke_cancelled(monkeypatch, settings):
+    _smoke_agent(monkeypatch, RunResult(ok=True, spoken_summary="ready"))
+
+    async def interrupted(settings, agent, *, on_progress=None):
+        raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
+
+    monkeypatch.setattr("keryx.setup.agents.run_smoke", interrupted)
+    return ["claude"]
+
+
+#: Each way the smoke test ends: how to arrange it (the agent named), its ending, its exit
+#: code, and whether a step was told first.
+SMOKES = [(_smoke_passed, "done", 0, True), (_smoke_failed, "done", 1, True),
+          (_smoke_signed_out, "error", 1, False), (_smoke_nobody, "error", 2, False),
+          (_smoke_cancelled, "cancelled", 130, True)]
+
+
+def test_the_smoke_tests_below_reach_every_event_the_contract_names():
+    stream = awaited_stream(AUTH_SMOKE)
+
+    assert {ending for _, ending, _, _ in SMOKES} == set(stream["terminal"])
+    assert set(stream["events"]) == {*stream["terminal"], "step"}
+
+
+@pytest.mark.parametrize(("arrange", "ending", "code", "stepped"), SMOKES)
+def test_a_smoke_test_ends_once_whatever_the_contract_says(
+    seeded, monkeypatch, arrange, ending, code, stepped
+):
+    (name,) = arrange(monkeypatch, seeded)
+
+    result = runner.invoke(app, AUTH_SMOKE.replace("NAME", name).split())
+
+    events = [json.loads(line) for line in result.stdout.splitlines()]
+    assert ends_once(events) == ending and result.exit_code == code, events
+    assert (events[0]["event"] == "step") is stepped
+    if AUTH_SMOKE in contract()["streams"]:
+        keeps_its_promise(contract()["streams"][AUTH_SMOKE], events, ending, result.exit_code)
 
 
 # --- the fix ids: one vocabulary, on both sides -------------------------------------------

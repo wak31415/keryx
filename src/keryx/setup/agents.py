@@ -7,7 +7,8 @@ an API key or with the subscription its owner already pays for. Three callers us
   default, a sign-in for each one that has none, then one real task on each;
 - `keryx auth login claude|codex` (`login`): the agent's own login command, on this
   terminal, or its headless variant;
-- `keryx auth status --smoke` (`run_smoke`).
+- `keryx auth status --smoke` and `keryx auth smoke NAME` (`run_smoke`; the second told
+  as it runs, `setup.smoke_stream`).
 
 **An agent that can already run is never asked for a credential.** The precedence is
 `keryx.agents.auth`'s — key, headless token, stored login — and the sign-in question only
@@ -144,9 +145,12 @@ async def run_task(
             os.environ[ACTOR_ENV] = previous
 
 
-async def run_smoke(settings: Settings, agent: str) -> RunResult:
-    """One minimal task on `agent`, asked to say it is ready."""
-    return await run_task(settings, agent, SMOKE_PROMPT, timeout_s=SMOKE_TIMEOUT_S)
+async def run_smoke(
+    settings: Settings, agent: str, *, on_progress: Callable[[str], Any] | None = None
+) -> RunResult:
+    """One minimal task on `agent`, asked to say it is ready; `on_progress` as `run_task`'s."""
+    return await run_task(settings, agent, SMOKE_PROMPT, timeout_s=SMOKE_TIMEOUT_S,
+                          on_progress=on_progress)
 
 
 def is_headless() -> bool:

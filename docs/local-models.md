@@ -43,6 +43,7 @@ uv run keryx models use qwen3-coder-30b-a3b   # --default-agent to have it do un
 uv run keryx models start            # llama.cpp if missing, the model server's unit, a check
 uv run keryx restart                 # Keryx reads the new settings when it starts
 uv run keryx auth status --smoke     # one real task on each enabled agent
+uv run keryx auth smoke local        # the same task on one agent, told as it runs
 
 uv run keryx voice                   # where the voice is, and the voice server on this machine
 uv run keryx voice use here          # --voice bm_george; installs, starts and waits for it

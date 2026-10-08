@@ -110,7 +110,7 @@ from keryx.restart.watchdog import watch
 from keryx.server import create_app
 from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
-from keryx.setup import auth_stream, migrate_stream, profile, project_stream
+from keryx.setup import auth_stream, migrate_stream, profile, project_stream, smoke_stream
 from keryx.setup import pin as pin_flow
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
@@ -3116,6 +3116,28 @@ def auth_status_command(
             typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
     if any(entry["state"] == "failed" for entry in report.values()):
         raise typer.Exit(1)
+
+
+@auth_app.command("smoke")
+def auth_smoke(
+    name: Annotated[str, typer.Argument(help="claude, codex or local.")],
+    as_json: Annotated[bool, typer.Option("--json", help="JSON lines for the Mac app: each "
+                                          "step, then how it ended.")] = False,
+) -> None:
+    """One real task on one coding agent — the smoke test `auth status --smoke` runs on
+    each — told as it runs. Exit 0 when it said it is ready, 1 when it did not (or could not
+    be asked: not installed, not signed in), 2 for no such agent, 130 when stopped."""
+    if as_json:
+        events: smoke_stream.SmokeEvents = smoke_stream.SmokeEvents(typer.echo)
+    else:
+        events = smoke_stream.SmokeText(typer.echo, lambda line: typer.echo(line, err=True))
+
+    def run() -> int:
+        settings = _configure_readonly(refuse=events.error)
+        return smoke_stream.stream(settings, name, events)
+
+    with pull.terminate_as_interrupt():
+        raise typer.Exit(events.guard(run))
 
 
 @auth_app.command("logout")

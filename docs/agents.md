@@ -46,7 +46,8 @@ started the task: a session belongs to the agent that issued it.
 signed in, asks which agents and which is the default, runs the sign-in each one is missing
 (and leaves one that can already run alone), and runs one real task through each as a smoke
 test. From the command line: `keryx auth login claude|codex`, `keryx config set
-AGENT_BACKEND …`, and `keryx auth status --smoke`. `uv run keryx doctor` checks the same
+AGENT_BACKEND …`, and `keryx auth status --smoke` (or `keryx auth smoke claude|codex|local`
+for one agent, told as it runs). `uv run keryx doctor` checks the same
 things on every run.
 
 ## Signing in

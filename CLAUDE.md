@@ -107,6 +107,11 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run keryx auth status [--json] [--smoke]`, `uv run keryx auth
+  smoke claude|codex|local [--json]` (`auth status --smoke`'s one real task on one agent —
+  `agents.run_smoke`, as the service — told as it runs, `setup/smoke_stream.py`: refused as
+  an `error` while it is not installed or not signed in; `--json` is a `step` (`dispatch`,
+  then `answering`), then one of `done` (`ok`, `summary`, `detail`), `error`, `cancelled`;
+  exit 0 passed, 1 failed or refused, 2 no such agent, 130 stopped), `uv run keryx auth
   logout gmail|google-workspace [--json]` (the owner's alone: removes the tokens that one
   sign-in stored — never the OAuth client file, never the other sign-in)
 - The same sign-ins from the Mac app: `uv run keryx auth login NAME [--client-file PATH]
@@ -325,7 +330,7 @@ remember:
 - **setup** — `setup/` is `keryx setup` and `keryx auth`: `wizard` (section order, what is
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
   `issues`, `plugins`, `profile`, `project_context`) and `sections` for the small ones,
-  `auth_stream` (`auth login --json`), `terminal` (the pty it drives Claude's sign-in
+  `auth_stream` (`auth login --json`), `smoke_stream` (`auth smoke`), `terminal` (the pty it drives Claude's sign-in
   behind), `child_env` (a re-export: `keryx/child_env.py` is every login and operational
   child's environment, scrubbed of Keryx's secrets), `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
   the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
@@ -380,7 +385,7 @@ remember:
   windows, by window id. `tests/test_macos_contract.py` holds the JSON contract — the keys
   the Swift decoders require from each command, with their JSON types, and the events,
   ending and exit codes of its streams (`models pull`, `voice use here`, `voice download`,
-  `models start` and the four `auth login NAME`, each `--json`) — so
+  `models start`, the four `auth login NAME` and `auth smoke NAME`, each `--json`) — so
   renaming a field fails pytest, not the app at runtime.
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line.
