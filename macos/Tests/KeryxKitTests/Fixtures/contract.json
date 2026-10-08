@@ -264,9 +264,10 @@
         "value": "any|null",
         "choices": "array|null",
         "has_options": "boolean",
-        "tab": "string",
-        "tab_title": "string",
-        "tab_order": "integer",
+        "tab": "string|null",
+        "tab_title": "string|null",
+        "tab_order": "integer|null",
+        "screen": "string|null",
         "advanced": "boolean"
       }
     },

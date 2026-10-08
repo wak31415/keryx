@@ -23,7 +23,33 @@ public final class Preferences: @unchecked Sendable {
         }
     }
 
+    /// Whether a plain Quit asks first ("Quit Keryx?"), until the owner ticks "Don't ask
+    /// again". A quit with a call in progress, or with something under way, always asks.
+    public var asksBeforeQuitting: Bool {
+        get { !defaults.bool(forKey: Keys.quitWithoutAsking) }
+        set { defaults.set(!newValue, forKey: Keys.quitWithoutAsking) }
+    }
+
     private enum Keys {
+        static let quitWithoutAsking = "quitWithoutAsking"
         static let keryxFolder = "keryxFolder"
+        static let launchAgent = "launchAgentPlist"
+    }
+}
+
+/// Where the locator keeps the last usable copy of Keryx's launch agent plist, to read
+/// while the plist itself is gone (the app removes it with the unit when it quits).
+public protocol LaunchAgentMemory: Sendable {
+    func rememberLaunchAgent(_ plist: Data)
+    func recallLaunchAgent() -> Data?
+}
+
+extension Preferences: LaunchAgentMemory {
+    public func rememberLaunchAgent(_ plist: Data) {
+        if defaults.data(forKey: Keys.launchAgent) != plist { defaults.set(plist, forKey: Keys.launchAgent) }
+    }
+
+    public func recallLaunchAgent() -> Data? {
+        defaults.data(forKey: Keys.launchAgent)
     }
 }

@@ -4,8 +4,8 @@
 #
 #   scripts/install-systemd.sh              # render the templates and start both units
 #   scripts/install-systemd.sh --uninstall  # stop both units and delete them
-#   scripts/install-systemd.sh --llm --voice  # the local model servers instead (either one;
-#                                             # with --uninstall, remove them)
+#   scripts/install-systemd.sh --llm --voice --voice-llm  # the local model servers instead
+#                                   # (any of them; with --uninstall, remove them)
 #
 # The templates in ops/systemd/ carry __PLACEHOLDER__ names; this script fills them in from
 # `command -v` and `keryx config get`, writes the result to ~/.config/systemd/user/, and hands
@@ -44,18 +44,20 @@ uninstall() {
 }
 
 parse_install_args "$@"
-if (( LLM || VOICE )); then
+if (( LLM || VOICE || VOICE_LLM )); then
   SERVICES=()
   (( LLM )) && SERVICES+=(keryx-llm)
   (( VOICE )) && SERVICES+=(keryx-voice)
+  (( VOICE_LLM )) && SERVICES+=(keryx-voice-llm)
 fi
 if (( UNINSTALL )); then
   uninstall
   exit 0
 fi
 
-if (( LLM || VOICE )); then
+if (( LLM || VOICE || VOICE_LLM )); then
   # The local model servers: no tunnel, no public host. `keryx models serve` reads the rest.
+  (( VOICE_LLM )) && require_own_voice_llm_port
   require_command UV uv "https://docs.astral.sh/uv/"
   make_dirs "$UNITS"
   for name in "${SERVICES[@]}"; do
@@ -74,7 +76,7 @@ if (( LLM || VOICE )); then
     echo "started $name.service ($UNITS/$name.service)"
   done
   loginctl enable-linger "$USER" 2>/dev/null || true
-  echo "logs: tail -f $LOGS/keryx-llm.err.log $LOGS/keryx-voice.err.log"
+  echo "logs: tail -f $LOGS/keryx-llm.err.log $LOGS/keryx-voice.err.log $LOGS/keryx-voice-llm.err.log"
   exit 0
 fi
 

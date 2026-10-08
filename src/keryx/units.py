@@ -1,7 +1,7 @@
-"""`keryx service`: Keryx's four units — itself, its tunnel, the model server and the voice
-server — as the service manager finds them, installing or removing them through the
-checkout's own installer, and stopping or starting them without either (`control`), so the
-Mac app needs no terminal for any of it.
+"""`keryx service`: Keryx's five units — itself, its tunnel, the model server, the voice
+server and the voice LLM's own server — as the service manager finds them, installing or
+removing them through the checkout's own installer, and stopping or starting them without
+either (`control`), so the Mac app needs no terminal for any of it.
 
 A unit counts as installed when its manager has it loaded *or* its unit file is on disk:
 `keryx service stop` boots a launchd job out and disables it, which leaves its plist where
@@ -31,8 +31,11 @@ from keryx.restart.service import LAUNCHD_LABEL, SYSTEMD_UNIT, ServiceTarget
 #: which gives its own installer runs the same deadline.
 INSTALL_TIMEOUT_S = voice_setup.INSTALL_TIMEOUT_S
 TIMED_OUT = voice_setup.TIMED_OUT
-#: The units, in the order `keryx service` lists them.
-KINDS = ("agent", "tunnel", "llm", "voice")
+#: The units, in the order `keryx service` lists them: the one list of them, which
+#: anything that walks every unit reads.
+KINDS = ("agent", "tunnel", "llm", "voice", "voice_llm")
+#: The installers' flag for each model server's unit, and the unit it is.
+FLAGS = {"--llm": "llm", "--voice": "voice", "--voice-llm": "voice_llm"}
 #: Each unit's name, by service manager: what `scripts/install-*.sh` installs (the agent's
 #: is `SERVICE_UNIT` when that is set).
 NAMES = {
@@ -126,15 +129,18 @@ def install(
     settings: Settings | None = None,
     llm: bool = False,
     voice: bool = False,
+    voice_llm: bool = False,
     uninstall: bool = False,
     root: Path,
     platform: str | None = None,
     run: Callable[[Sequence[str]], tuple[int, str, str]] = run_captured,
 ) -> Outcome:
-    """Install (or, with `uninstall`, remove) Keryx and its tunnel, or with `llm`/`voice`
-    the model servers' units, through the checkout at `root`. 2 for no installer here —
-    no checkout, no service manager — 1 with the script's last error line, 0 when done."""
-    flags = [flag for flag, on in (("--llm", llm), ("--voice", voice)) if on]
+    """Install (or, with `uninstall`, remove) Keryx and its tunnel, or with `llm`/`voice`/
+    `voice_llm` the model servers' units, through the checkout at `root`. 2 for no
+    installer here — no checkout, no service manager — 1 with the script's last error
+    line, 0 when done."""
+    chosen = {"llm": llm, "voice": voice, "voice_llm": voice_llm}
+    flags = [flag for flag, kind in FLAGS.items() if chosen[kind]]
     script, problem = installer(" ".join(flags), root=root, platform=platform)
     if script is None:
         return Outcome(REFUSED, problem or "no installer")
@@ -143,7 +149,7 @@ def install(
     if code != 0:
         return Outcome(FAILED, _last_line(err) or f"{script.name} {' '.join(argv[1:])} exited "
                                                   f"with {code}")
-    kinds = [flag.removeprefix("--") for flag in flags] or ["agent", "tunnel"]
+    kinds = [FLAGS[flag] for flag in flags] or ["agent", "tunnel"]
     found = "launchd" if script.name == "install-launchd.sh" else "systemd"
     settings = settings or Settings()
     names = ", ".join(unit_name(settings, found, kind) for kind in kinds)
@@ -156,6 +162,9 @@ def install(
 #: serves nothing else and without which nobody can reach Keryx. `--all` adds every other
 #: unit in `NAMES` — the model servers, and whatever that table gains later.
 MAIN_KINDS = ("agent", "tunnel")
+#: The server units that read from another, and the ones they read from: the voice's words
+#: come from the voice LLM's own server, or the model server's.
+STARTS_AFTER = {"voice": ("llm", "voice_llm")}
 #: A unit's state once a stop or start has been through it.
 RUNNING, STOPPED, NOT_INSTALLED, UNIT_FAILED = "running", "stopped", "not-installed", "failed"
 
@@ -193,6 +202,25 @@ class Control:
     def as_dict(self) -> dict[str, Any]:
         return {"ok": self.ok, "message": self.message, "detail": self.detail,
                 "units": self.units}
+
+
+def start_order(kinds: list[str]) -> list[str]:
+    """`kinds` in the order a start takes them: the model servers first, each after the
+    ones it reads from (`STARTS_AFTER`), then the tunnel, then Keryx. A stop is the
+    reverse: Keryx first, then what it uses."""
+    servers = [kind for kind in kinds if kind not in MAIN_KINDS]
+    ordered: list[str] = []
+
+    def place(kind: str) -> None:
+        if kind in ordered or kind not in servers:
+            return
+        for first in STARTS_AFTER.get(kind, ()):
+            place(first)
+        ordered.append(kind)
+
+    for kind in servers:
+        place(kind)
+    return [*ordered, *(kind for kind in MAIN_KINDS[::-1] if kind in kinds)]
 
 
 def _enablement_command(target: ServiceTarget, action: str) -> list[str]:
@@ -263,8 +291,9 @@ def control(
             return Control(False, REFUSED, NOT_INSTALLED_YET, None, list(rows.values()))
         if not any(present.values()):
             return Control(True, OK, NOTHING_TO_STOP, None, list(rows.values()))
-    # Stopped Keryx first, then what it uses; started the other way round.
-    acting = [kind for kind in (kinds if action == "stop" else kinds[::-1]) if present[kind]]
+    # Started what is used first and Keryx last; stopped the other way round.
+    order = start_order(kinds)
+    acting = [kind for kind in (order[::-1] if action == "stop" else order) if present[kind]]
     failures: dict[str, str] = {}
 
     def attempt(kind: str, argv: list[str], *, holds: Callable[[], bool]) -> None:

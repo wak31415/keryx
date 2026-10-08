@@ -132,7 +132,7 @@ import KeryxPreview
 
     @Test func theRefusalsThatAreAStepToTakeFirstAreKnown() {
         #expect(LocalRefusal.of("set up a local model first: keryx models use NAME") == .needsModel)
-        #expect(LocalRefusal.of("choose and download a model first: LLM_SERVER_MODEL is not set") == .needsModel)
+        #expect(LocalRefusal.of("choose and download a model first: AGENT_SERVER_MODEL is not set") == .needsModel)
         #expect(LocalRefusal.of("The local model server isn't running: start it first.") == .needsServer)
         #expect(LocalRefusal.of("brew install llama.cpp did not finish") == nil)
         #expect(ThisMacProgress.refused(.failed("The local model server isn't running: start it first.")))

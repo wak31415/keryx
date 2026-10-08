@@ -178,6 +178,16 @@ def test_a_transcription_language_is_passed_as_a_hint():
     assert transcription == {"model": "gpt-4o-mini-transcribe", "language": "de"}
 
 
+def test_a_language_without_a_transcription_model_is_sent_alone():
+    config = SessionConfig(
+        instructions="x", tools=[], voice="", audio_format="audio/pcm",
+        transcription_model=None, transcription_language="de",
+    )
+
+    transcription = build_session_update(config)["session"]["audio"]["input"]["transcription"]
+    assert transcription == {"language": "de"}
+
+
 def test_build_session_update_for_the_local_path_omits_transcription_and_barge_in():
     config = SessionConfig(
         instructions="Local Keryx.",
@@ -949,6 +959,12 @@ async def test_a_self_hosted_server_is_reached_without_a_key_on_its_own_address(
     url, headers = harness.connector.calls[0]
     assert url == "ws://127.0.0.1:8765/v1/realtime?model=gpt-realtime-2.1"
     assert headers == {}
+
+
+async def test_an_endpoint_with_no_model_is_reached_with_no_model_in_the_query(connect):
+    harness = await connect(endpoint=Endpoint.parse("http://127.0.0.1:8765"))
+
+    assert harness.connector.calls[0][0] == "ws://127.0.0.1:8765/v1/realtime"
 
 
 async def test_a_self_hosted_server_with_a_key_gets_it_as_a_bearer(connect):

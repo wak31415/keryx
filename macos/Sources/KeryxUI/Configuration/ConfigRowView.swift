@@ -259,25 +259,36 @@ struct ConfigRowView: View {
             .textFieldStyle(.roundedBorder)
             .frame(width: width)
             .focused($focused)
-            .onSubmit(commit)
+            .onSubmit { commit() }
             .onChange(of: focused) { if !focused { commit() } }
+            // A Configuration tab switch, a sidebar section, or a programmatic `selection`
+            // change removes this row in the same update, before the focus change above
+            // would have committed it — so what was typed is saved here instead. The
+            // `shouldCommit` guard below stops this from sending twice when a blur already
+            // did.
+            .onDisappear { commit(onDisappear: true) }
             .help(readOnly ? ConfigWording.environmentHelp(row) : draft)
     }
 
     /// Saves the field's text when it differs from what is stored — once: not while a write
     /// is under way (disabling the field drops its focus, which would commit again), and not
     /// the text the CLI just refused until it is edited. A number that is not one is said so
-    /// here, without asking the CLI.
-    private func commit() {
+    /// here, without asking the CLI. `onDisappear`: this row is already gone by the time a
+    /// refusal would show under it, so the model shows it as a window-level banner instead.
+    private func commit(onDisappear: Bool = false) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ConfigWording.shouldCommit(text, stored: ConfigWording.editText(row.value),
                                          writing: writing, refused: refused) else { return }
         if let reason = ConfigWording.invalid(text, type: row.type) {
-            invalid = reason
-            error = nil
+            if onDisappear {
+                model.reportSettingSaveFailure(title: row.displayTitle, sentence: reason)
+            } else {
+                invalid = reason
+                error = nil
+            }
             return
         }
-        write(attempt: text) { await model.set(row, to: text) }
+        write(attempt: text, onDisappear: onDisappear) { await model.set(row, to: text) }
     }
 
     /// Back to the default: at once for a plain setting, after asking for a secret, which
@@ -292,14 +303,22 @@ struct ConfigRowView: View {
 
     /// Runs one write, shows its error (or clears the last one), and lets the control follow
     /// the reloaded row again. `attempt`: a field's text, remembered when it is refused.
-    private func write(attempt: String? = nil, _ action: @escaping () async -> KeryxError?) {
+    /// `onDisappear`: this row is already gone, so a refusal goes to the model's banner
+    /// instead of this row's own (dead) state.
+    private func write(attempt: String? = nil, onDisappear: Bool = false,
+                       _ action: @escaping () async -> KeryxError?) {
         guard !writing else { return }
         writing = true
         invalid = nil
+        let title = row.displayTitle
         Task {
             let failure = await action()
-            error = failure
-            refused = failure == nil ? nil : attempt
+            if onDisappear {
+                if let failure { model.reportSettingSaveFailure(title: title, error: failure) }
+            } else {
+                error = failure
+                refused = failure == nil ? nil : attempt
+            }
             pending = nil
             writing = false
         }

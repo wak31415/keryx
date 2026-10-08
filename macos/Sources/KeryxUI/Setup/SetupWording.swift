@@ -104,7 +104,7 @@ enum SetupWording {
     /// "Waits for Voice, Coding Agents and Phone.": the steps a blocked step waits for, by
     /// their titles as the list shows them; the plan's own sentence when none is left open.
     static func waitsFor(_ step: SetupStep, in plan: SetupPlan) -> String? {
-        let waiting = SetupGuide.blockers(of: step, in: plan).map { Wording.titleCase($0.title) }
+        let waiting = SetupGuide.blockers(of: step, in: plan).map(title)
         guard !waiting.isEmpty else { return step.why }
         return "Waits for \(Wording.list(waiting))."
     }
@@ -131,8 +131,8 @@ enum SetupWording {
             return "\(title) isn't connected."
         case .pin:
             return failed ? "The PIN file holds no usable PIN." : "No PIN yet."
-        case .installService:
-            return "Keryx isn't running in the background yet."
+        case .startKeryx:
+            return "Keryx isn't answering calls yet."
         case .startModelServer:
             if let other = context.modelServerServesAnother {
                 return "The model server is serving \(other), not the model chosen."
@@ -188,7 +188,7 @@ enum SetupWording {
         case "owner": "Your name, and the phones you call from. Keryx answers only these numbers."
         case "pin": "Digits you key in on a call before \(name) acts for you. Set them here, or choose them on your first call."
         case "phone": "A Twilio number to call, and a tunnel so that Twilio can reach this Mac."
-        case "service": "Keryx runs in the background, starts at login, and restarts if it stops."
+        case "service": "While Keryx is open, \(name) answers your calls. Keryx starts by itself once the steps before this one are done, and stops when you quit it."
         case "local": "The voice and the coding agent can run on this Mac's own models, with no API key."
         case "google": "Lets the coding agents read your Gmail and Calendar."
         case "plugins": "Extra tools \(name) can use on a call: Slack, email answers, billing and cluster stats."
@@ -199,10 +199,14 @@ enum SetupWording {
         }
     }
 
-    /// A step's title as a page's heading: "Coding agents" → "Coding Agents".
+    /// A step's title as a page's heading: "Coding agents" → "Coding Agents". The service
+    /// step is said as what it is for: the app keeps the unit itself out of sight.
     static func title(_ step: SetupStep) -> String {
-        Wording.titleCase(step.title)
+        step.id == "service" ? answeringCalls : Wording.titleCase(step.title)
     }
+
+    /// The service step's title, and the Overview's for its checks.
+    static let answeringCalls = "Answering Calls"
 
     /// The plan's `why` for a step's page, unless it is only the plan's offer of an optional
     /// step ("Optional: …", "Off until you choose: …"), which the page's own sentence

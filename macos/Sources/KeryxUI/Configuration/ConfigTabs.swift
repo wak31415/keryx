@@ -3,7 +3,9 @@ import KeryxKit
 
 /// How Configuration lays `keryx config list`'s rows out on tabs: each row's `tab`, the
 /// tabs in `tab_order`, and each tab's key settings apart from its advanced ones. Nothing
-/// here keeps a list of which setting is on which tab — the CLI says.
+/// here keeps a list of which setting is on which tab — the CLI says. A row a screen owns
+/// (`screen`: Voice, Local Models) is on no tab: it has one editor, on that screen, and a
+/// search here finds it as a way there.
 extension ConfigWording {
     /// One tab: its key settings by group, and the rest by group under its Advanced
     /// disclosure.
@@ -24,18 +26,33 @@ extension ConfigWording {
         var advancedRows: [ConfigRow] { advanced.flatMap(\.rows) }
     }
 
+    /// One screen's rows a search found, each shown as the way to that screen.
+    struct ScreenResult: Identifiable {
+        let screen: SidebarItem
+        let rows: [ConfigRow]
+
+        var id: String { screen.rawValue }
+        /// "Voice", "Local Models": the section's title, as the sidebar names the screen.
+        var title: String { screen.title }
+        /// "Change in Voice ›": the row's link to the screen that edits it.
+        var link: String { ConfigWording.changeIn(screen) }
+    }
+
     /// The rows by tab, in `tab_order` (ties in the order `config list` first names them).
+    /// A row a screen owns is on none of them.
     static func tabs(_ rows: [ConfigRow]) -> [Tab] {
         var order: [String] = []
         var byTab: [String: [ConfigRow]] = [:]
         for row in rows {
-            if byTab[row.tab] == nil { order.append(row.tab) }
-            byTab[row.tab, default: []].append(row)
+            guard row.screen == nil, let tab = row.tab else { continue }
+            if byTab[tab] == nil { order.append(tab) }
+            byTab[tab, default: []].append(row)
         }
         let tabs = order.map { id -> Tab in
             let rows = byTab[id] ?? []
             let first = rows[0]
-            return Tab(id: id, title: Wording.titleCase(first.tabTitle), order: first.tabOrder,
+            return Tab(id: id, title: Wording.titleCase(first.tabTitle ?? ConfigRow.title(ofTab: id, group: first.group)),
+                       order: first.tabOrder ?? ConfigRow.order(ofTab: id),
                        groups: groups(rows.filter { !$0.advanced }),
                        advanced: groups(rows.filter(\.advanced)))
         }
@@ -52,6 +69,26 @@ extension ConfigWording {
     /// A search's matches across every tab, advanced settings included, by tab.
     static func results(_ rows: [ConfigRow], for query: String) -> [Tab] {
         tabs(filter(rows, by: query))
+    }
+
+    /// A search's matches among the rows a screen owns, by screen in the sidebar's order. A
+    /// screen this build has no section for is left out: it has nowhere to send them.
+    static func screenResults(_ rows: [ConfigRow], for query: String) -> [ScreenResult] {
+        let found = filter(rows.filter { $0.screen != nil }, by: query)
+        return SidebarItem.allCases.compactMap { item in
+            let owned = found.filter { $0.screen == item.rawValue }
+            return owned.isEmpty ? nil : ScreenResult(screen: item, rows: owned)
+        }
+    }
+
+    /// The screen that owns `key`'s row, when one does and this build has it.
+    static func screen(of key: String, in rows: [ConfigRow]?) -> SidebarItem? {
+        rows?.first { $0.key == key }?.screen.flatMap(SidebarItem.init(rawValue:))
+    }
+
+    /// "Change in Voice ›".
+    static func changeIn(_ screen: SidebarItem) -> String {
+        "Change in \(screen.title) ›"
     }
 
     /// A group's section title on its tab, or none where it would only repeat the tab's
@@ -85,7 +122,6 @@ extension ConfigWording {
         case "general": "gearshape"
         case "voice": "waveform"
         case "agents": "cpu"
-        case "local": "desktopcomputer"
         case "phone": "phone"
         case "approvals": "checkmark.shield"
         case "integrations": "puzzlepiece.extension"

@@ -194,11 +194,12 @@ enum PhoneWording {
         return Line(tone: .ok, text: "Installed", hint: kind)
     }
 
-    /// Whether the tunnel runs as a service (installed with Keryx's own, in the Overview).
+    /// Whether the tunnel runs in the background: Keryx starts it with itself, once setup is
+    /// finished, and stops it when the app quits.
     static func tunnelService(_ tunnel: PhoneTunnel) -> Line {
         tunnel.unitInstalled
-            ? Line(tone: .ok, text: "Installed")
-            : Line(tone: .inactive, text: "Not installed", hint: "Installing Keryx's service in the Overview installs it too")
+            ? Line(tone: .ok, text: "Yes")
+            : Line(tone: .inactive, text: "Not yet", hint: "It starts with Keryx once setup is finished")
     }
 
     /// Whether Twilio can reach Keryx at `https://PUBLIC_HOST`.

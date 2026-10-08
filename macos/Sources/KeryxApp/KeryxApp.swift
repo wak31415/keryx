@@ -4,7 +4,8 @@ import KeryxUI
 import SwiftUI
 
 /// Keryx for Mac: a menu bar item that is always there, a window opened from it, and the
-/// app's own Settings. An `LSUIElement` app — it is in the Dock only while its window is open.
+/// app's own Settings. A regular app, in the Dock for as long as it runs: closing its window
+/// leaves it running, and Keryx answering calls; Quit stops both (`AppLifecycle`).
 @main
 struct KeryxApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
@@ -61,7 +62,7 @@ enum KeryxWindow {
 }
 
 /// The window's content. SwiftUI opens it at launch; at a login launch it closes again at
-/// once. While it is open (or Settings is) the app is in the Dock.
+/// once, leaving the app in the Dock and the menu bar.
 private struct MainWindowContent: View {
     let delegate: AppDelegate
     @Environment(\.dismissWindow) private var dismissWindow

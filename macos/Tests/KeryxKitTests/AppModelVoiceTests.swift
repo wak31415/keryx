@@ -41,8 +41,8 @@ extension AppModelTests {
         let model = makeModel(client: client)
         await model.start()
         defer { model.stop() }
-        await model.loadOptions("SUBAGENT_MODEL")
-        let list = model.options["SUBAGENT_MODEL"]
+        await model.loadOptions("CLAUDE_MODEL")
+        let list = model.options["CLAUDE_MODEL"]
         #expect(list?.error == nil)
         #expect(list?.value?.live == false)
         #expect(list?.value?.error != nil)

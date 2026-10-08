@@ -120,6 +120,33 @@ import KeryxPreview
         #expect(model.models.error == nil)
     }
 
+    /// Two `config list` reads race (a setting saved twice in quick succession, say): the
+    /// one started first is held, so the one started after it answers first, with the
+    /// fresher value. The first then answers too, last — and must not overwrite it with the
+    /// value it read before the second's write landed.
+    @Test func anOlderConfigReadThatFinishesLastDoesNotOverwriteTheNewerOne() async {
+        let gate = OptionsGate()
+        let client = StubClient()
+        let model = makeModel(client: client)
+        await model.start()
+        defer { model.stop() }
+
+        let stale = Array(PreviewData.config.dropFirst())
+        let fresh = PreviewData.config
+        client.update { $0.config = .success(stale); $0.configWait = { await gate.wait() } }
+
+        let first = Task { await model.refresh(.config) }
+        #expect(await eventually { gate.held == 1 })
+
+        client.update { $0.config = .success(fresh); $0.configWait = {} }
+        await model.refresh(.config)
+        #expect(model.config.value == fresh)
+
+        gate.open()
+        await first.value
+        #expect(model.config.value == fresh, "the stale read must not land after the fresh one")
+    }
+
     @Test func refreshAllLoadsEveryDocument() async {
         let client = StubClient()
         let model = makeModel(client: client)

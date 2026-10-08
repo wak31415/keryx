@@ -15,16 +15,19 @@ public struct VoiceView: View {
     /// The way picked on screen; `nil` until the owner picks one, which shows the one in use.
     @State private var picked: VoiceMode?
     private let server: ServerSection.Start
+    /// Whether the Advanced disclosure starts open (the catalog's).
+    private let advancedOpen: Bool
 
     public init() {
         self.init(mode: nil)
     }
 
     /// `mode`: the way picked when the screen appears; `server`: the server section's state
-    /// then (the catalog's).
-    package init(mode: VoiceMode?, server: ServerSection.Start = .init()) {
+    /// then; `advancedOpen`: the Advanced disclosure open (the catalog's).
+    package init(mode: VoiceMode?, server: ServerSection.Start = .init(), advancedOpen: Bool = false) {
         _picked = State(initialValue: mode)
         self.server = server
+        self.advancedOpen = advancedOpen
     }
 
     public var body: some View {
@@ -40,12 +43,13 @@ public struct VoiceView: View {
                 case .here: HereSection(voice: voice)
                 case .server: ServerSection(voice: voice, start: server)
                 }
+                ScreenAdvancedSection(screen: .voice, open: advancedOpen)
             }
             .formStyle(.grouped)
         }
         .task {
             await model.refresh(.voice)
-            // The words model's title and the API key rows read these.
+            // The words model's title, the API key rows and Advanced read these.
             if model.models.value == nil { await model.refresh(.models) }
             if model.config.value == nil { await model.refresh(.config) }
         }
@@ -419,11 +423,12 @@ package struct ServerSection: View {
                 Text("API key")
                 Text("Only if the server asks for one")
             }
-            if voice.kind == .server, let reachable = voice.server.reachable {
+            if voice.kind == .server,
+               let state = VoiceWording.serverState(voice.server.reachable, address: voice.baseUrl) {
                 LabeledContent("Server") {
                     HStack(spacing: 6) {
-                        StatusDot(reachable ? .ok : .error)
-                        Text(reachable ? "Answering" : "Not answering")
+                        StatusDot(state.tone)
+                        Text(state.text)
                     }
                 }
             }

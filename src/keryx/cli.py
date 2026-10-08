@@ -1284,9 +1284,12 @@ def models_use(
 
 @models_app.command("serve")
 def models_serve(
-    kind: Annotated[str, typer.Argument(help="llm (llama.cpp) or voice (speech-to-speech).")],
+    kind: Annotated[str, typer.Argument(
+        help="llm (the agent's llama.cpp), voice (speech-to-speech) or voice-llm (the "
+             "voice's own llama.cpp).")],
 ) -> None:
-    """Become the local llm or voice server, as the settings describe it (what the units run)."""
+    """Become a local server — llm, voice or voice-llm — as the settings describe it (what
+    the units run)."""
     settings = _configure()
     try:
         servers.serve(kind, settings)
@@ -1628,13 +1631,14 @@ def service_command(
         name = units.unit_name(settings, manager, kind) if manager else "-"
         state = ("not installed" if not unit["installed"]
                  else "running" if unit["active"] else "installed, not running")
-        typer.echo(f"{kind:<7} {name:<22} {state}")
+        typer.echo(f"{kind:<9} {name:<23} {state}")
 
 
 #: Who installs each model server's unit, since `service install` does not: the command
 #: that installs it, starts it, checks it answers, and removes it again when it does not.
 MODEL_UNIT_OWNERS = {"--llm": ("keryx models start", "the model server"),
-                     "--voice": ("keryx voice use here", "the voice server")}
+                     "--voice": ("keryx voice use here", "the voice server"),
+                     "--voice-llm": ("keryx voice llm here MODEL", "the voice LLM server")}
 
 
 @service_app.command("install")
@@ -1647,15 +1651,23 @@ def service_install(
         bool, typer.Option("--voice", help="Refused: `keryx voice use here` installs, starts "
                                            "and checks the voice server's unit.")
     ] = False,
+    voice_llm_unit: Annotated[
+        bool, typer.Option("--voice-llm", help="Refused: `keryx voice llm here MODEL` (or "
+                                               "`keryx models start --voice-llm`) installs, "
+                                               "starts and checks the voice LLM server's "
+                                               "unit.")
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
     """Install Keryx and its tunnel as services, through the checkout's installer.
 
-    Not the local model servers' units: `keryx models start` and `keryx voice use here`
-    install those, start them and check they answer, and remove the unit again when they
-    do not — a unit installed bare would restart a server that cannot start, for ever.
+    Not the local model servers' units: `keryx models start`, `keryx voice use here` and
+    `keryx voice llm here` install those, start them and check they answer, and remove the
+    unit again when they do not — a unit installed bare would restart a server that cannot
+    start, for ever.
     """
-    flags = [flag for flag, on in (("--llm", llm_unit), ("--voice", voice_unit)) if on]
+    flags = [flag for flag, on in (("--llm", llm_unit), ("--voice", voice_unit),
+                                   ("--voice-llm", voice_llm_unit)) if on]
     if flags:
         owners = " and ".join(f"`{MODEL_UNIT_OWNERS[flag][0]}` for {MODEL_UNIT_OWNERS[flag][1]}"
                               for flag in flags)
@@ -1678,20 +1690,27 @@ def service_uninstall(
     voice_unit: Annotated[
         bool, typer.Option("--voice", help="The voice server's unit, instead of Keryx's.")
     ] = False,
+    voice_llm_unit: Annotated[
+        bool, typer.Option("--voice-llm", help="The voice LLM server's unit, instead of "
+                                               "Keryx's.")
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
-    """Stop and remove Keryx and its tunnel, or the local model servers' (--llm, --voice)."""
-    _install_units(llm_unit=llm_unit, voice_unit=voice_unit, uninstall=True, as_json=as_json)
+    """Stop and remove Keryx and its tunnel, or the local model servers' (--llm, --voice,
+    --voice-llm)."""
+    _install_units(llm_unit=llm_unit, voice_unit=voice_unit, voice_llm_unit=voice_llm_unit,
+                   uninstall=True, as_json=as_json)
 
 
 def _install_units(
-    *, llm_unit: bool = False, voice_unit: bool = False, uninstall: bool = False,
-    as_json: bool, verb: str = INSTALL_THE_SERVICES,
+    *, llm_unit: bool = False, voice_unit: bool = False, voice_llm_unit: bool = False,
+    uninstall: bool = False, as_json: bool, verb: str = INSTALL_THE_SERVICES,
 ) -> None:
     _owner_only(verb)
     settings = _configure_readonly()
     outcome = units.install(settings=settings, llm=llm_unit, voice=voice_unit,
-                            uninstall=uninstall, root=repo_root(), run=units.run_captured)
+                            voice_llm=voice_llm_unit, uninstall=uninstall, root=repo_root(),
+                            run=units.run_captured)
     if outcome.code != 0:
         typer.echo(outcome.message, err=True)
         raise typer.Exit(outcome.code)

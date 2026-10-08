@@ -19,10 +19,11 @@
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #: Set by `parse_install_args` when `--uninstall` was passed.
 UNINSTALL=0
-#: Set by `parse_install_args` for `--llm` / `--voice`: the local model servers' units
-#: (`keryx models serve llm|voice`) instead of Keryx and its tunnel.
+#: Set by `parse_install_args` for `--llm` / `--voice` / `--voice-llm`: the local model
+#: servers' units (`keryx models serve llm|voice|voice-llm`) instead of Keryx and its tunnel.
 LLM=0
 VOICE=0
+VOICE_LLM=0
 
 keryx_cli() {
   # keryx_cli ARGS... — run keryx from the repository, the service's working directory.
@@ -78,20 +79,37 @@ require_paths() {
 }
 
 parse_install_args() {
-  # parse_install_args "$@" — sets UNINSTALL=1 for `--uninstall`, LLM=1 for `--llm` and
-  # VOICE=1 for `--voice`, in any order; exits 2 on anything else.
+  # parse_install_args "$@" — sets UNINSTALL=1 for `--uninstall`, LLM=1 for `--llm`,
+  # VOICE=1 for `--voice` and VOICE_LLM=1 for `--voice-llm`, in any order; exits 2 on
+  # anything else.
   local arg
   for arg in "$@"; do
     case "$arg" in
       --uninstall) UNINSTALL=1 ;;
       --llm) LLM=1 ;;
       --voice) VOICE=1 ;;
+      --voice-llm) VOICE_LLM=1 ;;
       *)
-        echo "usage: $(basename "$0") [--llm] [--voice] [--uninstall]" >&2
+        echo "usage: $(basename "$0") [--llm] [--voice] [--voice-llm] [--uninstall]" >&2
         exit 2
         ;;
     esac
   done
+}
+
+require_own_voice_llm_port() {
+  # require_own_voice_llm_port — exit 1, saying so, when VOICE_LLM_SERVER_PORT is the port of
+  # the agent's model server or the voice server: two servers on one port both fail to bind
+  # and restart for ever. Nothing is installed first. (`servers.port_clash` says it the same.)
+  local port others=()
+  port="$(config_value VOICE_LLM_SERVER_PORT)" || exit 1
+  [[ "$port" == "$(config_value AGENT_SERVER_PORT)" ]] && others+=("the agent's model server")
+  [[ "$port" == "$(config_value VOICE_SERVER_PORT)" ]] && others+=("the voice server")
+  (( ${#others[@]} )) || return 0
+  local names="${others[0]}"
+  (( ${#others[@]} > 1 )) && names="$names and ${others[1]}"
+  echo "The voice LLM's server and $names are both set to port $port: give the voice LLM a port of its own." >&2
+  exit 1
 }
 
 require_command() {

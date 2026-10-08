@@ -24,6 +24,11 @@ import httpx
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 #: What a client sends where its SDK refuses an empty key and the server checks none.
 PLACEHOLDER_BEARER = "keryx-local"
+#: Where the servers Keryx runs on this machine listen: loopback, never the LAN.
+LOOPBACK_HOST = "127.0.0.1"
+#: The API a client speaks to an endpoint that says which (`Endpoint.api`): OpenAI's
+#: Responses API, the one the voice pipeline's words are asked over today.
+RESPONSES_API = "responses"
 PROBE_TIMEOUT_S = 10.0
 
 #: Name suffixes that never leave a private network: mDNS, Tailscale's MagicDNS, and the
@@ -38,11 +43,17 @@ TAILNET_NETWORKS = (
 
 @dataclass(frozen=True)
 class Endpoint:
-    """One server's `.../v1` root, its optional Bearer key, and a model on it."""
+    """One server's `.../v1` root, its optional Bearer key, and a model on it.
+
+    `api` is the API a client speaks to it, where the endpoint is the one to say (the voice
+    LLM's is `RESPONSES_API`); None leaves it to the client, as every other endpoint does.
+    A value rather than a call site's constant, so a second API is a second value.
+    """
 
     base_url: str
     api_key: str | None = field(default=None, repr=False)
     model: str = ""
+    api: str | None = None
 
     @classmethod
     def parse(cls, url: str, *, api_key: str | None = None, model: str = "") -> "Endpoint":

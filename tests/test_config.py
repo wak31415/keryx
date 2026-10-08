@@ -311,7 +311,7 @@ def test_defaults_match_spec_table():
     assert settings.transcription_language == ""
     assert settings.clock_format == "24h"
     assert settings.anthropic_api_key is None
-    assert settings.subagent_model == "claude-opus-5-5"
+    assert settings.claude_model == "claude-opus-5-5"
     assert settings.subagent_max_turns == 200
     assert settings.subagent_max_budget_usd == 10.0
     assert settings.host == "127.0.0.1"
@@ -1000,3 +1000,57 @@ def test_local_as_the_default_needs_a_server(tmp_path, every_agent_installed):
     assert "LOCAL_AGENT_BASE_URL" in (settings.agent_refusal() or "")
     served = settings.model_copy(update={"local_agent_base_url": "http://box/v1"})
     assert served.agent_refusal() is None
+
+
+# --- the voice's own model settings ---------------------------------------------------
+
+
+def test_the_voice_model_settings_default_to_what_runs_today():
+    """Nothing set is today's install: the mode worked out as before, the words shared."""
+    settings = Settings(_env_file=None, openai_api_key="test")
+
+    assert settings.voice_mode_explicit is None and settings.voice_mode == "openai"
+    assert settings.voice_llm == "shared"
+    assert (settings.voice_llm_model, settings.voice_llm_base_url,
+            settings.voice_llm_api_key) == (None, None, None)
+    assert settings.voice_llm_server_port == 8091
+
+
+def test_a_blank_voice_mode_or_voice_llm_address_is_unset():
+    settings = Settings(_env_file=None, openai_api_key="test", voice_mode_explicit=" ",
+                        voice_llm_model="", voice_llm_base_url="", voice_llm_api_key="")
+
+    assert settings.voice_mode_explicit is None
+    assert (settings.voice_llm_model, settings.voice_llm_base_url,
+            settings.voice_llm_api_key) == (None, None, None)
+
+
+def test_the_voice_llms_address_is_kept_as_its_v1_root():
+    settings = Settings(_env_file=None, openai_api_key="test",
+                        voice_llm_base_url="https://api.openai.com")
+
+    assert settings.voice_llm_base_url == "https://api.openai.com/v1"
+
+
+@pytest.mark.parametrize(("field", "value"), [("VOICE_MODE", "local"), ("voice_llm", "cloud"),
+                                              ("voice_llm_server_port", 0),
+                                              ("voice_llm_server_port", 70000)])
+def test_a_voice_model_setting_outside_its_values_is_refused(field, value):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, openai_api_key="test", **{field: value})
+
+
+@pytest.mark.parametrize(("old", "field", "value"), [
+    ("SUBAGENT_MODEL", "claude_model", "claude-sonnet-5"),
+    ("LLM_SERVER_MODEL", "agent_server_model", "qwen3-coder-30b-a3b"),
+    ("LLM_SERVER_PORT", "agent_server_port", 8099),
+])
+def test_a_renamed_setting_is_read_under_its_old_name_and_the_new_one_wins(
+    monkeypatch, old, field, value
+):
+    monkeypatch.setenv(old, str(value))
+    assert getattr(Settings(_env_file=None, openai_api_key="test"), field) == value
+
+    new = env_var_name(field)
+    monkeypatch.setenv(new, str(value + 1) if isinstance(value, int) else f"{value}-new")
+    assert getattr(Settings(_env_file=None, openai_api_key="test"), field) != value

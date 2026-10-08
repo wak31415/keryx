@@ -30,8 +30,8 @@ import KeryxPreview
     }
 
     @Test func aBuiltInListWithItsErrorIsAnAnswer() async throws {
-        let fake = FakeRunner { _ in Self.ok(PreviewData.data("options-subagent.json")) }
-        let list = try await CLIClient(location: .fixture, runner: fake).options(key: "SUBAGENT_MODEL")
+        let fake = FakeRunner { _ in Self.ok(PreviewData.data("options-claude.json")) }
+        let list = try await CLIClient(location: .fixture, runner: fake).options(key: "CLAUDE_MODEL")
         #expect(!list.live)
         #expect(list.error != nil)
         #expect(list.options.first?.label == "Claude Opus")

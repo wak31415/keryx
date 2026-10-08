@@ -31,7 +31,7 @@ def test_a_model_on_this_machine_is_downloaded_served_and_tried(make_ctx, world)
 
     assert ctx.ui.done(), ctx.ui.answers
     settings = ctx.refresh()
-    assert settings.llm_server_model == CODER.key
+    assert settings.agent_server_model == CODER.key
     assert settings.local_agent_base_url == "http://127.0.0.1:8090/v1"
     assert settings.local_agent_model == CODER.key
     assert settings.local_agent_api == "anthropic-messages"
@@ -84,7 +84,7 @@ def test_a_download_that_fails_says_so_and_saves_nothing(make_ctx, world):
     local_models.run_section(ctx)
 
     assert ctx.ui.lines("error") == ["the download stopped (ReadTimeout)"]
-    assert ctx.refresh().llm_server_model is None
+    assert ctx.refresh().agent_server_model is None
 
 
 def test_the_voice_on_the_same_gpu_keeps_room_for_itself(make_ctx, world):
@@ -96,7 +96,7 @@ def test_the_voice_on_the_same_gpu_keeps_room_for_itself(make_ctx, world):
     local_models.run_section(ctx)
 
     # 25 GB for the tested model and 3 for the voice do not fit in 27: the next one does.
-    assert ctx.refresh().llm_server_model == "qwen3.8-27b"
+    assert ctx.refresh().agent_server_model == "qwen3.8-27b"
     assert any("kept for the voice server" in line for line in ctx.ui.lines("note"))
 
 
@@ -112,7 +112,7 @@ def test_ollama_already_here_pulls_the_model_and_serves_it(make_ctx, world):
     assert scripts(world) == [["ollama", "pull", entry.ollama]]
     settings = ctx.refresh()
     assert settings.local_agent_base_url == "http://127.0.0.1:11434/v1"
-    assert settings.local_agent_model == entry.ollama and settings.llm_server_model is None
+    assert settings.local_agent_model == entry.ollama and settings.agent_server_model is None
     assert not [c for c in world.calls if c[0] in ("download", "wait")]
     # Ollama has no "a file of my own": that choice is llama.cpp's.
     assert local_models.OWN_FILE not in [c.value for c in ctx.ui.choices["Which model?"]]
@@ -127,7 +127,7 @@ def test_no_runtime_installs_llama_cpp(make_ctx, world, monkeypatch):
     local_models.run_section(ctx)
 
     assert ("install_llama_cpp",) in world.calls
-    assert ctx.refresh().llm_server_model == "qwen3.5-4b"
+    assert ctx.refresh().agent_server_model == "qwen3.5-4b"
 
 
 def test_declining_llama_cpp_stops_there(make_ctx, world):
@@ -151,7 +151,7 @@ def test_a_machine_nothing_fits_can_bring_its_own_gguf(make_ctx, world, tmp_path
 
     assert any("Nothing in the list fits" in line for line in ctx.ui.lines("warn"))
     settings = ctx.refresh()
-    assert settings.llm_server_model == str(own) and settings.local_agent_model == "small-model"
+    assert settings.agent_server_model == str(own) and settings.local_agent_model == "small-model"
 
 
 def test_a_model_server_that_does_not_come_up_points_at_its_log(make_ctx, world):
@@ -301,7 +301,7 @@ def test_a_voice_server_that_refuses_is_kept_only_if_asked(make_ctx, world):
 def test_back_to_openai_and_no_local_agent(make_ctx, world):
     ConfigStore().set({"VOICE_BASE_URL": "http://127.0.0.1:8765/v1",
                        "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
-                       "LOCAL_AGENT_MODEL": "m", "LLM_SERVER_MODEL": CODER.key,
+                       "LOCAL_AGENT_MODEL": "m", "AGENT_SERVER_MODEL": CODER.key,
                        "AGENTS_ENABLED": "claude,local", "AGENT_BACKEND": "local"})
     ctx = make_ctx([("model run", "none"), ("voice on a call", "openai")])
 
@@ -353,7 +353,7 @@ def test_ollama_here_but_llama_cpp_chosen_on_a_mac_with_homebrew(make_ctx, world
     local_models.run_section(ctx)
 
     assert scripts(world)[0] == ["brew", "install", "llama.cpp"]
-    assert ctx.refresh().llm_server_model == "qwen3.5-4b"
+    assert ctx.refresh().agent_server_model == "qwen3.5-4b"
 
 
 def test_a_failed_install_or_pull_stops_with_the_reason(make_ctx, world, monkeypatch):

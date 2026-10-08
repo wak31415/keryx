@@ -44,7 +44,7 @@ def test_a_claude_alias_resolves_and_an_id_passes_through(settings, name, expect
 
 @pytest.mark.parametrize("name", [None, "", "  "])
 def test_no_model_is_the_agents_configured_default(settings, name):
-    settings.subagent_model = "claude-sonnet-5"
+    settings.claude_model = "claude-sonnet-5"
 
     assert resolve_model("claude", name, settings) == "claude-sonnet-5"
 

@@ -7,7 +7,7 @@ extension ScreenCatalog {
     /// running (with sizes and without), stopping, failed, finished and refused; the model
     /// server not running, and Set Up starting it first then going on to the voice (and
     /// failing there); no local model at all; a server saved with a warning and one that
-    /// failed its handshake; and the window.
+    /// failed its handshake; This Mac with Advanced open; and the window.
     @MainActor static var voiceEntries: [Entry] {
         let screen = CGSize(width: 760, height: 720)
         // Room for every step of a setup that starts the model server first.
@@ -25,6 +25,9 @@ extension ScreenCatalog {
             },
             Entry("voice-here-picked", size: screen) {
                 VoiceView(mode: .here).environment(AppModel.preview())
+            },
+            Entry("voice-here-advanced", size: tall) {
+                VoiceView(mode: .here, advancedOpen: true).environment(AppModel.preview())
             },
             Entry("voice-here-setting-up", size: screen) {
                 VoiceView(mode: .here).environment(settingUp(.holding([downloading])))

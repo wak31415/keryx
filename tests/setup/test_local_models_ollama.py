@@ -9,7 +9,7 @@ ENTRY = by_key("gpt-oss-20b")
 
 
 def test_ollama_over_a_llama_server_removes_its_unit(make_ctx, world):
-    ConfigStore().set({"LLM_SERVER_MODEL": "qwen3.5-4b"})
+    ConfigStore().set({"AGENT_SERVER_MODEL": "qwen3.5-4b"})
     world.llama, world.ollama = None, "/usr/local/bin/ollama"
     ctx = make_ctx([("model run", "here"), ("voice on a call", "openai"),
                     ("What should run the model?", "ollama"), ("Which model?", ENTRY.key),
@@ -20,7 +20,7 @@ def test_ollama_over_a_llama_server_removes_its_unit(make_ctx, world):
     ran = [argv for kind, argv in (c[:2] for c in world.calls if c[0] == "script")]
     assert ran[0] == ["ollama", "pull", ENTRY.ollama]
     assert ran[1][1:] == ["--llm", "--uninstall"]
-    assert ctx.refresh().llm_server_model is None
+    assert ctx.refresh().agent_server_model is None
     assert any("Ollama serves the model now" in line for line in ctx.ui.lines("note"))
 
 

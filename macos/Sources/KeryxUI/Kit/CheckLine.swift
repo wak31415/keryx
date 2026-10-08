@@ -52,7 +52,14 @@ struct CheckLine: View {
 
 /// A check's detail as the app says it.
 enum CheckWording {
-    static let serviceNotInstalled = "The background service isn't installed"
+    static let serviceNotInstalled = "Keryx isn't answering calls yet"
+
+    /// The titles the app says otherwise: the service's checks, as what they mean to someone
+    /// who never sees the unit.
+    static let titles = ["Service manager": "Runs in the background", "Service running": "Running"]
+
+    /// A check's title as the app says it.
+    static func title(_ title: String) -> String { titles[title] ?? title }
 
     /// The sentence to show, and what is held back for Show Details: a detail written for a
     /// terminal (a command, a path, a traceback — an older CLI's, before `hint` existed) is
@@ -81,15 +88,14 @@ enum CheckWording {
 }
 
 /// Runs a fix's button outside the Setup Assistant (the Overview): a request to another
-/// screen, the secret sheet, the service's install after its question, the model server or
-/// the speech models started (and shown on Local Models), a trusted page opened.
+/// screen, the secret sheet, Keryx started, the model server or the speech models started
+/// (and shown on Local Models), a trusted page opened.
 struct FixPerformer: ViewModifier {
     @Binding var action: SetupAction?
 
     @Environment(AppModel.self) private var model
     @Environment(\.openURL) private var openURL
     @State private var secret: SecretRequest?
-    @State private var confirmingInstall = false
     @State private var failure: KeryxError?
 
     func body(content: Content) -> some View {
@@ -102,13 +108,6 @@ struct FixPerformer: ViewModifier {
             .sheet(item: $secret, onDismiss: { Task { await model.refresh(.doctor, .setupPlan, .config) } }) { request in
                 SecretSheet(key: request.key, title: request.title, replacing: request.replacing)
             }
-            .confirmationDialog(ServiceWording.Change.install.question, isPresented: $confirmingInstall) {
-                Button(ServiceWording.Change.install.button) { install() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(ServiceWording.Change.install.message(assistant: Wording.assistant(model.status.value)
-                    ?? "the assistant", liveCalls: 0))
-            }
             .errorAlert($failure)
     }
 
@@ -118,8 +117,8 @@ struct FixPerformer: ViewModifier {
             model.request(request)
         case let .secret(key, title, replacing):
             secret = SecretRequest(key: key, title: title, replacing: replacing)
-        case .installService:
-            confirmingInstall = true
+        case .startKeryx:
+            start()
         case .startModelServer:
             model.runModelServer()
             model.show(inModels: ModelsAnchor.modelServer)
@@ -134,9 +133,9 @@ struct FixPerformer: ViewModifier {
         }
     }
 
-    private func install() {
+    private func start() {
         Task {
-            if case let .failure(error) = await model.installService() { failure = error }
+            if case let .failure(error) = await model.startAnswering() { failure = error }
         }
     }
 }

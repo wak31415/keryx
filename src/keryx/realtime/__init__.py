@@ -13,6 +13,10 @@ def make_provider(settings: Settings) -> RealtimeProvider:
     """A fresh, unconnected provider for one session, on `settings.voice_endpoint`.
 
     The phone server and `keryx loopback` both build theirs here, so a voice server of the
-    owner's own is the same one wherever a session opens.
+    owner's own is the same one wherever a session opens. `keryx serve` refuses to start
+    without one (`voice_refusal`); this is that refusal, for anything that did not ask.
     """
-    return OpenAIRealtimeClient(settings.voice_endpoint)
+    endpoint = settings.voice_endpoint
+    if endpoint is None:
+        raise ValueError(settings.voice_refusal() or "the voice has nowhere to go")
+    return OpenAIRealtimeClient(endpoint)

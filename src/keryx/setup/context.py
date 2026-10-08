@@ -156,6 +156,8 @@ class Probes:
     unit_installed: Callable[[str], bool] = use.unit_installed
     #: Whether the server the voice server takes its words from answers (`voice.words_up`).
     words_up: Callable[[Endpoint | None], bool] = voice.words_up
+    #: Whether the voice LLM's own server here serves its model (`voice.voice_llm_up`).
+    voice_llm_up: Callable[[Endpoint | None], bool] = voice.voice_llm_up
     #: The voice server's speech models: speech-to-speech's own Python, the fetch it runs,
     #: and whether they are all in the Hugging Face cache (`localmodels.speech`).
     speech_python: Callable[[], str | None] = runtimes.speech_to_speech_python

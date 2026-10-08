@@ -15,32 +15,41 @@ public struct RootView: View {
 
     public var body: some View {
         @Bindable var model = model
-        NavigationSplitView {
-            List(SidebarItem.allCases, selection: $model.selection) { item in
-                Label(item.title, systemImage: item.systemImage)
-                    .tag(item)
+        VStack(spacing: 0) {
+            // A setting saved as its own row went (a tab, a sidebar section, or a
+            // programmatic selection change) has no row left to show a refusal on; this
+            // shows it over whatever section is up instead, until it is dismissed.
+            if let failure = model.settingSaveFailure {
+                SettingSaveFailureBanner(failure: failure)
+                Divider()
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
-        } detail: {
-            detail
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    Task { await model.refreshShown() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+            NavigationSplitView {
+                List(SidebarItem.allCases, selection: $model.selection) { item in
+                    Label(item.title, systemImage: item.systemImage)
+                        .tag(item)
                 }
-                .help("Refresh")
+                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 260)
+            } detail: {
+                detail
             }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await model.refreshShown() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .help("Refresh")
+                }
+            }
+            // A request that only shows its section is answered by showing it.
+            .onChange(of: model.requested, initial: true) { _, requested in
+                guard let requested, Self.answers(requested) != nil else { return }
+                model.didHandle(requested)
+            }
+            .navigationTitle(onboarding ? "Keryx" : model.selection.title)
+            .navigationSubtitle(onboarding ? "" : subtitle)
         }
-        // A request that only shows its section is answered by showing it.
-        .onChange(of: model.requested, initial: true) { _, requested in
-            guard let requested, Self.answers(requested) != nil else { return }
-            model.didHandle(requested)
-        }
-        .navigationTitle(onboarding ? "Keryx" : model.selection.title)
-        .navigationSubtitle(onboarding ? "" : subtitle)
         .frame(minWidth: 860, minHeight: 560)
     }
 
@@ -74,5 +83,36 @@ public struct RootView: View {
     private var subtitle: String {
         let parts = [Wording.assistant(model.status.value), Wording.shortStatus(model.menuState)]
         return parts.compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+/// A setting's save, refused or locally invalid, that landed with no row left to show it on
+/// (`AppModel.settingSaveFailure`): the same sentence-plus-Show-Details shape as everywhere
+/// else, over the whole window, with its own dismiss — never blocking, since nothing here
+/// needs an answer.
+struct SettingSaveFailureBanner: View {
+    @Environment(AppModel.self) private var model
+    let failure: StreamFailure
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(failure.message)
+                .problemStyle()
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let detail = failure.detail {
+                DetailsDisclosure(detail)
+            }
+            Spacer(minLength: 8)
+            Button {
+                model.dismissSettingSaveFailure()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(10)
+        .background(Color.red.opacity(0.08))
     }
 }

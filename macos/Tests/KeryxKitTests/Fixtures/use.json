@@ -1,13 +1,16 @@
 {
   "saved": {
-    "LLM_SERVER_MODEL": "qwen3-coder-30b-a3b",
-    "LLM_SERVER_PORT": 8090,
+    "AGENT_SERVER_MODEL": "qwen3-coder-30b-a3b",
+    "AGENT_SERVER_PORT": 8090,
     "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
     "LOCAL_AGENT_MODEL": "qwen3-coder-30b-a3b",
-    "LOCAL_AGENT_API_KEY": null,
     "LOCAL_AGENT_API": "anthropic-messages",
-    "AGENTS_ENABLED": "claude,codex,local",
-    "AGENT_BACKEND": "claude"
+    "AGENTS_ENABLED": [
+      "claude",
+      "local"
+    ],
+    "AGENT_BACKEND": "claude",
+    "LOCAL_AGENT_API_KEY": null
   },
   "llama_server": "/opt/homebrew/bin/llama-server",
   "restart_needed": true

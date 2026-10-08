@@ -472,7 +472,7 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENAI_API_KEY", "test")
     monkeypatch.setenv("PROJECTS_ROOT", str(tmp_path / "projects"))
-    ConfigStore().set({"ASSISTANT_NAME": "Vega", "LLM_SERVER_MODEL": MODEL.key,
+    ConfigStore().set({"ASSISTANT_NAME": "Vega", "AGENT_SERVER_MODEL": MODEL.key,
                        "VOICE_BASE_URL": "http://127.0.0.1:8765/v1",
                        "LOCAL_AGENT_BASE_URL": "http://127.0.0.1:8090/v1",
                        "LOCAL_AGENT_MODEL": MODEL.key,
@@ -841,7 +841,7 @@ def _start_failed(monkeypatch, settings, scripts):
 
 
 def _start_refused(monkeypatch, settings, scripts):
-    ConfigStore().set({"LLM_SERVER_MODEL": None})
+    ConfigStore().set({"AGENT_SERVER_MODEL": None})
 
 
 def _start_cancelled(monkeypatch, settings, scripts):

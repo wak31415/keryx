@@ -6,8 +6,9 @@
 
 [Unit]
 Description=Keryx: the local voice server (speech-to-speech)
-# The voice takes its words from the local model; started after it when that is here too.
-After=keryx-llm.service
+# The voice takes its words from the voice LLM: the local agent's model server, or one of its
+# own; started after whichever of them is here too.
+After=keryx-llm.service keryx-voice-llm.service
 
 [Service]
 Type=simple

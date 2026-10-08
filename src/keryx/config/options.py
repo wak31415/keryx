@@ -352,10 +352,11 @@ _openai_realtime = _openai(
 
 
 def realtime_models(settings: Settings, sources: Sources) -> Found:
-    """OpenAI's Realtime models — or, with `VOICE_BASE_URL`, that server's, since an OpenAI
-    id offered for a server of the owner's own would leave every call silent."""
-    if settings.voice_base_url:
-        return _server(settings.voice_endpoint, sources.get, "")
+    """OpenAI's Realtime models — or, with a voice of the owner's own, that server's, since
+    an OpenAI id offered for a server of the owner's own would leave every call silent."""
+    if settings.voice_mode != "openai":
+        return _server(settings.voice_endpoint, sources.get,
+                       _no_key("There's no voice server address"))
     return _openai_realtime(settings, sources)
 
 
@@ -453,7 +454,7 @@ def _codex_env(settings: Settings) -> dict[str, str]:
     return env
 
 
-#: A blank `CODEX_MODEL` is Codex choosing. `SUBAGENT_MODEL` has no such option: it is a
+#: A blank `CODEX_MODEL` is Codex choosing. `CLAUDE_MODEL` has no such option: it is a
 #: plain string with a default, and blank names no model at all.
 CODEX_DEFAULT = Option("", "Codex's default")
 
@@ -546,10 +547,10 @@ PROVIDERS: dict[str, Callable[[Settings, Sources], Found]] = {
     "OPENAI_WEB_SEARCH_MODEL": web_search_models,
     "OPENAI_VOICE": realtime_voices,
     "ASSISTANT_NAME": assistant_names,
-    "SUBAGENT_MODEL": claude_models,
+    "CLAUDE_MODEL": claude_models,
     "CODEX_MODEL": codex_models,
     "LOCAL_AGENT_MODEL": local_agent_models,
-    "LLM_SERVER_MODEL": served_models,
+    "AGENT_SERVER_MODEL": served_models,
     "VOICE_SERVER_VOICE": kokoro_voices,
     "VOICE_SERVER_STT": _speech("stt", VOICE_SERVER_STT),
     "VOICE_SERVER_TTS": _speech("tts", VOICE_SERVER_TTS),

@@ -132,25 +132,111 @@ import KeryxPreview
         bad.reachable = false
         bad.error = "PUBLIC_HOST must be a bare hostname"
         #expect(PhoneWording.reachable(bad).hint == "PUBLIC_HOST must be a bare hostname.")
-        #expect(PhoneWording.tunnelService(PreviewData.phoneTunnelUnset).text == "Not installed")
+        #expect(PhoneWording.tunnelService(PreviewData.phoneTunnelUnset).text == "Not yet")
     }
 }
 
-/// The Overview's service rows.
+/// The Overview's "Answering calls" row, and what quitting asks.
 @Suite struct ServiceWordingTests {
-    @Test func quittingAsksWhileTheServiceIsChanging() {
+    static var notInstalled: StatusReport {
+        var status = PreviewData.status
+        status.service.installed = false
+        status.service.active = false
+        status.health.reachable = false
+        return status
+    }
+
+    @Test func aRunningKeryxAnswersAndNamesItsUnitOnlyInTheTooltip() {
+        let line = ServiceWording.answering(PreviewData.status, step: .running, change: nil, failure: nil)
+        #expect(line.text == "Yes" && line.tone == .ok && !line.offersStart)
+        #expect(line.help == "Running as launchd dev.keryx.agent")
+        #expect(line.hint == nil)
+        for text in [line.text, line.hint ?? ""] {
+            #expect(!text.lowercased().contains("service") && !text.contains("launchd"))
+        }
+    }
+
+    @Test func startIsOfferedOnlyWhenKeryxShouldRunAndDoesNot() {
+        let should = ServiceWording.answering(Self.notInstalled, step: .start, change: nil, failure: nil)
+        #expect(should.text == "No" && should.offersStart)
+        let waiting = ServiceWording.answering(Self.notInstalled, step: .waitingForSetup, change: nil, failure: nil)
+        #expect(waiting.text == "Not yet" && !waiting.offersStart)
+        #expect(waiting.hint == "Keryx starts once setup is finished")
+        let unknown = ServiceWording.answering(Self.notInstalled, step: .unknown, change: nil, failure: nil)
+        #expect(!unknown.offersStart)
+    }
+
+    @Test func aFailedStartSaysWhyAndOffersStartAgain() {
+        let failure = KeryxError.failed(command: "keryx service install", exitCode: 1,
+                                        message: "PUBLIC_HOST is not set")
+        let line = ServiceWording.answering(Self.notInstalled, step: .waitingForSetup, change: nil, failure: failure)
+        #expect(line.tone == .error && line.offersStart)
+        #expect(line.hint?.hasPrefix("Keryx couldn't start") == true)
+    }
+
+    @Test func aStartUnderWayIsAWordAndASpinner() {
+        let line = ServiceWording.answering(Self.notInstalled, step: .start, change: .installing, failure: nil)
+        #expect(line.text == "Starting…" && line.busy && !line.offersStart)
+        #expect(ServiceWording.answering(PreviewData.status, step: .running, change: .uninstalling,
+                                         failure: nil).text == "Stopping…")
+    }
+
+    @Test func aKeryxStartedByHandAnswersWithoutTheUnit() {
+        var byHand = Self.notInstalled
+        byHand.health.reachable = true
+        let line = ServiceWording.answering(byHand, step: .running, change: nil, failure: nil)
+        #expect(line.text == "Yes" && !line.offersStart)
+        #expect(line.hint == "Started outside this app")
+    }
+
+    @Test func quittingAsksWhileKeryxStarts() {
         let alone = Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
                                       changingService: .installing)
-        #expect(alone?.message == "Keryx's service is being installed. Quit anyway?")
-        #expect(alone?.detail == "It stops, and may be left part done. Install… in the Overview runs it again.")
+        #expect(alone?.message == "Keryx is starting. Quit anyway?")
+        #expect(alone?.detail == "It stops part way.")
+        #expect(alone?.suppressible == false)
         // With something else under way, one question names both.
         let both = Quitting.question(downloading: true, settingUpVoice: false, assistant: "Lyra",
-                                     changingService: .uninstalling)
-        #expect(both?.message == "A model is downloading and Keryx's service is being uninstalled. Quit anyway?")
-        #expect(both?.detail == "Both stop. The download picks up where it left off, and the service's uninstall "
-            + "may be left part done (Uninstall… in the Overview runs it again).")
+                                     changingService: .installing)
+        #expect(both?.message == "A model is downloading and Keryx is starting. Quit anyway?")
+        #expect(both?.detail == "Both stop. The download picks up where it left off, and Keryx stops starting.")
         #expect(Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
                                   changingService: nil) == nil)
+    }
+
+    @Test func quittingSaysItStopsAnsweringCalls() {
+        let plain = Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
+                                      stopsAnswering: true, confirm: true)
+        #expect(plain == Quitting.Question(
+            message: "Quit Keryx?",
+            detail: "Lyra stops answering calls until you open Keryx again. To keep answering, close the window instead.",
+            suppressible: true))
+        // Once the owner has said not to ask, a plain quit just quits.
+        #expect(Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
+                                  stopsAnswering: true, confirm: false) == nil)
+        // Without a unit to stop, nothing to say.
+        #expect(Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
+                                  stopsAnswering: false, confirm: true) == nil)
+        // Anything else under way says it too.
+        let download = Quitting.question(downloading: true, settingUpVoice: false, assistant: "Lyra",
+                                         stopsAnswering: true, confirm: false)
+        #expect(download?.detail == "It will pick up where it left off next time. "
+            + "Lyra stops answering calls until you open Keryx again.")
+        #expect(download?.suppressible == false)
+    }
+
+    @Test func aCallInProgressAlwaysAsks() {
+        let one = Quitting.question(downloading: false, settingUpVoice: false, assistant: "Lyra",
+                                    stopsAnswering: true, liveCalls: 1, confirm: false)
+        #expect(one == Quitting.Question(
+            message: "1 call is in progress. Quit anyway?",
+            detail: "The call in progress ends, and Lyra stops answering calls until you open Keryx again."))
+        let two = Quitting.question(downloading: false, settingUpVoice: false, assistant: nil,
+                                    stopsAnswering: true, liveCalls: 2, confirm: false)
+        #expect(two?.message == "2 calls are in progress. Quit anyway?")
+        #expect(two?.detail == "The 2 calls in progress end, and the assistant stops answering calls "
+            + "until you open Keryx again.")
+        #expect(two?.suppressible == false)
     }
 
     @Test func quittingNamesAWriteStillGoing() {
@@ -165,24 +251,14 @@ import KeryxPreview
         #expect(both?.detail.hasSuffix("and a change cut short may be left half made.") == true)
     }
 
-    @Test func quittingNamesTheServiceAndASignInTogether() {
+    @Test func quittingNamesKeryxStartingAndASignInTogether() {
         let both = Quitting.question(downloading: false, settingUpVoice: false, signingIn: "Claude",
                                      signInDetail: SignInWording.quitDetail(.claude), assistant: "Lyra",
                                      changingService: .installing)
         #expect(both?.message
-            == "A sign-in to Claude is still going and Keryx's service is being installed. Quit anyway?")
+            == "A sign-in to Claude is still going and Keryx is starting. Quit anyway?")
         #expect(both?.detail.hasPrefix("Both stop. The sign-in to Claude can be started again later, ") == true)
-        #expect(both?.detail.contains("the service's install may be left part done") == true)
-    }
-
-    @Test func uninstallingSaysWhatStopsAndWhatIsKept() {
-        let message = ServiceWording.Change.uninstall.message(assistant: "Lyra", liveCalls: 0)
-        #expect(message.contains("Lyra won't answer the phone"))
-        #expect(message.contains("settings and what Keryx remembers are kept"))
-        #expect(ServiceWording.Change.uninstall.message(assistant: "Lyra", liveCalls: 1).hasSuffix("The call in progress ends."))
-        #expect(ServiceWording.Change.uninstall.message(assistant: "Lyra", liveCalls: 2).hasSuffix("The 2 calls in progress end."))
-        #expect(ServiceWording.Change.install.question == "Install Keryx as a Service?")
-        #expect(ServiceWording.Change.uninstall.button == "Uninstall")
+        #expect(both?.detail.contains("Keryx stops starting") == true)
     }
 
     @Test func theTunnelUnitIsAWord() {

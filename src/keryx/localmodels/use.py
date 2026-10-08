@@ -21,16 +21,19 @@ import httpx
 from keryx.config import Settings
 from keryx.endpoints import Endpoint
 from keryx.localmodels import runtimes
-from keryx.localmodels.servers import HOST
+from keryx.localmodels.servers import HOST, free_port_avoiding
 from keryx.restart import service
 from keryx.restart.service import ServiceTarget
 
 #: How long a loopback server may take to answer whether it is up.
 REACH_TIMEOUT_S = 1.0
-#: Each server's unit, by service manager: what `scripts/install-*.sh --llm|--voice` install.
+#: Each server's unit, by service manager: what `scripts/install-*.sh --llm|--voice|
+#: --voice-llm` install. `keryx.units` lists them beside Keryx's own.
 UNITS = {
-    "launchd": {"llm": "dev.keryx.llm", "voice": "dev.keryx.voice"},
-    "systemd": {"llm": "keryx-llm.service", "voice": "keryx-voice.service"},
+    "launchd": {"llm": "dev.keryx.llm", "voice": "dev.keryx.voice",
+                "voice_llm": "dev.keryx.voice-llm"},
+    "systemd": {"llm": "keryx-llm.service", "voice": "keryx-voice.service",
+                "voice_llm": "keryx-voice-llm.service"},
 }
 
 
@@ -46,18 +49,27 @@ def llama_values(
     `alias`, and point the local agent at it.
 
     The port is kept when the model server is already ours — the port is taken by itself —
-    and otherwise asked for, from `LLM_SERVER_PORT` up, so it never lands on another's.
+    and otherwise asked for, from `AGENT_SERVER_PORT` up, so it never lands on another's,
+    nor on the voice LLM's or the voice server's, which may not be running yet.
     """
-    port = settings.llm_server_port
-    if not settings.llm_server_model:
-        port = free_port(port)
+    port = settings.agent_server_port
+    if not settings.agent_server_model:
+        port = free_port_avoiding(free_port, port, {settings.voice_llm_server_port,
+                                                    settings.voice_server_port})
     return {
-        "LLM_SERVER_MODEL": model,
-        "LLM_SERVER_PORT": port,
+        "AGENT_SERVER_MODEL": model,
+        "AGENT_SERVER_PORT": port,
         "LOCAL_AGENT_BASE_URL": f"http://{HOST}:{port}/v1",
         "LOCAL_AGENT_MODEL": alias,
         **messages_harness(),
     }
+
+
+def voice_llm_port(settings: Settings, *, free_port: Callable[[int], int]) -> int:
+    """A port for the voice LLM's own server, from `VOICE_LLM_SERVER_PORT` up, never the
+    agent's model server's or the voice server's, whether or not they are running."""
+    return free_port_avoiding(free_port, settings.voice_llm_server_port,
+                              {settings.agent_server_port, settings.voice_server_port})
 
 
 def enable_local(settings: Settings, *, default: bool) -> dict[str, Any]:
@@ -80,14 +92,14 @@ def server_status(
     """The model server, the voice server and the local agent, as the settings describe
     them and as the machine finds them. `installed` is asked "llm" or "voice"; `probe` is
     asked a `…/v1` address, and only when the settings name one. No key is in it."""
-    model = settings.llm_server_model
-    llm_url = f"http://{HOST}:{settings.llm_server_port}/v1" if model else None
+    model = settings.agent_server_model
+    llm_url = f"http://{HOST}:{settings.agent_server_port}/v1" if model else None
     llm_up, served = probe(llm_url) if llm_url else (False, None)
     voice_url = settings.voice_base_url or None
     return {
         "llm": {
             "model": model,
-            "port": settings.llm_server_port,
+            "port": settings.agent_server_port,
             "url": llm_url,
             "binary": runtimes.llama_server(settings.cache_dir, lookup=which),
             "unit_installed": installed("llm"),
@@ -160,7 +172,9 @@ def unit_installed(
     platform: str = sys.platform,
     is_installed: Callable[[ServiceTarget], bool] | None = None,
 ) -> bool:
-    """Whether the service manager knows the `kind` ("llm" or "voice") server's unit."""
+    """Whether the `kind` ("llm", "voice" or "voice_llm") server's unit is installed: its
+    manager has it loaded, or its unit file is on disk — a server `keryx service stop
+    --all` booted out is installed and stopped, as `service --json` says it."""
     if platform == "darwin":
         manager = "launchd"
     elif platform.startswith("linux"):
@@ -168,5 +182,5 @@ def unit_installed(
     else:
         return False
     # Late-bound through the module, as `keryx.status` binds it.
-    ask = is_installed or service.is_installed
+    ask = is_installed or service.is_present
     return ask(ServiceTarget(manager, UNITS[manager][kind]))

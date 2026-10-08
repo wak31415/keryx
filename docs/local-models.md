@@ -28,11 +28,19 @@ where the voice should, and then:
   and makes it the voice only once it has answered.
 - **A server elsewhere** is its address and an optional key, checked before it is kept.
 
-Both servers on this machine run as user services of their own, bound to `127.0.0.1`:
+The servers on this machine run as user services of their own, bound to `127.0.0.1`:
 `keryx-llm` and `keryx-voice` under systemd (`dev.keryx.llm` and `dev.keryx.voice` under
-launchd), installed with `scripts/install-systemd.sh --llm --voice`. Each runs
-`keryx models serve llm|voice`, which reads your settings, so a change is a
-`keryx config set` and a restart of the unit.
+launchd), installed with `scripts/install-systemd.sh --llm --voice`, and a third,
+`keryx-voice-llm` (`dev.keryx.voice-llm`, `--voice-llm`), when the voice has a model of its
+own. Each runs `keryx models serve llm|voice|voice-llm`, which reads your settings, so a
+change is a `keryx config set` and a restart of the unit.
+
+The voice's words come from its voice LLM, `VOICE_LLM`: `shared` (the default) is the local
+agent's model, as it always was; `here` is `VOICE_LLM_MODEL` on its own llama.cpp server at
+`VOICE_LLM_SERVER_PORT`, so a call never queues behind a task; `remote` is a server
+elsewhere (`VOICE_LLM_BASE_URL`, `VOICE_LLM_MODEL`, `VOICE_LLM_API_KEY`). Its key reaches the
+voice server in its environment, never on its command line, and `OPENAI_API_KEY` only when
+the address is OpenAI's own.
 
 From the command line:
 
@@ -52,7 +60,8 @@ uv run keryx voice use openai        # back to OpenAI's Realtime API
 ```
 
 `keryx voice use here` is the wizard's local voice, step for step (the same code): it needs
-the local agent's model first, for the words, and a clone of Keryx, for the unit's installer.
+its voice LLM first, answering, for the words — the local agent's model unless `VOICE_LLM`
+says otherwise — and a clone of Keryx, for the unit's installer.
 `keryx voice use server` saves a server only once it has opened a Realtime session, unless
 `--keep-anyway`. The key already saved is kept and asked with, unless `--key-stdin` replaces
 it or `--clear-key` forgets it. Either way Keryx takes the new voice up when it restarts.
@@ -216,7 +225,8 @@ saying so is welcome.
 |---|---|
 | `VOICE_BASE_URL`, `VOICE_API_KEY` | a voice server of your own; blank is OpenAI |
 | `LOCAL_AGENT_BASE_URL`, `LOCAL_AGENT_API_KEY`, `LOCAL_AGENT_MODEL`, `LOCAL_AGENT_API` | the `local` agent's server, key, model and harness |
-| `LLM_SERVER_MODEL`, `LLM_SERVER_PORT` | the model `keryx-llm` serves here, and its port |
+| `AGENT_SERVER_MODEL`, `AGENT_SERVER_PORT` | the model `keryx-llm` serves here, and its port |
 | `VOICE_SERVER_PORT`, `VOICE_SERVER_STT`, `VOICE_SERVER_TTS`, `VOICE_SERVER_VOICE`, `VOICE_SERVER_ARGS` | the voice server `keryx-voice` runs here |
+| `VOICE_LLM`, `VOICE_LLM_MODEL`, `VOICE_LLM_SERVER_PORT`, `VOICE_LLM_BASE_URL`, `VOICE_LLM_API_KEY` | where the voice server's words come from; `keryx-voice-llm` serves the model here |
 
 All of them are in [configuration.md](configuration.md), under "Local and self-hosted models".

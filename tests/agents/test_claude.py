@@ -131,7 +131,7 @@ def test_resolve_model_maps_aliases_and_passes_ids_through(settings, name, expec
 
 @pytest.mark.parametrize("name", [None, "", "   "])
 def test_resolve_model_defaults_to_the_configured_model(settings, name):
-    settings.subagent_model = "claude-sonnet-5"
+    settings.claude_model = "claude-sonnet-5"
 
     assert resolve_model(name, settings) == "claude-sonnet-5"
 

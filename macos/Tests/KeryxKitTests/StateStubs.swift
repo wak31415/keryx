@@ -17,6 +17,9 @@ final class StubClient: KeryxClient, @unchecked Sendable {
         var usage: Result<UsageReport, KeryxError> = .success(PreviewData.usage)
         var models: Result<ModelsReport, KeryxError> = .success(PreviewData.models)
         var config: Result<[ConfigRow], KeryxError> = .success(PreviewData.config)
+        /// Awaited before each `config list` answer: a test's way to hold one mid-way, to
+        /// race it against another that starts after it and finishes first.
+        var configWait: @Sendable () async -> Void = {}
         var approvals: Result<ApprovalsReport, KeryxError> = .success(PreviewData.approvals)
         var memory: Result<MemoryDocument, KeryxError> = .success(PreviewData.memory)
         var use: Result<UseResult, KeryxError> = .success(StubClient.useResult(restartNeeded: true))
@@ -117,7 +120,11 @@ final class StubClient: KeryxClient, @unchecked Sendable {
     func use(model: String, defaultAgent: Bool) async throws -> UseResult {
         try answer("models use \(model)\(defaultAgent ? " --default-agent" : "")") { $0.use }
     }
-    func config() async throws -> [ConfigRow] { try answer("config list") { $0.config } }
+    func config() async throws -> [ConfigRow] {
+        let wait = lock.withLock { replies.configWait }
+        await wait()
+        return try answer("config list") { $0.config }
+    }
     func set(key: String, value: String) async throws { try write("config set \(key) \(value)") }
     func setSecret(key: String, value: String) async throws { try write("config set \(key) --stdin") }
     func unset(key: String) async throws { try write("config unset \(key)") }

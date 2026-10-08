@@ -43,8 +43,6 @@ private struct ServiceSection: View {
     @State private var liveCalls: Int?
     @State private var failure: KeryxError?
     @State private var restarting = false
-    /// Installing or uninstalling the service: the question asked, then the run under way.
-    @State private var unitChange: ServiceWording.Change?
 
     var body: some View {
         Section {
@@ -61,27 +59,31 @@ private struct ServiceSection: View {
             }
             .padding(.vertical, 4)
 
-            LabeledContent("Service") {
+            LabeledContent("Answering calls") {
+                let line = answering
                 HStack(spacing: 10) {
                     VStack(alignment: .trailing, spacing: 2) {
                         HStack(spacing: 6) {
-                            StatusDot(service.tone)
-                            Text(service.text)
+                            if line.busy {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                StatusDot(line.tone)
+                            }
+                            Text(line.text)
                         }
-                        .help(service.help)
-                        if let hint = service.hint {
+                        .help(line.help)
+                        if let hint = line.hint {
                             Text(hint)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
                                 .textSelection(.enabled)
                         }
                     }
-                    if let changingUnit {
-                        ProgressView().controlSize(.small)
-                            .accessibilityLabel(changingUnit.progress)
-                    } else if !status.service.installed, status.service.ok, model.location.value?.checkout != nil {
-                        Button("Install…") { unitChange = .install }
-                            .help("Installs Keryx and its tunnel as services that start at login")
+                    if line.offersStart {
+                        Button("Start") { start() }
+                            .disabled(model.serviceChange != nil)
+                            .help("Starts Keryx answering calls")
                     }
                 }
             }
@@ -154,29 +156,14 @@ private struct ServiceSection: View {
                 if restarting {
                     ProgressView().controlSize(.small)
                     Text("Restarting…").foregroundStyle(.secondary)
-                } else if let changingUnit {
-                    ProgressView().controlSize(.small)
-                    Text(changingUnit.progress).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("Reveal Logs") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: status.paths.logs)])
                 }
-                if status.service.installed, model.location.value?.checkout != nil {
-                    Button("Uninstall…") { unitChange = .uninstall }
-                        .disabled(restarting || changingUnit != nil)
-                }
                 Button("Restart…") { confirmingRestart = true }
-                    .disabled(restarting || changingUnit != nil || !status.service.installed)
+                    .disabled(restarting || model.serviceChange != nil || !status.service.installed)
             }
-        }
-        .confirmationDialog(unitChange?.question ?? "", isPresented: Binding(
-            get: { unitChange != nil }, set: { if !$0 { unitChange = nil } }
-        ), presenting: unitChange) { change in
-            Button(change.button, role: change == .uninstall ? .destructive : nil) { run(change) }
-        } message: { change in
-            Text(change.message(assistant: Wording.assistant(status) ?? "The assistant",
-                                liveCalls: status.health.liveSessions ?? 0))
         }
         .confirmationDialog("Restart Keryx?", isPresented: $confirmingRestart) {
             Button("Restart") { restart(force: false) }
@@ -200,7 +187,7 @@ private struct ServiceSection: View {
     }
 
     private var headline: String {
-        status.health.reachable ? "Keryx is running" : model.menuState.headline
+        status.health.reachable ? "Keryx is answering calls" : model.menuState.headline
     }
 
     /// "Lyra · Claude": the assistant, and the agent it sends work to.
@@ -209,28 +196,18 @@ private struct ServiceSection: View {
             .filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
-    /// The service in a word, a line under it when there is more to say, and the manager
-    /// and unit in its tooltip.
-    private var service: (tone: StatusDot.Tone, text: String, hint: String?, help: String) {
-        let s = status.service
-        let manager = [s.manager ?? "launchd", s.unit].compactMap { $0 }.joined(separator: ", ")
-        if !s.ok {
-            return (.warning, "Unknown", s.error.flatMap { AppFacing.isFit($0) ? Wording.sentence($0) : nil }, s.error ?? "")
-        }
-        if !s.installed {
-            return (.inactive, "Not installed", nil, "Not installed as a \(s.manager ?? "launchd") service")
-        }
-        if s.active { return (.ok, "Running", nil, "Running under \(manager)") }
-        return (.inactive, "Not running", nil, "Not running (\(manager))")
+    /// Whether Keryx answers calls, in a word (`ServiceWording.answering`).
+    private var answering: ServiceWording.Answering {
+        ServiceWording.answering(status, step: model.answeringStep, change: model.serviceChange,
+                                 failure: model.startFailure)
     }
 
-    /// Installs or uninstalls Keryx and its tunnel (`keryx service install|uninstall`),
-    /// asked first; never the model or voice server, which their own screens start.
-    private func run(_ change: ServiceWording.Change) {
+    /// Start: the fallback when Keryx should be answering and isn't. The app starts it by
+    /// itself, so this asks nothing first.
+    private func start() {
         guard model.serviceChange == nil else { return }
         Task {
-            let answer = change == .install ? await model.installService() : await model.uninstallService()
-            if case let .failure(error) = answer { failure = error }
+            if case let .failure(error) = await model.startAnswering() { failure = error }
         }
     }
 
@@ -255,15 +232,6 @@ private struct ServiceSection: View {
         guard status.health.reachable, let running = status.version.running, let checkout = status.version.checkout,
               running != checkout else { return nil }
         return "Restart to load \(OverviewWording.version(checkout))"
-    }
-
-    /// The install or uninstall under way (`AppModel.serviceChange`), as the Overview says it.
-    private var changingUnit: ServiceWording.Change? {
-        switch model.serviceChange {
-        case .installing?: .install
-        case .uninstalling?: .uninstall
-        case nil: nil
-        }
     }
 
     private var liveCallsTitle: String {
@@ -324,7 +292,7 @@ private struct SetupSection: View {
 
     /// One of doctor's checks, with the button its `fix` names.
     private func line(_ check: DoctorCheck, context: SetupContext) -> some View {
-        CheckLine(title: check.displayTitle, state: check.state, detail: check.detail, hint: check.hint,
+        CheckLine(title: CheckWording.title(check.displayTitle), state: check.state, detail: check.detail, hint: check.hint,
                   titles: titles, action: FixAction(check.fix)?.action(context, named: check.displayTitle,
                                                              missing: check.state == "missing"),
                   disabled: model.serviceChange != nil) { fixing = $0 }
@@ -398,7 +366,7 @@ private struct SetupSection: View {
         case "issues": "Issue Reports"
         case "profile": "About You"
         case "projects": "Project Context"
-        case "service": "Background Service"
+        case "service": SetupWording.answeringCalls
         case "security": "Security"
         default: Wording.capitalised(section)
         }

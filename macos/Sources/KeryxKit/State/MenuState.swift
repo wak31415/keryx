@@ -50,7 +50,7 @@ public enum MenuState: Equatable, Sendable {
         case .notFound: "Keryx isn't on this Mac"
         case .needsMigration: "Keryx needs to move its files"
         case .stopped: "Keryx is stopped"
-        case .notInstalled: "Keryx isn't installed as a service"
+        case .notInstalled: "Keryx isn't running"
         case .idle, .working: "Keryx is running"
         case let .attention(reason): reason
         }

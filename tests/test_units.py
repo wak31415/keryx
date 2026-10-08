@@ -1,4 +1,4 @@
-"""`keryx service`: the four units as the service manager finds them, and installing or
+"""`keryx service`: the five units as the service manager finds them, and installing or
 removing them through the checkout's installer — every manager and script faked."""
 
 import pytest
@@ -33,10 +33,12 @@ def test_launchd_units_are_asked_by_their_labels():
         "tunnel": {"installed": True, "active": False},
         "llm": {"installed": True, "active": True},
         "voice": {"installed": False, "active": False},
+        "voice_llm": {"installed": False, "active": False},
     }}
     assert {target.manager for target in asked} == {"launchd"}
     assert [target.unit for target in asked] == [
-        "dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice"]
+        "dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.llm", "dev.keryx.voice",
+        "dev.keryx.voice-llm"]
 
 
 def test_systemd_units_and_a_renamed_agent_unit():
@@ -48,7 +50,8 @@ def test_systemd_units_and_a_renamed_agent_unit():
 
     assert document["manager"] == "systemd"
     assert [target.unit for target in asked] == [
-        "mine.service", "cloudflared.service", "keryx-llm.service", "keryx-voice.service"]
+        "mine.service", "cloudflared.service", "keryx-llm.service", "keryx-voice.service",
+        "keryx-voice-llm.service"]
     assert all(unit == {"installed": False, "active": False}
                for unit in document["units"].values())
 
@@ -101,6 +104,34 @@ def test_the_installer_is_run_with_its_flags(tmp_path, llm, voice, uninstall, fl
 
     assert outcome == units.Outcome(0, said)
     assert script.ran == [[str(root / "scripts" / "install-launchd.sh"), *flags]]
+
+
+@pytest.mark.parametrize(("platform", "script", "said"), [
+    ("darwin", "install-launchd.sh", "removed dev.keryx.voice-llm"),
+    ("linux", "install-systemd.sh", "removed keryx-voice-llm.service"),
+])
+def test_the_voice_llms_unit_is_removed_through_the_installer(tmp_path, platform, script, said):
+    root, run = checkout(tmp_path / "checkout"), Script()
+
+    outcome = units.install(voice_llm=True, uninstall=True, root=root, platform=platform,
+                            run=run)
+
+    assert outcome == units.Outcome(0, said)
+    assert run.ran == [[str(root / "scripts" / script), "--voice-llm", "--uninstall"]]
+
+
+def test_the_units_table_is_the_one_list_of_units():
+    """`keryx service`, the model servers' own probes and anything that walks every unit
+    read one table: a unit added to it is a unit everywhere."""
+    from keryx.localmodels.use import UNITS
+
+    assert units.KINDS == ("agent", "tunnel", "llm", "voice", "voice_llm")
+    for manager in ("launchd", "systemd"):
+        assert set(units.NAMES[manager]) == set(units.KINDS)
+        assert set(UNITS[manager]) == {"llm", "voice", "voice_llm"}
+        assert {units.NAMES[manager][kind] for kind in UNITS[manager]} == set(
+            UNITS[manager].values())
+    assert units.FLAGS == {"--llm": "llm", "--voice": "voice", "--voice-llm": "voice_llm"}
 
 
 def test_a_failed_install_says_the_scripts_last_error_line(tmp_path):
@@ -202,7 +233,8 @@ class Manager:
 
 
 MAIN = ("dev.keryx.agent", "dev.keryx.tunnel")
-EVERY = (*MAIN, "dev.keryx.llm", "dev.keryx.voice")
+#: Keryx and its tunnel, then the model servers: the model, the voice, the voice's own words.
+EVERY = (*MAIN, "dev.keryx.llm", "dev.keryx.voice", "dev.keryx.voice-llm")
 
 
 def states(outcome):
@@ -226,14 +258,20 @@ def test_stop_disables_then_boots_out_keryx_and_its_tunnel():
 
 def test_stop_all_walks_every_unit_in_the_table(monkeypatch):
     monkeypatch.setitem(units.NAMES, "launchd", {**units.NAMES["launchd"],
-                                                 "voice-llm": "dev.keryx.voice-llm"})
-    launchd = Manager(loaded={*EVERY, "dev.keryx.voice-llm"})
+                                                 "later": "dev.keryx.later"})
+    launchd = Manager(loaded={*EVERY, "dev.keryx.later"})
 
     outcome = launchd.control("stop", every=True)
 
     assert outcome.ok and launchd.loaded == set()
+    # The voice LLM's own server is one of them, and so is a unit the table gains later.
     assert [row["kind"] for row in outcome.units] == ["agent", "tunnel", "llm", "voice",
-                                                      "voice-llm"]
+                                                      "voice_llm", "later"]
+    # Keryx first, then the voice before the language models its words come from.
+    stopped = [argv[-1].rsplit("/", 1)[-1] for argv in launchd.commands if argv[1] == "bootout"]
+    assert stopped[:4] == ["dev.keryx.agent", "dev.keryx.tunnel", "dev.keryx.later",
+                           "dev.keryx.voice"]
+    assert set(stopped[4:]) == {"dev.keryx.llm", "dev.keryx.voice-llm"}
     assert outcome.message == ("Keryx and its model servers are stopped, and won't start at "
                                "login until they're started again.")
 
@@ -260,7 +298,8 @@ def test_a_unit_not_installed_is_said_and_not_touched():
     assert outcome.ok
     assert states(outcome) == {"dev.keryx.agent": "stopped", "dev.keryx.tunnel": "not-installed",
                                "dev.keryx.llm": "not-installed",
-                               "dev.keryx.voice": "not-installed"}
+                               "dev.keryx.voice": "not-installed",
+                               "dev.keryx.voice-llm": "not-installed"}
     assert launchd.verbs("dev.keryx.tunnel") == []
     assert outcome.message == "Keryx is stopped, and won't start at login until it's started again."
 
@@ -283,11 +322,13 @@ def test_start_enables_then_bootstraps_the_servers_first_and_keryx_last():
     assert launchd.loaded == set(EVERY)
     assert launchd.verbs("dev.keryx.agent") == ["enable", "bootstrap"]
     started = [argv[-1] for argv in launchd.commands if argv[1] == "bootstrap"]
+    # The language models before the voice whose words they are, then the tunnel, Keryx last.
     assert [path.rsplit("/", 1)[-1] for path in started] == [
-        "dev.keryx.voice.plist", "dev.keryx.llm.plist", "dev.keryx.tunnel.plist",
-        "dev.keryx.agent.plist"]
+        "dev.keryx.llm.plist", "dev.keryx.voice-llm.plist", "dev.keryx.voice.plist",
+        "dev.keryx.tunnel.plist", "dev.keryx.agent.plist"]
     # The table's order, whatever order they were started in.
-    assert [row["kind"] for row in outcome.units] == ["agent", "tunnel", "llm", "voice"]
+    assert [row["kind"] for row in outcome.units] == ["agent", "tunnel", "llm", "voice",
+                                                      "voice_llm"]
 
 
 def test_start_of_a_loaded_job_kickstarts_it_and_is_idempotent():
@@ -320,7 +361,8 @@ def test_starting_keryx_that_is_not_installed_is_refused_and_starts_nothing():
     assert launchd.commands == []
     assert states(outcome) == {"dev.keryx.agent": "not-installed",
                                "dev.keryx.tunnel": "not-installed",
-                               "dev.keryx.llm": "stopped", "dev.keryx.voice": "not-installed"}
+                               "dev.keryx.llm": "stopped", "dev.keryx.voice": "not-installed",
+                               "dev.keryx.voice-llm": "not-installed"}
 
 
 def test_only_the_model_servers_to_stop_says_so():
@@ -434,7 +476,7 @@ def test_every_unit_is_disabled_before_any_is_stopped():
     launchd.control("stop", every=True)
 
     verbs = [argv[1] for argv in launchd.commands]
-    assert verbs == ["disable"] * 4 + ["bootout"] * 4
+    assert verbs == ["disable"] * len(EVERY) + ["bootout"] * len(EVERY)
 
 
 def test_every_unit_is_enabled_before_any_is_started():
@@ -510,3 +552,10 @@ def test_a_stop_that_could_not_settle_the_record_stops_all_the_same_and_says_so(
     assert outcome.detail == "the restart record stayed locked"
     assert states(outcome) == {"dev.keryx.agent": "stopped", "dev.keryx.tunnel": "stopped"}
     assert launchd.loaded == set() and launchd.disabled == set(MAIN)
+
+
+def test_the_start_order_puts_what_is_read_from_first():
+    assert units.start_order(["agent", "tunnel", "voice", "llm", "voice_llm"]) == [
+        "llm", "voice_llm", "voice", "tunnel", "agent"]
+    assert units.start_order(["agent", "tunnel"]) == ["tunnel", "agent"]
+    assert units.start_order(["agent", "voice"]) == ["voice", "agent"]  # its LLMs not asked

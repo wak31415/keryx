@@ -73,6 +73,11 @@ def test_nothing_protected_defaults_to_writable():
         "LOCAL_AGENT_BASE_URL",
         "LOCAL_AGENT_API_KEY",
         "VOICE_SERVER_ARGS",
+        # Where a call's audio goes, and where its words go.
+        "VOICE_MODE",
+        "VOICE_LLM",
+        "VOICE_LLM_BASE_URL",
+        "VOICE_LLM_API_KEY",
     ],
 )
 def test_the_lines_of_defence_are_protected(key):
@@ -96,7 +101,7 @@ def test_the_writable_defaults_are_the_ones_you_would_say_on_a_call():
         "LOCAL_AGENT_MODEL",
         "LOCAL_AGENT_API",
         "CLOCK_FORMAT",
-        "SUBAGENT_MODEL",
+        "CLAUDE_MODEL",
         "CODEX_MODEL",
         "AGENT_BACKEND",
         "LOCAL_SILENCE_TIMEOUT",
@@ -106,6 +111,15 @@ def test_the_writable_defaults_are_the_ones_you_would_say_on_a_call():
         "APPROVAL_QUIET_HOURS",
         "LOG_LEVEL",
     }
+
+
+def test_the_voice_llms_model_and_port_are_the_owners_but_not_protected():
+    """Neither is a line of defence (`VOICE_LLM_BASE_URL` is), so the owner may unlock them;
+    by default the service may not move the call's words to another model."""
+    for key in ("VOICE_LLM_MODEL", "VOICE_LLM_SERVER_PORT"):
+        assert key not in PROTECTED_KEYS
+        assert not service_writable(key, {})
+        assert service_writable(key, {key: True})
 
 
 def test_an_override_moves_an_unprotected_key_either_way():
@@ -128,7 +142,11 @@ def test_a_subagent_of_the_old_service_is_still_the_service(monkeypatch):
     assert current_actor() == "service"
 
 
-@pytest.mark.parametrize("old", ["FAKE_AGENTS", "JARVIS_CHECKOUT", "JARVIS_PIN"])
+@pytest.mark.parametrize(
+    "old",
+    ["FAKE_AGENTS", "JARVIS_CHECKOUT", "JARVIS_PIN", "SUBAGENT_MODEL", "LLM_SERVER_MODEL",
+     "LLM_SERVER_PORT"],
+)
 def test_an_old_name_is_protected_exactly_as_the_current_one(old):
     """A setting's rules are the same whatever name it is asked for by."""
     new = canonical_key(old)

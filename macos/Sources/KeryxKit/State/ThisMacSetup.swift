@@ -18,7 +18,7 @@ public struct ThisMacSetup: Equatable, Sendable {
 
 /// What serves the model the local agent (and this Mac's voice) takes its words from.
 public enum WordsServer: Equatable, Sendable {
-    /// This Mac's llama.cpp model server (`LLM_SERVER_MODEL` is set): `keryx models start`.
+    /// This Mac's llama.cpp model server (`AGENT_SERVER_MODEL` is set): `keryx models start`.
     case modelServer
     /// Ollama on this Mac: `keryx models start --runtime ollama`.
     case ollama
@@ -29,7 +29,7 @@ public enum WordsServer: Equatable, Sendable {
 }
 
 extension ModelsReport {
-    /// This Mac's model server is meant to serve a model (`LLM_SERVER_MODEL` is set) and
+    /// This Mac's model server is meant to serve a model (`AGENT_SERVER_MODEL` is set) and
     /// isn't answering: what `keryx models start` is for, and what `keryx voice use here`
     /// refuses over.
     public var modelServerDown: Bool {

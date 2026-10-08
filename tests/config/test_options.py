@@ -241,7 +241,7 @@ def test_a_provider_that_fails_outside_its_read_still_answers(settings):
     def broken():
         raise OSError("sysctl went away")
 
-    found = options_for("LLM_SERVER_MODEL", settings, sources(hardware=broken))
+    found = options_for("AGENT_SERVER_MODEL", settings, sources(hardware=broken))
 
     assert (found.source, found.live, found.options) == ("builtin", False, [])
     assert found.error == "Keryx couldn't read the list (OSError)."
@@ -292,6 +292,15 @@ def test_a_voice_server_of_ones_own_is_asked_instead_of_openai(keyed):
     assert kwargs["headers"] == {"Authorization": "Bearer vk-local"}
     assert kwargs["timeout"] == options.TIMEOUT_S
     assert kwargs["follow_redirects"] is False
+
+
+def test_a_server_voice_with_no_address_says_so_and_offers_no_openai_model(keyed):
+    found = options_for("OPENAI_REALTIME_MODEL",
+                        keyed.model_copy(update={"voice_mode_explicit": "server"}),
+                        sources(get=FakeGet(body={})))
+
+    assert found.live is False and "no voice server address" in found.error
+    assert values(found) == [keyed.openai_realtime_model]
 
 
 def test_a_voice_server_that_does_not_answer_offers_only_the_current(keyed):
@@ -368,7 +377,7 @@ def test_claude_models_are_read_from_anthropic_with_the_api_key(settings):
     keyed = settings.model_copy(update={"anthropic_api_key": KEY})
     get = FakeGet(body={**ANTHROPIC_BODY, "data": [*ANTHROPIC_BODY["data"], {"id": "other"}]})
 
-    found = options_for("SUBAGENT_MODEL", keyed, sources(get=get))
+    found = options_for("CLAUDE_MODEL", keyed, sources(get=get))
 
     assert values(found) == ["claude-opus-5-5", "claude-sonnet-5-5", "claude-mythos-1"]
     assert found.options[0] == Option("claude-opus-5-5", "Claude Opus 5.5", "opus")
@@ -381,7 +390,7 @@ def test_claude_models_are_read_from_anthropic_with_the_api_key(settings):
 
 
 def test_without_an_anthropic_key_the_known_models_are_offered(settings):
-    found = options_for("SUBAGENT_MODEL", settings, sources())
+    found = options_for("CLAUDE_MODEL", settings, sources())
 
     assert found.error == (
         "There's no Anthropic API key, so Keryx can't ask which models exist."
@@ -395,7 +404,7 @@ def test_without_an_anthropic_key_the_known_models_are_offered(settings):
 def test_a_refused_anthropic_key_falls_back(settings, status):
     keyed = settings.model_copy(update={"anthropic_api_key": KEY})
 
-    found = options_for("SUBAGENT_MODEL", keyed, sources(get=FakeGet(status=status)))
+    found = options_for("CLAUDE_MODEL", keyed, sources(get=FakeGet(status=status)))
 
     assert found.error == "Anthropic didn't accept the API key."
     assert found.source == "builtin" and "claude-sonnet-5-5" in values(found)
@@ -405,7 +414,7 @@ def test_an_unreachable_anthropic_falls_back(settings):
     keyed = settings.model_copy(update={"anthropic_api_key": KEY})
     get = FakeGet(raises=httpx.ReadTimeout("slow"))
 
-    found = options_for("SUBAGENT_MODEL", keyed, sources(get=get))
+    found = options_for("CLAUDE_MODEL", keyed, sources(get=get))
 
     assert found.error == "Keryx couldn't reach Anthropic (ReadTimeout)."
 
@@ -413,25 +422,25 @@ def test_an_unreachable_anthropic_falls_back(settings):
 def test_anthropic_listing_no_claude_model_falls_back(settings):
     keyed = settings.model_copy(update={"anthropic_api_key": KEY})
 
-    found = options_for("SUBAGENT_MODEL", keyed, sources(get=FakeGet(body={"data": []})))
+    found = options_for("CLAUDE_MODEL", keyed, sources(get=FakeGet(body={"data": []})))
 
     assert found.error == "Anthropic lists no Claude models." and not found.live
 
 
 def test_claude_has_no_blank_option_since_a_blank_model_is_not_a_default(settings):
-    """`SUBAGENT_MODEL` is a plain string with a default: blank does not mean "Claude's own"."""
+    """`CLAUDE_MODEL` is a plain string with a default: blank does not mean "Claude's own"."""
     keyed = settings.model_copy(update={"anthropic_api_key": KEY})
 
-    assert "" not in values(options_for("SUBAGENT_MODEL", settings, sources()))
+    assert "" not in values(options_for("CLAUDE_MODEL", settings, sources()))
     assert "" not in values(
-        options_for("SUBAGENT_MODEL", keyed, sources(get=FakeGet(body=ANTHROPIC_BODY)))
+        options_for("CLAUDE_MODEL", keyed, sources(get=FakeGet(body=ANTHROPIC_BODY)))
     )
 
 
 def test_a_claude_model_set_by_hand_is_kept(settings):
-    custom = settings.model_copy(update={"subagent_model": "claude-opus-4-1"})
+    custom = settings.model_copy(update={"claude_model": "claude-opus-4-1"})
 
-    found = options_for("SUBAGENT_MODEL", custom, sources())
+    found = options_for("CLAUDE_MODEL", custom, sources())
 
     assert found.options[-1] == Option("claude-opus-4-1", "claude-opus-4-1", "current")
 
@@ -667,7 +676,7 @@ def test_a_server_listing_no_models_says_so(settings):
 def test_the_model_to_serve_is_the_catalog_downloaded_first(settings):
     downloaded = {"gemma-4-12b"}
     found = options_for(
-        "LLM_SERVER_MODEL",
+        "AGENT_SERVER_MODEL",
         settings,
         sources(
             downloaded=lambda entry: entry.key in downloaded,
@@ -690,7 +699,7 @@ def test_the_model_to_serve_is_the_catalog_downloaded_first(settings):
 
 def test_on_another_machine_too_big_names_no_mac(settings):
     found = options_for(
-        "LLM_SERVER_MODEL", settings,
+        "AGENT_SERVER_MODEL", settings,
         sources(hardware=lambda: Hardware("cuda", "RTX", 12.0, 64.0)),
     )
 
@@ -699,9 +708,9 @@ def test_on_another_machine_too_big_names_no_mac(settings):
 
 
 def test_a_gguf_path_being_served_is_kept(settings):
-    custom = settings.model_copy(update={"llm_server_model": "/models/mine.gguf"})
+    custom = settings.model_copy(update={"agent_server_model": "/models/mine.gguf"})
 
-    found = options_for("LLM_SERVER_MODEL", custom, sources())
+    found = options_for("AGENT_SERVER_MODEL", custom, sources())
 
     assert found.options[-1] == Option("/models/mine.gguf", "/models/mine.gguf", "current")
 
@@ -841,9 +850,9 @@ def _every_error(settings) -> list[str]:
         ("OPENAI_TRANSCRIPTION_MODEL", openai, sources(get=FakeGet(body={"data": []}))),
         ("OPENAI_WEB_SEARCH_MODEL", openai, sources(get=FakeGet(body={"data": []}))),
         ("OPENAI_REALTIME_MODEL", openai, sources(get=FakeGet(raises=RuntimeError(KEY)))),
-        ("SUBAGENT_MODEL", settings, sources()),
-        ("SUBAGENT_MODEL", anthropic, sources(get=FakeGet(status=403))),
-        ("SUBAGENT_MODEL", anthropic, sources(get=FakeGet(body={"data": []}))),
+        ("CLAUDE_MODEL", settings, sources()),
+        ("CLAUDE_MODEL", anthropic, sources(get=FakeGet(status=403))),
+        ("CLAUDE_MODEL", anthropic, sources(get=FakeGet(body={"data": []}))),
         ("CODEX_MODEL", coded, sources()),
         ("CODEX_MODEL", settings, sources(codex_models=lambda env, timeout: [])),
         ("LOCAL_AGENT_MODEL", settings, sources()),
@@ -852,7 +861,7 @@ def _every_error(settings) -> list[str]:
         ("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(raises=httpx.ReadTimeout("x")))),
         ("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(body=["x"]))),
         ("LOCAL_AGENT_MODEL", local, sources(get=FakeGet(body={"data": []}))),
-        ("LLM_SERVER_MODEL", settings, sources(hardware=failing(OSError("x")))),
+        ("AGENT_SERVER_MODEL", settings, sources(hardware=failing(OSError("x")))),
     ]
     return [options_for(key, given, found).error for key, given, found in cases]
 

@@ -290,12 +290,12 @@ def _config_check(store: ConfigStore) -> Check:
 def _voice_checks(settings: Settings) -> list[Check]:
     """Where a call's voice goes, and the OpenAI key it may or may not need.
 
-    With `VOICE_BASE_URL` blank the key is the voice, and Keryx cannot take a call without
-    it. With a voice server of the owner's own it buys only the voice model's `web_search`,
-    so its absence is a warning.
+    With the voice on OpenAI (`Settings.voice_mode`) the key is the voice, and Keryx cannot
+    take a call without it. With a voice server of the owner's own it buys only the voice
+    model's `web_search`, so its absence is a warning.
     """
     key = settings.openai_key
-    if not settings.voice_base_url:
+    if settings.voice_mode == "openai":
         if key is None:
             return [
                 Check(
@@ -308,8 +308,12 @@ def _voice_checks(settings: Settings) -> list[Check]:
                 )
             ]
         return [Check("OPENAI_API_KEY", True, "set", section="voice")]
-    checks = [Check("voice", True, f"your own server at {settings.voice_base_url}",
-                    section="voice")]
+    voice = settings.voice_endpoint
+    checks = [Check("voice", True, f"your own server at {voice.base_url}", section="voice")
+              if voice is not None else
+              Check("voice", False, "no voice server address", section="voice",
+                    hint=settings.voice_refusal(), unset=True,
+                    fix=fixes.setting("VOICE_BASE_URL"))]
     if key is None:
         checks.append(Check("OPENAI_API_KEY", False, "not set — calls have no web_search",
                             severity="soft", section="voice", unset=True,
@@ -409,8 +413,9 @@ def _agent_checks(settings: Settings) -> list[Check]:
 def _local_overview_check(settings: Settings) -> Check:
     """Optional, and what the Local models section is for: is anything on your own hardware?"""
     parts = []
-    if settings.voice_base_url:
-        parts.append(f"voice at {settings.voice_base_url}")
+    voice = settings.voice_endpoint if settings.voice_mode != "openai" else None
+    if voice is not None:
+        parts.append(f"voice at {voice.base_url}")
     if settings.local_agent_endpoint is not None:
         parts.append(f"agent {settings.local_agent_model or '?'} at "
                      f"{settings.local_agent_endpoint.base_url}")
@@ -424,7 +429,7 @@ def _local_overview_check(settings: Settings) -> Check:
 def _local_server_checks(settings: Settings) -> list[Check]:
     """The servers `keryx setup` runs here: the model on disk and the programs installed."""
     checks = []
-    if settings.llm_server_model:
+    if settings.agent_server_model:
         severity: Severity = "hard" if settings.agent_backend == "local" else "soft"
         try:
             alias, path, _context = servers.llm_model(settings)
@@ -441,7 +446,7 @@ def _local_server_checks(settings: Settings) -> list[Check]:
             else:
                 checks.append(Check("model server", True, f"{alias}, on disk",
                                     severity=severity, section="local", hint=str(path)))
-    if settings.voice_base_url == _own_voice(settings):
+    if settings.voice_mode == "here":
         found = runtimes.speech_to_speech()
         if found is None:
             checks.append(Check("voice server program", False,
@@ -463,8 +468,8 @@ def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> l
     a call or the default agent cannot do without.
     """
     checks: list[Check] = []
-    if settings.voice_base_url:
-        voice = settings.voice_endpoint
+    voice = settings.voice_endpoint if settings.voice_mode != "openai" else None
+    if voice is not None:
         checks += [
             Check("voice server", False, warning, severity="soft", section="local",
                   fix=_warning_fix(warning, "VOICE_BASE_URL", "VOICE_API_KEY"))
@@ -478,7 +483,7 @@ def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> l
                                     section="local"))
             else:
                 # Its own words go to the terminal: a server's error can be a traceback.
-                here = settings.voice_base_url == _own_voice(settings)
+                here = settings.voice_mode == "here"
                 checks.append(Check("voice server", False,
                                     f"{voice.host} did not open a Realtime session",
                                     section="local", hint=problem,
@@ -495,7 +500,7 @@ def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> l
         for warning in warnings(agent)
     ]
     # A server Keryx runs here is started from the app; one elsewhere is only an address.
-    ours = agent.base_url in (f"http://{servers.HOST}:{settings.llm_server_port}/v1",
+    ours = agent.base_url in (f"http://{servers.HOST}:{settings.agent_server_port}/v1",
                               f"{OLLAMA_URL}/v1")
     model_fix = "models:choose" if ours else fixes.setting("LOCAL_AGENT_MODEL")
     if reach is None:
@@ -520,11 +525,6 @@ def endpoint_checks(settings: Settings, reach: EndpointReach | None = None) -> l
         checks.append(Check(name, True, f"{agent.base_url} serves {agent.model}",
                             severity=severity, section="local"))
     return checks
-
-
-def _own_voice(settings: Settings) -> str:
-    """The address of the voice server Keryx runs on this machine."""
-    return f"http://{servers.HOST}:{settings.voice_server_port}/v1"
 
 
 def _warning_fix(warning: str, address: str, key: str) -> str:

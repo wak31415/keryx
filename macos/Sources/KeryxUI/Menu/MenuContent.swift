@@ -66,6 +66,16 @@ public struct MenuContent: View {
             .keyboardShortcut(",")
         Button("Quit Keryx") { actions.quit() }
             .keyboardShortcut("q")
+        if model.quitStopsAnswering {
+            // A footnote under Quit: what quitting does that closing the window does not.
+            Text(Self.quitNote(Wording.assistant(model.status.value)))
+        }
+    }
+
+    /// "Lyra stops answering calls when Keryx quits": the menu's footnote under Quit.
+    static func quitNote(_ assistant: String?) -> String {
+        let name = (assistant?.isEmpty == false ? assistant : nil) ?? "The assistant"
+        return "\(name) stops answering calls when Keryx quits"
     }
 
     /// "Keryx is running — Lyra": the state first, whatever else there is to say.
