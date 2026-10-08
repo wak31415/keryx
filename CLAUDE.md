@@ -719,7 +719,14 @@ Four rulings:
   follow-up starts afresh, and the imports of the tools in `DATA_DIR/tools` are rewritten
   (their import lines only). `CLOUDFLARE_TUNNEL` is pinned to `jarvis` when it was the
   default, and Jarvis's unit is retired before Keryx's is installed, so two tunnels never
-  run at once.
+  run at once. Running twice covers the units too: `STATE_DIR/migrate-units-pending.json`
+  (`config.migrate.UNITS_PENDING`, 0600, written atomically) goes down before the first move
+  — inside Jarvis's state directory when that is about to move onto `STATE_DIR` whole, so it
+  is carried there — and is removed only once Jarvis's units are retired and Keryx's and the
+  approval hook re-rendered with no installer failing (`InstallFailed`). While it is there
+  the plan is not empty: it says why, the run re-renders, and the unit it names is installed
+  even when nothing is installed to be found. Without it a run killed after the moves, or an
+  installer that failed, would leave the units naming the old paths with nothing left to do.
 - **The service resolves what its installer's terminal resolved.** The units render
   `KERYX_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is
   handed them with `--setenv`: a user manager's environment is not the service's. A

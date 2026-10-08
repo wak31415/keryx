@@ -1343,3 +1343,159 @@ def test_cancel_during_the_run_is_held_until_it_has_finished(machine, command, i
                           "message": migrate_stream.LATE_CANCEL_MESSAGE, "detail": None}
     assert not machine.legacy.exists() and (machine.data / "tasks.db").is_file()
     assert not signal.sigpending()
+
+
+# --- the units, still to do after a run that did not finish them ------------------------
+
+
+def pending(machine) -> Path:
+    return machine.state / migration.UNITS_PENDING
+
+
+def test_the_units_are_marked_pending_before_anything_moves_and_cleared_once_done(machine):
+    seen = []
+
+    def rerender():
+        seen.append((pending(machine).is_file(), mode(pending(machine))))
+        return ["install-systemd.sh: done"]
+
+    report = migrate(machine, rerender=rerender)
+
+    assert seen == [(True, 0o600)]
+    assert not pending(machine).exists() and report.units_pending is False
+    assert machine.plan().empty
+
+
+def test_the_marker_is_there_before_the_first_move(machine, monkeypatch):
+    real_move = migration.move
+    seen = []
+
+    def move(source, destination):
+        seen.append(pending(machine).is_file())
+        real_move(source, destination)
+
+    monkeypatch.setattr(migration, "move", move)
+
+    migrate(machine)
+
+    assert seen and seen[0] is True
+
+
+def test_an_installer_that_fails_leaves_the_units_pending_for_the_next_run(machine):
+    report = migrate(machine, rerender=lambda: [
+        migration.InstallFailed("install-systemd.sh: exited 1, run it again")])
+
+    assert report.units_pending is True and pending(machine).is_file()
+    plan = machine.plan()
+    assert not plan.empty and not plan.steps
+    assert plan.as_dict()["units_pending"] == migration.UNITS_PENDING_MESSAGE
+    assert plan.as_dict()["nothing_to_do"] is False
+
+    again = run(plan, service=None, fix_permissions=lambda: [], today=TODAY,
+                rerender=lambda: ["install-systemd.sh: done"])
+
+    assert again.rerendered == ["install-systemd.sh: done"]
+    assert not pending(machine).exists() and machine.plan().empty
+
+
+def test_a_run_killed_while_the_units_are_rendered_is_finished_by_the_next(machine, command):
+    def killed():
+        raise KeyboardInterrupt  # the app's SIGKILL, as near as a test can come to one
+
+    with pytest.raises(KeyboardInterrupt):
+        migrate(machine, rerender=killed)
+    assert pending(machine).is_file()
+    claude = machine.home / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text("keryx_approval.py")
+
+    result = runner.invoke(cli.app, ["migrate", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing to migrate" not in result.output
+    assert "put in place again" in result.output
+    assert [Path(argv[0]).name for argv in command] == ["install-claude-hook.sh"]
+    assert not pending(machine).exists()
+    assert "nothing to migrate" in runner.invoke(cli.app, ["migrate"]).output
+
+
+def test_the_unit_an_unfinished_run_was_installing_is_installed_by_the_next(
+    machine, command, monkeypatch
+):
+    manager = FakeManager(machine)
+    monkeypatch.setattr(cli, "MigratingService",
+                        lambda target: Service(target, run=manager, sleep=lambda _: None))
+    migrate(machine, service=Service(ServiceTarget("systemd", "keryx.service"), run=manager,
+                                     sleep=lambda _: None),
+            rerender=lambda: [migration.InstallFailed("install-systemd.sh: exited 1")])
+    # Not installed now, so nothing would find it: the record names it.
+    monkeypatch.setattr(cli, "resolve_target", lambda settings, **_: None)
+    monkeypatch.setattr(cli, "old_target", lambda target: None)
+
+    result = runner.invoke(cli.app, ["migrate", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert [Path(argv[0]).name for argv in command] == ["install-systemd.sh"]
+    assert not pending(machine).exists()
+
+
+def test_an_installer_that_fails_from_the_command_keeps_the_units_pending(machine, command,
+                                                                       monkeypatch):
+    monkeypatch.setattr(cli, "resolve_target",
+                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    manager = FakeManager(machine)
+    monkeypatch.setattr(cli, "MigratingService",
+                        lambda target: Service(target, run=manager, sleep=lambda _: None))
+    monkeypatch.setattr(cli, "run_command", lambda argv: 1)
+
+    result = runner.invoke(cli.app, ["migrate", "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert "not in place yet" in result.output and pending(machine).is_file()
+
+
+def test_the_app_sees_units_pending_in_the_plan_and_the_run(machine, command, installers,
+                                                          monkeypatch):
+    from wording import for_the_app
+
+    migrate(machine, rerender=lambda: [migration.InstallFailed("hook: exited 1")])
+
+    _, plan = plan_json()
+    assert plan["nothing_to_do"] is False and plan["ready"] is True
+    assert for_the_app(plan["units_pending"])
+
+    monkeypatch.setattr("keryx.units.run_captured", lambda argv: (1, "", "broken"))
+    claude = machine.home / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text("keryx_approval.py")
+    result, events = stream()
+
+    assert result.exit_code == 0 and ends_once(events) == "done"
+    assert [event["step"] for event in events if event["event"] == "step"] == [
+        "move", "update", "units"]
+    assert events[-1]["units_pending"] is True
+    assert "migrating again finishes it" in events[-1]["summary"]
+    assert pending(machine).is_file()
+
+
+def test_a_jarvis_state_directory_carries_the_marker_where_it_moves(jarvis):
+    def killed():
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run(make_plan([]), service=None, fix_permissions=lambda: [], today=TODAY,
+            rerender=killed)
+
+    assert (jarvis.new("state") / migration.UNITS_PENDING).is_file()
+    assert not jarvis.old("state").exists() or not any(jarvis.old("state").iterdir())
+    plan = make_plan([])
+    assert not plan.empty and plan.units_pending is not None
+
+
+def test_a_marker_that_cannot_be_read_is_still_work_to_do(machine):
+    secure_dir(machine.state)
+    pending(machine).write_text("not json")
+
+    plan = make_plan([])
+
+    assert plan.units_pending == {} and plan.pending_target is None and not plan.empty

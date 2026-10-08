@@ -48,7 +48,13 @@ from keryx.config import (
 )
 from keryx.config import verify as credentials
 from keryx.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
-from keryx.config.migrate import MigrationError, make_plan, old_target, retire_old_units
+from keryx.config.migrate import (
+    InstallFailed,
+    MigrationError,
+    make_plan,
+    old_target,
+    retire_old_units,
+)
 from keryx.config.migrate import Report as MigrationReport
 from keryx.config.migrate import Service as MigratingService
 from keryx.config.migrate import run as run_migration
@@ -91,6 +97,7 @@ from keryx.restart.logscan import marks as log_marks
 from keryx.restart.service import (
     INSTALLERS,
     UNSUPPORTED_HINT,
+    ServiceTarget,
     candidate_target,
     resolve_target,
     spawn_watchdog,
@@ -2773,7 +2780,7 @@ def migrate(
     for line in plan.describe():
         typer.echo(line)
     settings = _load_settings_optional()
-    units_ = _migration_units(settings)
+    units_ = _migration_units(settings, plan)
     target, predecessor = units_.target, units_.predecessor
     if predecessor is not None:
         typer.echo(f"  {predecessor.describe()}: stopped first, and retired once everything "
@@ -2805,13 +2812,16 @@ def migrate(
     _echo_migration(report)
 
 
-def _migration_units(settings: Settings) -> migrate_stream.Units:
+def _migration_units(settings: Settings, plan) -> migrate_stream.Units:
     """The service a migration stops and starts again, and Jarvis's unit when it is still
-    the one installed: stopped first, and retired for Keryx's."""
+    the one installed: stopped first, and retired for Keryx's. A run that did not finish the
+    units names the one it was installing, which may not be installed to be found."""
     target = resolve_target(settings, from_outside=True)
     predecessor = old_target(candidate_target(settings))
     if predecessor is not None:
         target = target or candidate_target(settings)
+    if target is None and (pending := plan.pending_target) is not None:
+        target = ServiceTarget(*pending)
     return migrate_stream.Units(target, predecessor)
 
 
@@ -2845,7 +2855,7 @@ def _migrate_plan_json(plan) -> None:
         summary = _config_summary(error) if isinstance(error, ValidationError) else str(error)
         typer.echo(f"keryx migrate: the settings do not load: {summary}", err=True)
         raise typer.Exit(1) from None
-    units_ = _migration_units(settings)
+    units_ = _migration_units(settings, plan)
     live = health_probe(settings) if units_.target is not None else None
     typer.echo(json.dumps(migrate_stream.plan_document(plan, units_, live), indent=2))
 
@@ -2878,7 +2888,7 @@ def _migrate_stream() -> int:
                        else str(error))
             events.error(SETTINGS_UNREADABLE, detail=redact_known(summary))
             return 1
-        units_ = _migration_units(settings)
+        units_ = _migration_units(settings, plan)
         if (live := health_probe(settings)) and units_.target is not None:
             events.error(migrate_stream.LIVE_CALL, detail=f"{live} live call(s)")
             return 1
@@ -2917,7 +2927,7 @@ def _rerender(target, *, run: Callable[[list[str]], int] | None = None) -> list[
     if target is not None:
         installer = scripts / Path(INSTALLERS[target.manager]).name
         code = run([str(installer)])
-        done.append(f"{installer.name}: {'done' if code == 0 else f'exited {code}, run it again'}")
+        done.append(_installed(installer.name, code))
     try:
         hooks = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
         hooked = any(name in hooks for name in HOOK_NAMES)
@@ -2925,8 +2935,15 @@ def _rerender(target, *, run: Callable[[list[str]], int] | None = None) -> list[
         hooked = False
     if hooked:
         code = run([str(scripts / "install-claude-hook.sh")])
-        done.append(f"approval hook: {'done' if code == 0 else f'exited {code}, run it again'}")
+        done.append(_installed("approval hook", code))
     return done
+
+
+def _installed(name: str, code: int) -> str:
+    """What became of one installer; a failure keeps the units pending (`InstallFailed`)."""
+    if code == 0:
+        return f"{name}: done"
+    return InstallFailed(f"{name}: exited {code}, run it again")
 
 
 def _echo_migration(report: MigrationReport) -> None:
@@ -2958,6 +2975,9 @@ def _echo_migration(report: MigrationReport) -> None:
         typer.echo("\nthe service is running again")
     elif report.started is False:
         typer.echo("\nthe service did not start: `keryx doctor`, and its logs, say why")
+    if report.units_pending:
+        typer.echo("the service and the approval hook are not in place yet: `keryx migrate` "
+                   "again finishes them")
 
 
 def _owner_refusal(verb: str) -> str | None:

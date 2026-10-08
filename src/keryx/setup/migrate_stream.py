@@ -89,7 +89,8 @@ class MigrateSteps(EventLines):
     def nothing_to_do(self) -> None:
         self._end({"event": "done", "summary": NOTHING_TO_DO, "nothing_to_do": True,
                    "moved": 0, "imported": 0, "rewritten": 0, "lost_sessions": 0,
-                   "started": None, "retired_to": None, "leftovers": [], "notes": []})
+                   "started": None, "retired_to": None, "leftovers": [], "notes": [],
+                   "units_pending": False})
 
     def done(self, report: Report) -> None:
         self._end({
@@ -104,11 +105,15 @@ class MigrateSteps(EventLines):
             "retired_to": None if report.retired_to is None else str(report.retired_to),
             "leftovers": list(report.leftovers),
             "notes": [*report.notes, *report.tightened, *report.rerendered],
+            "units_pending": report.units_pending,
         })
 
 
 def summary(report: Report) -> str:
     """How a run ended, in a sentence for a person."""
+    if report.units_pending:
+        return ("Keryx's files were moved, but the background service could not be put in "
+                "place again: migrating again finishes it.")
     if report.started is True:
         return "Keryx's files were moved, and its background service is running again."
     if report.started is False:

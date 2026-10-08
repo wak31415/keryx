@@ -36,6 +36,7 @@ signal is the legacy data still being there, never the new directory existing, b
 
 import contextlib
 import errno
+import json
 import os
 import re
 import shutil
@@ -150,6 +151,13 @@ BOTH_HOLD_FILES = ("The folder from before and the new one both hold files, so w
                    "is yours to decide.")
 TWO_PINS = ("The old settings file holds a different PIN from the one saved now, so which to "
             "keep is yours to decide.")
+#: In `STATE_DIR`: written before the first move and removed once Jarvis's units are retired
+#: and Keryx's and the approval hook are re-rendered, so a run killed or failed between the
+#: two is finished by the next one, which would otherwise find nothing left to move. It
+#: names the unit to install, which may no longer be installed to be found.
+UNITS_PENDING = "migrate-units-pending.json"
+UNITS_PENDING_MESSAGE = ("A migration before this one moved the files but did not finish "
+                         "putting the background service in place, so that is still to do.")
 #: What an entry is going to have done to it.
 MOVE = "move"
 REMOVE = "remove"
@@ -159,6 +167,10 @@ DUPLICATE = "duplicate"  # already at the destination, byte for byte: the source
 #: The phases of `run`, in order, as `on_step` is told them.
 STOP, MOVE_PHASE, UPDATE, UNITS, START = "stop", "move", "update", "units", "start"
 PHASES = (STOP, MOVE_PHASE, UPDATE, UNITS, START)
+
+
+class InstallFailed(str):
+    """A line of `rerender`'s saying an installer did not finish: the units stay pending."""
 
 
 class MigrationError(RuntimeError):
@@ -210,10 +222,24 @@ class Plan:
     old_imports: list[str] = field(default_factory=list)
     #: Whether `CLOUDFLARE_TUNNEL` is pinned to the tunnel a Jarvis install ran by default.
     pin_tunnel: bool = False
+    #: `UNITS_PENDING`'s record when a run before this one did not finish the units: the
+    #: unit it was installing (`target`, or None). None when there is no such record.
+    units_pending: dict[str, Any] | None = None
 
     @property
     def empty(self) -> bool:
-        return not (self.steps or self.env_files or self.unset_data_dir or self.retire)
+        return not (self.steps or self.env_files or self.unset_data_dir or self.retire
+                    or self.units_pending is not None)
+
+    @property
+    def pending_target(self) -> tuple[str, str] | None:
+        """The `(manager, unit)` an unfinished run was installing, when it said."""
+        target = (self.units_pending or {}).get("target")
+        if isinstance(target, dict) and all(
+            isinstance(target.get(key), str) for key in ("manager", "unit")
+        ):
+            return target["manager"], target["unit"]
+        return None
 
     def conflict(self, detail: str, message: str) -> None:
         """A conflict: `detail` names what is in the way, `message` says it for a person."""
@@ -244,6 +270,7 @@ class Plan:
             "unset_data_dir": self.unset_data_dir,
             "pin_tunnel": self.pin_tunnel,
             "retire": aside,
+            "units_pending": None if self.units_pending is None else UNITS_PENDING_MESSAGE,
             "conflicts": [
                 {"message": message, "detail": detail}
                 for message, detail in zip(self.conflict_messages, self.conflicts, strict=True)
@@ -282,6 +309,9 @@ class Plan:
                 f"  {_tilde(self.legacy)}: renamed {_tilde(self.legacy)}.migrated-<date>, "
                 "with whatever is left in it"
             )
+        if self.units_pending is not None:
+            lines.append("  the service and the approval hook: put in place again (a "
+                         "migration before this one moved the files but did not finish them)")
         return lines
 
 
@@ -319,7 +349,8 @@ def make_plan(
     state_dir = _setting_dir("STATE_DIR", env, stores) or default_state_dir()
     cache_dir = _setting_dir("CACHE_DIR", env, stores) or xdg_home("cache") / "keryx"
     plan = Plan(legacy, config_dir, data_dir, state_dir, cache_dir, env_files=env_files,
-                working_dirs=working, unset_data_dir=unset)
+                working_dirs=working, unset_data_dir=unset,
+                units_pending=_pending_record(state_dir / UNITS_PENDING))
 
     targets = {CONFIG: config_dir, DATA: data_dir, STATE: state_dir}
     twins = {"config": config_dir, "data": data_dir, "state": state_dir, "cache": cache_dir}
@@ -491,6 +522,17 @@ def _setting_dir(
     return Path(value).expanduser() if value else None
 
 
+def _pending_record(path: Path) -> dict[str, Any] | None:
+    """`UNITS_PENDING`'s record, `{}` when it is there and cannot be read, None when not."""
+    if not (path.exists() or path.is_symlink()):
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
 def _stored_quietly(store: ConfigStore) -> dict[str, Any]:
     try:
         return store.stored()
@@ -603,6 +645,8 @@ class Report:
     rerendered: list[str] = field(default_factory=list)
     started: bool | None = None
     notes: list[str] = field(default_factory=list)
+    #: Whether the units are still to re-render (`UNITS_PENDING` left for the next run).
+    units_pending: bool = False
 
 
 def run(
@@ -640,6 +684,13 @@ def run(
     on_step(MOVE_PHASE)
     for directory in (plan.config_dir, plan.data_dir, plan.state_dir):
         secure_dir(directory)
+    starting = successor or service
+    pending = plan.state_dir / UNITS_PENDING
+    write_private(_pending_before_moves(plan), json.dumps({
+        "written": today.isoformat(),
+        "target": None if starting is None
+        else {"manager": starting.target.manager, "unit": starting.target.unit},
+    }) + "\n")
     for source in dict.fromkeys(step.source.parent for step in plan.steps):
         _checkpoint(source / TASK_DB)
     try:
@@ -684,11 +735,23 @@ def run(
     report.leftovers += _working_leftovers(plan.working_dirs)
     on_step(UNITS)
     report.rerendered = retire() + rerender()
-    starting = successor or service
+    report.units_pending = any(isinstance(line, InstallFailed) for line in report.rerendered)
+    if not report.units_pending:
+        pending.unlink(missing_ok=True)
     if starting is not None and (was_active or starting.active()):
         on_step(START)
         report.started = starting.start()
     return report
+
+
+def _pending_before_moves(plan: Plan) -> Path:
+    """Where `UNITS_PENDING` goes before anything moves: `STATE_DIR`, unless Jarvis's state
+    directory is about to move onto it whole — then inside that, which carries it there,
+    since a file already in `STATE_DIR` would stand in the move's way."""
+    for step in plan.steps:
+        if step.action == MOVE and step.destination == plan.state_dir:
+            return step.source / UNITS_PENDING
+    return plan.state_dir / UNITS_PENDING
 
 
 def _names_legacy(store: ConfigStore, legacy: Path) -> bool:
