@@ -110,11 +110,12 @@ For a program driving these: `keryx models list --json` adds `servers` (the mode
 the voice server and the local agent: whether each unit is installed, and whether a server
 on this machine answers — a server elsewhere is never asked), and the recommendations, so
 nothing else has to work out what fits: `recommended` (the agent's model for this machine as
-it is set up, or null), `recommended_with_local_voice` (the same with the voice here),
-`voice_llm_recommended` (the voice's own model the owner's rule gives a voice here — the one
-already chosen, else the rule's pick — or null for the agent's), `voice_llm_separate`
-(whether it has one), and on each model `fits_with_voice_llm` (whether, as the agent's
-model, it leaves room for the voice here with a model of its own). `keryx models pull NAME --json`
+it is set up, or null), `voice_llm_recommended` (the voice's own model: the one already chosen, else, the first time
+a voice is set up here, exactly what `keryx voice use here` would bring up now — or null for
+none of its own), `voice_llm_separate` (whether it has one), `recommended_with_local_voice`
+(the agent's model that fits beside that one and the speech models, so the two always fit
+together), and on each model `fits_with_voice_llm` (whether, as the agent's model, it leaves
+room for that voice model — or, with none, for any the rule would pick). `keryx models pull NAME --json`
 prints JSON lines: `{"event": "progress", "done": …, "total": …}`, then exactly one of
 `done` (with its `path`), `adopted` (`path` and `from`), `error` (`message`) or `cancelled` —
 a refusal before the download included. A SIGTERM or SIGINT cancels it with exit 130, and
@@ -197,16 +198,18 @@ the voice's model keeps its whole context. For example, with the voice here:
 **Who chooses.** The first time a voice is set up here, the owner's rule gives the voice a
 model of its own when one fits: Qwen3.5 9B, else Qwen3.5 4B, beside the agent's model and the
 speech models — else the agent's model. An agent's model here whose size Keryx cannot tell
-(a GGUF of your own) keeps the voice on it. The agent's model is chosen first and the
-voice's from what it leaves, so the voice never pushes the tested model off a machine; a
-voice model you have already chosen is reserved before the agent's is recommended.
-`keryx setup` asks it as a question of its own, with the rule's choice as the default and the
-agent's model always on offer (when there is nothing to choose, it says so); `keryx voice use
-here` applies the rule only while `VOICE_LLM` was never set. After that it is yours:
-`keryx voice llm here|shared|remote`, above.
+(a GGUF of your own) keeps the voice on it. The rule is judged beside the agent's model that
+runs here now — beside nothing when the work runs elsewhere, so an RTX 5090 with Claude doing
+the work gives the voice the 9B. `keryx voice use here` applies it only while `VOICE_LLM` was
+never set and the voice is not here yet. `keryx setup` asks it as a question of its own: on
+a first set-up the rule's choice is the default, and otherwise the words the voice already
+has — the agent's model included — are offered to keep and are the default; the agent's
+model is always on offer, and when there is nothing to choose it says so. After that it is
+yours: `keryx voice llm here|shared|remote`, above. `keryx models list --json` tells a program
+exactly what `voice use here` would bring up, and the agent's model that fits beside it.
 
 `keryx doctor` checks each voice for its own settings: a voice here whose words have no model
-(or, `remote`, no address) fails, and so do the voice's own model missing from the disk and,
+(the local agent's, while they are shared; or, `remote`, no address) fails, and so do the voice's own model missing from the disk and,
 with `keryx doctor`'s network checks, its server not answering with its model — the Mac app's
 fix for those brings the voice's own model up again.
 

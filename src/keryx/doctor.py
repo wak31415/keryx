@@ -61,6 +61,7 @@ from keryx.endpoints import Endpoint, Probe, probe, warnings
 from keryx.integrations.gmail import token_path
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
 from keryx.localmodels import catalog, runtimes, servers
+from keryx.localmodels import voice as local_voice
 from keryx.localmodels.server import OLLAMA_URL
 from keryx.logging_util import mask_number
 from keryx.realtime.openai import realtime_problem
@@ -310,13 +311,19 @@ def _voice_checks(settings: Settings) -> list[Check]:
             ]
         return [Check("OPENAI_API_KEY", True, "set", section="voice")]
     voice = settings.voice_endpoint
-    words = settings.voice_llm_refusal() if settings.voice_mode == "here" else None
+    needs = local_voice.needs(settings) if settings.voice_mode == "here" else None
     if voice is None:
         checks = [Check("voice", False, "no voice server address", section="voice",
                         hint=settings.voice_refusal(), unset=True,
                         fix=fixes.setting("VOICE_BASE_URL"))]
-    elif words is not None:
-        checks = [_no_words_check(settings, words)]
+    elif needs == local_voice.NEEDS_WORDS:
+        # Shared with a local agent that has no model: the voice unit could never start.
+        checks = [Check("voice", False, "The voice here takes its words from the local "
+                        "agent, which has no model yet.", section="voice",
+                        hint=local_voice.NO_WORDS_HINT, unset=True, fix="models:choose")]
+    elif needs is not None:
+        checks = [_no_words_check(settings, settings.voice_llm_refusal()
+                                  or local_voice.NO_VOICE_LLM_HINT)]
     else:
         checks = [Check("voice", True, f"your own server at {voice.base_url}", section="voice")]
     if settings.voice_mode == "server":

@@ -107,9 +107,10 @@ def first_set_up(settings: Settings, source: str) -> bool:
 
 
 def first_choice(settings: Settings, hardware: Hardware) -> ModelEntry | None:
-    """The voice LLM a first set-up runs (D2, `catalog.voice_llm_pick`): a small model of its
-    own when it fits beside the agent's model and the speech models, else None — shared."""
-    return catalog.voice_llm_pick(hardware, agent_gb=use.agent_memory_gb(settings))
+    """The voice LLM a first set-up runs (D2, `use.d2_choice`, which `keryx models list
+    --json` reports too): a small model of its own when it fits beside the agent's model and
+    the speech models, else None — shared."""
+    return use.d2_choice(settings, hardware)
 
 
 # --- here ------------------------------------------------------------------------------------

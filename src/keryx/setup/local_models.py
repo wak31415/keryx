@@ -32,7 +32,6 @@ from pathlib import Path
 
 from keryx.agents.registry import BACKENDS
 from keryx.config import Settings
-from keryx.config.store import FROM_DEFAULT
 from keryx.endpoints import Endpoint, warnings
 from keryx.localmodels import catalog, server, use, voice, voice_llm
 from keryx.localmodels.catalog import ModelEntry
@@ -436,22 +435,26 @@ def _voice_words(ctx: SetupContext, machine: Hardware) -> dict[str, str] | None:
     stopped, which leaves the voice as it was.
 
     Offered from what the agent's model leaves (`catalog.budget`): the local agent's model,
-    and each catalog model that fits beside it and the speech models, the owner's rule's
-    choice (`catalog.voice_llm_pick`) first and the default. An agent's model here whose
-    size cannot be told leaves only itself, as the rule does; so does a machine with no room
-    for a second, said rather than asked. A choice already made can be kept.
+    and each catalog model that fits beside it and the speech models. On a first set-up
+    (`voice_llm.first_set_up`) the owner's rule's choice (`use.d2_choice`, what `keryx voice
+    use here` would bring up) is the default; otherwise the words the voice has are offered
+    to keep and are the default, the agent's model included — an existing install keeps
+    what it has unless the owner says otherwise. An agent's model here whose size cannot be
+    told leaves only itself, as the rule does; so does a machine with no room for a second,
+    said rather than asked.
     """
     ui, settings = ctx.ui, ctx.settings
     agent_gb = use.agent_memory_gb(settings)
     agent = settings.local_agent_endpoint
     shares = agent is not None and bool(agent.model)
-    pick = catalog.voice_llm_pick(machine, agent_gb=agent_gb)
-    chosen = (ctx.store.source_of("VOICE_LLM", settings) != FROM_DEFAULT
-              and settings.voice_llm != SHARED and settings.voice_llm_refusal() is None)
+    first = voice_llm.first_set_up(settings, ctx.store.source_of("VOICE_LLM", settings))
+    pick = use.d2_choice(settings, machine)
+    working = settings.voice_llm_refusal() is None and (settings.voice_llm != SHARED or shares)
+    chosen = not first and working
     options: list[Choice] = []
     if chosen:
         options.append(Choice(KEEP, f"Keep {_described(settings)}"))
-    if shares:
+    if shares and not (chosen and settings.voice_llm == SHARED):
         assert agent is not None
         options.append(Choice(SHARED, "The local agent's model",
                               hint=f"{agent.model}; it waits while a task is generating"))
@@ -481,7 +484,8 @@ def _voice_words(ctx: SetupContext, machine: Hardware) -> dict[str, str] | None:
                     "from the local agent's model.")
         answer = enabled[0].value
     else:
-        default = KEEP if chosen else (pick.key if pick is not None else enabled[0].value)
+        default = KEEP if chosen else (pick.key if first and pick is not None
+                                       else enabled[0].value)
         answer = ui.select("Where should the voice's words come from?", options,
                            default=default)
     if answer == KEEP:
@@ -495,6 +499,8 @@ def _voice_words(ctx: SetupContext, machine: Hardware) -> dict[str, str] | None:
 
 def _described(settings: Settings) -> str:
     """The voice LLM already chosen, as the option to keep it says it."""
+    if settings.voice_llm == SHARED:
+        return f"the local agent's model, {settings.local_agent_model}"
     if settings.voice_llm == HERE:
         return f"{_title(settings.voice_llm_model)}, on its own server here"
     endpoint = settings.voice_llm_endpoint

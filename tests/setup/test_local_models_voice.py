@@ -291,3 +291,33 @@ def test_a_voice_llm_elsewhere_already_chosen_is_offered_to_keep(make_ctx, world
     keep = ctx.ui.choices["Where should the voice's words come from?"][0]
     assert (keep.value, keep.label) == ("keep", "Keep small at gpu-box")
     assert ctx.refresh().voice_llm == "remote"
+
+
+def test_a_voice_llm_explicitly_shared_is_kept_by_default(make_ctx, world):
+    """Not a first set-up: the agent's model chosen before is offered to keep, and kept,
+    though a model of the voice's own would fit (the rule's 9b is not the default)."""
+    ConfigStore().set({**CODER_HERE, "VOICE_LLM": "shared"})
+    world.machine, world.s2s = MAC_64, "/bin/s2s"
+    ctx = make_ctx([("model run", "keep"), ("voice on a call", "here"),
+                    (WORDS_QUESTION, DEFAULT), ("Which voice?", DEFAULT)])
+
+    local_models.run_section(ctx)
+
+    choices = ctx.ui.choices["Where should the voice's words come from?"]
+    assert choices[0].value == "keep" and CODER.key in choices[0].label
+    assert "shared" not in [c.value for c in choices]  # the keep is that one
+    assert installers(world) == ["--voice"] and ctx.refresh().voice_llm == "shared"
+
+
+def test_a_voice_already_here_on_the_default_shared_keeps_it(make_ctx, world):
+    """An install whose voice is already here, `VOICE_LLM` never set: not a first set-up."""
+    ConfigStore().set({**CODER_HERE, "VOICE_MODE": "here"})
+    world.machine, world.s2s = MAC_64, "/bin/s2s"
+    ctx = make_ctx([("model run", "keep"), ("voice on a call", "here"),
+                    (WORDS_QUESTION, DEFAULT), ("Which voice?", DEFAULT)])
+
+    local_models.run_section(ctx)
+
+    assert ctx.ui.choices["Where should the voice's words come from?"][0].value == "keep"
+    assert not [c for c in world.calls if c[0] == "download"]
+    assert ctx.refresh().voice_llm == "shared"

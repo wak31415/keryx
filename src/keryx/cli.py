@@ -1194,9 +1194,10 @@ def models_list(
     """The models Keryx can download, which fit this machine, and the local voices."""
     settings = _configure_readonly()
     machine = hardware.detect()
-    advice = use.recommendations(settings, machine)
+    first = voice_llm.first_set_up(settings, ConfigStore().source_of("VOICE_LLM", settings))
+    advice = use.recommendations(settings, machine, first_set_up=first)
     voice_here = settings.voice_mode == "here"
-    reserved = advice.chosen_gb or 0.0
+    reserved = advice.chosen_gb
     rows = [
         {
             "name": entry.key,

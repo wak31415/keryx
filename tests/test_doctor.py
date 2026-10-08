@@ -156,7 +156,8 @@ def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
 
 def test_a_voice_server_of_your_own_needs_no_openai_key(healthy):
     settings = healthy.model_copy(
-        update={"openai_api_key": None, "voice_base_url": "http://127.0.0.1:8765/v1"}
+        update={"openai_api_key": None, "voice_base_url": "http://127.0.0.1:8765/v1",
+                **AGENT_WORDS}
     )
 
     checks = by_name(run_doctor_checks(settings))
@@ -185,13 +186,18 @@ def test_the_voice_set_to_openai_ignores_an_address_left_behind(healthy):
     assert endpoint_checks(settings, ok) == []
 
 
+#: A local agent with a model: the words a voice here shares by default.
+AGENT_WORDS = {"local_agent_base_url": "http://127.0.0.1:8090/v1",
+               "local_agent_model": "qwen3-coder"}
+
+
 def test_the_voice_set_to_here_is_this_machines_pipeline_whatever_the_address(healthy):
-    settings = healthy.model_copy(update={"voice_mode_explicit": "here"})
+    settings = healthy.model_copy(update={"voice_mode_explicit": "here", **AGENT_WORDS})
 
     assert "127.0.0.1:8765" in by_name(run_doctor_checks(settings))["voice"].text
     refused, _ = _reach(realtime="no")
-    (failed,) = endpoint_checks(settings, refused)
-    assert failed.fix == "voice:here"
+    failed = by_name(endpoint_checks(settings, refused))["voice server"]
+    assert (failed.ok, failed.fix) == (False, "voice:here")
 
 
 def test_with_a_voice_server_of_your_own_the_openai_key_is_for_web_search(healthy):
@@ -1316,6 +1322,7 @@ FIXED = [
     (_with(issue_reporting=True, keryx_checkout=Path("/nowhere")), "issue reports",
      "setting:KERYX_CHECKOUT"),
     (_with(voice_mode_explicit="here", voice_llm="here"), "voice", "voice:llm"),
+    (_with(voice_mode_explicit="here"), "voice", "models:choose"),
     (_with(voice_mode_explicit="here", voice_llm="remote"), "voice",
      "setting:VOICE_LLM_BASE_URL"),
     (_with(voice_mode_explicit="here", voice_llm="remote",
@@ -1565,8 +1572,22 @@ def test_a_voice_here_whose_words_have_no_setting_fails_and_says_which(
 
 def test_a_voice_here_whose_words_are_set_or_shared_passes(healthy):
     for settings in (_own_voice_llm(healthy), _remote_voice_llm(healthy),
-                     healthy.model_copy(update={"voice_mode_explicit": "here"})):
+                     healthy.model_copy(update={"voice_mode_explicit": "here",
+                                                **AGENT_WORDS})):
         assert by_name(run_doctor_checks(settings))["voice"].ok
+
+
+@pytest.mark.parametrize("agent", [{}, {"local_agent_base_url": "http://127.0.0.1:8090/v1"}])
+def test_a_voice_here_sharing_a_local_agent_with_no_model_fails(healthy, agent):
+    """The voice unit could never start: its words are the local agent's, which has none."""
+    settings = healthy.model_copy(update={"voice_mode_explicit": "here", **agent})
+
+    check = by_name(run_doctor_checks(settings))["voice"]
+
+    assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
+    assert check.detail == ("The voice here takes its words from the local agent, which has "
+                            "no model yet.")
+    assert check.fix == "models:choose" and "keryx models use" in check.hint
 
 
 def test_the_voices_own_model_must_be_on_disk_with_llama_cpp_to_serve_it(

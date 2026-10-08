@@ -101,30 +101,37 @@ def voice_llm_memory_gb(settings: Settings) -> float | None:
     return entry.memory_gb if entry is not None else None
 
 
+def d2_choice(settings: Settings, hardware: Hardware) -> ModelEntry | None:
+    """The owner's rule (D2) for this machine as it is now: `catalog.voice_llm_pick` beside
+    the agent's model that runs here (`agent_memory_gb`; 0 when none does). The one call
+    both a first `keryx voice use here` (`voice_llm.first_choice`) and `recommendations`
+    make, so what the Mac app is told is what the command brings up."""
+    return catalog.voice_llm_pick(hardware, agent_gb=agent_memory_gb(settings))
+
+
 @dataclass(frozen=True)
 class Recommendations:
     """What `keryx models list --json` recommends for this machine, so the Mac app never
     works out a fit itself. Every figure is `catalog.budget`'s sum.
 
+    - `voice_llm`: the voice's own model for a voice here — the one already chosen
+      (`VOICE_LLM=here`), else, on a first set-up, exactly what `keryx voice use here` would
+      bring up now (`d2_choice`); None is none of its own (shared, or elsewhere).
     - `recommended`: the agent's model as things stand — the speech models reserved while the
-      voice is here (`Settings.voice_mode`), and the voice's own LLM while it runs here.
-    - `with_local_voice`: the same with the voice here, whether or not it is yet.
-    - `voice_llm`: the voice LLM the owner's rule (D2) gives a voice here: the one already
-      chosen to run here, else `catalog.voice_llm_pick` beside the agent's model — the one
-      running here, or, with none here, `with_local_voice`. None is `shared`.
-
-    The agent's model comes first and the voice's from what remains, as `keryx setup` asks
-    them: the voice's own model is never what keeps the tested model off a machine, unless
-    it is one the owner already chose. A GGUF of the owner's own as the voice's is not
-    counted, since it cannot be sized.
+      voice is here (`Settings.voice_mode`), and a voice LLM already chosen.
+    - `with_local_voice`: the agent's model with the voice here and `voice_llm` reserved, so
+      the two always fit together.
     """
 
     hardware: Hardware
     recommended: ModelEntry | None
     with_local_voice: ModelEntry | None
     voice_llm: str | None
-    #: The memory the voice's own LLM already chosen takes, or None when there is none.
-    chosen_gb: float | None
+    #: The memory `voice_llm` takes (0 for a GGUF of the owner's own, which cannot be
+    #: sized), or None when there is none.
+    voice_llm_gb: float | None
+    #: The memory a voice LLM already chosen takes: what `recommended` reserves.
+    chosen_gb: float
 
     @property
     def voice_llm_separate(self) -> bool:
@@ -133,30 +140,30 @@ class Recommendations:
 
     def fits_with_voice_llm(self, entry: ModelEntry) -> bool:
         """Whether `entry`, as the agent's model, leaves room for the voice here and a model
-        of its own: the one already chosen, else whichever the owner's rule would pick."""
-        if self.chosen_gb is not None:
+        of its own: `voice_llm`, else any the owner's rule would pick beside it."""
+        if self.voice_llm_gb is not None:
             return catalog.fits(entry, self.hardware, voice_here=True,
-                                voice_llm_gb=self.chosen_gb)
+                                voice_llm_gb=self.voice_llm_gb)
         return catalog.voice_llm_pick(self.hardware, agent_gb=entry.memory_gb) is not None
 
 
-def recommendations(settings: Settings, hardware: Hardware) -> Recommendations:
-    """`Recommendations` for `hardware`, as `settings` describe the voice and the agent."""
-    own = settings.voice_llm == "here" and bool(settings.voice_llm_model)
-    chosen_gb = (voice_llm_memory_gb(settings) or 0.0) if own else None
-    reserved = chosen_gb or 0.0
+def recommendations(settings: Settings, hardware: Hardware, *,
+                    first_set_up: bool) -> Recommendations:
+    """`Recommendations` for `hardware`, as `settings` describe the voice and the agent;
+    `first_set_up` is `voice_llm.first_set_up`, the one time `voice use here` chooses."""
+    voice_llm: str | None = None
+    voice_llm_gb: float | None = None
+    chosen_gb = 0.0
+    if settings.voice_llm == "here" and settings.voice_llm_model:
+        voice_llm = settings.voice_llm_model
+        voice_llm_gb = chosen_gb = voice_llm_memory_gb(settings) or 0.0
+    elif first_set_up and (pick := d2_choice(settings, hardware)) is not None:
+        voice_llm, voice_llm_gb = pick.key, pick.memory_gb
     recommended = catalog.recommend(hardware, voice_here=settings.voice_mode == "here",
-                                    voice_llm_gb=reserved)
-    with_voice = catalog.recommend(hardware, voice_here=True, voice_llm_gb=reserved)
-    if own:
-        voice_llm: str | None = settings.voice_llm_model
-    else:
-        agent = agent_memory_gb(settings)
-        if agent == 0.0:  # no agent's model here yet: the one this machine would be given
-            agent = with_voice.memory_gb if with_voice is not None else 0.0
-        pick = catalog.voice_llm_pick(hardware, agent_gb=agent)
-        voice_llm = pick.key if pick is not None else None
-    return Recommendations(hardware, recommended, with_voice, voice_llm, chosen_gb)
+                                    voice_llm_gb=chosen_gb)
+    with_voice = catalog.recommend(hardware, voice_here=True, voice_llm_gb=voice_llm_gb or 0.0)
+    return Recommendations(hardware, recommended, with_voice, voice_llm, voice_llm_gb,
+                           chosen_gb)
 
 
 def enable_local(settings: Settings, *, default: bool) -> dict[str, Any]:

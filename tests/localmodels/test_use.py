@@ -392,33 +392,60 @@ def keys(advice):
             advice.voice_llm_separate)
 
 
-def test_a_5090_with_the_agent_elsewhere_keeps_the_voices_words_shared(settings):
-    """The agent the machine would be given (the tested 25 GB one, beside the speech models'
-    3) leaves 3.8 GB: no voice model fits beside it, so the owner's rule says shared."""
-    advice = use.recommendations(settings, RTX_5090)
+def advise(settings, machine, *, first_set_up=True):
+    return use.recommendations(settings, machine, first_set_up=first_set_up)
 
-    assert keys(advice) == (CODER.key, CODER.key, None, False)
-    assert not advice.fits_with_voice_llm(CODER)  # 25 + 6 + 3 = 34 > 31.8
-    assert advice.fits_with_voice_llm(by_key("gpt-oss-20b"))  # 16 + 9 + 3 = 28
+
+def test_the_rule_is_one_function_beside_the_agents_model_running_here(settings):
+    """`d2_choice` is what a first `voice use here` brings up: beside nothing (0) when the
+    agent runs elsewhere, beside its model when it runs here."""
+    assert use.d2_choice(settings, RTX_5090).key == "qwen3.5-9b"  # 0 + 9 + 3
+    coder = settings.model_copy(update={"agent_server_model": CODER.key})
+    assert use.d2_choice(coder, MAC[48]).key == "qwen3.5-4b"  # 25 + 9 + 3 = 37 > 36
+    assert use.d2_choice(coder, RTX_5090) is None  # 25 + 6 + 3 = 34 > 31.8
+
+
+def test_a_5090_with_the_agent_elsewhere_gives_the_voice_the_9b_and_the_agent_what_is_left(
+    settings,
+):
+    """What `voice use here` would bring up (the 9b, beside no agent's model here), and the
+    agent's model that fits beside it with the speech models: 9 + 3 + 16 = 28 <= 31.8."""
+    advice = advise(settings, RTX_5090)
+
+    assert keys(advice) == (CODER.key, "gpt-oss-20b", "qwen3.5-9b", True)
+    assert not advice.fits_with_voice_llm(CODER)  # 25 + 9 + 3 = 37 > 31.8
+    assert advice.fits_with_voice_llm(by_key("gpt-oss-20b"))
     assert not advice.fits_with_voice_llm(by_key("gpt-oss-120b"))
 
 
 def test_a_64_gb_mac_gives_the_voice_a_model_of_its_own_beside_the_agents(settings):
-    advice = use.recommendations(settings, MAC[64])
+    advice = advise(settings, MAC[64])
 
-    # 25 + 9 + 3 = 37 <= 48: the larger of the two small models.
+    # 25 + 9 + 3 = 37 <= 48: the tested model beside the 9b.
     assert keys(advice) == (CODER.key, CODER.key, "qwen3.5-9b", True)
     assert advice.fits_with_voice_llm(CODER)
 
 
-def test_the_rule_is_applied_to_the_agents_model_already_here(settings):
-    """A 48 GB Mac (36 for models) running gpt-oss-20b (16) has room for the 9b (28); the
-    tested model it would otherwise be given (25) only for the 4b (34)."""
-    assert keys(use.recommendations(settings, MAC[48]))[2:] == ("qwen3.5-4b", True)
+def test_the_pair_fits_beside_the_agents_model_already_here(settings):
+    """A 48 GB Mac (36) running gpt-oss-20b (16): the rule gives the 9b (28), and the agent's
+    model recommended beside it is one that fits with it, never the tested 25 GB one (37)."""
     running = settings.model_copy(update={"agent_server_model": "gpt-oss-20b"})
-    assert keys(use.recommendations(running, MAC[48]))[2:] == ("qwen3.5-9b", True)
+    advice = advise(running, MAC[48])
+
+    assert keys(advice)[1:] == ("qwen3.8-27b", "qwen3.5-9b", True)  # 24 + 9 + 3 = 36
+    coder = settings.model_copy(update={"agent_server_model": CODER.key})
+    assert keys(advise(coder, MAC[48]))[1:] == (CODER.key, "qwen3.5-4b", True)  # 34
     own = settings.model_copy(update={"agent_server_model": "/models/own.gguf"})
-    assert keys(use.recommendations(own, MAC[64]))[2:] == (None, False)  # cannot be sized
+    assert keys(advise(own, MAC[64]))[2:] == (None, False)  # cannot be sized: shared
+
+
+def test_only_a_first_set_up_is_given_a_voice_model_by_the_rule(settings):
+    """`VOICE_LLM` set, or a voice already here on the agent's words: `voice use here`
+    chooses nothing, and neither does the recommendation."""
+    advice = advise(settings, MAC[64], first_set_up=False)
+
+    assert keys(advice) == (CODER.key, CODER.key, None, False)
+    assert advice.fits_with_voice_llm(CODER)  # a model of its own would still fit beside it
 
 
 def test_the_speech_models_are_kept_free_only_while_the_voice_is_here(settings):
@@ -428,23 +455,25 @@ def test_the_speech_models_are_kept_free_only_while_the_voice_is_here(settings):
     stale = settings.model_copy(update={"voice_mode_explicit": "openai",
                                         "voice_base_url": "http://127.0.0.1:8765/v1"})
 
-    assert use.recommendations(here, tight).recommended.key == "qwen3.8-27b"
-    assert use.recommendations(stale, tight).recommended.key == CODER.key
-    assert use.recommendations(stale, tight).with_local_voice.key == "qwen3.8-27b"
+    assert advise(here, tight, first_set_up=False).recommended.key == "qwen3.8-27b"
+    assert advise(stale, tight, first_set_up=False).recommended.key == CODER.key
+    assert advise(stale, tight, first_set_up=False).with_local_voice.key == "qwen3.8-27b"
 
 
 def test_a_voice_llm_already_chosen_is_reserved_and_kept(settings):
     chosen = settings.model_copy(update={"voice_llm": "here", "voice_llm_model": "qwen3.5-9b",
                                          "voice_mode_explicit": "here"})
-    advice = use.recommendations(chosen, MAC[48])
+    advice = advise(chosen, MAC[48], first_set_up=False)
 
-    # 25 + 9 + 3 = 37 > 36: the agent's model makes room for the voice's, never the other way.
+    # 25 + 9 + 3 = 37 > 36: the agent's model makes room for the voice's chosen one.
     assert keys(advice) == ("qwen3.8-27b", "qwen3.8-27b", "qwen3.5-9b", True)
     assert advice.fits_with_voice_llm(by_key("qwen3.8-27b"))
     assert not advice.fits_with_voice_llm(CODER)
+    own = chosen.model_copy(update={"voice_llm_model": "/models/own.gguf"})
+    assert keys(advise(own, MAC[48], first_set_up=False))[2:] == ("/models/own.gguf", True)
 
 
 def test_nothing_fits_a_small_machine(settings):
-    advice = use.recommendations(settings, Hardware("cpu", None, 0, 4))
+    advice = advise(settings, Hardware("cpu", None, 0, 4))
 
     assert keys(advice) == (None, None, None, False)
