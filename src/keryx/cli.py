@@ -2205,7 +2205,8 @@ def setup_mark(
     step: Annotated[str, typer.Argument(help="The step, by its id in `keryx setup plan`.")],
     as_json: Annotated[bool, typer.Option("--json", help="Print it as one JSON document.")] = False,
 ) -> None:
-    """Record a step as walked: an optional one skipped, or the PIN left to the first call."""
+    """Record a step as walked: an optional one skipped, the PIN left to the first call, or
+    the phone or the service left for later (still not done, so not ready: "deferred")."""
     _owner_only("mark a setup step")
     try:
         settings = _load_settings_optional()
@@ -2227,7 +2228,8 @@ def setup_mark(
         typer.echo(f"nothing is marked: {store.config_path} cannot be read ({error}); "
                    "fix it by hand", err=True)
         raise typer.Exit(1) from None
-    typer.echo(json.dumps(marked) if as_json else f"{marked['id']}: walked")
+    said = "left for later" if marked["deferred"] else "walked"
+    typer.echo(json.dumps(marked) if as_json else f"{marked['id']}: {said}")
 
 
 #: What the Mac app's answers come as: one JSON object on stdin, never typed at a terminal.

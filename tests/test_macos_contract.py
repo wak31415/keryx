@@ -110,6 +110,7 @@ COMMANDS = {
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
     "migrate --json", "setup project-context --describe --json",
     "setup project-context --apply --json", "config options ASSISTANT_NAME --json",
+    "setup mark phone --json",
 }
 #: The command lines and streams the CLI prints that the app has yet to name. Each is
 #: checked once the contract names it; until then the cross-checks let it be missing, and
@@ -118,7 +119,7 @@ AWAITING = {
     "setup profile --json", "setup profile --preview --json", "setup profile --apply --json",
     "migrate --json", MIGRATE, "setup project-context --describe --json",
     "setup project-context --apply --json", PROJECT_CONTEXT,
-    "config options ASSISTANT_NAME --json",
+    "config options ASSISTANT_NAME --json", "setup mark phone --json",
 }
 #: What a command line reads on stdin (with `--stdin` added to it): the new PIN, twice;
 #: the key to check, unsaved.

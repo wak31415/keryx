@@ -19,7 +19,8 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - The steps to a first working call, as the Mac app's Setup Assistant shows them:
   `uv run keryx setup plan [--json]` (a report, so it exits 0; it asks what `doctor` asks, and
   a migration still to run is its first step), `uv run keryx setup mark STEP [--json]` (an
-  optional step skipped, or `pin` left to the first call; an unknown step exits 2),
+  optional step skipped, `pin` left to the first call, or a `deferrable` step — `phone`,
+  `service` — left for later, `deferred: true` on it in the plan; an unknown step exits 2),
   `uv run keryx setup profile [--json]` (the wizard's "About you" questions as data, in its
   order), `setup profile --preview|--apply [--json]` (the answers, one JSON object on stdin
   — never a terminal — composed and written by the wizard's own code in `setup/profile.py`:
@@ -679,7 +680,10 @@ after the Mac app has shown the same two addresses and had the same yes. `keryx 
 (`setup/plan.py` over `wizard.section_statuses`), so the two cannot drift: decide a section's
 status in the wizard, and the plan follows. `walked` there only ever settles an optional step,
 or `pin` (the owner's "let the first call set it"); a required step is done by its checks,
-and `setup mark` refuses one. A soft warning never holds a step or `ready` back, a hard
+and `setup mark` refuses one — except a `deferrable` one (the phone, the service: a Mac that
+may never get a phone), which walking leaves *deferred*: still not done, so `ready` stays
+false (the app's "Nearly Ready"), but no longer holding back what waits for it. A blank
+owner name holds nothing back either: the wizard takes it as "the owner". A soft warning never holds a step or `ready` back, a hard
 failure no step owns is the service's (no hard failure beside `ready: true`), and the plan
 always answers — exit 0, a document — whatever the settings.
 

@@ -518,9 +518,18 @@ def test_setup_mark_records_a_step(home):
     result = run("setup", "mark", "google", "--json")
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout) == {"id": "google", "walked": True}
+    assert json.loads(result.stdout) == {"id": "google", "walked": True, "deferred": False}
     assert "google" in home.walked_sections()
     assert run("setup", "mark", "pin").output == "pin: walked\n"
+
+
+def test_setup_mark_leaves_the_phone_for_later(home):
+    result = run("setup", "mark", "phone", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"id": "phone", "walked": True, "deferred": True}
+    assert run("setup", "mark", "service").output == "service: left for later\n"
+    assert {"phone", "service"} <= set(home.walked_sections())
 
 
 def test_setup_mark_refuses_a_step_that_is_not_one(home):
