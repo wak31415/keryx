@@ -129,6 +129,8 @@ public final class AppModel {
     @ObservationIgnored private var serviceTask: Task<Result<ServiceResult, KeryxError>, Never>?
     /// The model server is being stopped (`stopModelServer`): nothing starts it meanwhile.
     public private(set) var stoppingModelServer = false
+    /// The voice LLM's own server is being stopped (`stopVoiceLLMServer`).
+    public private(set) var stoppingVoiceLLMServer = false
     /// The short writes under way — a setting, the PIN, the webhooks … — which quitting gives
     /// a moment to finish, and names if they have not.
     public private(set) var writes: [UUID: Write] = [:]
@@ -159,7 +161,7 @@ public final class AppModel {
     /// A short write to Keryx, as quitting names it.
     public enum Write: Sendable, Equatable, Hashable, CaseIterable {
         case setting, pin, webhooks, voice, model, setupStep, plugin, signOut, modelServerStop, restart
-        case memory, projects
+        case memory, projects, voiceLLMServerStop
 
         /// "the phone PIN is being saved": a clause for the quit question.
         public var clause: String {
@@ -176,6 +178,7 @@ public final class AppModel {
             case .restart: "Keryx is being restarted"
             case .memory: "what the assistant knows about you is being saved"
             case .projects: "the project briefs are being saved"
+            case .voiceLLMServerStop: "the voice LLM's server is being stopped"
             }
         }
     }
@@ -212,6 +215,10 @@ public final class AppModel {
     private var chain: UUID?
     /// Starting the model server here (`keryx models start`).
     public let modelServerRun: StreamRun<ModelServerStarted>
+    /// Choosing where a voice on this Mac takes its words from (`keryx voice llm`).
+    public let voiceLLMRun: StreamRun<VoiceLLMChosen>
+    /// Starting the voice LLM's own server here (`keryx models start --voice-llm`).
+    public let voiceLLMServerRun: StreamRun<ModelServerStarted>
     /// Downloading the voice's speech models (`keryx voice download`).
     public let voiceDownloadRun: StreamRun<VoiceModelsDownloaded>
     /// A sign-in (`keryx auth login NAME`), one at a time whichever it is.
@@ -274,6 +281,8 @@ public final class AppModel {
         downloads = Downloads()
         voiceSetup = VoiceSetup()
         modelServerRun = StreamRun()
+        voiceLLMRun = StreamRun()
+        voiceLLMServerRun = StreamRun()
         voiceDownloadRun = StreamRun()
         signInRun = StreamRun()
         migrationRun = StreamRun()
@@ -1063,8 +1072,8 @@ public final class AppModel {
     /// Ollama's copy of the model. Nothing starts while either is busy, nor while the
     /// speech models download (the setup would fetch them too).
     public func setUpThisMac(voice: String? = nil, startServer: Bool? = nil, runtime: String? = nil) {
-        guard canStartModelServer, !voiceDownloadRun.isBusy else { return }
-        let first = startServer ?? (models.value?.modelServerDown ?? false)
+        guard canStartModelServer, !voiceDownloadRun.isBusy, !voiceLLMBusy else { return }
+        let first = startServer ?? ((models.value?.modelServerDown ?? false) && voiceWordsAreTheAgents)
         thisMacSetup = ThisMacSetup(startsServer: first, runtime: first ? runtime : nil)
         voiceSetup.dismiss()
         if first {
@@ -1072,6 +1081,64 @@ public final class AppModel {
         } else {
             setUpVoiceHere(voice: voice)
         }
+    }
+
+    /// The voice on this Mac takes its words from the local agent's model (`VOICE_LLM`
+    /// shared, or a CLI too old to say): only then does its setup wait on the agent's model
+    /// server.
+    public var voiceWordsAreTheAgents: Bool {
+        (voice.value?.llmSource ?? .shared) == .shared
+    }
+
+    // MARK: - The voice LLM
+
+    /// The voice LLM is being chosen, or its own server started or stopped.
+    public var voiceLLMBusy: Bool {
+        voiceLLMRun.isBusy || voiceLLMServerRun.isBusy || stoppingVoiceLLMServer
+    }
+
+    /// Where the voice's words come from may be changed now: nothing else is changing it,
+    /// and no voice setup — which reads it — runs or waits for its model server.
+    public var canChangeVoiceLLM: Bool {
+        client != nil && !voiceLLMBusy && !voiceSetup.isBusy && chain == nil
+    }
+
+    /// Makes `choice` where a voice on this Mac takes its words from, in `voiceLLMRun`, one
+    /// at a time (`keryx voice llm`), and reads the voice, the settings, the models and the
+    /// units again once it is done. False, starting nothing, unless `canChangeVoiceLLM`.
+    @discardableResult
+    public func chooseVoiceLLM(_ choice: VoiceLLMChoice) -> Bool {
+        guard canChangeVoiceLLM, let client else { return false }
+        return voiceLLMRun.start(reason: "Choosing the voice LLM", { client.chooseVoiceLLM(choice) }) { [weak self] _ in
+            self?.invalidateOptions()
+            Task { await self?.refresh(.voice, .config, .models, .service, .setupPlan) }
+        }
+    }
+
+    /// Starts the voice LLM's own server on the model chosen for it (`keryx models start
+    /// --voice-llm`), one run at a time, and reads the voice and the units again once it
+    /// serves. False, starting nothing, unless `canChangeVoiceLLM`.
+    @discardableResult
+    public func runVoiceLLMServer() -> Bool {
+        guard canChangeVoiceLLM, let client else { return false }
+        return voiceLLMServerRun.start(reason: "Starting the voice LLM's server",
+                                       { client.startVoiceLLMServer() }) { [weak self] _ in
+            Task { await self?.refresh(.voice, .service, .setupPlan) }
+        }
+    }
+
+    /// Stops the voice LLM's own server and removes its unit. Refused while the voice LLM
+    /// is being chosen or its server started, and while the voice is being set up.
+    public func stopVoiceLLMServer() async -> Result<ServiceResult, KeryxError> {
+        if stoppingVoiceLLMServer { return .failure(.refused(Self.voiceLLMServerStopping)) }
+        if voiceLLMRun.isBusy || voiceLLMServerRun.isBusy || voiceSetup.isBusy {
+            return .failure(.refused(Self.voiceLLMServerInUse))
+        }
+        stoppingVoiceLLMServer = true
+        defer { stoppingVoiceLLMServer = false }
+        let answer = await answer(writing: .voiceLLMServerStop) { try await $0.stopVoiceLLMServer() }
+        if case .success = answer { await refresh(.voice, .service, .setupPlan) }
+        return answer
     }
 
     /// Cancel on This Mac's setup: stops whichever of its runs is going, and the voice never
@@ -1183,7 +1250,7 @@ public final class AppModel {
     /// model server start or stop, a speech model download, a sign-in, Keryx's service being
     /// installed or uninstalled.
     public var isBusy: Bool {
-        downloads.isBusy || voiceSetup.isBusy || modelServerRun.isBusy || voiceDownloadRun.isBusy
+        downloads.isBusy || voiceSetup.isBusy || modelServerRun.isBusy || voiceDownloadRun.isBusy || voiceLLMBusy
             || signInRun.isBusy || serviceChange != nil || stoppingModelServer
             || migrationRun.isBusy || projectDraftRun.isBusy || smokeRun.isBusy || tunnelInstall.isBusy
     }
@@ -1194,6 +1261,8 @@ public final class AppModel {
         // Nothing a stopped run would have gone on to starts.
         chain = nil
         modelServerRun.cancel()
+        voiceLLMRun.cancel()
+        voiceLLMServerRun.cancel()
         voiceDownloadRun.cancel()
         signInRun.cancel()
         projectDraftRun.cancel()
@@ -1208,6 +1277,10 @@ public final class AppModel {
     static let modelServerStopping = "The model server is already stopping."
     static let modelServerInUse =
         "The model server can't be stopped while it is starting or while the voice is being set up on it."
+    static let voiceLLMServerStopping = "The voice LLM's server is already stopping."
+    static let voiceLLMServerInUse =
+        "The voice LLM's server can't be stopped while it is starting, while the voice LLM is being chosen, "
+        + "or while the voice is being set up."
     static let speechModelsDownloading =
         "The speech models are still downloading. Set it up again once they're in."
 

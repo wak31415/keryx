@@ -12,14 +12,17 @@ public struct VoiceStatus: Codable, Sendable, Equatable {
     public var assistant: String
     public var openaiKeySet: Bool
     /// What must be set up before this Mac can speak for itself: `local_agent_model` while
-    /// there is no local model for the words, whatever the mode. `nil` when nothing is.
+    /// the voice shares the local agent's model and there is none, `voice_llm` while it has
+    /// an LLM of its own (or elsewhere) with no model named. `nil` when nothing is.
     public var needs: String?
     public var here: HereVoice
     public var server: ElsewhereVoice
-    /// SEAM (`voice --json` `pipelines`, not printed yet): the ways each mode can speak —
-    /// `speech-to-speech` (one model hears and answers) or `three-model` (hear, think, speak)
-    /// — by mode (`openai`, `here`, `server`). `nil` from a CLI without it: each mode has its
-    /// one way, which the wizard says in a caption rather than offers as a choice.
+    /// Where the voice on this Mac takes its words from (`VOICE_LLM`); `nil` from a CLI
+    /// older than a voice LLM of its own, whose words were always the local agent's.
+    public var llm: VoiceLLMStatus?
+    /// The ways each mode can speak — `speech-to-speech` (one model hears and answers) or
+    /// `three-model` (hear, think, speak) — by mode (`openai`, `here`, `server`). `nil` from
+    /// a CLI without it: each mode has its one way.
     public var pipelines: [String: [String]]?
 
     /// The mode, when this build knows it.
@@ -31,8 +34,96 @@ public struct VoiceStatus: Codable, Sendable, Equatable {
     /// This Mac's voice needs a local model first.
     public var needsLocalModel: Bool { needs == VoiceStatus.localAgentModel }
 
+    /// This Mac's voice has an LLM of its own, or one elsewhere, with no model named.
+    public var needsVoiceLLM: Bool { needs == VoiceStatus.voiceLLM }
+
+    /// Where the words come from: the CLI's `llm.source`, else the local agent's model.
+    public var llmSource: VoiceLLMSource { llm.flatMap { VoiceLLMSource(rawValue: $0.source) } ?? .shared }
+
     public static let localAgentModel = "local_agent_model"
+    public static let voiceLLM = "voice_llm"
 }
+
+/// `voice --json` `llm`: where a voice on this Mac takes its words from.
+public struct VoiceLLMStatus: Codable, Sendable, Equatable {
+    /// `shared`, `here` or `remote` (`VOICE_LLM`); see `VoiceStatus.llmSource`.
+    public var source: String
+    /// The model it asks for; `nil` while none is named.
+    public var model: String?
+    /// Its address; `nil` while it has none.
+    public var url: String?
+    /// Whether it answers — a server of its own only while it serves its model; `nil` when
+    /// it was not asked (a remote one while the voice is not here, or no address).
+    public var reachable: Bool?
+    /// The voice LLM's own server is installed as a service (`dev.keryx.voice-llm`).
+    public var unitInstalled: Bool
+
+    public init(source: String, model: String?, url: String?, reachable: Bool?, unitInstalled: Bool) {
+        self.source = source
+        self.model = model
+        self.url = url
+        self.reachable = reachable
+        self.unitInstalled = unitInstalled
+    }
+}
+
+/// Where a voice on this Mac takes its words from (`VOICE_LLM`).
+public enum VoiceLLMSource: String, Sendable, CaseIterable, Identifiable {
+    /// The local agent's model, as before the voice had one of its own.
+    case shared
+    /// A model of its own, on a llama.cpp server of its own on this Mac.
+    case here
+    /// A server elsewhere: a box of the owner's, or a cloud's Responses API.
+    case remote
+
+    public var id: String { rawValue }
+}
+
+/// What `keryx voice llm` is asked to make the voice's words.
+public enum VoiceLLMChoice: Sendable, Equatable {
+    /// `voice llm shared`: the local agent's model.
+    case shared
+    /// `voice llm here MODEL`: a catalog name (downloaded first when it is not) or a GGUF path.
+    case here(model: String)
+    /// `voice llm remote URL --model M`: its key kept, typed (on stdin) or removed, as a
+    /// voice server's is.
+    case remote(url: String, model: String, key: ServerKey)
+}
+
+/// `keryx voice llm … --json`'s `done`: where the words come from now, and what became of a
+/// voice server running here.
+public struct VoiceLLMChosen: StreamDone {
+    /// `shared`, `here` or `remote`.
+    public var source: String
+    public var model: String?
+    public var url: String?
+    /// A voice server running here was restarted onto the new words, and answers.
+    public var voiceRestarted: Bool
+    /// The voice is here with no voice server running: it takes them up when it starts.
+    public var voiceRestartNeeded: Bool
+
+    public init(source: String, model: String?, url: String?, voiceRestarted: Bool, voiceRestartNeeded: Bool) {
+        self.source = source
+        self.model = model
+        self.url = url
+        self.voiceRestarted = voiceRestarted
+        self.voiceRestartNeeded = voiceRestartNeeded
+    }
+
+    public init?(event: [String: Any]) {
+        guard let source = event["source"] as? String,
+              let restarted = MigrationDone.boolean(event["voice_restarted"]),
+              let needed = MigrationDone.boolean(event["voice_restart_needed"]) else { return nil }
+        self.init(source: source, model: event["model"] as? String, url: event["url"] as? String,
+                  voiceRestarted: restarted, voiceRestartNeeded: needed)
+    }
+
+    public static let stoppedWithoutSaying = "Choosing the voice LLM stopped without saying why."
+}
+
+public typealias VoiceLLMEvent = StreamEvent<VoiceLLMChosen>
+/// `keryx voice llm shared|here|remote --json`, which can be asked to stop.
+public typealias VoiceLLMStream = StoppableStream<VoiceLLMEvent>
 
 /// The three ways the assistant can speak.
 public enum VoiceMode: String, Sendable, CaseIterable, Identifiable {
@@ -129,7 +220,8 @@ public struct VoiceServerResult: Codable, Sendable, Equatable {
 /// One line of `keryx voice use here --json`. Like `PullEvent`, parsed by hand: a line that
 /// is not one of these is not an event.
 public enum VoiceSetupEvent: Equatable, Sendable {
-    /// A phase begins (`install`, `download`, `configure`, `unit`, `start`). `progress` only
+    /// A phase begins (`install`, `download`, `configure`, `unit`, `start`; a first set-up's
+    /// voice LLM, `voice_llm`, before them). `progress` only
     /// when an older CLI nests sizes in the step; a current one says them in `.progress`.
     case step(step: String, message: String, progress: Progress?, detail: String? = nil)
     /// Bytes so far while the speech models download (`step` is `download`); `total` is

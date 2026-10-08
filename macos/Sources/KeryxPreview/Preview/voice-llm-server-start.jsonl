@@ -1,0 +1,5 @@
+{"event": "step", "step": "runtime", "message": "llama.cpp is installed.", "detail": "/opt/homebrew/bin/llama-server"}
+{"event": "step", "step": "unit", "message": "Installing the voice LLM server's service, for Qwen3.5 4B", "detail": null}
+{"event": "step", "step": "start", "message": "Loading Qwen3.5 4B into llama.cpp at http://127.0.0.1:8091/v1", "detail": null}
+{"event": "step", "step": "check", "message": "Asking the voice LLM's server which model it serves, Qwen3.5 4B", "detail": null}
+{"event": "done", "url": "http://127.0.0.1:8091/v1", "served_model": "qwen3.5-4b"}

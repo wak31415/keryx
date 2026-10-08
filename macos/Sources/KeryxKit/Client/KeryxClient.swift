@@ -46,6 +46,12 @@ public protocol KeryxClient: Sendable {
     /// Installs, configures and starts the voice server on this Mac, step by step; stops
     /// as `pull` does. `voice`: the Kokoro voice to speak in, else the one set.
     func voiceHere(voice: String?) -> VoiceSetupStream
+    /// Where a voice on this Mac takes its words from (`keryx voice llm`), step by step:
+    /// the local agent's model, a model of its own on a server of its own here (downloaded
+    /// and started first), or a server elsewhere once it lists the model. A voice server
+    /// running here is restarted onto them. Stops as `pull` does. A remote key that is typed
+    /// goes on the child's stdin.
+    func chooseVoiceLLM(_ choice: VoiceLLMChoice) -> VoiceLLMStream
 
     // MARK: Setup
 
@@ -131,6 +137,12 @@ public protocol KeryxClient: Sendable {
     func startModelServer(runtime: String?) -> ModelServerStream
     /// Stops the model server and removes its unit (`keryx models stop`).
     func stopModelServer() async throws -> ServiceResult
+    /// Runs the voice LLM's own server here on the model `VOICE_LLM_MODEL` names (`keryx
+    /// models start --voice-llm`), step by step, as `startModelServer` does; saves nothing.
+    func startVoiceLLMServer() -> ModelServerStream
+    /// Stops the voice LLM's own server and removes its unit (`keryx service uninstall
+    /// --voice-llm`).
+    func stopVoiceLLMServer() async throws -> ServiceResult
     /// Downloads the voice server's speech models ahead of its first start; stops as `pull`
     /// does.
     func downloadVoiceModels() -> VoiceDownloadStream

@@ -20,5 +20,23 @@
   "needs": null,
   "server": {
     "reachable": false
+  },
+  "llm": {
+    "source": "shared",
+    "model": "qwen3-coder-30b-a3b",
+    "url": "http://127.0.0.1:8090/v1",
+    "reachable": true,
+    "unit_installed": false
+  },
+  "pipelines": {
+    "openai": [
+      "speech-to-speech"
+    ],
+    "here": [
+      "three-model"
+    ],
+    "server": [
+      "speech-to-speech"
+    ]
   }
 }

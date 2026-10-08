@@ -5,16 +5,14 @@ import Foundation
 // "SEAM" where it is declared, and listed in `ContractTests.awaitingCLI`):
 //
 // - `AgentSmokeTesting` — `keryx auth smoke NAME --json`.
-// - `VoiceStatus.pipelines` — `voice --json` `pipelines`.
 // - `ModelsReport.recommended`, `.recommendedWithLocalVoice`, `.voiceLlmRecommended`,
-//   `.voiceLlmSeparate` — `models list --json`, the owner's rule applied by the CLI.
+//   `.voiceLlmSeparate`, `CatalogModel.fitsWithVoiceLlm` — `models list --json`, the
+//   owner's rule applied by the CLI (Task M5).
+// - `voice:llm` — `doctor`'s fix id for the voice LLM (M5), known to `FixAction` already.
 // - `PhoneTunnel.hostname` — `phone tunnel --json` `hostname`.
 // - `SetupStep.deferrable`, `.deferred`, `SetupMarkResult.deferred` — `setup plan --json`,
 //   and `setup mark phone|service`.
 // - `config options ASSISTANT_NAME` — the `ASSISTANT_NAME` row's `has_options`, already read.
-// - `VOICE_LLM`, `VOICE_LLM_MODEL` — settings, read from `config list` when they are there.
-//   The voice's own model server (`models start --voice-llm`) gets its client method when
-//   the CLI has it; until then `voice use here` starts what the voice needs.
 //
 // No `KeryxClient` adopts `AgentSmokeTesting` yet: it says how its command is run once the
 // CLI prints it, and the contract names the command in the same change.

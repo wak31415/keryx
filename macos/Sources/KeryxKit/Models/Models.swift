@@ -41,6 +41,10 @@ public struct CatalogModel: Codable, Sendable, Equatable, Identifiable {
     public var downloaded: Bool
     public var recommended: Bool
     public var tested: Bool
+    /// SEAM (`models list --json` `models[].fits_with_voice_llm`, not printed yet): it fits
+    /// beside a voice LLM of its own and the speech models, as the CLI works it out. `nil`
+    /// from a CLI without it.
+    public var fitsWithVoiceLlm: Bool?
 
     public var id: String { name }
 }

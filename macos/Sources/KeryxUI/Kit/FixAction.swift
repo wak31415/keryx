@@ -32,6 +32,9 @@ enum FixAction: Equatable, Sendable {
     case voiceHere
     /// `voice:download`: the voice's speech models downloaded.
     case voiceDownload
+    /// `voice:llm`: the voice's LLM — its source, model or server — on Voice, where it is
+    /// chosen. Sent by the doctor from Task M5; known here before the CLI sends it.
+    case voiceLLM
     /// `phone:account`: the Twilio account sheet.
     case phoneAccount
     /// `phone:webhooks`: the Twilio number pointed here, after its question.
@@ -45,6 +48,7 @@ enum FixAction: Equatable, Sendable {
     static let screens: [String: FixAction] = [
         "pin": .pin, "service:install": .startKeryx, "models:start": .startModelServer,
         "models:choose": .chooseModel, "voice:here": .voiceHere, "voice:download": .voiceDownload,
+        "voice:llm": .voiceLLM,
         "phone:account": .phoneAccount, "phone:webhooks": .phoneWebhooks, "phone:tunnel": .phoneTunnel,
         "migrate": .migrate,
     ]
@@ -119,6 +123,8 @@ enum FixAction: Equatable, Sendable {
             return open("Set Up Voice on This Mac…", .setUpVoiceHere)
         case .voiceDownload:
             return SetupAction(title: "Download Speech Models", effect: .downloadVoiceModels)
+        case .voiceLLM:
+            return open("Open Voice", .show(.voice))
         case .phoneAccount:
             return open("Connect Twilio…", .phoneAccount)
         case .phoneWebhooks:

@@ -38,7 +38,13 @@ import KeryxPreview
         "integration:github", "integration:openai-admin",
     ]
 
-    nonisolated static var everyId: [String] { screens + signIns.map { "signin:\($0)" } + withArguments }
+    /// Ids the app knows that the CLI does not send yet (`Seams.swift`): `voice:llm`, the
+    /// doctor's from Task M5. Once the contract names one, the test below says to drop it.
+    nonisolated static let awaitingCLI: Set<String> = ["voice:llm"]
+
+    nonisolated static var everyId: [String] {
+        screens + awaitingCLI.sorted() + signIns.map { "signin:\($0)" } + withArguments
+    }
 
     @Test(arguments: everyId)
     func everyIdTheCLIMayGiveIsAButton(_ id: String) throws {
@@ -50,7 +56,8 @@ import KeryxPreview
     }
 
     @Test func theNoArgumentIdsAreExactlyTheCLIsSet() {
-        #expect(Set(FixAction.screens.keys) == Set(Self.screens))
+        #expect(Set(FixAction.screens.keys) == Set(Self.screens).union(Self.awaitingCLI))
+        #expect(Self.awaitingCLI.isDisjoint(with: Self.screens), "the contract names it now: drop it from awaitingCLI")
     }
 
     @Test func everyPrefixTheCLIMayGiveIsUnderstood() {

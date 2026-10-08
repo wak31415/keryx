@@ -189,6 +189,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                     settingUpVoice: setup.isRunning || chained,
                                                     startingModelServer: server && !chained,
                                                     downloadingVoiceModels: model.voiceDownloadRun.isRunning,
+                                                    changingVoiceLLM: model.voiceLLMRun.isRunning
+                                                        || model.voiceLLMServerRun.isRunning,
                                                     signingIn: signingIn.map(SignInWording.name),
                                                     signInDetail: signingIn.map(SignInWording.quitDetail),
                                                     assistant: Wording.assistant(model.status.value),

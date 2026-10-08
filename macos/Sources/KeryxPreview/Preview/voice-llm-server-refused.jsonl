@@ -1,0 +1,1 @@
+{"event": "error", "message": "Choose and download the voice LLM's model first.", "detail": "VOICE_LLM_MODEL is not set — `keryx voice llm here MODEL` picks one"}

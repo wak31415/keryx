@@ -164,6 +164,92 @@ import KeryxPreview
         #expect(Self.words(fake.requests.last) == ["voice", "use", "here", "--json"])
     }
 
+    // MARK: - The voice LLM
+
+    @Test func theVoiceLLMIsChosenAsTheCLIIsAsked() async throws {
+        let fake = FakeRunner()
+        fake.lineResponder = { _ in PreviewData.voiceLLMHereLines }
+        let client = CLIClient(location: .fixture, runner: fake)
+        var events: [VoiceLLMEvent] = []
+        for try await event in client.chooseVoiceLLM(.here(model: "qwen3.5-4b")) { events.append(event) }
+        let request = try #require(fake.requests.last)
+        #expect(Self.words(request) == ["voice", "llm", "here", "qwen3.5-4b", "--json"])
+        #expect(request.timeout == nil)
+        #expect(request.stdin == nil)
+        #expect(events.first == .step(step: "download", message: "Downloading Qwen3.5 4B for the voice LLM (2.7 GB)"))
+        #expect(events.last == .done(VoiceLLMChosen(source: "here", model: "qwen3.5-4b", url: "http://127.0.0.1:8091/v1",
+                                                    voiceRestarted: true, voiceRestartNeeded: false)))
+
+        for try await _ in client.chooseVoiceLLM(.shared) {}
+        #expect(Self.words(fake.requests.last) == ["voice", "llm", "shared", "--json"])
+        for try await _ in client.chooseVoiceLLM(.here(model: "-odd.gguf")) {}
+        #expect(Self.words(fake.requests.last) == ["voice", "llm", "here", "--json", "--", "-odd.gguf"])
+    }
+
+    @Test func aRemoteVoiceLLMsKeyGoesOnStdinOnly() async throws {
+        let fake = FakeRunner()
+        fake.lineResponder = { _ in PreviewData.voiceLLMSharedLines }
+        let client = CLIClient(location: .fixture, runner: fake)
+        for try await _ in client.chooseVoiceLLM(.remote(url: "https://api.openai.com/v1", model: "gpt-5-mini",
+                                                        key: .typed(" sk-very-secret \n"))) {}
+        let request = try #require(fake.requests.last)
+        #expect(Self.words(request) == ["voice", "llm", "remote", "https://api.openai.com/v1", "--model=gpt-5-mini",
+                                        "--key-stdin", "--json"])
+        #expect(request.stdin == Data("sk-very-secret".utf8))
+        #expect(!request.arguments.joined().contains("sk-very-secret"))
+
+        for try await _ in client.chooseVoiceLLM(.remote(url: "http://box:11434", model: "qwen3:4b", key: .clear)) {}
+        let cleared = try #require(fake.requests.last)
+        #expect(Self.words(cleared) == ["voice", "llm", "remote", "http://box:11434", "--model=qwen3:4b",
+                                        "--clear-key", "--json"])
+        #expect(cleared.stdin == nil)
+
+        for try await _ in client.chooseVoiceLLM(.remote(url: "-box", model: "m", key: .stored)) {}
+        #expect(Self.words(fake.requests.last) == ["voice", "llm", "remote", "--model=m", "--json", "--", "-box"])
+    }
+
+    @Test func theVoiceLLMsServerStartsAndStops() async throws {
+        let fake = FakeRunner { _ in Self.ok(Data(#"{"ok": true, "message": "removed dev.keryx.voice-llm"}"#.utf8)) }
+        fake.lineResponder = { _ in PreviewData.voiceLLMServerStartLines }
+        let client = CLIClient(location: .fixture, runner: fake)
+        var events: [ModelServerEvent] = []
+        for try await event in client.startVoiceLLMServer() { events.append(event) }
+        #expect(Self.words(fake.requests.last) == ["models", "start", "--voice-llm", "--json"])
+        #expect(events.last == .done(ModelServerStarted(url: "http://127.0.0.1:8091/v1", servedModel: "qwen3.5-4b")))
+        let stopped = try await client.stopVoiceLLMServer()
+        #expect(Self.words(fake.requests.last) == ["service", "uninstall", "--voice-llm", "--json"])
+        #expect(stopped.message == "removed dev.keryx.voice-llm")
+    }
+
+    @Test func aVoiceLLMsDoneNeedsItsSourceAndBothRestarts() {
+        #expect(VoiceLLMEvent.parse(#"{"event": "done", "source": "shared", "model": null, "url": null, "#
+            + #""voice_restarted": false, "voice_restart_needed": true}"#)
+            == .done(VoiceLLMChosen(source: "shared", model: nil, url: nil, voiceRestarted: false,
+                                    voiceRestartNeeded: true)))
+        // A number is not a boolean, and each of the three must be there.
+        #expect(VoiceLLMEvent.parse(#"{"event": "done", "source": "here", "voice_restarted": 0, "#
+            + #""voice_restart_needed": false}"#) == nil)
+        #expect(VoiceLLMEvent.parse(#"{"event": "done", "voice_restarted": false, "voice_restart_needed": false}"#)
+            == nil)
+    }
+
+    @Test func theVoiceSaysWhereItsWordsComeFrom() {
+        #expect(PreviewData.voice.llmSource == .shared)
+        #expect(PreviewData.voice.llm?.model == "qwen3-coder-30b-a3b")
+        #expect(PreviewData.voiceOwnLLM.llmSource == .here)
+        #expect(PreviewData.voiceOwnLLM.llm == VoiceLLMStatus(source: "here", model: "qwen3.5-4b",
+                                                              url: "http://127.0.0.1:8091/v1", reachable: true,
+                                                              unitInstalled: true))
+        #expect(PreviewData.voice.pipelines(for: .here) == ["three-model"])
+        // An older CLI says nothing of it: the words are the local agent's.
+        var older = PreviewData.voice
+        older.llm = nil
+        #expect(older.llmSource == .shared)
+        older.needs = "voice_llm"
+        #expect(older.needsVoiceLLM && !older.needsLocalModel)
+        #expect(PreviewData.service.units.voiceLlm == UnitState(installed: false, active: false))
+    }
+
     @Test func voiceHereEndingWithOnlyStepsThrows() async throws {
         let fake = FakeRunner()
         fake.lineResponder = { _ in [#"{"event": "step", "step": "install", "message": "Installing"}"#] }
