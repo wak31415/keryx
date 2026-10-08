@@ -1227,3 +1227,20 @@ def test_a_draft_ends_once_whatever_the_contract_says(
     if PROJECT_CONTEXT in contract()["streams"]:
         keeps_its_promise(contract()["streams"][PROJECT_CONTEXT], events, ending,
                           result.exit_code)
+
+
+# --- the fix ids: one vocabulary, on both sides -------------------------------------------
+
+
+def test_the_app_knows_exactly_the_fix_ids_the_cli_can_send():
+    """The app maps each `fix` id to a button from its own copy of the vocabulary, so a
+    drift on either side is a button missing or a promise broken."""
+    from keryx import fixes
+
+    ids = contract().get("fix_ids")
+    if ids is None:
+        pytest.skip("the contract does not name the fix ids yet")
+    assert set(ids["actions"]) == set(fixes.ACTIONS)
+    assert set(ids["signins"]) == set(fixes.SIGNINS)
+    assert set(ids["prefixes"]) == set(fixes.PREFIXES)
+

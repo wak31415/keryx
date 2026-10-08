@@ -36,3 +36,14 @@ def test_an_id_is_made_only_through_the_validator():
                       (fixes.plugin, "nope"), (fixes.signin, "gh")):
         with pytest.raises(ValueError, match="not an action"):
             make(arg)
+
+
+def test_the_prefixes_are_exactly_the_ids_that_take_an_argument():
+    """`PREFIXES` is what the app's copy is checked against: each takes an argument, and
+    nothing else does."""
+    examples = {"secret:": "OPENAI_API_KEY", "setting:": "ASSISTANT_NAME",
+                "plugin:": "check_billing", "integration:": "slack"}
+
+    assert set(fixes.PREFIXES) == set(examples)
+    assert all(fixes.is_valid(prefix + arg) for prefix, arg in examples.items())
+    assert not fixes.is_valid("pin:OPENAI_API_KEY")

@@ -26,6 +26,8 @@ ACTIONS = frozenset({
     "pin", "service:install", "models:start", "models:choose", "voice:here", "voice:download",
     "phone:account", "phone:webhooks", "phone:tunnel", "migrate",
 })
+#: The ids that take an argument, `signin:` aside (its arguments are `SIGNINS`).
+PREFIXES = ("secret:", "setting:", "plugin:", "integration:")
 
 
 def signin(name: str) -> str:
@@ -62,6 +64,8 @@ def is_valid(fix: str | None) -> bool:
     kind, _, arg = fix.partition(":")
     if kind == "signin":
         return arg in SIGNINS
+    if f"{kind}:" not in PREFIXES:
+        return False
     if kind in ("secret", "setting"):
         field = field_for(arg)
         # The PIN is no setting (`config set KERYX_PIN` is refused): its action is `pin`.
@@ -71,8 +75,6 @@ def is_valid(fix: str | None) -> bool:
         from keryx.plugins import PLUGINS
 
         return arg in PLUGINS
-    if kind == "integration":
-        from keryx.integrations.accounts import INTEGRATIONS
+    from keryx.integrations.accounts import INTEGRATIONS  # the last prefix: `integration:`
 
-        return arg in INTEGRATIONS
-    return False
+    return arg in INTEGRATIONS
