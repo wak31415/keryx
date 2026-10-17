@@ -749,8 +749,30 @@ def test_the_command_lists_conflicts_and_stops(machine, command):
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
-    assert result.exit_code == 1
-    assert "settled" in result.output and machine.legacy.is_dir()
+    assert result.exit_code == 2
+    assert migrate_stream.CONFLICTS in result.stderr and machine.legacy.is_dir()
+
+
+@pytest.mark.parametrize("blocked", ["conflict", "live call", "another home"])
+def test_the_terminal_and_the_app_refuse_a_migration_alike(
+    machine, command, installed, monkeypatch, blocked
+):
+    """One check decides, so the two ways of running it cannot drift apart."""
+    if blocked == "conflict":
+        (machine.legacy / "pin").write_text("111357\n")
+    elif blocked == "live call":
+        monkeypatch.setattr(cli, "resolve_target",
+                            lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+        monkeypatch.setattr(cli, "health_probe", lambda settings: 1)
+    else:
+        keryx_unit("/srv/someone-else/keryx")
+
+    text = runner.invoke(cli.app, ["migrate", "--yes"])
+    streamed, events = stream()
+
+    assert text.exit_code == streamed.exit_code != 0
+    assert events[-1]["message"] in text.stderr
+    assert command == [] and machine.legacy.is_dir()
 
 
 def test_without_a_terminal_it_wants_yes(machine, command):

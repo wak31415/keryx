@@ -3137,21 +3137,13 @@ def migrate(
                    f"has moved; {target.describe()} installed and started in its place")
     elif target is not None:
         typer.echo(f"  {target.describe()}: stopped first, re-rendered, and started again")
-    if plan.conflicts:
-        typer.echo("\nNothing can move until these are settled:", err=True)
-        for conflict in plan.conflicts:
-            typer.echo(f"  {conflict}", err=True)
-        raise typer.Exit(1)
-    if foreign := _foreign_migration(settings, units_):
-        typer.echo(foreign.message, err=True)
-        typer.echo(foreign.detail, err=True)
-        raise typer.Exit(2)
+    if refusal := _migration_refusal(plan, settings, units_, live_calls=not dry_run):
+        typer.echo(f"\n{refusal.message}", err=True)
+        for line in refusal.details:
+            typer.echo(f"  {line}", err=True)
+        raise typer.Exit(refusal.code)
     if dry_run:
         return
-    if (live := health_probe(settings)) and target is not None:
-        typer.echo(f"{live} live call(s): migrating stops the service and would cut them off. "
-                   "Run it again once the line is clear.", err=True)
-        raise typer.Exit(1)
     if not yes:
         if not _interactive():
             typer.echo("pass --yes to migrate without a terminal to ask at", err=True)
@@ -3190,6 +3182,32 @@ def _foreign_migration(
         return None
     return units.owner_mismatch(settings, units.MAIN_KINDS,
                                 service_manager=units_.target.manager)
+
+
+@dataclasses.dataclass(frozen=True)
+class _MigrationRefusal:
+    """Why a migration may not start: a sentence for a person, what lies behind it, and the
+    exit code — 2 when the owner must settle something first, 1 when later will do."""
+
+    message: str
+    details: list[str]
+    code: int
+
+
+def _migration_refusal(
+    plan, settings: Settings, units_: migrate_stream.Units, *, live_calls: bool = True
+) -> _MigrationRefusal | None:
+    """What stops `plan` before anything is touched, asked by `migrate` and `migrate --yes
+    --json` alike so the terminal and the app refuse the same runs the same way: a conflict,
+    Keryx's units rendered for another home, and — unless `live_calls` is off, as for a dry
+    run — a call the stop would cut off."""
+    if plan.conflicts:
+        return _MigrationRefusal(migrate_stream.CONFLICTS, list(plan.conflicts), 2)
+    if foreign := _foreign_migration(settings, units_):
+        return _MigrationRefusal(foreign.message, [foreign.detail], 2)
+    if live_calls and units_.target is not None and (live := health_probe(settings)):
+        return _MigrationRefusal(migrate_stream.LIVE_CALL, [f"{live} live call(s)"], 1)
+    return None
 
 
 def _run_migration(
@@ -3244,10 +3262,6 @@ def _migrate_stream() -> int:
         if plan.empty and not plan.conflicts:
             events.nothing_to_do()
             return 0
-        if plan.conflicts:
-            events.error(migrate_stream.CONFLICTS,
-                         detail=redact_known("; ".join(plan.conflicts)))
-            return 2
         try:
             settings = _load_settings_optional()
         except (ConfigFileError, ValidationError) as error:
@@ -3256,12 +3270,10 @@ def _migrate_stream() -> int:
             events.error(SETTINGS_UNREADABLE, detail=redact_known(summary))
             return 1
         units_ = _migration_units(settings, plan)
-        if foreign := _foreign_migration(settings, units_):
-            events.error(foreign.message, detail=foreign.detail)
-            return 2
-        if (live := health_probe(settings)) and units_.target is not None:
-            events.error(migrate_stream.LIVE_CALL, detail=f"{live} live call(s)")
-            return 1
+        if refusal := _migration_refusal(plan, settings, units_):
+            events.error(refusal.message,
+                         detail=redact_known("; ".join(refusal.details), settings))
+            return refusal.code
         with migrate_stream.held() as cancelled:
             try:
                 report = _run_migration(
