@@ -423,6 +423,24 @@ def resolve_target(
     return None
 
 
+def platform_manager(platform: str = sys.platform) -> str | None:
+    """The service manager `platform` has, if Keryx runs under one there: what its
+    installers (`INSTALLERS`) are written for."""
+    if platform == "darwin":
+        return "launchd"
+    return "systemd" if platform.startswith("linux") else None
+
+
+def configured_manager(settings: Settings, platform: str = sys.platform) -> str | None:
+    """The service manager Keryx's units are under: `SERVICE_MANAGER`, or this platform's
+    for `auto`; None for `none`. The one answer every command that looks for a unit asks,
+    so none of them can disagree about whether one is installed."""
+    chosen = settings.service_manager
+    if chosen != "auto":
+        return None if chosen == "none" else chosen
+    return platform_manager(platform)
+
+
 def candidate_target(
     settings: Settings,
     *,
@@ -439,15 +457,8 @@ def candidate_target(
     # so `monkeypatch.setattr(shutil, "which", ...)` could never reach it — which is how a
     # suite that assumes systemd ends up failing two dozen tests on a Mac.
     which = which or shutil.which
-    manager = settings.service_manager
-    if manager == "auto":
-        if platform.startswith("linux"):
-            manager = "systemd"
-        elif platform == "darwin":
-            manager = "launchd"
-        else:
-            manager = "none"
-    if manager == "none":
+    manager = configured_manager(settings, platform)
+    if manager is None:
         return None
     if not which("systemctl" if manager == "systemd" else "launchctl"):
         if settings.service_manager != "auto":

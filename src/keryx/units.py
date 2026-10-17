@@ -46,16 +46,6 @@ NAMES = {
 }
 
 
-def manager(settings: Settings, platform: str) -> str | None:
-    """The service manager Keryx's units are under: `SERVICE_MANAGER`, or this platform's."""
-    chosen = settings.service_manager
-    if chosen != "auto":
-        return None if chosen == "none" else chosen
-    if platform == "darwin":
-        return "launchd"
-    return "systemd" if platform.startswith("linux") else None
-
-
 def unit_name(settings: Settings, manager: str, kind: str) -> str:
     """The `kind` unit's name under `manager`: the installers' own, or `SERVICE_UNIT`'s."""
     if kind == "agent" and settings.service_unit:
@@ -73,7 +63,8 @@ def owner_mismatch(
     `manager`, by default); None with no manager. The tunnel renders no Keryx environment
     of its own, and belongs to whichever Keryx its agent unit does: it is judged by that
     unit, or as the default home's when it is installed alone."""
-    found = service_manager or manager(settings, platform or voice_setup.PLATFORM)
+    found = service_manager or service.configured_manager(
+        settings, platform or voice_setup.PLATFORM)
     if found is None:
         return None
     agent = ServiceTarget(found, unit_name(settings, found, "agent"))
@@ -100,7 +91,7 @@ def status(
 ) -> dict[str, Any]:
     """`keryx service --json`: each unit installed (loaded, or its file on disk), and
     running. Only asks."""
-    found = manager(settings, platform or voice_setup.PLATFORM)
+    found = service.configured_manager(settings, platform or voice_setup.PLATFORM)
     # Late-bound through the module, as `keryx.status` binds them.
     is_installed = installed or service.is_installed
     is_active = active or service.is_active
@@ -172,7 +163,7 @@ def install(
     if script is None:
         return Outcome(REFUSED, problem or "no installer")
     kinds = [FLAGS[flag] for flag in flags] or list(MAIN_KINDS)
-    found = "launchd" if script.name == "install-launchd.sh" else "systemd"
+    found = service.platform_manager(platform or voice_setup.PLATFORM)
     settings = settings or Settings()
     if foreign := owner_mismatch(settings, kinds, service_manager=found):
         return Outcome(REFUSED, foreign.message, foreign.detail)
@@ -307,7 +298,7 @@ def control(
     (`launchctl print-disabled`, `systemctl is-enabled`) does not show it. 1 when any unit
     failed, every failure in `detail`, redacted.
     """
-    found = manager(settings, platform or voice_setup.PLATFORM)
+    found = service.configured_manager(settings, platform or voice_setup.PLATFORM)
     kinds = [kind for kind in NAMES[found] if every or kind in MAIN_KINDS] if found else []
     if found is not None and (foreign := owner_mismatch(settings, kinds,
                                                         service_manager=found)):

@@ -29,7 +29,7 @@ def models_settings(monkeypatch, tmp_path, every_agent_installed):
     monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
     monkeypatch.setattr(hardware, "detect", lambda: RTX)
     monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
-    monkeypatch.setattr(use, "unit_installed", lambda kind: False)
+    monkeypatch.setattr(use, "unit_installed", lambda kind, **_: False)
     monkeypatch.setattr(use, "probe", lambda url: (False, None))
     return settings
 
@@ -131,7 +131,7 @@ def test_list_json_says_which_servers_are_set_up_and_answering(models_settings, 
     models_settings.local_agent_base_url = "http://127.0.0.1:8090/v1"
     models_settings.local_agent_model = CODER.key
     models_settings.agents_enabled = ["claude", "local"]
-    monkeypatch.setattr(use, "unit_installed", lambda kind: kind == "llm")
+    monkeypatch.setattr(use, "unit_installed", lambda kind, **_: kind == "llm")
     monkeypatch.setattr(use, "probe", lambda url: (url == "http://127.0.0.1:8090/v1",
                                                    "qwen3-coder"))
 

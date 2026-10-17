@@ -73,7 +73,7 @@ def machine(monkeypatch, tmp_path, every_agent_installed):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-owner")
     monkeypatch.setattr(voice, "PLATFORM", "darwin")
     monkeypatch.setattr(voice, "run_detached", found.run)
-    monkeypatch.setattr(use, "unit_installed", lambda kind: kind in found.units)
+    monkeypatch.setattr(use, "unit_installed", lambda kind, **_: kind in found.units)
     monkeypatch.setattr(use, "probe", lambda url: found.serving.get(url, (False, None)))
     monkeypatch.setattr(servers, "free_port", lambda port: port)
     monkeypatch.setattr(runtimes, "llama_server", lambda cache_dir, **_: "/usr/bin/llama-server")

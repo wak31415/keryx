@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import dataclasses
+import functools
 import importlib.metadata
 import json
 import logging
@@ -1236,7 +1237,9 @@ def models_list(
             "voice_llm_recommended": advice.voice_llm,
             "voice_llm_separate": advice.voice_llm_separate,
             "voices": [{"name": name, "sounds": sounds} for name, sounds in catalog.VOICES],
-            "servers": use.server_status(settings, installed=use.unit_installed,
+            "servers": use.server_status(settings,
+                                         installed=functools.partial(use.unit_installed,
+                                                                     settings=settings),
                                          probe=use.probe, which=runtimes.which),
         }, indent=2))
         return
@@ -1431,7 +1434,9 @@ def voice_command(
         return
     settings = _configure_readonly()
     document = voice.status(settings, program=runtimes.speech_to_speech,
-                            installed=use.unit_installed, probe=use.probe,
+                            installed=functools.partial(use.unit_installed,
+                                                        settings=settings),
+                            probe=use.probe,
                             server_reachable=voice.server_reachable,
                             models_ready=speech.models_ready, llm_up=voice.words_up,
                             own_llm_up=voice.voice_llm_up)

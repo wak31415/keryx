@@ -80,7 +80,7 @@ def machine(monkeypatch, tmp_path, every_agent_installed):
     checkout(tmp_path / "checkout")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(runtimes, "speech_to_speech", lambda: found.s2s)
-    monkeypatch.setattr(use, "unit_installed", lambda kind: found.unit)
+    monkeypatch.setattr(use, "unit_installed", lambda kind, **_: found.unit)
     monkeypatch.setattr(use, "probe", lambda url: (
         found.words if url == WORDS["LOCAL_AGENT_BASE_URL"] else found.up, None))
     monkeypatch.setattr(voice, "server_reachable",

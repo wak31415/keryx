@@ -335,6 +335,26 @@ def test_a_platform_with_no_service_manager_has_no_unit():
     assert use.unit_installed("llm", platform="win32", is_installed=never) is False
 
 
+@pytest.mark.parametrize(("chosen", "target"), [
+    ("none", None),
+    ("systemd", ServiceTarget("systemd", "keryx-llm.service")),
+])
+def test_service_manager_decides_where_a_unit_is_looked_for(settings, chosen, target):
+    """`SERVICE_MANAGER` is honoured here as `keryx service` honours it, so the two never
+    disagree about whether a server is installed."""
+    asked: list = []
+
+    def is_installed(found):
+        asked.append(found)
+        return True
+
+    chosen_settings = settings.model_copy(update={"service_manager": chosen})
+    installed = use.unit_installed("llm", settings=chosen_settings, platform="darwin",
+                                   is_installed=is_installed)
+
+    assert installed is (target is not None) and asked == ([target] if target else [])
+
+
 
 # --- what the agent's model takes on this machine ------------------------------------------
 

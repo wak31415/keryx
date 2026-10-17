@@ -550,7 +550,7 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     # The models commands: a known machine, its units, and one model on disk (sparse).
     monkeypatch.setattr(hardware, "detect", lambda: Hardware("metal", "Apple silicon", 0.0, 36.0))
     monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
-    monkeypatch.setattr(use, "unit_installed", lambda kind: True)
+    monkeypatch.setattr(use, "unit_installed", lambda kind, **_: True)
     monkeypatch.setattr(servers, "free_port", lambda preferred: preferred)
     monkeypatch.setattr("keryx.localmodels.runtimes.llama_server",
                         lambda cache_dir, **_: "/opt/homebrew/bin/llama-server")
