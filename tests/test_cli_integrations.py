@@ -7,6 +7,7 @@ owner's alone. Nothing here reaches the network: `gh` is faked.
 import json
 
 import pytest
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 
 from keryx.cli import app
@@ -22,7 +23,7 @@ runner = CliRunner()
 def settings_stub(monkeypatch, tmp_path, every_agent_installed):
     settings = Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx",
                         google_client_secrets_file=tmp_path / "no-client.json")
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
     monkeypatch.setattr("keryx.issues.gh_status",
                         lambda: GhStatus(installed=True, signed_in=True, account="ada"))
     return settings

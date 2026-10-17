@@ -14,15 +14,20 @@ from pathlib import Path
 
 import pytest
 import typer
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 
+import keryx
 from keryx import cli, status
 from keryx.cli import app
+from keryx.cli import pin as cli_pin
 from keryx.config import Settings, pin_file, read_enrolled_pin, write_enrolled_pin
 from keryx.config.files import legacy_home
 from keryx.config.pin import PIN_PATTERN
+from keryx.config.settings import ConfigFileError
 from keryx.pin_guard import PinGuard
 from keryx.restart.service import ServiceTarget
+from keryx.setup import pin as pin_flow
 
 runner = CliRunner()
 FIRST = "482915"
@@ -94,13 +99,13 @@ def test_a_first_pin_is_typed_twice_on_stdin_and_enrolled(home, logs):
 
 def test_a_first_pin_goes_through_the_one_way_door(home, monkeypatch):
     calls = []
-    real = cli.pin_flow.write_enrolled_pin
+    real = pin_flow.write_enrolled_pin
 
     def spy(where, digits):
         calls.append(where)
         return real(where, digits)
 
-    monkeypatch.setattr(cli.pin_flow, "write_enrolled_pin", spy)
+    monkeypatch.setattr(pin_flow, "write_enrolled_pin", spy)
 
     assert run("set", "--stdin", input=twice(FIRST)).exit_code == 0
     assert calls == [home]
@@ -141,15 +146,15 @@ def test_two_pins_that_differ_are_refused(home, logs):
 
 def test_the_pins_are_compared_in_constant_time_before_either_is_judged(home, monkeypatch):
     compared = []
-    real = cli.pin_flow.hmac.compare_digest
+    real = pin_flow.hmac.compare_digest
 
     def spy(a, b):
         compared.append((a, b))
         return real(a, b)
 
-    monkeypatch.setattr(cli.pin_flow.hmac, "compare_digest", spy)
+    monkeypatch.setattr(pin_flow.hmac, "compare_digest", spy)
     judged = []
-    monkeypatch.setattr(cli.pin_flow, "pin_problem", lambda digits: judged.append(digits))
+    monkeypatch.setattr(pin_flow, "pin_problem", lambda digits: judged.append(digits))
 
     result = run("set", "--stdin", input=twice("12", "34"))
 
@@ -216,13 +221,13 @@ def test_an_existing_pin_is_not_replaced_without_asking(home, logs):
 def test_replace_puts_the_new_pin_in_place_by_an_atomic_rename(home, logs, monkeypatch):
     write_enrolled_pin(home, FIRST)
     renamed = []
-    real = cli.pin_flow.replace_pin_at_keyboard
+    real = pin_flow.replace_pin_at_keyboard
 
     def spy(where, digits):
         renamed.append(where)
         real(where, digits)
 
-    monkeypatch.setattr(cli.pin_flow, "replace_pin_at_keyboard", spy)
+    monkeypatch.setattr(pin_flow, "replace_pin_at_keyboard", spy)
 
     result = run("set", "--stdin", "--replace", "--json", input=twice(NEW))
 
@@ -248,7 +253,7 @@ def test_a_failed_replacement_leaves_the_old_pin(home, logs, monkeypatch):
     def broken(where, digits):
         raise OSError(f"disk full writing {digits}")
 
-    monkeypatch.setattr(cli.pin_flow, "replace_pin_at_keyboard", broken)
+    monkeypatch.setattr(pin_flow, "replace_pin_at_keyboard", broken)
 
     result = run("set", "--stdin", "--replace", "--json", input=twice(NEW))
 
@@ -262,7 +267,7 @@ def test_a_pin_that_appears_meanwhile_is_never_overwritten(home, monkeypatch):
         write_enrolled_pin(where, FIRST)
         return False
 
-    monkeypatch.setattr(cli.pin_flow, "write_enrolled_pin", raced)
+    monkeypatch.setattr(pin_flow, "write_enrolled_pin", raced)
 
     result = run("set", "--stdin", "--json", input=twice(NEW))
 
@@ -278,7 +283,7 @@ def test_a_first_write_that_fails_part_way_is_not_called_a_pin(home, monkeypatch
         pin_file(where).write_text(digits[:2])
         return False
 
-    monkeypatch.setattr(cli.pin_flow, "write_enrolled_pin", partial)
+    monkeypatch.setattr(pin_flow, "write_enrolled_pin", partial)
 
     result = run("set", "--stdin", "--json", input=twice(NEW))
 
@@ -288,7 +293,7 @@ def test_a_first_write_that_fails_part_way_is_not_called_a_pin(home, monkeypatch
 
 
 def test_a_pin_that_cannot_be_written_says_so(home, monkeypatch):
-    monkeypatch.setattr(cli.pin_flow, "write_enrolled_pin", lambda where, digits: False)
+    monkeypatch.setattr(pin_flow, "write_enrolled_pin", lambda where, digits: False)
 
     result = run("set", "--stdin", "--json", input=twice(NEW))
 
@@ -381,7 +386,7 @@ def test_the_service_is_refused_before_stdin_is_read(home, monkeypatch, capsys, 
     monkeypatch.setattr(sys, "stdin", Untouchable())
 
     with pytest.raises(typer.Exit) as refused:
-        cli.pin_set(stdin=True, replace=True, as_json=True)
+        cli_pin.pin_set(stdin=True, replace=True, as_json=True)
 
     assert refused.value.exit_code == 1
     assert "only the owner" in capsys.readouterr().err
@@ -402,7 +407,7 @@ def test_a_pin_is_never_typed_into_a_terminal_that_echoes_it(home, monkeypatch, 
     monkeypatch.setattr(sys, "stdin", Terminal())
 
     with pytest.raises(typer.Exit) as refused:
-        cli.pin_set(stdin=True, replace=False, as_json=True)
+        cli_pin.pin_set(stdin=True, replace=False, as_json=True)
 
     assert refused.value.exit_code == 2
     assert "keryx setup" in capsys.readouterr().err
@@ -426,7 +431,7 @@ def test_the_service_is_refused_through_the_command_line_too(home, monkeypatch, 
 
 def test_no_voice_tool_or_plugin_can_reach_the_setter():
     """The setter's names appear nowhere the voice model's tools are built."""
-    source = Path(cli.__file__).parent
+    source = Path(keryx.__file__).parent
     reachable = [*source.glob("tools/**/*.py"), *source.glob("plugins/**/*.py"),
                  source / "session.py", source / "server.py", source / "app.py"]
     for path in reachable:
@@ -606,9 +611,9 @@ def test_the_status_text_says_when_entry_is_locked(home):
 
 def test_settings_that_will_not_load_are_an_error_on_stderr(home, monkeypatch):
     def broken():
-        raise cli.ConfigFileError("config.toml will not parse")
+        raise ConfigFileError("config.toml will not parse")
 
-    monkeypatch.setattr(cli, "_load_settings_reporting", broken)
+    patch_cli(monkeypatch, "_load_settings_reporting", broken)
 
     for result in (run("--json"), run("set", "--stdin", "--json", input=twice(FIRST))):
         assert result.exit_code == 1

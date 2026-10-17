@@ -9,6 +9,7 @@ import json
 import tomllib
 
 import pytest
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 
 from keryx import plugins
@@ -23,7 +24,7 @@ KEPT = {"name", "on", "installed", "tool_file", "config_file", "refused", "setti
 @pytest.fixture
 def settings_stub(monkeypatch, tmp_path, every_agent_installed):
     settings = Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx")
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
     return settings
 
 
@@ -52,7 +53,7 @@ def test_the_list_describes_each_plugin_and_keeps_what_it_had(settings_stub):
 
 def test_an_admin_key_makes_billing_ready(settings_stub, monkeypatch):
     ready = settings_stub.model_copy(update={"openai_admin_key": "sk-admin-shh"})
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: ready)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: ready)
 
     result = runner.invoke(app, ["plugins", "--json"])
 

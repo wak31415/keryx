@@ -33,6 +33,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from cli_patch import patch_cli
 from setup.auth_fakes import (
     CONSENT,
     DEVICE_AUTH,
@@ -1205,7 +1206,7 @@ def _migrate_cancelled(monkeypatch, settings):
     def interrupted(*args, **kwargs):
         raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
 
-    monkeypatch.setattr("keryx.cli.make_plan", interrupted)
+    patch_cli(monkeypatch, "make_plan", interrupted)
 
 
 #: Each way `migrate --yes --json` ends: how to arrange it, its ending, its exit code, and

@@ -8,6 +8,7 @@ import os
 import stat
 
 import pytest
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 from wording import for_the_app
 
@@ -40,7 +41,7 @@ def home(monkeypatch, tmp_path, every_agent_installed):
     )
     for name in ("orchard", "weather"):
         (settings.projects_root / name).mkdir(parents=True)
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
     return settings
 
 

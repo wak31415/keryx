@@ -1,7 +1,7 @@
 """Tests for keryx.approvals.audit_log: the audit trail as data, for the table and `--json`
 alike.
 
-`cli.py` keeps only the table formatting; everything here is what it formats.
+`keryx.cli.approvals` keeps only the table formatting; everything here is what it formats.
 """
 
 import json

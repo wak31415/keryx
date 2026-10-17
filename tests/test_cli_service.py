@@ -9,6 +9,7 @@ import signal
 from pathlib import Path
 
 import pytest
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 from wording import for_the_app
 
@@ -166,7 +167,7 @@ def test_a_failed_install_exits_1_with_the_scripts_last_error_line(machine):
 
 
 def test_no_checkout_is_exit_2(machine, monkeypatch, tmp_path):
-    monkeypatch.setattr("keryx.cli.repo_root", lambda: tmp_path / "not-a-checkout")
+    patch_cli(monkeypatch, "repo_root", lambda: tmp_path / "not-a-checkout")
 
     result = runner.invoke(app, ["service", "install", "--json"])
 
@@ -548,7 +549,7 @@ def _not_downloaded(monkeypatch, machine, tmp_path):
 
 def _no_checkout(monkeypatch, machine, tmp_path):
     chosen()
-    monkeypatch.setattr("keryx.cli.repo_root", lambda: tmp_path / "not-a-checkout")
+    patch_cli(monkeypatch, "repo_root", lambda: tmp_path / "not-a-checkout")
 
 
 def _never_up(monkeypatch, machine, tmp_path):

@@ -7,11 +7,12 @@ import sys
 
 import pytest
 import typer
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 from wording import for_the_app
 
-from keryx import cli
 from keryx.cli import app
+from keryx.cli import setup as cli_setup
 from keryx.config import Settings, write_enrolled_pin
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import MAX_MEMORY_CHARS, memory_path, read_memory, seed_memory
@@ -36,7 +37,7 @@ def home(monkeypatch, tmp_path):
         projects_root=tmp_path / "projects",
         skills_dir=tmp_path / "skills",
     )
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
     return settings
 
 
@@ -389,7 +390,7 @@ def test_answers_are_never_typed_into_a_terminal(home, monkeypatch):
     monkeypatch.setattr(sys, "stdin", Terminal())
 
     with pytest.raises(typer.Exit) as refused:
-        cli.setup_profile(apply=True, preview=False, as_json=True)
+        cli_setup.setup_profile(apply=True, preview=False, as_json=True)
 
     assert refused.value.exit_code == 2
     assert not memory_path(home.data_dir).exists()

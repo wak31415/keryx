@@ -114,6 +114,7 @@ The modules that sit below the floor, and why, as of 2026-09-02:
 
 | Module | | What is uncovered |
 |---|---|---|
+| `cli/serve.py` | 86% | The `serve` loop, which is exercised end to end rather than by unit test |
 | `skills.py` | 87% | Malformed and unreadable `SKILL.md` files on disk |
 | `transports/twilio_ws.py` | 89% | Media-socket error paths that need a half-closed real socket to reach honestly |
 | `continuity/recall.py` | 90% | Store failures and empty-result branches |
@@ -121,7 +122,6 @@ The modules that sit below the floor, and why, as of 2026-09-02:
 | `integrations/cluster.py` | 91% | Parser branches for `sinfo`/`squeue` shapes the fixtures do not contain |
 | `approvals/broker.py` | 91% | Socket-level failures (a client that disconnects mid-request) |
 | `projects.py` | 91% | `OSError` paths on project discovery |
-| `cli.py` | 93% | Argument-parsing edges and the `serve` loop, which is exercised end to end rather than by unit test |
 
 None of them is a gap in a *rule* — the PIN gate, the `reported_at` contract, the
 `can_text` gate, the read-only guarantees in `integrations/billing.py` and

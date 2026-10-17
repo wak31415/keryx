@@ -6,11 +6,12 @@ import signal
 from pathlib import Path
 
 import pytest
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 from wording import for_the_app
 
-from keryx import cli
 from keryx.cli import app
+from keryx.cli import voice as cli_voice
 from keryx.config.store import ConfigStore
 from keryx.localmodels import hardware, runtimes, servers, speech, use, voice
 from keryx.localmodels.hardware import Hardware
@@ -224,7 +225,7 @@ def test_use_server_that_does_not_answer_saves_nothing(machine):
 
     assert result.exit_code == 1
     assert json.loads(result.stdout) == {
-        "saved": None, "problem": cli.SERVER_REFUSED,
+        "saved": None, "problem": cli_voice.SERVER_REFUSED,
         "detail": "could not open gpu-box's Realtime socket", "warnings": [],
         "restart_needed": False,
     }
@@ -243,7 +244,7 @@ def test_use_server_kept_anyway_with_its_key_from_stdin(machine):
     assert json.loads(result.stdout) == {
         "saved": {"VOICE_MODE": "server", "VOICE_BASE_URL": "https://voice.example.com/v1",
                   "VOICE_API_KEY": "(set)"},
-        "problem": cli.SERVER_REFUSED,
+        "problem": cli_voice.SERVER_REFUSED,
         "detail": "could not open voice.example.com's Realtime socket", "warnings": [],
         "restart_needed": True,
     }
@@ -433,7 +434,7 @@ def test_use_here_in_words(machine):
 def test_use_here_with_no_checkout_says_to_run_it_from_a_clone(machine, monkeypatch, tmp_path):
     ConfigStore().set(WORDS)
     machine.s2s = "/bin/s2s"
-    monkeypatch.setattr("keryx.cli.repo_root", lambda: tmp_path / "not-a-checkout")
+    patch_cli(monkeypatch, "repo_root", lambda: tmp_path / "not-a-checkout")
 
     result = runner.invoke(app, ["voice", "use", "here", "--json"])
 
@@ -582,7 +583,7 @@ def _done(monkeypatch, machine, tmp_path):
 
 def _no_checkout(monkeypatch, machine, tmp_path):
     ConfigStore().set(WORDS)
-    monkeypatch.setattr("keryx.cli.repo_root", lambda: tmp_path / "not-a-checkout")
+    patch_cli(monkeypatch, "repo_root", lambda: tmp_path / "not-a-checkout")
 
 
 def _unsupported(monkeypatch, machine, tmp_path):
@@ -660,7 +661,7 @@ def _unparsable(monkeypatch, machine, tmp_path):
     def refuse(**overrides):
         raise ConfigFileError(f"{tmp_path}/config.toml does not parse (line 1)")
 
-    monkeypatch.setattr("keryx.cli.load_settings", refuse)
+    patch_cli(monkeypatch, "load_settings", refuse)
 
 
 def _save_refused(monkeypatch, machine, tmp_path):

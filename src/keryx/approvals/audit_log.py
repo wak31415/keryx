@@ -1,10 +1,10 @@
 """The approval bridge's audit trail as data: what `keryx approvals` prints as a table, and
 what `--json` hands the Mac app.
 
-`cli.py` keeps only the formatting (the table, the summary line's wording); every read of
-`audit.jsonl` and the kill switch lives here, so every other reader of either (`keryx
-status`, for one) reaches the same file through the same two functions instead of a second,
-possibly-drifted copy of this logic.
+`keryx.cli.approvals` keeps only the formatting (the table, the summary line's wording);
+every read of `audit.jsonl` and the kill switch lives here, so every other reader of either
+(`keryx status`, for one) reaches the same file through the same two functions instead of a
+second, possibly-drifted copy of this logic.
 """
 
 import json
