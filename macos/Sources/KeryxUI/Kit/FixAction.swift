@@ -21,8 +21,8 @@ enum FixAction: Equatable, Sendable {
     case integration(String)
     /// `pin`: the PIN sheet.
     case pin
-    /// `service:install` (not installed yet) or `service:start` (installed but stopped,
-    /// Task N): Keryx started answering calls. The app starts it by itself once setup
+    /// `service:install` (not installed yet) or `service:start` (installed but
+    /// stopped): Keryx started answering calls. The app starts it by itself once setup
     /// allows; the button is for a start that failed, and asks nothing first.
     case startKeryx
     /// `models:start`: the local model server, started.

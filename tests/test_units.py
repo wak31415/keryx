@@ -671,7 +671,7 @@ def test_an_install_or_removal_of_units_another_home_rendered_runs_no_installer(
 
 
 def test_the_installers_own_refusal_is_said_without_a_path(tmp_path):
-    """Fix round 1: only the installer saw it (its check reads what this one cannot). The
+    """Only the installer saw it (its check reads what this one cannot). The
     app leads with the message, so the installer's path-laden lines go in the detail."""
     root = checkout(tmp_path / "checkout")
     said = (f"These units belong to KERYX_HOME={OWNER_HOME}; this command runs with "

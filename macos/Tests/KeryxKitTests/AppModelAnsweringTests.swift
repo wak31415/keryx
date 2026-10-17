@@ -41,7 +41,7 @@ import KeryxPreview
     }
 
     /// The plan the CLI prints for a unit installed but not running: the step fails on its
-    /// "Background process" check (Task N), whose fix is `service:start`.
+    /// "Background process" check, whose fix is `service:start`.
     static var stoppedPlan: SetupPlan { plan(service: "failed", fix: "service:start") }
 
     /// `plan` with a migration still to run in front of every step.
@@ -77,7 +77,7 @@ import KeryxPreview
     }
 
     /// `keryx service start --all`: a unit that is already there, started again along with
-    /// every installed model server (C1, Task N: `start --all` acts only on what is
+    /// every installed model server (`start --all` acts only on what is
     /// installed, so this is as safe at launch as a plain `start`).
     func starts(_ client: StubClient) -> Int {
         client.calls.filter { $0 == "service start --all" }.count
@@ -154,7 +154,7 @@ import KeryxPreview
     }
 
     @Test func launchStartsAStoppedUnitAgain() async {
-        // Installed but stopped (`service:start`, Task N): started again, never installed.
+        // Installed but stopped (`service:start`): started again, never installed.
         let client = StubClient {
             $0.status = .success(Self.stopped)
             $0.setupPlan = .success(Self.stoppedPlan)

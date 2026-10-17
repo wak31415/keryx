@@ -4,7 +4,7 @@ import KeryxUI
 import SwiftUI
 
 extension ScreenCatalog {
-    /// The Phone section (Task UE) — connected and pointed elsewhere, pointed here, nothing
+    /// The Phone section — connected and pointed elsewhere, pointed here, nothing
     /// saved yet, Twilio refusing — its account and Point Here sheets; the PIN sheet in each
     /// state `keryx pin` can be in; the secret sheet's key check; and the Overview's service
     /// rows with the service not installed.

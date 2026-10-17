@@ -767,7 +767,7 @@ def test_no_home_to_compare_with_is_said_before_anything(machine):
     assert result.returncode == 1 and "keryx config path" in result.stderr
 
 
-# --- fix round 1: what the manager has loaded, and what cannot be read ---------------------
+# --- what the manager has loaded, and what cannot be read ---------------------
 
 #: Every bash here — and macOS's own 3.2 at /bin/bash, when there is one — runs these.
 SHELLS = list(dict.fromkeys(

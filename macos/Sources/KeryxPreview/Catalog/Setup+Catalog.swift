@@ -393,7 +393,7 @@ extension ScreenCatalog {
     }
 
     /// The models list with the owner's rule giving the voice a model of its own beside the
-    /// agent's (a 48 GB Mac's pair, as M5 prints it), its values written by hand.
+    /// agent's (a 48 GB Mac's pair, as `models list --json` prints it), its values written by hand.
     private static var separateVoiceModel: ModelsReport {
         var report = PreviewData.models
         report.recommended = "qwen3-coder-30b-a3b"

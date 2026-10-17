@@ -74,7 +74,7 @@ import KeryxPreview
     @Test func theServiceChecksAreSaidInTheAppsWords() {
         #expect(CheckWording.title("Service manager") == "Runs in the background")
         #expect(CheckWording.title("Service running") == "Running")
-        // Task N's renamed doctor check titles say the same thing in the same words.
+        // The renamed doctor check titles say the same thing in the same words.
         #expect(CheckWording.title("Background process") == "Runs in the background")
         #expect(CheckWording.title("Keryx running") == "Running")
         #expect(CheckWording.title("OpenAI API key") == "OpenAI API key")

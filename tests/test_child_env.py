@@ -13,7 +13,6 @@ import pytest
 from keryx import child_env, units
 from keryx.localmodels import speech, voice
 from keryx.localmodels.speech import Repo
-from keryx.setup import child_env as old_home
 
 #: Credentials of Keryx's, exported the ways an owner might: a setting's name, a setting
 #: read case-insensitively, and a credential that is no setting at all.
@@ -64,11 +63,6 @@ def script(tmp_path, name: str = "child") -> str:
 def test_the_operational_environment_holds_no_secret_and_what_children_need(exported):
     assert_scrubbed(child_env.operational_env())
     assert child_env.operational_env(EXTRA="1")["EXTRA"] == "1"
-
-
-def test_the_old_import_still_works():
-    assert old_home.login_env is child_env.login_env
-    assert old_home.secret_variables is child_env.secret_variables
 
 
 def test_the_speech_download_child_holds_no_secret(exported, tmp_path):

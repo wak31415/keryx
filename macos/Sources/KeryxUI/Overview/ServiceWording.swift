@@ -60,7 +60,7 @@ enum ServiceWording {
         }
         switch step {
         case .start:
-            // Relaunched into a Keryx the owner stopped (`keryx service stop`, Task N):
+            // Relaunched into a Keryx the owner stopped (`keryx service stop`):
             // said quietly, never as an error, and gone as soon as it starts (the `s.active`
             // branch above returns first, once it has).
             let hint = status.restart.state == "stopped" ? "Keryx was stopped by its owner" : nil

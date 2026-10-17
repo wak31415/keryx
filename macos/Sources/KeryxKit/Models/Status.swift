@@ -1,8 +1,8 @@
 import Foundation
 
 /// `keryx status --json`: one document for the menu bar, every part reporting itself
-/// (`ok`/`error`) so one broken probe never hides the rest. See Task 3 in the plan for the
-/// exact shape the CLI prints.
+/// (`ok`/`error`) so one broken probe never hides the rest. The exact shape the CLI prints
+/// is in the contract (`Tests/KeryxKitTests/Fixtures/contract.json`).
 public struct StatusReport: Codable, Sendable, Equatable {
     public var schema: Int
     public var storage: Storage

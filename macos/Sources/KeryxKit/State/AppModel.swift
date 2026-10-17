@@ -902,7 +902,7 @@ public final class AppModel {
         }
     }
 
-    /// Starts every installed unit again (`keryx service start --all`, Task N): Keryx's own
+    /// Starts every installed unit again (`keryx service start --all`): Keryx's own
     /// is already there, only stopped, and the model servers started with it — a Mac
     /// stopped by `stopAnswering`'s `service stop --all` had them running too. Refused as
     /// `installService` is.
@@ -936,7 +936,7 @@ public final class AppModel {
         switch step.kind {
         case .needed?, .done?: return .start
         // Installed but stopped: the CLI fails the step on its "Background process" check
-        // (`service:start`, Task N), or says nothing is installed yet (`service:install`).
+        // (`service:start`), or says nothing is installed yet (`service:install`).
         // Failed for anything else (a security check), it waits.
         case .failed?: return step.fix.map(Self.startFixes.contains) == true ? .start : .waitingForSetup
         default: return .waitingForSetup
@@ -944,7 +944,7 @@ public final class AppModel {
     }
 
     /// The fix ids (`keryx/fixes.py`) that mean Keryx's unit should be started: not
-    /// installed yet, or installed and stopped (`keryx service stop`, Task N).
+    /// installed yet, or installed and stopped (`keryx service stop`).
     nonisolated static let startFixes: Set<String> = ["service:install", "service:start"]
 
     /// Starts Keryx when setup allows and it isn't running, once a launch; does nothing
@@ -992,7 +992,7 @@ public final class AppModel {
     /// and its answer is this one's too. Otherwise the plan and the status are read again,
     /// and Keryx started only when `answeringStep` says `.start`: its unit installed with
     /// `keryx service install` when it isn't there yet, or — already installed but stopped
-    /// (`service:start`, Task N) — started again with `keryx service start --all`, with the
+    /// (`service:start`) — started again with `keryx service start --all`, with the
     /// model and voice servers Quit stopped. Then the status read once more after a moment, as
     /// after a restart. A failed start is kept in `startFailure` for the Overview to say.
     /// `automatic`: once a launch (`startTried`); a click always tries.
@@ -1111,7 +1111,7 @@ public final class AppModel {
 
     /// Stops Keryx answering calls, as the app quits: every unit it runs — the main unit,
     /// the model server, the voice server and the voice LLM — stopped and kept from
-    /// starting at login with `keryx service stop --all` (Task N), never removed: the unit
+    /// starting at login with `keryx service stop --all`, never removed: the unit
     /// files stay, so macOS asks nothing, and the next launch only starts them again. An
     /// install still finishing is waited for first, briefly. Nothing unless `keepsAnswering`.
     ///

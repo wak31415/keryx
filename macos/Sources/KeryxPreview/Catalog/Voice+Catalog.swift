@@ -200,8 +200,8 @@ extension ScreenCatalog {
         ]
     }
 
-    /// The models beside a voice LLM of its own: the 4b chosen and downloaded (M5's keys, as
-    /// a 36 GB Mac with the 4b chosen gives them).
+    /// The models beside a voice LLM of its own: the 4b chosen and downloaded (`models list
+    /// --json`'s keys, as a 36 GB Mac with the 4b chosen gives them).
     private static var ownLLMModels: ModelsReport {
         var report = PreviewData.models
         report.voiceLlmRecommended = "qwen3.5-4b"

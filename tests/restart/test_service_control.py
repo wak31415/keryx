@@ -251,7 +251,7 @@ def test_a_rendered_xdg_config_home_says_where_the_default_home_was(tmp_path):
     assert service.foreign_units([LAUNCHD]).theirs.as_posix() == "/srv/config/keryx"
 
 
-# Fix round 1: whatever cannot be read is foreign.
+# Whatever cannot be read is foreign.
 
 
 @pytest.mark.parametrize("content", [
@@ -311,7 +311,7 @@ def test_a_rendered_tilde_is_the_accounts_home_and_a_relative_home_is_nobodys(
     assert (service.foreign_units([LAUNCHD]) is not None) is foreign
 
 
-# Fix round 1: what the service manager has loaded, asked of it read-only.
+# What the service manager has loaded, asked of it read-only.
 
 
 def answers(code, stdout="", raises=None):

@@ -132,13 +132,13 @@ import KeryxPreview
     ]
 
     /// Keys the contract promises (and the CLI test holds the CLI to) that this build does
-    /// not decode yet: the Configuration tabs, which Task UA's `ConfigRow` reads. Once a key
+    /// not decode yet: for example a Configuration tab's key, which `ConfigRow` reads. Once a key
     /// is decoded the test says to drop it here.
     static let notYetDecoded: [String: [String: Set<String>]] = [:]
 
     /// Paths the app decodes whose keys the contract gives in prose, not by path, because
     /// the CLI test cannot step into them: a list that is often empty, an object that is
-    /// often null (contract-handoff.md §1). The contract still names the key that holds them.
+    /// often null. The contract still names the key that holds them.
     static let inProse: [String: Set<String>] = [
         "integrations --json": ["integrations[].secrets[]"],
         "phone webhooks --json": ["current"],

@@ -737,7 +737,7 @@ def test_the_model_servers_set_ups_refuse_units_another_home_rendered(machine, a
 
 
 def test_an_installer_that_refuses_by_itself_is_said_without_a_path(machine):
-    """Fix round 1: the app leads with `message`; the installer's own lines name paths."""
+    """The app leads with `message`; the installer's own lines name paths."""
     machine.captured = (2, "", f"These units belong to KERYX_HOME={OWNER_HOME}; this command "
                                "runs with KERYX_HOME=/x.\nrendered in /y.plist\n")
 

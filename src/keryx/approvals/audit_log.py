@@ -2,9 +2,9 @@
 what `--json` hands the Mac app.
 
 `cli.py` keeps only the formatting (the table, the summary line's wording); every read of
-`audit.jsonl` and the kill switch lives here, so the next reader of either — the status
-command Task 8 adds — reaches the same file through the same two functions instead of a
-second, possibly-drifted copy of this logic.
+`audit.jsonl` and the kill switch lives here, so every other reader of either (`keryx
+status`, for one) reaches the same file through the same two functions instead of a second,
+possibly-drifted copy of this logic.
 """
 
 import json

@@ -3,7 +3,7 @@ import KeryxUI
 import SwiftUI
 
 extension ScreenCatalog {
-    /// The Integrations section and the sign-in sheets (Task UD): the accounts as a sandbox
+    /// The Integrations section and the sign-in sheets: the accounts as a sandbox
     /// has them (Slack's token set, the rest not), all connected, two half done (Google for
     /// agents on and not signed in, issue reports on and gh not signed in), a change that
     /// failed, a list that failed to load, and the window; then each sign-in sheet in each

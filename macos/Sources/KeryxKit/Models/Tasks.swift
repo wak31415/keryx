@@ -1,8 +1,7 @@
 import Foundation
 
-/// A subagent session, as `keryx tasks list|show --json` prints it. The owner's ruling (see
-/// the plan's controller amendment to Task 8) is that this is an agent session, not a row in
-/// a task list — `log` and `resumable` are what make that visible in the app.
+/// A subagent session, as `keryx tasks list|show --json` prints it. The app shows it as
+/// an agent session, not a row in a task list — `log` and `resumable` are what make that visible in the app.
 public struct TaskItem: Codable, Sendable, Equatable, Identifiable {
     public var id: Int
     public var status: TaskStatus

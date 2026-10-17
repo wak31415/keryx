@@ -2097,7 +2097,7 @@ async def test_a_unit_another_home_rendered_is_not_restarted(tmp_path):
 async def test_a_unit_that_cannot_be_looked_at_refuses_the_restart_without_raising(
     tmp_path, monkeypatch
 ):
-    """Fix round 1: `Path.is_file` raises on EACCES. `request()` never raises; whose the
+    """`Path.is_file` raises on EACCES. `request()` never raises; whose the
     unit is cannot be told, and that is a refusal."""
     harness = Harness(make_settings(tmp_path))
     real = Path.is_file

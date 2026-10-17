@@ -176,11 +176,11 @@ import KeryxPreview
         #expect(client.piped.count == 2)
     }
 
-    // MARK: - Task L's seams
+    // MARK: - Deferring a step
 
     @Test func aPlanThatCanDeferIsNearlyReadyWhenAllThatIsLeftWasDeferred() throws {
         var plan = PreviewData.setupPlanReady
-        // The shared fixture now speaks of deferring (Task L has landed); start from an
+        // The shared fixture speaks of deferring; start from an
         // older CLI's shape (neither key printed) before building the scenario by hand.
         for index in plan.steps.indices {
             plan.steps[index].deferrable = nil

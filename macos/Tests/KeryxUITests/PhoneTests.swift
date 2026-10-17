@@ -189,7 +189,7 @@ import KeryxPreview
         #expect(line.hint == "Started outside this app")
     }
 
-    /// A relaunch into a Keryx the owner stopped (`keryx service stop`, Task N) says so
+    /// A relaunch into a Keryx the owner stopped (`keryx service stop`) says so
     /// quietly, never as an error, and only until it starts again.
     @Test func stoppedByTheOwnerIsSaidQuietlyUntilStarted() {
         var stopped = Self.notInstalled

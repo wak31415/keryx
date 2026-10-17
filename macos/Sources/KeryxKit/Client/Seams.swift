@@ -1,16 +1,13 @@
 import Foundation
 
-// SEAMS: what the setup wizard is built to use once the CLI has it, and does without until
-// then — each one small protocol here, or one optional field on a document model, listed in
-// `ContractTests.awaitingCLI` until the contract names it. `awaitingCLI` is empty today:
-// `AgentSmokeTesting` (`CLIClient` now adopts it), `PhoneTunnel.hostname`, `SetupStep.
-// deferrable`/`.deferred`, `SetupMarkResult.deferred`, `config options ASSISTANT_NAME`'s
-// `has_options`, `VoiceStatus.pipelines`, `ModelsReport.recommended` and its siblings, and
-// `CatalogModel.fitsAsVoiceLlm` are all in the contract now, and `models start --voice-llm`
-// has had its client method (`CLIClient.startVoiceLLMServer`) since before this list was
-// last true — nothing here is still waiting on the CLI.
+// SEAMS: what the app is built to use before the CLI has it, so the two can land in either
+// order. Each is a small protocol here, which a client may adopt (the app asks with `as?`
+// and does without otherwise), or an optional field on a document model, listed in
+// `ContractTests.awaitingCLI` until the contract names it. Nothing is awaited today;
+// `AgentSmokeTesting` stays a protocol of its own so a preview or test client need not run
+// an agent.
 
-/// A coding agent asked to run a test task, as a stream (Task L: `keryx auth smoke NAME
+/// A coding agent asked to run a test task, as a stream (`keryx auth smoke NAME
 /// --json`, NAME `claude`, `codex` or `local`: `step`, then `done {ok, summary, detail}`,
 /// `error` or `cancelled`), so the wizard can show it running. A `done` that did not pass
 /// exits 1 and is still the ending (the contract's `done` exit is `[0, 1]`). `CLIClient`

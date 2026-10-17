@@ -47,7 +47,7 @@ public struct SetupStep: Codable, Sendable, Equatable, Identifiable {
     /// The app's action for the check `why` names (`FixAction`); `nil` once done, while it
     /// waits, or when the app has nothing to offer. Optional for an older CLI.
     public var fix: String?
-    /// The step may be left for later (`setup mark phone|service`, Task L) — the phone and
+    /// The step may be left for later (`setup mark phone|service`) — the phone and
     /// the service. `nil` from a CLI without it, which refuses to mark a required step
     /// other than the PIN.
     public var deferrable: Bool?
@@ -78,7 +78,7 @@ public struct SetupCheck: Codable, Sendable, Equatable {
 public struct SetupMarkResult: Codable, Sendable, Equatable {
     public var id: String
     public var walked: Bool
-    /// The step is now left for later (`setup mark phone`, Task L).
+    /// The step is now left for later (`setup mark phone`).
     public var deferred: Bool?
 
     public init(id: String, walked: Bool, deferred: Bool? = nil) {

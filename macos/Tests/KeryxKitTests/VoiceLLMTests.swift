@@ -141,7 +141,7 @@ import KeryxTestSupport
     }
 }
 
-/// Fix round 1: a finished choice is held until what it changed is read back, a typed key is
+/// A finished choice is held until what it changed is read back, a typed key is
 /// never kept, and a stopped `voice llm` is given its time to put things back.
 @MainActor
 @Suite struct VoiceLLMSettlingTests {

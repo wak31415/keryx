@@ -3,7 +3,7 @@ import KeryxUI
 import SwiftUI
 
 extension ScreenCatalog {
-    /// The Plugins section and the owner's own tools (Task UD): the plugins as a sandbox has
+    /// The Plugins section and the owner's own tools: the plugins as a sandbox has
     /// them (Slack on, Email answers on and not loading, Billing on and not ready, Cluster
     /// stats off), every account connected with Cluster stats on and a host in its table, a
     /// plugin that would not turn on, the owner's own tools (and none), a list that failed

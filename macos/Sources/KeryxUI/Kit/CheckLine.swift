@@ -56,8 +56,8 @@ enum CheckWording {
 
     /// The titles the app says otherwise: the service's checks, as what they mean to someone
     /// who never sees the unit. The old names ("Service manager", "Service running") are
-    /// kept beside Task N's ("Background process", "Keryx running") for a CLI before the
-    /// rename.
+    /// kept beside the new ones ("Background process", "Keryx running") for a CLI from
+    /// before the rename.
     static let titles = [
         "Service manager": "Runs in the background", "Service running": "Running",
         "Background process": "Runs in the background", "Keryx running": "Running",
@@ -112,7 +112,7 @@ enum CheckWording {
             return (serviceNotInstalled + rest.replacingOccurrences(of: "`", with: ""), raw)
         }
         // A stopped unit's own label ("dev.keryx.agent is installed, not running — …",
-        // Task N's `service:start`) is dropped the same way — but the rest already says
+        // fixed by `service:start`) is dropped the same way — but the rest already says
         // plainly that Keryx is stopped, so nothing stands in for the label here; the
         // label itself is still for Show Details alone.
         if let range = text.range(of: #"^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+ is installed, not running — "#,

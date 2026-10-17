@@ -6,8 +6,8 @@ import SwiftUI
 /// after a failure is under way, so Try Again visibly does something.
 ///
 /// A value already shown stays shown through a later refresh or a later failure — the
-/// screen does not blank while it reloads. Task 10's `Loadable` maps onto this with an
-/// `init(_ loadable:retry:content:)` that passes `value`, `isLoading` and
+/// screen does not blank while it reloads. A `Loadable` maps onto this through
+/// `init(_:section:retry:content:)`, which passes `value`, `isLoading` and
 /// `error.map { Failure(title: $0.title, message: $0.message) }`.
 public struct StateView<Value, Content: View>: View {
     /// What went wrong, in words: a short title and a sentence.
