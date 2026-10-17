@@ -33,6 +33,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from cli_patch import patch_cli
 from setup.auth_fakes import (
     CONSENT,
     DEVICE_AUTH,
@@ -550,7 +551,7 @@ def seeded(tmp_path, monkeypatch, every_agent_installed):
     # The models commands: a known machine, its units, and one model on disk (sparse).
     monkeypatch.setattr(hardware, "detect", lambda: Hardware("metal", "Apple silicon", 0.0, 36.0))
     monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
-    monkeypatch.setattr(use, "unit_installed", lambda kind: True)
+    monkeypatch.setattr(use, "unit_installed", lambda kind, **_: True)
     monkeypatch.setattr(servers, "free_port", lambda preferred: preferred)
     monkeypatch.setattr("keryx.localmodels.runtimes.llama_server",
                         lambda cache_dir, **_: "/opt/homebrew/bin/llama-server")
@@ -1205,7 +1206,7 @@ def _migrate_cancelled(monkeypatch, settings):
     def interrupted(*args, **kwargs):
         raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
 
-    monkeypatch.setattr("keryx.cli.make_plan", interrupted)
+    patch_cli(monkeypatch, "make_plan", interrupted)
 
 
 #: Each way `migrate --yes --json` ends: how to arrange it, its ending, its exit code, and

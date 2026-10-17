@@ -17,13 +17,17 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 
 from keryx import cli
+from keryx.cli import common
+from keryx.cli import migrate as cli_migrate
 from keryx.config import Settings
 from keryx.config import migrate as migration
 from keryx.config.files import dump_toml, keryx_home, read_toml, secure_dir
 from keryx.config.migrate import MigrationError, Service, make_plan, rewrite_task_paths, run
+from keryx.config.settings import ConfigFileError
 from keryx.restart.service import ServiceTarget
 from keryx.setup import migrate_stream
 from keryx.tasks.models import Task, TaskKind, TaskStatus
@@ -655,10 +659,10 @@ def test_launchd_is_booted_out_and_bootstrapped_from_its_plist():
 def command(machine, monkeypatch):
     """`keryx migrate` run from the machine's checkout, with nothing real to re-render."""
     monkeypatch.chdir(machine.repo)
-    monkeypatch.setattr(cli, "repo_root", lambda: machine.repo)
+    patch_cli(monkeypatch, "repo_root", lambda: machine.repo)
     ran: list[list[str]] = []
-    monkeypatch.setattr(cli, "run_command", lambda argv: ran.append(argv) or 0)
-    monkeypatch.setattr(cli, "health_probe", lambda settings: None)
+    patch_cli(monkeypatch, "run_command", lambda argv: ran.append(argv) or 0)
+    patch_cli(monkeypatch, "health_probe", lambda settings: None)
     return ran
 
 
@@ -690,10 +694,10 @@ def test_the_command_migrates_and_says_what_is_left(machine, command):
 
 def test_the_command_rerenders_an_installed_service(machine, command, monkeypatch):
     manager = FakeManager(machine)
-    monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
-    monkeypatch.setattr(cli, "MigratingService",
-                        lambda target: Service(target, run=manager, sleep=lambda _: None))
+    patch_cli(monkeypatch, "resolve_target",
+              lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "MigratingService",
+              lambda target: Service(target, run=manager, sleep=lambda _: None))
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
@@ -711,7 +715,7 @@ def test_the_command_summarises_a_long_list_and_a_service_that_did_not_come_back
         lost_sessions=[(n, "done", f"task {n}") for n in range(1, 14)],
         started=False,
     )
-    monkeypatch.setattr(cli, "run_migration", lambda plan, **kwargs: report)
+    patch_cli(monkeypatch, "run_migration", lambda plan, **kwargs: report)
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
@@ -722,21 +726,21 @@ def test_the_command_summarises_a_long_list_and_a_service_that_did_not_come_back
 
 
 def test_an_installer_that_fails_says_to_run_it_again(machine, command, monkeypatch):
-    monkeypatch.setattr(cli, "run_command", lambda argv: 1)
+    patch_cli(monkeypatch, "run_command", lambda argv: 1)
     claude = machine.home / ".claude"
     claude.mkdir()
     (claude / "settings.json").write_text("keryx_approval.py")
 
-    assert cli._rerender(ServiceTarget("systemd", "keryx.service")) == [
+    assert cli_migrate._rerender(ServiceTarget("systemd", "keryx.service")) == [
         "install-systemd.sh: exited 1, run it again",
         "approval hook: exited 1, run it again",
     ]
 
 
 def test_the_command_will_not_cut_a_live_call_off(machine, command, monkeypatch):
-    monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
-    monkeypatch.setattr(cli, "health_probe", lambda settings: 1)
+    patch_cli(monkeypatch, "resolve_target",
+              lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "health_probe", lambda settings: 1)
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
@@ -749,8 +753,30 @@ def test_the_command_lists_conflicts_and_stops(machine, command):
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
-    assert result.exit_code == 1
-    assert "settled" in result.output and machine.legacy.is_dir()
+    assert result.exit_code == 2
+    assert migrate_stream.CONFLICTS in result.stderr and machine.legacy.is_dir()
+
+
+@pytest.mark.parametrize("blocked", ["conflict", "live call", "another home"])
+def test_the_terminal_and_the_app_refuse_a_migration_alike(
+    machine, command, installed, monkeypatch, blocked
+):
+    """One check decides, so the two ways of running it cannot drift apart."""
+    if blocked == "conflict":
+        (machine.legacy / "pin").write_text("111357\n")
+    elif blocked == "live call":
+        patch_cli(monkeypatch, "resolve_target",
+                  lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+        patch_cli(monkeypatch, "health_probe", lambda settings: 1)
+    else:
+        keryx_unit("/srv/someone-else/keryx")
+
+    text = runner.invoke(cli.app, ["migrate", "--yes"])
+    streamed, events = stream()
+
+    assert text.exit_code == streamed.exit_code != 0
+    assert events[-1]["message"] in text.stderr
+    assert command == [] and machine.legacy.is_dir()
 
 
 def test_without_a_terminal_it_wants_yes(machine, command):
@@ -764,7 +790,7 @@ def test_a_failure_part_way_is_reported(machine, command, monkeypatch):
     def fails(*args, **kwargs):
         raise MigrationError("stopped at somewhere")
 
-    monkeypatch.setattr(cli, "run_migration", fails)
+    patch_cli(monkeypatch, "run_migration", fails)
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
@@ -1033,17 +1059,16 @@ def test_the_old_unit_is_found_only_for_the_default_one(monkeypatch):
 def test_the_command_hands_jarvis_unit_over_to_keryx(jarvis, monkeypatch):
     units = Units(jarvis)
     ran: list[list[str]] = []
-    monkeypatch.setattr(cli, "run_command", lambda argv: ran.append(argv) or 0)
-    monkeypatch.setattr(cli, "health_probe", lambda settings: None)
-    monkeypatch.setattr(cli, "resolve_target", lambda settings, **_: None)
-    monkeypatch.setattr(cli, "candidate_target",
-                        lambda settings: ServiceTarget("systemd", "keryx.service"))
-    monkeypatch.setattr(cli, "old_target",
-                        lambda target: ServiceTarget("systemd", "jarvis.service"))
-    monkeypatch.setattr(cli, "retire_old_units",
-                        lambda manager: migration.retire_old_units(manager, run=units))
-    monkeypatch.setattr(cli, "MigratingService",
-                        lambda target: Service(target, run=units, sleep=lambda _: None))
+    patch_cli(monkeypatch, "run_command", lambda argv: ran.append(argv) or 0)
+    patch_cli(monkeypatch, "health_probe", lambda settings: None)
+    patch_cli(monkeypatch, "resolve_target", lambda settings, **_: None)
+    patch_cli(monkeypatch, "candidate_target",
+              lambda settings: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "old_target", lambda target: ServiceTarget("systemd", "jarvis.service"))
+    patch_cli(monkeypatch, "retire_old_units",
+              lambda manager: migration.retire_old_units(manager, run=units))
+    patch_cli(monkeypatch, "MigratingService",
+              lambda target: Service(target, run=units, sleep=lambda _: None))
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
@@ -1146,8 +1171,8 @@ def test_every_kind_of_conflict_is_said_for_a_person():
 def moved_already(monkeypatch, tmp_path):
     """A machine with nothing of Jarvis's on it, and no service answering."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(cli, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(cli, "health_probe", lambda settings: None)
+    patch_cli(monkeypatch, "repo_root", lambda: tmp_path)
+    patch_cli(monkeypatch, "health_probe", lambda settings: None)
 
 
 def test_nothing_to_move_is_a_plan_with_nothing_to_do(moved_already):
@@ -1159,12 +1184,11 @@ def test_nothing_to_move_is_a_plan_with_nothing_to_do(moved_already):
 
 
 def test_the_plan_names_the_units_stopped_retired_and_installed(machine, command, monkeypatch):
-    monkeypatch.setattr(cli, "resolve_target", lambda settings, **_: None)
-    monkeypatch.setattr(cli, "candidate_target",
-                        lambda settings: ServiceTarget("systemd", "keryx.service"))
-    monkeypatch.setattr(cli, "old_target",
-                        lambda target: ServiceTarget("systemd", "jarvis.service"))
-    monkeypatch.setattr(cli, "health_probe", lambda settings: 2)
+    patch_cli(monkeypatch, "resolve_target", lambda settings, **_: None)
+    patch_cli(monkeypatch, "candidate_target",
+              lambda settings: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "old_target", lambda target: ServiceTarget("systemd", "jarvis.service"))
+    patch_cli(monkeypatch, "health_probe", lambda settings: 2)
 
     _, plan = plan_json()
 
@@ -1183,9 +1207,9 @@ def test_the_service_may_not_read_the_plan(machine, command, monkeypatch):
 
 def test_settings_that_do_not_load_are_said_on_stderr(machine, command, monkeypatch):
     def broken():
-        raise cli.ConfigFileError("config.toml does not parse")
+        raise ConfigFileError("config.toml does not parse")
 
-    monkeypatch.setattr(cli, "_load_settings_optional", broken)
+    patch_cli(monkeypatch, "_load_settings_optional", broken)
 
     result, _ = plan_json()
 
@@ -1219,10 +1243,10 @@ def test_the_run_streams_its_phases_and_ends_once(machine, command, installers):
 
 def test_the_run_stops_and_starts_an_installed_service(machine, command, installers, monkeypatch):
     manager = FakeManager(machine)
-    monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
-    monkeypatch.setattr(cli, "MigratingService",
-                        lambda target: Service(target, run=manager, sleep=lambda _: None))
+    patch_cli(monkeypatch, "resolve_target",
+              lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "MigratingService",
+              lambda target: Service(target, run=manager, sleep=lambda _: None))
 
     result, events = stream()
 
@@ -1255,9 +1279,9 @@ def test_nothing_to_move_is_done_at_once(moved_already):
 
 
 def test_a_live_call_holds_the_run_back(machine, command, monkeypatch):
-    monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
-    monkeypatch.setattr(cli, "health_probe", lambda settings: 1)
+    patch_cli(monkeypatch, "resolve_target",
+              lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "health_probe", lambda settings: 1)
 
     result, events = stream()
 
@@ -1277,21 +1301,21 @@ def test_the_service_may_not_run_it(machine, command, monkeypatch):
 
 def test_settings_that_do_not_load_end_the_run_as_an_error(machine, command, monkeypatch):
     def broken():
-        raise cli.ConfigFileError("config.toml does not parse")
+        raise ConfigFileError("config.toml does not parse")
 
-    monkeypatch.setattr(cli, "_load_settings_optional", broken)
+    patch_cli(monkeypatch, "_load_settings_optional", broken)
 
     result, events = stream()
 
     assert result.exit_code == 1 and ends_once(events) == "error"
-    assert events[0]["message"] == cli.SETTINGS_UNREADABLE and machine.legacy.is_dir()
+    assert events[0]["message"] == common.SETTINGS_UNREADABLE and machine.legacy.is_dir()
 
 
 def test_a_run_that_stops_part_way_says_so_and_how_to_finish(machine, command, monkeypatch):
     def fails(*args, **kwargs):
         raise MigrationError("stopped at somewhere")
 
-    monkeypatch.setattr(cli, "run_migration", fails)
+    patch_cli(monkeypatch, "run_migration", fails)
 
     result, events = stream()
 
@@ -1304,7 +1328,7 @@ def test_something_unexpected_is_an_error_with_its_type(machine, command, monkey
     def breaks(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(cli, "run_migration", breaks)
+    patch_cli(monkeypatch, "run_migration", breaks)
 
     result, events = stream()
 
@@ -1316,7 +1340,7 @@ def test_cancel_before_the_first_step_touches_nothing(machine, command, monkeypa
     def interrupted(*args, **kwargs):
         raise KeyboardInterrupt  # what the SIGTERM handler turns the app's Cancel into
 
-    monkeypatch.setattr(cli, "make_plan", interrupted)
+    patch_cli(monkeypatch, "make_plan", interrupted)
     before = listing(machine.home)
 
     result, events = stream()
@@ -1327,13 +1351,13 @@ def test_cancel_before_the_first_step_touches_nothing(machine, command, monkeypa
 
 def test_cancel_during_the_run_is_held_until_it_has_finished(machine, command, installers,
                                                             monkeypatch):
-    real = cli.run_migration
+    real = cli_migrate.run_migration
 
     def cancelled_part_way(plan, **kwargs):
         os.kill(os.getpid(), signal.SIGTERM)  # the app's Cancel, as the files start to move
         return real(plan, **kwargs)
 
-    monkeypatch.setattr(cli, "run_migration", cancelled_part_way)
+    patch_cli(monkeypatch, "run_migration", cancelled_part_way)
 
     result, events = stream()
 
@@ -1423,14 +1447,14 @@ def test_the_unit_an_unfinished_run_was_installing_is_installed_by_the_next(
     machine, command, monkeypatch
 ):
     manager = FakeManager(machine)
-    monkeypatch.setattr(cli, "MigratingService",
-                        lambda target: Service(target, run=manager, sleep=lambda _: None))
+    patch_cli(monkeypatch, "MigratingService",
+              lambda target: Service(target, run=manager, sleep=lambda _: None))
     migrate(machine, service=Service(ServiceTarget("systemd", "keryx.service"), run=manager,
                                      sleep=lambda _: None),
             rerender=lambda: [migration.InstallFailed("install-systemd.sh: exited 1")])
     # Not installed now, so nothing would find it: the record names it.
-    monkeypatch.setattr(cli, "resolve_target", lambda settings, **_: None)
-    monkeypatch.setattr(cli, "old_target", lambda target: None)
+    patch_cli(monkeypatch, "resolve_target", lambda settings, **_: None)
+    patch_cli(monkeypatch, "old_target", lambda target: None)
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
@@ -1441,12 +1465,12 @@ def test_the_unit_an_unfinished_run_was_installing_is_installed_by_the_next(
 
 def test_an_installer_that_fails_from_the_command_keeps_the_units_pending(machine, command,
                                                                        monkeypatch):
-    monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "resolve_target",
+              lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
     manager = FakeManager(machine)
-    monkeypatch.setattr(cli, "MigratingService",
-                        lambda target: Service(target, run=manager, sleep=lambda _: None))
-    monkeypatch.setattr(cli, "run_command", lambda argv: 1)
+    patch_cli(monkeypatch, "MigratingService",
+              lambda target: Service(target, run=manager, sleep=lambda _: None))
+    patch_cli(monkeypatch, "run_command", lambda argv: 1)
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
@@ -1565,7 +1589,7 @@ def test_a_hook_installer_that_fails_keeps_the_hook_pending(machine, command, mo
     claude = machine.home / ".claude"
     claude.mkdir()
     (claude / "settings.json").write_text("keryx_approval.py")
-    monkeypatch.setattr(cli, "run_command", lambda argv: 1)
+    patch_cli(monkeypatch, "run_command", lambda argv: 1)
 
     runner.invoke(cli.app, ["migrate", "--yes"])
     (claude / "settings.json").write_text("{}")  # what it left behind names no hook
@@ -1595,10 +1619,9 @@ def keryx_unit(home: str) -> Path:
 @pytest.fixture
 def installed(monkeypatch):
     """Keryx's unit installed and running, its manager never asked anything real."""
-    monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
-    monkeypatch.setattr(cli, "MigratingService",
-                        lambda target: pytest.fail("nothing may be stopped"))
+    patch_cli(monkeypatch, "resolve_target",
+              lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "MigratingService", lambda target: pytest.fail("nothing may be stopped"))
 
 
 @pytest.mark.parametrize("args", [["--yes"], ["--dry-run"]])
@@ -1633,10 +1656,10 @@ def test_a_migration_streamed_refuses_it_as_one_error(machine, command, installe
 def test_a_keryx_unit_rendered_for_the_destination_is_migrated(machine, command, monkeypatch):
     keryx_unit(str(keryx_home()))
     manager = FakeManager(machine)
-    monkeypatch.setattr(cli, "resolve_target",
-                        lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
-    monkeypatch.setattr(cli, "MigratingService",
-                        lambda target: Service(target, run=manager, sleep=lambda _: None))
+    patch_cli(monkeypatch, "resolve_target",
+              lambda settings, **_: ServiceTarget("systemd", "keryx.service"))
+    patch_cli(monkeypatch, "MigratingService",
+              lambda target: Service(target, run=manager, sleep=lambda _: None))
 
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 

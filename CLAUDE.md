@@ -323,8 +323,11 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 ## Layout
 
 Source lives under `src/keryx/` (installable package, `src/` layout). Tests
-live under `tests/`, mirroring the package structure. `cli.py` stays argument
-parsing plus wiring: the `doctor` checks live in `keryx/doctor.py`, everything behind
+live under `tests/`, mirroring the package structure. `cli/` stays argument
+parsing plus wiring, one module per command group: `apps` holds the Typer objects, `common`
+what more than one group needs, and a test patches a name any of them uses with
+`tests/cli_patch.py::patch_cli`, since each imports it by name. The `doctor` checks live in
+`keryx/doctor.py`, everything behind
 `keryx setup` and `keryx auth` in `keryx/setup/`, and the settings in `keryx/config/`. Service
 templates are in `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by the matching
 `scripts/install-*.sh`; `scripts/lib.sh` holds the scaffolding those scripts share

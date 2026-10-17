@@ -14,7 +14,6 @@ and an open door.
 """
 
 import json
-import sys
 import typing
 from pathlib import Path
 from typing import Any
@@ -33,6 +32,7 @@ from keryx.config.files import legacy_home
 from keryx.config.permissions import is_protected, service_writable, writable_keys
 from keryx.config.store import ConfigError, validate
 from keryx.doctor import service_manager_check
+from keryx.localmodels import voice as voice_setup
 from keryx.persona import DEFAULT_VOICE, PERSONAS
 from keryx.setup.context import SetupContext
 from keryx.setup.phone import numbers_problem
@@ -383,11 +383,11 @@ def run_service(ctx: SetupContext) -> None:
         return
     ui.note("A background service starts Keryx at boot, restarts it if it dies, and lets it "
             "restart itself after a change to its own code.")
-    name = "install-launchd.sh" if sys.platform == "darwin" else "install-systemd.sh"
-    script = repo_root() / "scripts" / name
-    if not script.is_file():
-        ui.note(f"Run scripts/{name} from a clone of the repository.")
+    script, missing = voice_setup.installer("", root=repo_root())
+    if script is None:
+        ui.note(f"{missing}.")
         return
+    name = script.name
     if not settings.public_host:
         ui.note("It runs the phone channel and its tunnel, so it needs the phone set up first.")
         return

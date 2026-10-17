@@ -5,12 +5,16 @@ import json
 import os
 import shlex
 import stat
+import sys
 from pathlib import Path
 
 import pytest
+import typer
+from cli_patch import patch_cli
 from typer.testing import CliRunner
 
-from keryx.cli import app
+from keryx.cli import app, common
+from keryx.cli import config as cli_config
 from keryx.config.files import read_toml
 from keryx.config.store import ConfigStore
 
@@ -452,7 +456,7 @@ def test_auth_login_of_an_agent_that_is_not_installed_says_how(home, monkeypatch
 
 def test_auth_login_runs_the_agents_own_login(home, monkeypatch):
     ran = []
-    monkeypatch.setattr("keryx.cli.run_command", lambda argv: ran.append(argv) or 0)
+    patch_cli(monkeypatch, "run_command", lambda argv: ran.append(argv) or 0)
 
     result = run("auth", "login", "codex", "--browser")
 
@@ -541,10 +545,9 @@ def test_setup_mark_refuses_a_required_step(home):
 
 
 def test_setup_plan_asks_the_checks_doctor_asks(home, monkeypatch):
-    from keryx import cli
 
     asked = []
-    monkeypatch.setattr(cli, "_twilio_admin", lambda settings: asked.append("twilio"))
+    patch_cli(monkeypatch, "_twilio_admin", lambda settings: asked.append("twilio"))
 
     run("setup", "plan", "--json")
 
@@ -601,16 +604,15 @@ def test_setup_agent_instructions_print_without_asking(home):
 def test_doctor_asks_twilio_only_with_credentials_and_a_host(
     home, monkeypatch, _no_twilio_from_doctor
 ):
-    from keryx import cli
 
-    monkeypatch.setattr(cli, "_twilio_admin", _no_twilio_from_doctor)
-    settings = cli._load_settings_optional()
-    assert cli._twilio_admin(settings) is None
+    patch_cli(monkeypatch, "_twilio_admin", _no_twilio_from_doctor)
+    settings = common._load_settings_optional()
+    assert common._twilio_admin(settings) is None
 
     configured = settings.model_copy(
         update={"twilio_account_sid": "AC1", "twilio_auth_token": "t", "public_host": "h.io"}
     )
-    assert cli._twilio_admin(configured) is not None
+    assert common._twilio_admin(configured) is not None
 
 
 def test_doctor_fix_with_nothing_loose_says_so(home):
@@ -620,12 +622,11 @@ def test_doctor_fix_with_nothing_loose_says_so(home):
 
 
 def test_setup_runs_the_wizard_on_a_terminal(home, monkeypatch):
-    from keryx import cli
 
-    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    patch_cli(monkeypatch, "_interactive", lambda: True)
     monkeypatch.setattr("keryx.setup.ui.RichPrompter", lambda: object())
     reviews = []
-    monkeypatch.setattr(cli, "run_wizard", lambda ctx, review_all: reviews.append(review_all) or 1)
+    patch_cli(monkeypatch, "run_wizard", lambda ctx, review_all: reviews.append(review_all) or 1)
 
     result = run("setup", "--all")
 
@@ -634,16 +635,15 @@ def test_setup_runs_the_wizard_on_a_terminal(home, monkeypatch):
 
 
 def test_ctrl_c_in_setup_says_what_was_kept(home, monkeypatch):
-    from keryx import cli
     from keryx.setup.ui import Aborted
 
-    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    patch_cli(monkeypatch, "_interactive", lambda: True)
     monkeypatch.setattr("keryx.setup.ui.RichPrompter", lambda: object())
 
     def stop(ctx, review_all):
         raise Aborted
 
-    monkeypatch.setattr(cli, "run_wizard", stop)
+    patch_cli(monkeypatch, "run_wizard", stop)
 
     result = run("setup")
 
@@ -652,15 +652,14 @@ def test_ctrl_c_in_setup_says_what_was_kept(home, monkeypatch):
 
 
 def test_a_secret_typed_at_a_terminal_is_asked_for_hidden(home, monkeypatch):
-    from keryx import cli
 
-    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True, raising=False)
     asked = []
     monkeypatch.setattr(
-        cli.typer, "prompt", lambda key, hide_input: asked.append(hide_input) or " sk-typed "
+        typer, "prompt", lambda key, hide_input: asked.append(hide_input) or " sk-typed "
     )
 
-    assert cli._read_secret_input("OPENAI_API_KEY") == "sk-typed"
+    assert common._read_secret_input("OPENAI_API_KEY") == "sk-typed"
     assert asked == [True]
 
 
@@ -1057,15 +1056,14 @@ def test_a_pair_whose_sid_is_not_an_account_sid_asks_nobody(home, credential_che
 def test_at_a_terminal_a_pair_asks_for_the_sid_then_the_token_hidden(monkeypatch):
     from types import SimpleNamespace
 
-    from keryx import cli
 
     asked = []
     answers = iter([" AC1 ", " tok "])
-    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
-    monkeypatch.setattr(cli.typer, "prompt", lambda text, hide_input=False: asked.append(
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(typer, "prompt", lambda text, hide_input=False: asked.append(
         (text, hide_input)) or next(answers))
 
-    assert cli._read_twilio_pair() == ("AC1", "tok")
+    assert cli_config._read_twilio_pair() == ("AC1", "tok")
     assert asked == [("TWILIO_ACCOUNT_SID", False), ("TWILIO_AUTH_TOKEN", True)]
 
 
@@ -1148,12 +1146,11 @@ def test_verify_writes_nothing_and_so_needs_no_owner(home, credential_checks, mo
 def test_at_a_terminal_verify_asks_for_the_key_hidden(monkeypatch):
     from types import SimpleNamespace
 
-    from keryx import cli
 
     asked = []
-    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: True))
-    monkeypatch.setattr(cli.typer, "prompt",
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(typer, "prompt",
                         lambda text, hide_input: asked.append((text, hide_input)) or " sk-1 ")
 
-    assert cli._read_secret_line("OPENAI_API_KEY") == "sk-1"
+    assert cli_config._read_secret_line("OPENAI_API_KEY") == "sk-1"
     assert asked == [("OPENAI_API_KEY", True)]

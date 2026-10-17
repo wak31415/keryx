@@ -5,7 +5,7 @@ import KeryxKit
 /// the bylines and the status lines. Kept apart from the views so each can be tested.
 enum SessionWording {
     /// The label `keryx tasks usage` gives Keryx's own housekeeping (`HOUSEKEEPING_LABEL` in
-    /// `cli.py`); the app's `ProjectUsage` does not carry the CLI's `internal` flag.
+    /// `keryx/cli/tasks.py`); the app's `ProjectUsage` does not carry the CLI's `internal` flag.
     static let housekeepingLabel = "(housekeeping)"
     /// The window the model asks `keryx tasks usage` about (`AppModel.usageDays`).
     static let usageDays = 30

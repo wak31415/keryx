@@ -45,6 +45,8 @@ settings: a removed or renamed setting or command is a major bump.
 
 - `OPENAI_API_KEY` is needed only for OpenAI's voice. With a voice server of your own it is
   optional, and gives the assistant its web search.
+- `keryx migrate` exits 2, not 1, when files from before are in the way, as `--json` does:
+  2 means something must be settled first, 1 that trying again later will do.
 
 ## [0.1.0] - 2026-09-30
 

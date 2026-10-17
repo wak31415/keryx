@@ -4,6 +4,7 @@ import dataclasses
 
 import pytest
 import repeated_directories
+from cli_patch import patch_cli
 
 from keryx.config import Settings
 from keryx.config.files import LEGACY_HOME_ENV
@@ -170,7 +171,7 @@ def _no_checkout_env(monkeypatch, tmp_path):
     """`keryx migrate` reads a `.env` and `.secrets/` in the checkout the service runs in,
     and in a test that checkout would be this one — a developer's real one, with every key
     in it. Pointed at a directory of the test's own instead."""
-    monkeypatch.setattr("keryx.cli.repo_root", lambda: tmp_path / "checkout")
+    patch_cli(monkeypatch, "repo_root", lambda: tmp_path / "checkout")
 
 
 @pytest.fixture(autouse=True)
@@ -188,10 +189,10 @@ def _no_twilio_from_doctor(monkeypatch):
     from a test: the doctor tests hand in a fake client of their own. Returns the real one,
     for the one test about it — never `monkeypatch.undo()`, which would also undo the
     suite's HOME and XDG isolation and read the developer's own settings."""
-    from keryx import cli
+    from keryx.cli import common
 
-    real = cli._twilio_admin
-    monkeypatch.setattr(cli, "_twilio_admin", lambda settings: None)
+    real = common._twilio_admin
+    patch_cli(monkeypatch, "_twilio_admin", lambda settings: None)
     return real
 
 

@@ -280,17 +280,16 @@ def _first_model_id(response: httpx.Response) -> str | None:
 def unit_installed(
     kind: str,
     *,
+    settings: Settings | None = None,
     platform: str = sys.platform,
     is_installed: Callable[[ServiceTarget], bool] | None = None,
 ) -> bool:
     """Whether the `kind` ("llm", "voice" or "voice_llm") server's unit is installed: its
-    manager has it loaded, or its unit file is on disk — a server `keryx service stop
-    --all` booted out is installed and stopped, as `service --json` says it."""
-    if platform == "darwin":
-        manager = "launchd"
-    elif platform.startswith("linux"):
-        manager = "systemd"
-    else:
+    manager (`service.configured_manager`, from `settings`, else the stored ones) has it
+    loaded, or its unit file is on disk — a server `keryx service stop --all` booted out
+    is installed and stopped, as `service --json` says it."""
+    manager = service.configured_manager(settings or Settings(), platform)
+    if manager is None:
         return False
     # Late-bound through the module, as `keryx.status` binds it.
     ask = is_installed or service.is_present

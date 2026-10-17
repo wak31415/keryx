@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from cli_patch import patch_cli
 from fakes import FakeProvider
 from pydantic import ValidationError
 from typer.testing import CliRunner
@@ -23,13 +24,10 @@ from typer.testing import CliRunner
 from keryx import plugins
 from keryx.app import TASK_DB_NAME
 from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
-from keryx.cli import (
-    APPROVALS_EMPTY,
-    LOG_BACKUP_COUNT,
-    LOG_MAX_BYTES,
-    MAX_REPORT_CHARS,
-    app,
-)
+from keryx.cli import app
+from keryx.cli.approvals import APPROVALS_EMPTY
+from keryx.cli.serve import LOG_BACKUP_COUNT, LOG_MAX_BYTES
+from keryx.cli.tasks import MAX_REPORT_CHARS
 from keryx.config import Settings, config_file
 from keryx.config.settings import ConfigFileError
 from keryx.config.store import ConfigStore
@@ -48,7 +46,7 @@ runner = CliRunner()
 def settings_stub(monkeypatch, tmp_path, every_agent_installed):
     """Make every command see a hermetic Settings instead of the ambient environment."""
     settings = Settings(_env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx")
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
     return settings
 
 
@@ -230,7 +228,7 @@ def stub_uvicorn(monkeypatch, built: dict) -> None:
             executor = asyncio.get_running_loop()._default_executor
             built["executor_workers"] = executor._max_workers if executor else 0
 
-    monkeypatch.setattr("keryx.cli.uvicorn.Server", StubServer)
+    monkeypatch.setattr("uvicorn.Server", StubServer)
 
 
 def test_serve_names_settings_a_plugin_replaced_and_starts_anyway(
@@ -320,7 +318,7 @@ def test_loopback_runs_a_session_and_writes_the_reply(settings_stub, monkeypatch
     provider = FakeProvider()
     provider.feed(AudioDelta(item_id="item_1", audio=b"\x01\x02" * 240))
     provider.feed(Transcript(role="assistant", text="hello there", item_id="item_1"))
-    monkeypatch.setattr("keryx.cli.make_provider", lambda settings: provider)
+    patch_cli(monkeypatch, "make_provider", lambda settings: provider)
     wav_in = write_wav(tmp_path / "in.wav")
     out = tmp_path / "reply.wav"
 
@@ -751,7 +749,7 @@ def optional_key_loader(monkeypatch, tmp_path, calls: list[dict]) -> Settings:
         calls.append(overrides)
         return Settings(_env_file=None, data_dir=tmp_path / "keryx", **overrides)
 
-    monkeypatch.setattr("keryx.cli.load_settings", load)
+    patch_cli(monkeypatch, "load_settings", load)
 
 
 def test_read_only_commands_run_without_an_openai_key(monkeypatch, tmp_path):
@@ -776,7 +774,7 @@ def log_levels(monkeypatch):
     """
     asked: list[object] = []
     monkeypatch.setattr(
-        "keryx.cli.logging.basicConfig", lambda **kwargs: asked.append(kwargs["level"])
+        "logging.basicConfig", lambda **kwargs: asked.append(kwargs["level"])
     )
     return asked
 
@@ -793,7 +791,7 @@ def test_log_level_debug_still_reaches_a_read_only_command(monkeypatch, tmp_path
     settings = Settings(
         _env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx", log_level="debug"
     )
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
 
     assert runner.invoke(app, ["tasks", "list"]).exit_code == 0
 
@@ -806,7 +804,7 @@ def test_the_restart_watchdog_keeps_its_info_lines(settings_stub, log_levels, mo
     async def watch(_settings):
         return "nothing"
 
-    monkeypatch.setattr("keryx.cli.watch", watch)
+    patch_cli(monkeypatch, "watch", watch)
 
     result = runner.invoke(app, ["restart-watch"])
 
@@ -826,13 +824,12 @@ def restart_settings(monkeypatch, tmp_path):
         data_dir=tmp_path / "keryx",
         owner_number_explicit="+15550000001",
     )
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
-    monkeypatch.setattr("keryx.cli.loaded_version", lambda data_dir, repo=None: "v-test")
-    monkeypatch.setattr(
-        "keryx.cli.resolve_target",
-        lambda _settings, **_kwargs: ServiceTarget("systemd", "keryx.service"),
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "loaded_version", lambda data_dir, repo=None: "v-test")
+    patch_cli(monkeypatch, "resolve_target",
+              lambda _settings, **_kwargs: ServiceTarget("systemd", "keryx.service"),
     )
-    monkeypatch.setattr("keryx.cli.health_probe", lambda _settings: 0)
+    patch_cli(monkeypatch, "health_probe", lambda _settings: 0)
     # `resolve_target` is stubbed above, but `watch_command` still looks for `systemd-run`
     # on PATH — and on a macOS runner it is not there, so the watchdog silently did not arm
     # and this fixture failed on the host rather than on anything it was testing.
@@ -859,10 +856,10 @@ def ran(monkeypatch):
         calls.append(list(command))
         return Done
 
-    monkeypatch.setattr("keryx.cli.subprocess.run", fake_run)
+    monkeypatch.setattr("subprocess.run", fake_run)
     # The watchdog deliberately starts a process that outlives its parent, which is the
     # one thing a test suite must never do (see the testing rule in CLAUDE.md).
-    monkeypatch.setattr("keryx.cli.spawn_watchdog", lambda plan, settings: 4321)
+    patch_cli(monkeypatch, "spawn_watchdog", lambda plan, settings: 4321)
     return calls, Done
 
 
@@ -897,7 +894,7 @@ def test_a_quiet_restart_arms_no_watchdog(restart_settings, ran):
 
 def test_restart_refuses_to_cut_off_a_live_call(restart_settings, ran, monkeypatch):
     calls, _ = ran
-    monkeypatch.setattr("keryx.cli.health_probe", lambda _settings: 1)
+    patch_cli(monkeypatch, "health_probe", lambda _settings: 1)
 
     result = runner.invoke(app, ["restart"])
 
@@ -909,7 +906,7 @@ def test_restart_refuses_to_cut_off_a_live_call(restart_settings, ran, monkeypat
 
 def test_restart_force_goes_ahead_anyway(restart_settings, ran, monkeypatch):
     calls, _ = ran
-    monkeypatch.setattr("keryx.cli.health_probe", lambda _settings: 1)
+    patch_cli(monkeypatch, "health_probe", lambda _settings: 1)
 
     result = runner.invoke(app, ["restart", "--force"])
 
@@ -921,7 +918,7 @@ def test_restart_without_a_service_manager_says_how_to_install_one(
     restart_settings, ran, monkeypatch
 ):
     calls, _ = ran
-    monkeypatch.setattr("keryx.cli.resolve_target", lambda _settings, **_kwargs: None)
+    patch_cli(monkeypatch, "resolve_target", lambda _settings, **_kwargs: None)
 
     result = runner.invoke(app, ["restart"])
 
@@ -940,7 +937,7 @@ def test_restart_from_a_terminal_restarts_the_installed_service(
         asked.append(kwargs)
         return ServiceTarget("systemd", "keryx.service")
 
-    monkeypatch.setattr("keryx.cli.resolve_target", resolve)
+    patch_cli(monkeypatch, "resolve_target", resolve)
 
     assert runner.invoke(app, ["restart"]).exit_code == 0
     assert asked == [{"from_outside": True}]
@@ -974,7 +971,7 @@ def test_a_restart_while_keryx_is_stopped_is_refused_and_on_record(
     a kickstart of a job launchd has unloaded must not be what finds that out."""
     calls, _ = ran
     target = ServiceTarget("launchd", "dev.keryx.agent")
-    monkeypatch.setattr("keryx.cli.candidate_target", lambda settings: target)
+    patch_cli(monkeypatch, "candidate_target", lambda settings: target)
     plist = Path.home() / "Library" / "LaunchAgents" / "dev.keryx.agent.plist"
     plist.parent.mkdir(parents=True)
     # On disk, rendered for this KERYX_HOME, and (the suite's own probe) not loaded.
@@ -997,8 +994,8 @@ def test_a_restart_of_a_unit_another_home_rendered_is_refused_before_anything(
     """Its label is the account's: a kickstart from a sandbox restarts the owner's Keryx."""
     calls, _ = ran
     target = ServiceTarget("launchd", "dev.keryx.agent")
-    monkeypatch.setattr("keryx.cli.candidate_target", lambda settings: target)
-    monkeypatch.setattr("keryx.cli.resolve_target", lambda settings, **_: target)
+    patch_cli(monkeypatch, "candidate_target", lambda settings: target)
+    patch_cli(monkeypatch, "resolve_target", lambda settings, **_: target)
     plist = Path.home() / "Library" / "LaunchAgents" / "dev.keryx.agent.plist"
     plist.parent.mkdir(parents=True)
     plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {
@@ -1021,7 +1018,7 @@ def test_a_restart_of_a_job_launchd_has_never_heard_of_ends_on_record(
     calls, done = ran
     done.returncode = 113
     target = ServiceTarget("launchd", "dev.keryx.agent")
-    monkeypatch.setattr("keryx.cli.resolve_target", lambda settings, **_: target)
+    patch_cli(monkeypatch, "resolve_target", lambda settings, **_: target)
 
     result = runner.invoke(app, ["restart"])
 
@@ -1040,7 +1037,7 @@ def test_a_stop_while_the_cli_arms_its_watchdog_stops_the_restart(
         store.settle_stopped()
         return "detached (pid 4321)"
 
-    monkeypatch.setattr("keryx.cli._arm_watchdog", armed_as_the_owner_stops)
+    patch_cli(monkeypatch, "_arm_watchdog", armed_as_the_owner_stops)
 
     result = runner.invoke(app, ["restart"])
 
@@ -1181,7 +1178,7 @@ def test_status_json_with_settings_that_will_not_load_is_still_a_document(
     def load(**overrides):
         raise refused.value
 
-    monkeypatch.setattr("keryx.cli.load_settings", load)
+    patch_cli(monkeypatch, "load_settings", load)
 
     result = runner.invoke(app, ["status", "--json"])
 
@@ -1198,7 +1195,7 @@ def test_status_json_with_unreadable_settings_files_is_still_a_document(
     def load(**overrides):
         raise ConfigFileError("secrets.toml is not valid TOML")
 
-    monkeypatch.setattr("keryx.cli.load_settings", load)
+    patch_cli(monkeypatch, "load_settings", load)
 
     result = runner.invoke(app, ["status", "--json"])
 
@@ -1285,7 +1282,7 @@ def test_doctor_passes_on_a_complete_install(
         public_host="keryx.example.com",
         data_dir=tmp_path / "keryx",
     )
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
 
     result = runner.invoke(app, ["doctor"])
 
@@ -1319,7 +1316,7 @@ def test_doctor_still_runs_and_explains_a_malformed_pin(monkeypatch, tmp_path):
         values.update(overrides)
         return Settings(_env_file=None, **values)
 
-    monkeypatch.setattr("keryx.cli.load_settings", load)
+    patch_cli(monkeypatch, "load_settings", load)
 
     result = runner.invoke(app, ["doctor"])
 
@@ -1369,7 +1366,7 @@ def test_serve_refuses_to_start_on_a_malformed_pin(monkeypatch, tmp_path):
     def load(**overrides):
         return Settings(_env_file=None, openai_api_key="sk-test", data_dir=tmp_path, pin="9876")
 
-    monkeypatch.setattr("keryx.cli.load_settings", load)
+    patch_cli(monkeypatch, "load_settings", load)
 
     result = runner.invoke(app, ["serve"])
 
@@ -1964,11 +1961,11 @@ def test_the_service_may_not_turn_plugins_on_or_off(settings_stub, monkeypatch, 
 def test_plugins_hosts_lists_what_ssh_says_and_whose_master_is_up(settings_stub, monkeypatch):
     from keryx.plugins.ssh_hosts import SshHost
 
-    monkeypatch.setattr("keryx.cli.ssh_hosts.discover", lambda: [
+    monkeypatch.setattr("keryx.plugins.ssh_hosts.discover", lambda: [
         SshHost("alpha", "login.alpha.example", "me", True, "/tmp/cm"),
         SshHost("beta", "beta.example", "", False, ""),
     ])
-    monkeypatch.setattr("keryx.cli.ssh_hosts.master_alive", lambda alias: alias == "alpha")
+    monkeypatch.setattr("keryx.plugins.ssh_hosts.master_alive", lambda alias: alias == "alpha")
 
     as_json = runner.invoke(app, ["plugins", "hosts", "--json"])
     text = runner.invoke(app, ["plugins", "hosts"])
@@ -1982,7 +1979,7 @@ def test_plugins_hosts_lists_what_ssh_says_and_whose_master_is_up(settings_stub,
 
 
 def test_plugins_hosts_with_no_ssh_config_says_so(settings_stub, monkeypatch):
-    monkeypatch.setattr("keryx.cli.ssh_hosts.discover", lambda: [])
+    monkeypatch.setattr("keryx.plugins.ssh_hosts.discover", lambda: [])
 
     assert "no hosts in" in runner.invoke(app, ["plugins", "hosts"]).output
 

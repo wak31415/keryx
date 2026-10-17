@@ -50,6 +50,7 @@ from keryx.localmodels import catalog, hardware, runtimes, servers, speech, use
 from keryx.localmodels.catalog import VOICE_SERVER_DOWNLOAD_GB
 from keryx.localmodels.pull import CANCEL_SIGNALS, EventLines
 from keryx.localmodels.servers import HOST
+from keryx.restart import service
 
 OPENAI, HERE, SERVER = "openai", "here", "server"
 #: How long the voice server may take to start once its speech models are in the cache —
@@ -89,7 +90,7 @@ REMOVED = "its service was removed, so it does not restart in a loop"
 #: Keryx's own installers, the only commands `run_detached` gives a deadline: a few
 #: `keryx config get`s and the service manager's answers, with room for `uv` to sync the
 #: environment first. A download (uv, brew, ollama) takes as long as it takes.
-INSTALLERS = frozenset({"install-launchd.sh", "install-systemd.sh"})
+INSTALLERS = frozenset(Path(script).name for script in service.INSTALLERS.values())
 INSTALL_TIMEOUT_S = 120.0
 #: The exit code said for an installer stopped at its deadline, as `timeout(1)` says it.
 TIMED_OUT = 124
@@ -651,13 +652,11 @@ def installer(
     """`scripts/install-launchd.sh` (a Mac) or `install-systemd.sh` (Linux) in the checkout
     at `root`, which installs the `flag` unit; or None, and why there is none here."""
     platform = platform or PLATFORM
-    if platform == "darwin":
-        name = "install-launchd.sh"
-    elif platform.startswith("linux"):
-        name = "install-systemd.sh"
-    else:
+    manager = service.platform_manager(platform)
+    if manager is None:
         return None, (f"Keryx runs its servers under launchd or systemd, and {platform} has "
                       "neither")
+    name = Path(service.INSTALLERS[manager]).name
     script = root / "scripts" / name
     if not script.is_file():
         with_flag = f" with {flag}" if flag else ""
@@ -815,16 +814,16 @@ def run_detached(argv: Sequence[str]) -> int:
     try:
         return child.wait(timeout=INSTALL_TIMEOUT_S if timed else None)
     except subprocess.TimeoutExpired:
-        _stop(child, group=True)
+        stop_child(child, group=True)
         print(f"{name} did not finish within {INSTALL_TIMEOUT_S:g} s", file=sys.stderr,
               flush=True)
         return TIMED_OUT
     except BaseException:
-        _stop(child, group=timed)
+        stop_child(child, group=timed)
         raise
 
 
-def _stop(child: subprocess.Popen, *, group: bool) -> None:
+def stop_child(child: subprocess.Popen, *, group: bool) -> None:
     """Kill `child` — with its whole process group when it leads one — and reap it."""
     try:
         if group:

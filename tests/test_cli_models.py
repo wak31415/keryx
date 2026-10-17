@@ -5,11 +5,11 @@ import os
 import signal
 
 import pytest
+from cli_patch import patch_cli
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from keryx import cli
-from keryx.cli import app
+from keryx.cli import app, common
 from keryx.config import Settings
 from keryx.config.store import ConfigStore
 from keryx.localmodels import catalog, download, hardware, pull, servers, use
@@ -26,10 +26,10 @@ def models_settings(monkeypatch, tmp_path, every_agent_installed):
         _env_file=None, openai_api_key="test", data_dir=tmp_path / "keryx",
         cache_dir=tmp_path / "cache",
     )
-    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    patch_cli(monkeypatch, "load_settings", lambda **overrides: settings)
     monkeypatch.setattr(hardware, "detect", lambda: RTX)
     monkeypatch.setattr(hardware, "free_bytes", lambda path: 10**12)
-    monkeypatch.setattr(use, "unit_installed", lambda kind: False)
+    monkeypatch.setattr(use, "unit_installed", lambda kind, **_: False)
     monkeypatch.setattr(use, "probe", lambda url: (False, None))
     return settings
 
@@ -131,7 +131,7 @@ def test_list_json_says_which_servers_are_set_up_and_answering(models_settings, 
     models_settings.local_agent_base_url = "http://127.0.0.1:8090/v1"
     models_settings.local_agent_model = CODER.key
     models_settings.agents_enabled = ["claude", "local"]
-    monkeypatch.setattr(use, "unit_installed", lambda kind: kind == "llm")
+    monkeypatch.setattr(use, "unit_installed", lambda kind, **_: kind == "llm")
     monkeypatch.setattr(use, "probe", lambda url: (url == "http://127.0.0.1:8090/v1",
                                                    "qwen3-coder"))
 
@@ -367,7 +367,7 @@ def test_pull_json_tells_the_migration_refusal_on_stdout(old_jarvis_dir):
     sentence = plain.stderr.strip()
     assert sentence.startswith("keryx cannot do that yet:") and "keryx migrate" in sentence
     assert result.stdout.splitlines() == [json.dumps(
-        {"event": "error", "message": cli.MIGRATE_FIRST, "detail": sentence})]
+        {"event": "error", "message": common.MIGRATE_FIRST, "detail": sentence})]
     assert result.stderr == ""
 
 
@@ -380,7 +380,7 @@ def broken_settings(monkeypatch) -> None:
     def refuse(**overrides):
         raise failure
 
-    monkeypatch.setattr("keryx.cli.load_settings", refuse)
+    patch_cli(monkeypatch, "load_settings", refuse)
 
 
 def test_pull_json_tells_settings_that_will_not_load(models_settings, monkeypatch):
@@ -531,7 +531,7 @@ def test_use_as_the_default_agent(models_settings, downloaded):
 
 
 def test_use_says_what_it_saved_and_what_comes_next(models_settings, downloaded, monkeypatch):
-    monkeypatch.setattr("keryx.cli.sys.platform", "darwin")
+    monkeypatch.setattr("sys.platform", "darwin")
 
     result = runner.invoke(app, ["models", "use", CODER.key])
 
