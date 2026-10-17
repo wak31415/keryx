@@ -814,16 +814,16 @@ def run_detached(argv: Sequence[str]) -> int:
     try:
         return child.wait(timeout=INSTALL_TIMEOUT_S if timed else None)
     except subprocess.TimeoutExpired:
-        _stop(child, group=True)
+        stop_child(child, group=True)
         print(f"{name} did not finish within {INSTALL_TIMEOUT_S:g} s", file=sys.stderr,
               flush=True)
         return TIMED_OUT
     except BaseException:
-        _stop(child, group=timed)
+        stop_child(child, group=timed)
         raise
 
 
-def _stop(child: subprocess.Popen, *, group: bool) -> None:
+def stop_child(child: subprocess.Popen, *, group: bool) -> None:
     """Kill `child` — with its whole process group when it leads one — and reap it."""
     try:
         if group:

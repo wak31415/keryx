@@ -172,6 +172,34 @@ def test_the_real_runner_captures_the_scripts_output(tmp_path):
     assert units.run_captured([str(tmp_path / "missing")])[0] == 127
 
 
+def test_an_installer_that_hangs_is_stopped_with_everything_it_started(tmp_path, monkeypatch):
+    """A `launchctl` or `uv` it started is stopped with it, and its open output does not keep
+    the runner waiting past the deadline."""
+    import os
+    import time
+
+    pidfile = tmp_path / "grandchild"
+    script = tmp_path / "install-launchd.sh"
+    script.write_text(f"#!/bin/sh\nsleep 10 &\necho $! > {pidfile}\nsleep 10\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(units, "INSTALL_TIMEOUT_S", 0.5)
+
+    started = time.monotonic()
+    code, _out, err = units.run_captured([str(script)])
+
+    assert code == units.TIMED_OUT and "did not finish" in err
+    assert time.monotonic() - started < 5
+    grandchild = int(pidfile.read_text())
+    for _ in range(50):
+        try:
+            os.kill(grandchild, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("the installer's own child outlived it")
+
+
 def test_a_renamed_agent_unit_is_the_one_named(tmp_path):
     outcome = units.install(settings=Settings(service_unit="mine"), root=checkout(tmp_path / "c"),
                             platform="darwin", run=Script())

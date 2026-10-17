@@ -120,19 +120,28 @@ class Outcome:
 
 
 def run_captured(argv: Sequence[str]) -> tuple[int, str, str]:
-    """Run an installer, nothing read from its stdin; its exit code, stdout and stderr. One
-    that has not finished within `INSTALL_TIMEOUT_S` is stopped, and says so on stderr. None
-    of Keryx's secrets is in its environment (`child_env.operational_env`)."""
+    """Run an installer, nothing read from its stdin; its exit code, stdout and stderr. It
+    runs in a session of its own, as `localmodels.voice.run_detached` runs one: one that has
+    not finished within `INSTALL_TIMEOUT_S` is stopped with everything it started, so no
+    `launchctl` or `uv` is left running, and says so on stderr. None of Keryx's secrets is
+    in its environment (`child_env.operational_env`)."""
     try:
-        done = subprocess.run(list(argv), stdin=subprocess.DEVNULL, capture_output=True,
-                              text=True, check=False, timeout=INSTALL_TIMEOUT_S,
-                              env=operational_env())
-    except subprocess.TimeoutExpired:
-        name = Path(argv[0]).name
-        return TIMED_OUT, "", f"{name} did not finish within {INSTALL_TIMEOUT_S:g} s"
+        child = subprocess.Popen(list(argv), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, start_new_session=True,
+                                 env=operational_env())
     except OSError as error:
         return 127, "", str(error)
-    return done.returncode, done.stdout, done.stderr
+    with child:
+        try:
+            out, err = child.communicate(timeout=INSTALL_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            voice_setup.stop_child(child, group=True)
+            name = Path(argv[0]).name
+            return TIMED_OUT, "", f"{name} did not finish within {INSTALL_TIMEOUT_S:g} s"
+        except BaseException:
+            voice_setup.stop_child(child, group=True)
+            raise
+    return child.returncode, out, err
 
 
 def _last_line(text: str) -> str | None:
