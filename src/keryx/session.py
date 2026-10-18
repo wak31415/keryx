@@ -685,8 +685,12 @@ class VoiceSession:
             note = PIN_ENTRY_MESSAGE if self._pin_entry else PIN_ENTRY_CANCELLED_MESSAGE
             self._spawn_task(self._tell_model(note), name="pin-entry")
             return
+        # A PIN begun before the menu was read out finishes as a PIN, or its digits answer it.
+        mid_pin = bool(self._dtmf_buffer) and (
+            time.monotonic() - self._dtmf_last <= DTMF_RESET_SECONDS
+        )
         if self._keypad is not None and (
-            self.authorized or (self._keypad_armed() and not self._keying_pin())
+            self.authorized or (self._keypad_armed() and not self._keying_pin() and not mid_pin)
         ):
             # The PIN is behind us — or a menu has been read out on a call Keryx placed
             # and the caller has not asked for the keypad back — so this digit is somebody
@@ -1136,6 +1140,8 @@ class VoiceSession:
         transcripts stamped with the time alone still parse — recall dates those from the
         file's modification time instead.
         """
+        # One line per entry, so no transcribed words can forge a `--- authorized` line.
+        text = " ".join(text.splitlines())
         text = redact_pin(text, self._settings.pin)  # said aloud, it is still never kept
         line = f"[{datetime.now().isoformat(timespec='seconds')}] {text}\n"
         try:

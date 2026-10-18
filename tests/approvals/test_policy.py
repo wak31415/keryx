@@ -408,6 +408,12 @@ def test_a_write_outside_every_project_is_not_eligible(settings, tmp_path):
         ".claude/settings.local.json",
         ".Claude/commands/x.md",
         ".mcp.json",
+        ".pre-commit-config.yaml",
+        ".husky/pre-commit",
+        "lefthook.yml",
+        ".lefthook.yml",
+        "lefthook.yaml",
+        ".lefthook.yaml",
     ],
 )
 def test_a_write_the_cli_or_git_would_execute_is_not_eligible(settings, tmp_path, inside):
