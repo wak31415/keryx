@@ -403,11 +403,19 @@ def test_a_value_that_would_stop_serve_is_refused(store, key, value):
 
 @pytest.mark.parametrize("key", ["SUBAGENT_TIMEOUT_S", "MAX_CALL_SECONDS", "LOCAL_SILENCE_TIMEOUT"])
 def test_the_service_may_tune_a_limit_but_never_lift_it(store, key):
-    store.set({key: "900"}, actor="service")
+    store.set({key: "120"}, actor="service")
 
     with pytest.raises(ConfigError, match="switch .* off"):
         store.set({key: "0"}, actor="service")
     store.set({key: "0"})  # the owner may
+
+
+@pytest.mark.parametrize("key", ["SUBAGENT_TIMEOUT_S", "MAX_CALL_SECONDS", "LOCAL_SILENCE_TIMEOUT"])
+def test_the_service_may_not_lift_a_limit_by_setting_it_huge(store, key):
+    with pytest.raises(ConfigError, match="ten times"):
+        store.set({key: "1e12"}, actor="service")
+    assert store.stored() == {}
+    store.set({key: "1e12"})  # the owner may
 
 
 def test_the_service_names_an_agent_in_any_case(store, settings):

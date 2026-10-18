@@ -349,6 +349,26 @@ async def test_anthropic_folds_cache_writes_into_input_tokens():
     assert report.usage["web_search_requests"] == 10
 
 
+async def test_anthropic_spend_for_a_workspace_counts_only_that_workspace():
+    """The scope says one workspace, so the spend (and its budget share) must be only that."""
+    api = FakeApi(
+        cost_report={"data": [{"results": [
+            {"amount": "500", "currency": "USD", "workspace_id": "wrkspc_1"},
+            {"amount": "9000", "currency": "USD", "workspace_id": "wrkspc_2"},
+            {"amount": "7000", "currency": "USD", "workspace_id": None},
+        ]}]},
+        usage_report={"data": []},
+    )
+
+    report = await AnthropicBilling(ADMIN_KEY, workspace_id="wrkspc_1", get=api).month_to_date(
+        now=NOW
+    )
+
+    assert "workspace_id" in api.params_for(ANTHROPIC_COST_URL)["group_by"]
+    assert report.spend == pytest.approx(5.0)
+    assert report.scope == "workspace:wrkspc_1"
+
+
 # --- pagination, retries and failures --------------------------------------
 
 

@@ -470,12 +470,14 @@ class AnthropicBilling:
                 "ending_at": _rfc3339(as_of),
                 "bucket_width": "1d",
                 "limit": MAX_BUCKETS,
-                "group_by": ["description"],
+                # The cost report takes no workspace filter: group by it and keep ours.
+                "group_by": ["description", "workspace_id"] if self._workspace_id
+                else ["description"],
             },
             self._headers,
             get=self._get,
         )
-        spend, currency, totals = self._sum_costs(buckets)
+        spend, currency, totals = self._sum_costs(buckets, self._workspace_id)
 
         return BillingReport(
             provider="anthropic",
@@ -491,12 +493,16 @@ class AnthropicBilling:
         )
 
     @classmethod
-    def _sum_costs(cls, buckets: list[dict]) -> tuple[float, str, dict[str, float]]:
+    def _sum_costs(
+        cls, buckets: list[dict], workspace_id: str | None = None
+    ) -> tuple[float, str, dict[str, float]]:
         total = 0.0
         currency = "USD"
         totals: dict[str, float] = {}
         for bucket in buckets:
             for result in bucket.get("results") or []:
+                if workspace_id and result.get("workspace_id") != workspace_id:
+                    continue
                 try:
                     value = float(result.get("amount") or 0.0) / cls.MINOR_UNITS
                 except (TypeError, ValueError):

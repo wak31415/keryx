@@ -1084,6 +1084,18 @@ def test_approvals_refuses_both_switches_at_once(settings_stub):
     assert result.exit_code == 2
 
 
+def test_the_service_may_switch_approvals_off_but_never_back_on(settings_stub, monkeypatch):
+    switch = settings_stub.state_dir / STATE_DIR_NAME / KILL_SWITCH_NAME
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    assert runner.invoke(app, ["approvals", "--disable"]).exit_code == 0
+    result = runner.invoke(app, ["approvals", "--enable"])
+
+    assert result.exit_code == 1
+    assert "only the owner" in result.output
+    assert switch.exists()
+
+
 # --- forget ----------------------------------------------------------------
 
 
@@ -1106,6 +1118,18 @@ def test_forget_deletes_transcripts_when_confirmed(settings_stub):
     assert result.exit_code == 0, result.output
     assert not (settings_stub.data_dir / "calls" / "abc.log").exists()
     assert "removed 1 transcript" in result.output
+
+
+def test_the_service_may_not_forget(settings_stub, monkeypatch):
+    settings_stub.ensure_dirs()
+    (settings_stub.data_dir / "calls" / "abc.log").write_text("user: hello")
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result = runner.invoke(app, ["forget", "--older-than", "0", "--yes"])
+
+    assert result.exit_code == 1
+    assert "only the owner" in result.output
+    assert (settings_stub.data_dir / "calls" / "abc.log").exists()
 
 
 def test_forget_leaves_task_rows_alone_when_asked(settings_stub):
