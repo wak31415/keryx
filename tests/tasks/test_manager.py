@@ -1072,14 +1072,22 @@ async def test_a_queued_row_from_a_dead_process_is_started(make_harness):
     assert finished.status is TaskStatus.DONE
 
 
-async def test_a_running_row_is_left_alone(make_harness):
-    """That subagent had opened; what it got through before the machine died is unknowable."""
+async def test_a_running_row_is_closed_out_as_failed_not_rerun(make_harness):
+    """That subagent had opened and nothing resumes it; left `running`, the row would hold
+    off every restart and answer every follow-up with "try again" for ever."""
     harness = make_harness()
-    await harness.manager._store.create(
+    orphan = await harness.manager._store.create(
         Task(id=None, kind=TaskKind.AGENT, description="was mid-flight", status=TaskStatus.RUNNING)
     )
 
     assert await harness.manager.resume_queued() == []
+
+    closed = await harness.manager.get(orphan.id)
+    assert closed.status is TaskStatus.FAILED
+    assert closed.summary == "Keryx stopped while this was running"
+    assert closed.finished_at is not None
+    assert [one.id for one in await harness.manager.unreported()] == [orphan.id]
+    assert harness.runner.opened == []
 
 
 async def test_the_oldest_thing_they_asked_for_runs_first(make_harness):
