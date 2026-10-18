@@ -41,15 +41,50 @@ _UNAUTHORIZED_FLAG = " authorized=no"
 PIN_REDACTED = "[PIN]"
 
 
+#: Two digits said as one number: "ten" to "nineteen", by their second digit, and the tens.
+_TEENS = "ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen".split()
+_TENS = dict(
+    zip("23456789", "twenty thirty forty fifty sixty seventy eighty ninety".split(), strict=True)
+)
+
+
+def _digit(digit: str) -> str:
+    """One digit, as a numeral or a whole word."""
+    return rf"(?:{digit}|\b(?:{'|'.join(DIGIT_WORDS[digit])})\b)"
+
+
+def _pair(first: str, second: str) -> str | None:
+    """Two digits said as one: "forty-two", "twelve", "forty", or "double four"."""
+    said = []
+    if first == "1":
+        said.append(rf"\b{_TEENS[int(second)]}\b")
+    elif first in _TENS:
+        unit = "" if second == "0" else BETWEEN_DIGITS + _digit(second)
+        said.append(rf"\b{_TENS[first]}\b{unit}")
+    if first == second:
+        said.append(r"\bdouble" + BETWEEN_DIGITS + _digit(first))
+    return "|".join(said) or None
+
+
+def _said(digits: str) -> str:
+    """`digits` in order, each one alone or two of them said as one number."""
+    ways = [(_digit(digits[0]), digits[1:])]
+    if len(digits) > 1 and (pair := _pair(digits[0], digits[1])):
+        ways.append((f"(?:{pair})", digits[2:]))
+    said = (head + (BETWEEN_DIGITS + _said(rest) if rest else "") for head, rest in ways)
+    return f"(?:{'|'.join(said)})"
+
+
 @lru_cache(maxsize=4)
 def _pin_pattern(pin: str) -> re.Pattern[str]:
-    """The PIN's digits in order, each as a numeral or a whole word, loosely separated.
+    """The PIN's digits in order — numerals, words, or pairs said as one ("forty-two",
+    "double four") — loosely separated.
 
     Not anchored to digit boundaries on purpose: the PIN inside a longer run is still
-    redacted, because the other direction lets a stray digit smuggle the rest out.
+    redacted, because the other direction lets a stray digit smuggle the rest out. A pair
+    is redacted wherever it could be the PIN, too: replacing too much is the safe direction.
     """
-    digits = (rf"(?:{digit}|\b(?:{'|'.join(DIGIT_WORDS[digit])})\b)" for digit in pin)
-    return re.compile(BETWEEN_DIGITS.join(digits), re.IGNORECASE)
+    return re.compile(_said(pin), re.IGNORECASE)
 
 
 def redact_pin(text: str, pin: str | None) -> str:

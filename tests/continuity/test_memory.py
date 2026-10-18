@@ -147,6 +147,40 @@ async def test_a_call_that_never_gave_the_pin_leaves_nothing_behind(settings, wr
     assert await internal_tasks(store) == []
 
 
+async def test_the_transcript_is_redacted_again_before_the_update_reads_it(settings, writer):
+    """The call that set the first PIN wrote its earlier lines before there was one to
+    redact, and the memory subagent reads the file raw."""
+    _, bus, _, store = writer
+    write_transcript(
+        settings,
+        "abc123",
+        ["user: make it forty-two forty-two forty-two", "assistant: key it in twice, please"],
+    )
+    settings.pin = "424242"  # enrolled part-way through the call
+
+    await bus.publish(ended())
+
+    path = transcript_path(settings.data_dir, "abc123")
+    assert "forty" not in path.read_text()
+    assert "user: make it [PIN]" in path.read_text()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert len(await internal_tasks(store)) == 1
+
+
+async def test_redacting_the_transcript_again_leaves_the_timestamps_alone(settings, writer):
+    _, bus, _, _ = writer
+    write_transcript(settings, "abc123", ["user: it's 2 0 2 6 0 8", "assistant: thanks"])
+    settings.pin = "202608"  # the shape of the stamps' own date
+
+    await bus.publish(ended())
+
+    lines = transcript_path(settings.data_dir, "abc123").read_text().splitlines()
+    assert lines[1:] == [
+        "[2026-08-25T14:00:00] user: it's [PIN]",
+        "[2026-08-25T14:01:00] assistant: thanks",
+    ]
+
+
 async def test_a_call_with_no_transcript_at_all_is_skipped(writer):
     _, bus, _, store = writer
 

@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from keryx.config import Settings, secure_dir, secure_file, write_private
-from keryx.continuity.transcripts import transcript_path
+from keryx.continuity.transcripts import redact_pin, transcript_path
 from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from keryx.prompts import render_prompt
 
@@ -73,6 +73,8 @@ _SPOKEN_PREFIXES = ("user:", "assistant:")
 _SECTIONS = ("Standing facts", "Ongoing threads", "Recent calls")
 #: A bullet somebody typed in front of a fact, which `compose_memory` supplies itself.
 _BULLET = re.compile(r"^(?:[-*•]\s+)+")
+#: The timestamp the session puts in front of each transcript line.
+_STAMP = re.compile(r"\[[^\]\n]*\] ")
 
 
 def count_spoken_lines(path: Path) -> int:
@@ -87,6 +89,27 @@ def count_spoken_lines(path: Path) -> int:
         if body.startswith(_SPOKEN_PREFIXES):
             spoken += 1
     return spoken
+
+
+def redact_transcript(path: Path, pin: str | None) -> None:
+    """Redact `pin` from every line of the transcript at `path`, in place, before the memory
+    subagent reads it raw: lines written before the call enrolled its PIN still hold it.
+
+    The text after each line's stamp, as the session redacts it, so a PIN that looks like
+    a date never eats a timestamp.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    lines = []
+    for line in raw.splitlines(keepends=True):
+        stamp = _STAMP.match(line)
+        head = stamp.group() if stamp else ""
+        lines.append(head + redact_pin(line[len(head) :], pin))
+    redacted = "".join(lines)
+    if redacted != raw:
+        write_private(path, redacted)
 
 
 def describe_tasks(tasks: list["Task"]) -> str:
@@ -289,6 +312,7 @@ class MemoryWriter:
             log.info("session %s never gave the PIN; nothing of it is kept", event.session_id)
             return
         path = transcript_path(self._settings.data_dir, event.session_id)
+        redact_transcript(path, self._settings.pin)
         spoken = count_spoken_lines(path)
         if spoken < MIN_SPOKEN_LINES:
             log.info(

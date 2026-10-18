@@ -105,6 +105,22 @@ def test_zero_is_redacted_however_it_is_said(zero):
 
 
 @pytest.mark.parametrize(
+    ("pin", "said"),
+    [
+        ("424242", "forty-two forty-two forty-two"),
+        ("424242", "Forty two, forty two, forty two"),
+        ("424242", "four two forty-two four two"),
+        ("123456", "twelve thirty-four fifty-six"),
+        ("102030", "ten twenty thirty"),
+        ("441234", "double four twelve thirty four"),
+        ("440404", "double 4 oh four oh four"),
+    ],
+)
+def test_a_pin_said_in_pairs_is_redacted(pin, said):
+    assert redact_pin(f"user: it's {said}, thanks.", pin) == f"user: it's {PIN_REDACTED}, thanks."
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "user: 1 2 3 4 5 7",  # one digit off is not the PIN
