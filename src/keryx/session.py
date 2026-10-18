@@ -1140,6 +1140,8 @@ class VoiceSession:
         transcripts stamped with the time alone still parse — recall dates those from the
         file's modification time instead.
         """
+        # One line per entry, so no transcribed words can forge a `--- authorized` line.
+        text = " ".join(text.splitlines())
         text = redact_pin(text, self._settings.pin)  # said aloud, it is still never kept
         line = f"[{datetime.now().isoformat(timespec='seconds')}] {text}\n"
         try:
