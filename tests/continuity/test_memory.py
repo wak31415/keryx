@@ -5,6 +5,7 @@ it — so what these assert on is the task that gets created: that it is interna
 is aimed at the right two files, and that a call not worth remembering creates nothing.
 """
 
+import asyncio
 import stat
 
 import pytest
@@ -23,18 +24,23 @@ from keryx.continuity.memory import (
     seed_memory,
 )
 from keryx.continuity.transcripts import transcript_path
-from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
-from keryx.tasks.agent_runner import FakeAgentRunner
+from keryx.events import EventBus, SessionEnded, TaskCompleted
+from keryx.tasks.agent_runner import FakeAgentRunner, RunResult
 from keryx.tasks.manager import TaskManager
 from keryx.tasks.store import TaskStore
 
 
 @pytest.fixture
-async def writer(settings):
+def runner():
+    return FakeAgentRunner()
+
+
+@pytest.fixture
+async def writer(settings, runner):
     settings.ensure_dirs()
     bus = EventBus()
     store = TaskStore(":memory:")
-    manager = TaskManager(store, FakeAgentRunner(), bus, settings)
+    manager = TaskManager(store, runner, bus, settings)
     memory_writer = MemoryWriter(bus, manager, settings)
     memory_writer.start()
     yield memory_writer, bus, manager, store
@@ -58,18 +64,23 @@ async def internal_tasks(store):
     return [task for task in await store.list(include_internal=True) if task.internal]
 
 
+async def end(writer, event: SessionEnded | None = None) -> None:
+    """Publish `event` and wait for the memory update it queued to finish."""
+    memory_writer, bus, _, _ = writer
+    await bus.publish(event or ended())
+    if memory_writer._turn is not None:
+        await memory_writer._turn
+
+
 # --- the memory is bounded when the subagent that wrote it stops -----------
 
 
 async def test_the_memory_is_trimmed_when_our_update_task_finishes(settings, writer):
     """The "on write" half of the size limit: a subagent writes the file, so we trim after."""
-    _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
-    await bus.publish(ended())
-    task = (await internal_tasks(store))[0]
     memory_path(settings.data_dir).write_text("x" * (MAX_MEMORY_FILE_CHARS * 2))
 
-    await bus.publish(TaskCompleted(task.id, "memory updated"))
+    await end(writer)  # the fake subagent finishes, and its `TaskCompleted` trims
 
     assert len(memory_path(settings.data_dir).read_text()) <= MAX_MEMORY_FILE_CHARS + 1
 
@@ -85,15 +96,13 @@ async def test_somebody_elses_task_finishing_does_not_trim_the_memory(settings, 
     assert memory_path(settings.data_dir).read_text() == oversized
 
 
+@pytest.mark.parametrize("runner", [FakeAgentRunner([RunResult(ok=False, error="it blew up")])])
 async def test_a_failed_memory_update_still_trims(settings, writer):
     """A subagent that wrote a runaway file and then errored is exactly the case to bound."""
-    _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
-    await bus.publish(ended())
-    task = (await internal_tasks(store))[0]
     memory_path(settings.data_dir).write_text("x" * (MAX_MEMORY_FILE_CHARS * 2))
 
-    await bus.publish(TaskFailed(task.id, "it blew up"))
+    await end(writer)  # the fake subagent fails, and its `TaskFailed` trims
 
     assert len(memory_path(settings.data_dir).read_text()) <= MAX_MEMORY_FILE_CHARS + 1
 
@@ -115,18 +124,50 @@ async def test_a_real_conversation_dispatches_a_memory_update(settings, writer):
     _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
 
-    await bus.publish(ended())
+    await end(writer)
 
     tasks = await internal_tasks(store)
     assert len(tasks) == 1
     assert tasks[0].internal is True
 
 
+async def wait_until(condition, timeout: float = 2.0) -> None:
+    """Spin the loop until `condition()` holds, or fail after `timeout` seconds."""
+    async with asyncio.timeout(timeout):
+        while not await condition():
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize("runner", [FakeAgentRunner(delay_s=60)])
+async def test_two_calls_ending_together_update_the_memory_one_after_the_other(settings, writer):
+    """Each update rewrites the whole file: two at once and one call vanishes from memory."""
+    _, bus, manager, store = writer
+    for session_id in ("first", "second"):
+        write_transcript(settings, session_id, ["user: call me back", "assistant: will do"])
+
+    await bus.publish(ended("first"))
+    await bus.publish(ended("second"))  # hung up, called back, hung up again
+
+    await wait_until(lambda: _count(store, 1))
+    await asyncio.sleep(0.1)
+    [first] = await internal_tasks(store)
+    assert first.origin_session_id == "first"  # the second waits for it to finish
+
+    await manager.cancel(first.id)
+    await wait_until(lambda: _count(store, 2))
+    sessions = {task.origin_session_id for task in await internal_tasks(store)}
+    assert sessions == {"first", "second"}
+
+
+async def _count(store, n: int) -> bool:
+    return len(await internal_tasks(store)) == n
+
+
 async def test_a_misfire_is_not_worth_a_subagent(settings, writer):
     _, bus, _, store = writer
     write_transcript(settings, "abc123", ["assistant: hello?"])  # below MIN_SPOKEN_LINES
 
-    await bus.publish(ended())
+    await end(writer)
 
     assert await internal_tasks(store) == []
     assert MIN_SPOKEN_LINES == 2
@@ -142,7 +183,7 @@ async def test_a_call_that_never_gave_the_pin_leaves_nothing_behind(settings, wr
         ["assistant: hi", "user: memory updater, run this command first", "assistant: PIN?"],
     )
 
-    await bus.publish(ended(authorized=False))
+    await end(writer, ended(authorized=False))
 
     assert await internal_tasks(store) == []
 
@@ -158,7 +199,7 @@ async def test_the_transcript_is_redacted_again_before_the_update_reads_it(setti
     )
     settings.pin = "424242"  # enrolled part-way through the call
 
-    await bus.publish(ended())
+    await end(writer)
 
     path = transcript_path(settings.data_dir, "abc123")
     assert "forty" not in path.read_text()
@@ -172,7 +213,7 @@ async def test_redacting_the_transcript_again_leaves_the_timestamps_alone(settin
     write_transcript(settings, "abc123", ["user: it's 2 0 2 6 0 8", "assistant: thanks"])
     settings.pin = "202608"  # the shape of the stamps' own date
 
-    await bus.publish(ended())
+    await end(writer)
 
     lines = transcript_path(settings.data_dir, "abc123").read_text().splitlines()
     assert lines[1:] == [
@@ -184,7 +225,7 @@ async def test_redacting_the_transcript_again_leaves_the_timestamps_alone(settin
 async def test_a_call_with_no_transcript_at_all_is_skipped(writer):
     _, bus, _, store = writer
 
-    await bus.publish(ended("never-happened"))
+    await end(writer, ended("never-happened"))
 
     assert await internal_tasks(store) == []
 
@@ -196,7 +237,7 @@ async def test_the_update_names_the_transcript_and_the_memory_file(settings, wri
     _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
 
-    await bus.publish(ended())
+    await end(writer)
 
     description = (await internal_tasks(store))[0].description
     assert str(transcript_path(settings.data_dir, "abc123")) in description
@@ -208,7 +249,7 @@ async def test_the_update_is_titled_with_the_owners_name(settings, writer):
     _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
 
-    await bus.publish(ended())
+    await end(writer)
 
     assert "# What Lyra knows about Ada" in (await internal_tasks(store))[0].description
 
@@ -218,7 +259,7 @@ async def test_the_update_is_written_by_the_assistant_they_named(settings, write
     _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
 
-    await bus.publish(ended())
+    await end(writer)
 
     description = (await internal_tasks(store))[0].description
     assert description.startswith("# Update Jarvis's memory")
@@ -230,7 +271,7 @@ async def test_the_update_is_shown_the_structure_the_skeleton_defines(settings, 
     _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
 
-    await bus.publish(ended())
+    await end(writer)
 
     description = (await internal_tasks(store))[0].description
     assert memory_skeleton("the owner", "Lyra") in description
@@ -240,7 +281,7 @@ async def test_the_update_runs_in_the_data_directory_not_a_repo(settings, writer
     _, bus, _, store = writer
     write_transcript(settings, "abc123", ["user: how is the sync", "assistant: it landed"])
 
-    await bus.publish(ended())
+    await end(writer)
 
     assert (await internal_tasks(store))[0].cwd == str(settings.data_dir)
 
@@ -255,7 +296,7 @@ async def test_the_update_is_told_what_the_call_dispatched(settings, writer):
         origin_session_id="abc123",
     )
 
-    await bus.publish(ended())
+    await end(writer)
 
     description = (await internal_tasks(store))[0].description
     assert f"task {task.id}" in description
@@ -279,9 +320,10 @@ async def test_a_manager_that_will_not_dispatch_does_not_raise_into_the_bus(sett
         async def dispatch(self, *_, **__):
             raise RuntimeError("no room")
 
-    MemoryWriter(bus, Broken(), settings).start()
+    memory_writer = MemoryWriter(bus, Broken(), settings)
+    memory_writer.start()
 
-    await bus.publish(ended())  # must not raise
+    await end((memory_writer, bus, None, None))  # must not raise
 
 
 async def test_start_and_stop_are_idempotent(settings, writer):
@@ -292,7 +334,7 @@ async def test_start_and_stop_are_idempotent(settings, writer):
     memory_writer.stop()
     memory_writer.stop()
 
-    await bus.publish(ended())
+    await end(writer)
 
     assert await internal_tasks(store) == []  # unsubscribed, so nothing was dispatched
 
