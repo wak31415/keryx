@@ -301,6 +301,8 @@ class MemoryWriter:
         self._remove_finished = []
         self._writing.clear()
         if self._turn is not None:
+            # shortcut: an update still waiting its turn is dropped, not dispatched, so a stop
+            # within one update of two calls ending loses the second; persist the queue if it bites.
             self._turn.cancel()  # and, through it, every update it waits behind
             self._turn = None
         if self._remove is not None:
