@@ -172,6 +172,7 @@ async def test_a_call_that_ends_leaves_a_memory_update_behind(state, settings):
     await state.bus.publish(
         SessionEnded("abc123", "phone", "+15550001111", "user", authorized=True)
     )
+    await state.memory._turn  # queued in the background, behind any update still running
 
     internal = [task for task in await state.store.list(include_internal=True) if task.internal]
     assert len(internal) == 1

@@ -25,6 +25,7 @@ Nothing here is allowed to break a call. The session has already ended by the ti
 runs, and every failure path ends in a log line.
 """
 
+import asyncio
 import logging
 import re
 from collections.abc import Iterable
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from keryx.config import Settings, secure_dir, secure_file, write_private
-from keryx.continuity.transcripts import transcript_path
+from keryx.continuity.transcripts import redact_pin, transcript_path
 from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from keryx.prompts import render_prompt
 
@@ -73,6 +74,8 @@ _SPOKEN_PREFIXES = ("user:", "assistant:")
 _SECTIONS = ("Standing facts", "Ongoing threads", "Recent calls")
 #: A bullet somebody typed in front of a fact, which `compose_memory` supplies itself.
 _BULLET = re.compile(r"^(?:[-*•]\s+)+")
+#: The timestamp the session puts in front of each transcript line.
+_STAMP = re.compile(r"\[[^\]\n]*\] ")
 
 
 def count_spoken_lines(path: Path) -> int:
@@ -87,6 +90,27 @@ def count_spoken_lines(path: Path) -> int:
         if body.startswith(_SPOKEN_PREFIXES):
             spoken += 1
     return spoken
+
+
+def redact_transcript(path: Path, pin: str | None) -> None:
+    """Redact `pin` from every line of the transcript at `path`, in place, before the memory
+    subagent reads it raw: lines written before the call enrolled its PIN still hold it.
+
+    The text after each line's stamp, as the session redacts it, so a PIN that looks like
+    a date never eats a timestamp.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    lines = []
+    for line in raw.splitlines(keepends=True):
+        stamp = _STAMP.match(line)
+        head = stamp.group() if stamp else ""
+        lines.append(head + redact_pin(line[len(head) :], pin))
+    redacted = "".join(lines)
+    if redacted != raw:
+        write_private(path, redacted)
 
 
 def describe_tasks(tasks: list["Task"]) -> str:
@@ -256,6 +280,9 @@ class MemoryWriter:
         #: Memory-update tasks this writer dispatched and is still waiting on, so the trim
         #: below fires for our subagent's write and not for every task that finishes.
         self._writing: set[int] = set()
+        #: The last update in line. Each waits for the one before it to finish: each
+        #: rewrites the whole file, so two at once would lose one call from the memory.
+        self._turn: asyncio.Task | None = None
 
     def start(self) -> None:
         """Subscribe to `SessionEnded`, and to the end of our own update tasks. Idempotent."""
@@ -273,22 +300,40 @@ class MemoryWriter:
             remove()
         self._remove_finished = []
         self._writing.clear()
+        if self._turn is not None:
+            # shortcut: an update still waiting its turn is dropped, not dispatched, so a stop
+            # within one update of two calls ending loses the second; persist the queue if it bites.
+            self._turn.cancel()  # and, through it, every update it waits behind
+            self._turn = None
         if self._remove is not None:
             self._remove()
             self._remove = None
 
     async def _on_session_ended(self, event: SessionEnded) -> None:
-        """Dispatch the memory update for the call that just ended. Never raises."""
+        """Queue the memory update for the call that just ended, behind the one before it.
+
+        In the background, because the session that published this is still hanging up.
+        """
+        self._turn = asyncio.create_task(self._in_turn(self._turn, event))
+
+    async def _in_turn(self, previous: asyncio.Task | None, event: SessionEnded) -> None:
+        """Once `previous` has finished, dispatch this call's update and wait for it to
+        finish too. Never raises."""
+        if previous is not None:
+            await previous
         try:
-            await self._update(event)
+            task = await self._update(event)
+            if task is not None and task.id is not None:
+                await self._manager.wait_for(task.id, self._settings.subagent_timeout_s or None)
         except Exception:
             log.exception("could not dispatch the memory update for session %s", event.session_id)
 
-    async def _update(self, event: SessionEnded) -> None:
+    async def _update(self, event: SessionEnded) -> "Task | None":
         if not event.authorized:
             log.info("session %s never gave the PIN; nothing of it is kept", event.session_id)
-            return
+            return None
         path = transcript_path(self._settings.data_dir, event.session_id)
+        redact_transcript(path, self._settings.pin)
         spoken = count_spoken_lines(path)
         if spoken < MIN_SPOKEN_LINES:
             log.info(
@@ -296,7 +341,7 @@ class MemoryWriter:
                 event.session_id,
                 spoken,
             )
-            return
+            return None
 
         dispatched = await self._manager.tasks_for_session(event.session_id)
         prompt = render_prompt(
@@ -324,6 +369,7 @@ class MemoryWriter:
         if task.id is not None:
             self._writing.add(task.id)
         log.info("session %s: memory update dispatched as task %s", event.session_id, task.id)
+        return task
 
     async def _on_task_finished(self, event: TaskCompleted | TaskFailed) -> None:
         """Bound `memory.md` as soon as the subagent that rewrote it has stopped.
