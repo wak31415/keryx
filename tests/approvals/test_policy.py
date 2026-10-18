@@ -414,6 +414,10 @@ def test_a_write_outside_every_project_is_not_eligible(settings, tmp_path):
         ".lefthook.yml",
         "lefthook.yaml",
         ".lefthook.yaml",
+        "lefthook.toml",
+        ".lefthook.json",
+        "lefthook-local.yml",
+        ".lefthook-local.jsonc",
     ],
 )
 def test_a_write_the_cli_or_git_would_execute_is_not_eligible(settings, tmp_path, inside):

@@ -53,16 +53,12 @@ EDIT_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 #: permissions and servers the Claude CLI runs by itself on the next tool call or session.
 #: The hook frameworks' files are `.git/hooks` by another route: `git commit` runs them too.
 EXECUTED_NAMES = frozenset(
-    {
-        ".git",
-        ".claude",
-        ".mcp.json",
-        ".pre-commit-config.yaml",
-        ".husky",
-        "lefthook.yml",
-        ".lefthook.yml",
-        "lefthook.yaml",
-        ".lefthook.yaml",
+    {".git", ".claude", ".mcp.json", ".pre-commit-config.yaml", ".husky"}
+    | {
+        f"{dot}{name}.{ext}"
+        for dot in ("", ".")
+        for name in ("lefthook", "lefthook-local")
+        for ext in ("yml", "yaml", "toml", "json", "jsonc")
     }
 )
 #: The fields a `Bash` request may carry and still be escalated. Anything else may change
