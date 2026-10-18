@@ -350,6 +350,27 @@ class TaskStore:
                     stamped.append(task_id)
         return stamped
 
+    async def fail_interrupted(self, task_ids: Iterable[int], reason: str, when: datetime) -> None:
+        """Close out `task_ids` as failed with `reason`, each only while it is still
+        `running`: a row that finished since it was read keeps its result."""
+        await asyncio.to_thread(self._fail_interrupted_sync, list(task_ids), reason, when)
+
+    def _fail_interrupted_sync(self, task_ids: list[int], reason: str, when: datetime) -> None:
+        with self._lock:
+            for task_id in task_ids:
+                self._conn.execute(
+                    "UPDATE tasks SET status = ?, error = ?, summary = ?, finished_at = ? "
+                    "WHERE id = ? AND status = ?",
+                    (
+                        TaskStatus.FAILED.value,
+                        reason,
+                        reason,
+                        to_utc_iso(when),
+                        task_id,
+                        TaskStatus.RUNNING.value,
+                    ),
+                )
+
     async def list_for_session(self, session_id: str, *, limit: int = 20) -> list[Task]:
         """The tasks one voice session dispatched, oldest first. Housekeeping excluded."""
         return await asyncio.to_thread(self._list_for_session_sync, session_id, limit)

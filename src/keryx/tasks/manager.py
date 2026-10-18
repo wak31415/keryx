@@ -237,15 +237,12 @@ class TaskManager:
         has already counted those as interrupted.
         """
         try:
-            for task in await self._store.list(status=TaskStatus.RUNNING, limit=MAX_RESUMED):
-                if task.id is not None and task.id not in self._tasks:
-                    await self._store.update(
-                        task.id,
-                        status=TaskStatus.FAILED,
-                        error=INTERRUPTED_SUMMARY,
-                        summary=INTERRUPTED_SUMMARY,
-                        finished_at=datetime.now(UTC),
-                    )
+            running = await self._store.list(status=TaskStatus.RUNNING, limit=MAX_RESUMED)
+            await self._store.fail_interrupted(
+                (t.id for t in running if t.id is not None and t.id not in self._tasks),
+                INTERRUPTED_SUMMARY,
+                datetime.now(UTC),
+            )
             waiting = await self._store.list(status=TaskStatus.QUEUED, limit=MAX_RESUMED)
         except Exception:
             log.exception("could not look for tasks to pick back up")

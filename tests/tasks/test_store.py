@@ -392,6 +392,20 @@ async def test_an_unfinished_task_cannot_be_marked_reported(store, status):
     assert (await store.get(task.id)).reported_at is None
 
 
+async def test_closing_out_an_interrupted_task_spares_one_that_finished_meanwhile(store):
+    """`resume_queued` reads the `running` rows, then closes them: a task that finished
+    between the two keeps its result rather than reading as interrupted."""
+    stuck = await store.create(_task(status=TaskStatus.RUNNING))
+    finished = await _finished(store, "the real result")
+
+    await store.fail_interrupted([stuck.id, finished.id], "stopped", datetime.now(UTC))
+
+    assert (await store.get(stuck.id)).status is TaskStatus.FAILED
+    assert (await store.get(stuck.id)).summary == "stopped"
+    assert (await store.get(finished.id)).status is TaskStatus.DONE
+    assert (await store.get(finished.id)).summary == "all done"
+
+
 async def test_mark_reported_with_no_ids_is_a_no_op(store):
     assert await store.mark_reported([], when=datetime.now(UTC)) == []
 
