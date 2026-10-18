@@ -384,3 +384,20 @@ async def test_a_pin_said_in_groups_needs_no_star_while_a_menu_is_armed(
 
     assert keypad.digits == [(session.session_id, "1")]
     assert session.trust is TrustLevel.FULL
+
+
+async def test_a_menu_opened_mid_pin_does_not_take_the_rest_of_it(
+    phone, provider, keypad, tmp_path
+):
+    """A PIN begun before the menu was read out finishes as a PIN: none of its digits
+    can be an answer to the menu."""
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        for digit in PIN[:2]:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session._dtmf_buffer == PIN[:2])
+        keypad.waiting = True
+        for digit in PIN[2:]:
+            phone.feed(Dtmf(digit))
+        await eventually(lambda: session.authorized)
+    assert keypad.digits == []
