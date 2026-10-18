@@ -382,6 +382,15 @@ async def test_marking_a_task_reported_twice_keeps_the_first_time(store):
     assert (await store.get(task.id)).reported_at == first_time
 
 
+@pytest.mark.parametrize("status", [TaskStatus.QUEUED, TaskStatus.RUNNING])
+async def test_an_unfinished_task_cannot_be_marked_reported(store, status):
+    """There is no result yet to have told them; a stamp now would hide the one to come."""
+    task = await store.create(_task(status=status))
+
+    assert await store.mark_reported([task.id], when=datetime.now(UTC)) == []
+    assert (await store.get(task.id)).reported_at is None
+
+
 async def test_mark_reported_with_no_ids_is_a_no_op(store):
     assert await store.mark_reported([], when=datetime.now(UTC)) == []
 

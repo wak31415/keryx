@@ -317,7 +317,10 @@ class TaskStore:
         return row["n"]
 
     async def mark_reported(self, task_ids: Iterable[int], *, when: datetime) -> list[int]:
-        """Stamp `reported_at` on each id that exists and had none. Returns the ids stamped.
+        """Stamp `reported_at` on each finished id that had none. Returns the ids stamped.
+
+        Only `done`/`failed`: a queued or running task has no result to have told them yet,
+        and a stamp now would hide the one it is about to have.
 
         Already-reported tasks are left alone rather than re-stamped: the first time Keryx
         said it is the honest answer, and a second call must not move the timestamp.
@@ -332,8 +335,9 @@ class TaskStore:
         with self._lock:
             for task_id in task_ids:
                 cursor = self._conn.execute(
-                    "UPDATE tasks SET reported_at = ? WHERE id = ? AND reported_at IS NULL",
-                    (stamp, task_id),
+                    "UPDATE tasks SET reported_at = ? WHERE id = ? AND reported_at IS NULL "
+                    "AND status IN (?, ?)",
+                    (stamp, task_id, TaskStatus.DONE.value, TaskStatus.FAILED.value),
                 )
                 if cursor.rowcount:
                     stamped.append(task_id)

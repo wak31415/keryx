@@ -737,8 +737,9 @@ class TaskManager:
         else:
             log.warning("task %s has no session id; starting a fresh run", task.id)
             prompt = f"{build_prompt(task)}\n\nFollow-up: {text}"
+        # `reported_at` too: the owner heard the last run's result, not the one coming.
         updated = await self._store.update(
-            task.id, status=TaskStatus.QUEUED, started_at=None, finished_at=None
+            task.id, status=TaskStatus.QUEUED, started_at=None, finished_at=None, reported_at=None
         )
         self._done_event(task.id).clear()
         self._resume_pending[task.id] = prompt
