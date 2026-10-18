@@ -266,6 +266,24 @@ async def test_star_again_hands_it_back_to_the_menu(phone, provider, keypad, tmp
     assert session.authorized is False
 
 
+async def test_star_back_to_the_menu_mid_pin_drops_what_was_typed(
+    phone, provider, keypad, tmp_path
+):
+    """Giving up on a PIN halfway hands the menu its next key, not the abandoned PIN."""
+    keypad.waiting = True
+    session = build(phone, provider, keypad, authorized=False, possession=True, tmp_path=tmp_path)
+    async with running(session):
+        phone.feed(Dtmf("*"))
+        for digit in PIN[:2]:
+            phone.feed(Dtmf(digit))
+        phone.feed(Dtmf("*"))
+        phone.feed(Dtmf("1"))
+        await eventually(lambda: keypad.digits)
+
+    assert keypad.digits == [(session.session_id, "1")]
+    assert session._dtmf_buffer == ""
+
+
 async def test_a_wrong_pin_does_not_hand_the_keypad_back(phone, provider, keypad, tmp_path):
     """The model is told to ask them to try again, and trying again has to work."""
     keypad.waiting = True

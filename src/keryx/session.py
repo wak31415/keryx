@@ -677,6 +677,7 @@ class VoiceSession:
         expected = self._settings.pin
         if self._asks_for_the_pin(digit):
             self._pin_entry = not self._pin_entry
+            self._dtmf_buffer = ""  # a PIN begun before the switch is not finished after it
             log.info(
                 "session %s: the keypad is now for %s",
                 self.session_id,
