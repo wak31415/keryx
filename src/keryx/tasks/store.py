@@ -148,9 +148,16 @@ class TaskStore:
 
         Runs synchronously in `__init__`. Each step is guarded by the version it upgrades
         *from*, so a database two versions behind walks through both.
+
+        One `BEGIN IMMEDIATE` transaction, committed on leaving the `with conn` and rolled
+        back on an error: the connection is autocommit, so otherwise a process dying between
+        two `ALTER`s — or a second process upgrading the same file at once — leaves columns
+        without the version bump, and every later start fails on "duplicate column". The
+        version is read inside it, after any other upgrader has finished.
         """
-        with self._lock:
-            conn = self._conn
+        conn = self._conn
+        with self._lock, conn:
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(_CREATE_SCHEMA_VERSION_SQL)
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
