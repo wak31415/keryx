@@ -579,6 +579,20 @@ async def test_followup_on_a_finished_task_resumes_the_claude_session(make_harne
     assert harness.events.of(TaskStarted) == [TaskStarted(task.id), TaskStarted(task.id)]
 
 
+async def test_a_followup_re_run_is_owed_a_word_again(make_harness):
+    """The first result was told; the re-run's result was not, so the digest must carry it."""
+    harness = make_harness()
+    task = await dispatch(harness.manager, description="original question")
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+    await harness.manager.mark_reported([task.id])
+
+    restarted = await harness.manager.followup(task.id, "one more thing")
+    assert restarted.reported_at is None
+
+    await harness.manager.wait_for(task.id, timeout=WAIT)
+    assert [one.id for one in await harness.manager.unreported()] == [task.id]
+
+
 async def test_a_followup_resumes_on_the_agent_that_ran_the_task(make_harness):
     """Not on today's default: a session id belongs to the agent that issued it."""
     claude, codex = FakeAgentRunner(), FakeAgentRunner()
@@ -1058,14 +1072,22 @@ async def test_a_queued_row_from_a_dead_process_is_started(make_harness):
     assert finished.status is TaskStatus.DONE
 
 
-async def test_a_running_row_is_left_alone(make_harness):
-    """That subagent had opened; what it got through before the machine died is unknowable."""
+async def test_a_running_row_is_closed_out_as_failed_not_rerun(make_harness):
+    """That subagent had opened and nothing resumes it; left `running`, the row would hold
+    off every restart and answer every follow-up with "try again" for ever."""
     harness = make_harness()
-    await harness.manager._store.create(
+    orphan = await harness.manager._store.create(
         Task(id=None, kind=TaskKind.AGENT, description="was mid-flight", status=TaskStatus.RUNNING)
     )
 
     assert await harness.manager.resume_queued() == []
+
+    closed = await harness.manager.get(orphan.id)
+    assert closed.status is TaskStatus.FAILED
+    assert closed.summary == "Keryx stopped while this was running"
+    assert closed.finished_at is not None
+    assert [one.id for one in await harness.manager.unreported()] == [orphan.id]
+    assert harness.runner.opened == []
 
 
 async def test_the_oldest_thing_they_asked_for_runs_first(make_harness):

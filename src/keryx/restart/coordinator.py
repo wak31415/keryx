@@ -251,13 +251,16 @@ class RestartCoordinator:
 
     async def _restart_when_quiet(self, target: ServiceTarget) -> None:
         """Wait for the machine to be idle, then restart. Give up rather than cut work off."""
-        if not await self._wait_until_idle(DEFER_TIMEOUT_S):
-            self._store.clear()
+        blocker = await self._wait_until_idle(DEFER_TIMEOUT_S)
+        if blocker is not None:
+            # Failed, not cleared: a cleared record reads as success, and the call-back a
+            # task handed to this restart would be lost with it.
+            await self._failed(f"gave up after {DEFER_TIMEOUT_S / 60:.0f} min: {blocker}")
             return
         await self._execute(target)
 
-    async def _wait_until_idle(self, timeout: float) -> bool:
-        """Poll until no call is live *and* no task is running; False if `timeout` passes.
+    async def _wait_until_idle(self, timeout: float) -> str | None:
+        """Poll until no call is live *and* no task is running; the blocker if `timeout` passes.
 
         Both, because a restart kills every subagent it finds and nothing resumes them: the
         task that is running is work they asked for minutes ago, and the restart would end it
@@ -269,10 +272,10 @@ class RestartCoordinator:
         while (blocker := await self._blocker()) is not None:
             if waited >= timeout:
                 log.warning("abandoning the restart: %s for %ss", blocker, timeout)
-                return False
+                return blocker
             await self._sleep(QUIET_POLL_S)
             waited += QUIET_POLL_S
-        return True
+        return None
 
     async def _blocker(self) -> str | None:
         """What a restart would interrupt right now, or None when it would interrupt nothing."""

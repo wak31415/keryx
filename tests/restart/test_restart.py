@@ -651,8 +651,8 @@ async def test_a_live_call_holds_the_restart_until_it_ends(tmp_path):
     assert harness.spawn.commands == [["systemctl", "--user", "restart", SYSTEMD_UNIT]]
 
 
-async def test_a_call_that_never_ends_cancels_the_restart(tmp_path):
-    """Rather than cut somebody off, the restart gives up and leaves no record behind."""
+async def test_a_call_that_never_ends_gives_the_restart_up_as_failed(tmp_path):
+    """Rather than cut somebody off, the restart gives up — and says so, never silently."""
     harness = Harness(make_settings(tmp_path))
     harness.sessions.add(FakeVoiceSession(channel="phone"))
 
@@ -660,7 +660,9 @@ async def test_a_call_that_never_ends_cancels_the_restart(tmp_path):
     await harness.settle()
 
     assert harness.spawn.commands == []
-    assert harness.record() is None
+    record = harness.record()
+    assert record.state == "failed"
+    assert "a session has been live" in record.error
 
 
 async def test_force_restarts_through_a_live_call(tmp_path):
@@ -1493,6 +1495,23 @@ async def test_the_restart_goes_ahead_once_the_task_finishes(tmp_path):
     await harness.settle()
 
     assert harness.spawn.commands == [["systemctl", "--user", "restart", "keryx.service"]]
+    await store.close()
+
+
+async def test_a_task_that_outlasts_the_wait_fails_the_restart_out_loud(tmp_path):
+    """A task may run for hours; giving up must reach the owner, not clear the record."""
+    store = TaskStore(":memory:")
+    await running_task(store)
+    harness = Harness(make_settings(tmp_path), tasks=store)
+
+    await harness.coordinator.request(reason="new code")
+    await harness.settle()
+
+    assert harness.spawn.commands == []
+    record = harness.record()
+    assert record.state == "failed"
+    assert "1 task(s) have been running" in record.error
+    assert harness.twilio.sms and "did not go through" in harness.twilio.sms[0][1]
     await store.close()
 
 

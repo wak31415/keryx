@@ -72,6 +72,8 @@ UNKNOWN_ERROR = "unknown error"
 #: What is said about a run the wall-clock cap stopped.
 TIMEOUT_SUMMARY = "The task ran for {duration} without finishing, so I stopped it."
 FAILURE_SUMMARY = "The task failed: {error}"
+#: A `running` row a fresh process finds: its subagent died with the process before it.
+INTERRUPTED_SUMMARY = "Keryx stopped while this was running"
 #: Heads the prompt of a re-run carrying the follow-ups that arrived mid-turn.
 LIVE_FOLLOWUP_PREAMBLE = "Follow-up from the user:"
 
@@ -228,11 +230,22 @@ class TaskManager:
         running it for the first time, not running it twice. Nothing is half-done, because
         nothing was done.
 
-        A `running` row is the opposite and is deliberately left alone: that subagent had
-        opened, and what it got through before the machine went down is unknowable from
-        here. `RestartCoordinator.status_summary` reports those as lost, which they are.
+        A `running` row is the opposite and is never re-run: that subagent had opened, and
+        what it got through before the machine went down is unknowable from here. It is
+        closed out as `failed` instead (this process runs nothing yet), so the next call's
+        digest says so and it stops holding off every restart. `RestartCoordinator.resume`
+        has already counted those as interrupted.
         """
         try:
+            for task in await self._store.list(status=TaskStatus.RUNNING, limit=MAX_RESUMED):
+                if task.id is not None and task.id not in self._tasks:
+                    await self._store.update(
+                        task.id,
+                        status=TaskStatus.FAILED,
+                        error=INTERRUPTED_SUMMARY,
+                        summary=INTERRUPTED_SUMMARY,
+                        finished_at=datetime.now(UTC),
+                    )
             waiting = await self._store.list(status=TaskStatus.QUEUED, limit=MAX_RESUMED)
         except Exception:
             log.exception("could not look for tasks to pick back up")
@@ -737,8 +750,9 @@ class TaskManager:
         else:
             log.warning("task %s has no session id; starting a fresh run", task.id)
             prompt = f"{build_prompt(task)}\n\nFollow-up: {text}"
+        # `reported_at` too: the owner heard the last run's result, not the one coming.
         updated = await self._store.update(
-            task.id, status=TaskStatus.QUEUED, started_at=None, finished_at=None
+            task.id, status=TaskStatus.QUEUED, started_at=None, finished_at=None, reported_at=None
         )
         self._done_event(task.id).clear()
         self._resume_pending[task.id] = prompt

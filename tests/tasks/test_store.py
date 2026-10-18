@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
+from keryx.tasks import store as store_module
 from keryx.tasks.models import Task, TaskKind, TaskStatus
 from keryx.tasks.store import (
     _V3_COLUMNS,
@@ -382,6 +383,15 @@ async def test_marking_a_task_reported_twice_keeps_the_first_time(store):
     assert (await store.get(task.id)).reported_at == first_time
 
 
+@pytest.mark.parametrize("status", [TaskStatus.QUEUED, TaskStatus.RUNNING])
+async def test_an_unfinished_task_cannot_be_marked_reported(store, status):
+    """There is no result yet to have told them; a stamp now would hide the one to come."""
+    task = await store.create(_task(status=status))
+
+    assert await store.mark_reported([task.id], when=datetime.now(UTC)) == []
+    assert (await store.get(task.id)).reported_at is None
+
+
 async def test_mark_reported_with_no_ids_is_a_no_op(store):
     assert await store.mark_reported([], when=datetime.now(UTC)) == []
 
@@ -497,6 +507,24 @@ async def test_work_that_finished_before_the_upgrade_counts_as_already_told(tmp_
         assert await store.list_unreported() == []
         finished = next(t for t in await store.list() if t.description == "old finished work")
         assert finished.reported_at == datetime(2026, 8, 1, 9, 5, tzinfo=UTC)
+    finally:
+        await store.close()
+
+
+async def test_a_migration_that_dies_halfway_leaves_nothing_half_done(tmp_path, monkeypatch):
+    """Columns added one at a time and committed each would leave the file "duplicate
+    column" on every later start; the upgrade is all or nothing instead."""
+    path = tmp_path / "tasks.db"
+    _v2_database(path)
+    # The last step fails after every earlier column has been added.
+    monkeypatch.setattr(store_module, "_V6_COLUMNS", ("cost_usd REAL", "cost_usd REAL"))
+    with pytest.raises(sqlite3.OperationalError):
+        TaskStore(path)
+    monkeypatch.undo()
+
+    store = TaskStore(path)
+    try:
+        assert len(await store.list()) == 2
     finally:
         await store.close()
 
