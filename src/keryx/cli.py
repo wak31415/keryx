@@ -1137,6 +1137,7 @@ def forget(
 
     This is not undoable, and `--older-than 0` really does mean everything.
     """
+    _owner_only("delete transcripts and tasks")
     if transcripts_only and tasks_only:
         typer.echo("pick one of --transcripts-only and --tasks-only")
         raise typer.Exit(code=2)
@@ -1769,6 +1770,7 @@ def approvals(
         typer.echo(f"approval escalation is off ({switch})")
         return
     if enable:
+        _owner_only("switch approval escalation back on")  # off is open to anyone
         switch.unlink(missing_ok=True)
         typer.echo("approval escalation is on")
         return
