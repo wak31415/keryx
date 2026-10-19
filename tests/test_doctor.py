@@ -210,7 +210,7 @@ def test_codex_is_named_by_its_bundled_binary_and_version(healthy, monkeypatch):
 
     check = by_name(run_doctor_checks(settings))["Codex agent"]
 
-    assert check.detail.startswith("/venv/codex_cli_bin/bin/codex (codex-cli 0.157.1); ")
+    assert check.detail.startswith("/venv/codex_cli_bin/bin/codex (codex-cli 0.158.0); ")
 
 
 def test_a_second_agent_that_is_not_ready_is_only_a_warning(healthy, monkeypatch):

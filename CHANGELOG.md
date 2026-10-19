@@ -6,12 +6,16 @@ settings: a removed or renamed setting or command is a major bump.
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-10-18
+## [0.1.1] - 2026-10-19
 
-Fixes from an audit of 0.1.0. Nothing to change on your side: no setting or command was
-renamed or removed.
+Fixes from an audit of 0.1.0, and updated dependencies. Nothing to change on your side: no
+setting or command was renamed or removed.
 
 ### Security
+
+- **Dependencies with published advisories are updated.** aiohttp 3.14.4, multidict 6.9.1,
+  mcp 1.30.0, PyJWT 2.15.0 and urllib3 2.8.0 each fix one or more advisories. Keryx does
+  not import any of them; they come in through Twilio and the Claude Agent SDK.
 
 - **Typing your PIN on an approval call can no longer approve anything.** When Keryx called
   about a Claude Code prompt, a digit of your PIN typed after the keypad menu opened went to
@@ -29,6 +33,12 @@ renamed or removed.
   forty-two" is replaced with `[PIN]` like single digits are. The transcript is also redacted
   again before the memory update reads it, which covers the lines spoken before a first PIN
   was set.
+
+### Changed
+
+- **The coding agents' SDKs are updated.** The Codex agent runs on `openai-codex` 0.158.0
+  and its bundled `codex` CLI, and the Claude agent on `claude-agent-sdk` 0.2.160 and its
+  bundled Claude Code CLI.
 
 ### Fixed
 
