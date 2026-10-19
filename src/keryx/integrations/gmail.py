@@ -19,9 +19,14 @@ call at a time); this is one Gmail pass and one model call. Two shapes:
 
 **A search** (no `day`) — "did Susan answer about the kickoff", "when is the camera-ready
 due": Gmail's search, which is good, with the terms the question implied (any Gmail
-operator, `newer_than:7d` included); the newest `MAX_SEARCH_THREADS` matching threads are
-read in full, answered or not — whether they replied is part of the answer, so it is said
-rather than filtered.
+operator, `newer_than:7d` included). Gmail lists newest first and ranks nothing else, so a
+query of alternatives (`kickoff OR signature`) is run one alternative at a time and the
+lists taken in turn: otherwise one broad word fills every slot with newer mail and the
+thread the question is about never makes the cut (#80). Up to `MAX_SEARCH_CANDIDATES`
+threads go to the model, the `MAX_SEARCH_THREADS` most promising (`worth_reading`) in
+full, answered or not — whether they replied is part of the answer, so it is said rather
+than filtered. A query of several terms ANDed that finds nothing is loosened to each of its
+terms on its own, and the model is told that only part of it matched.
 
 Either way the mail goes to a Claude model through the bundled `claude` CLI — no tools, no
 settings, no MCP servers, low effort — with their question, and comes back as a few spoken
@@ -46,6 +51,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.utils import getaddresses
+from itertools import zip_longest
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -67,9 +73,14 @@ SMART_FILTER = "-category:promotions -category:social -category:forums"
 #: full text. Past a few dozen threads a day, the list is not the bottleneck; the model is.
 MAX_MESSAGES = 60
 MAX_FULL = 12
-#: A search reads this many of the newest matching threads, all in full. Gmail's ranking is
-#: newest first, and the question is almost always about something recent.
+#: One search lists this many messages for each query it runs.
+SEARCH_LISTED = 25
+#: A search shows the model up to this many threads, and reads the most promising
+#: `MAX_SEARCH_THREADS` of them in full; the rest ride along as a snippet.
+MAX_SEARCH_CANDIDATES = 12
 MAX_SEARCH_THREADS = 5
+#: A query of alternatives runs as at most this many queries; the rest share the last.
+MAX_ALTERNATIVES = 6
 MAX_BODY_CHARS = 2000
 CONCURRENCY = 16
 REQUEST_TIMEOUT_S = 15.0
@@ -83,6 +94,13 @@ NO_REPLY = re.compile(
 )
 _QUOTE_START = re.compile(
     r"^(On .{0,200}wrote:|-----Original Message-----|From: .+|_{10,})$", re.M
+)
+#: Terms that narrow a search without saying what it is about. Loosening keeps them on every
+#: query; searched on their own, `newer_than:30d` would match everything recent.
+_FILTER_TERM = re.compile(
+    r"^-|^(newer_than|older_than|newer|older|after|before|is|in|label|category|has|"
+    r"larger|smaller):",
+    re.I,
 )
 _TAG = re.compile(r"<[^>]+>")
 _SCRIPT = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
@@ -124,12 +142,16 @@ DAY_PROMPT = (
     "say so in one sentence."
 )
 SEARCH_PROMPT = (
-    "You answer a question about someone's email from the few threads a search found, for "
+    "You answer a question about someone's email from the threads a search found, for "
     "them to hear read aloud on the phone. Answer in one to three short spoken sentences: "
     "say who and when where it matters, and whether they have already replied where the "
-    "thread shows it. If the threads do not answer the question, say so plainly in one "
-    "sentence and say what the search did find. Never invent anything that is not in the "
-    "mail. No markdown, no bullets, no preamble."
+    "thread shows it. Some threads come with their full text, the rest only with a "
+    "snippet: trust the full text where you have it, and use a snippet when it is what "
+    "they asked about. If nothing found is about their question, say so plainly in one "
+    "sentence, naming the words that were searched for so they can correct a misheard "
+    "one, and do not go through the unrelated mail instead. If the search as a whole "
+    "matched nothing, say that first. Never invent anything that is not in the mail. No "
+    "markdown, no bullets, no preamble."
 )
 
 
@@ -466,25 +488,156 @@ async def collect(
     return Collected(threads=len(thread_ids), answered=answered, emails=emails), label
 
 
-async def search(api: GmailApi, query: str) -> list[Email]:
-    """The newest `MAX_SEARCH_THREADS` threads matching `query`, each read in full."""
-    listed = await api.get("messages", {"q": " ".join(query.split()), "maxResults": 25})
-    thread_ids = list(dict.fromkeys(m["threadId"] for m in listed.get("messages", [])))
-    thread_ids = thread_ids[:MAX_SEARCH_THREADS]
+def _terms(query: str) -> list[str]:
+    """`query` split into Gmail's terms, each whole: a word, a quoted phrase, a () or {} group."""
+    terms: list[str] = []
+    current, depth, quoted = "", 0, False
+    for char in query:
+        if char == '"':
+            quoted = not quoted
+        elif not quoted and char in "({":
+            depth += 1
+        elif not quoted and char in ")}":
+            depth = max(depth - 1, 0)
+        if char.isspace() and not quoted and depth == 0:
+            if current:
+                terms.append(current)
+            current = ""
+        else:
+            current += char
+    if current:
+        terms.append(current)
+    return terms
+
+
+def _clauses(query: str) -> list[list[str]]:
+    """`query` as Gmail reads it: clauses ANDed together, each one term or several ORed.
+
+    OR binds tighter than the AND between words, so `from:ann OR ann kickoff OR grant` is
+    `(from:ann OR ann) (kickoff OR grant)` — two clauses of two.
+    """
+    clauses: list[list[str]] = []
+    joining = False
+    for term in _terms(query):
+        if term == "OR":
+            joining = bool(clauses)
+        elif joining:
+            clauses[-1].append(term)
+            joining = False
+        else:
+            clauses.append([term])
+    return clauses
+
+
+def _alternatives(clause: list[str]) -> list[str]:
+    """What a clause matches either of: its ORed terms, or the inside of `{a b}` or `(a OR b)`."""
+    if len(clause) > 1:
+        return clause
+    term = clause[0]
+    if term.startswith("{") and term.endswith("}"):
+        return _terms(term[1:-1]) or clause
+    if term.startswith("(") and term.endswith(")"):
+        inner = _clauses(term[1:-1])
+        if len(inner) == 1:
+            return _alternatives(inner[0])
+    return clause
+
+
+def _capped(alternatives: list[str]) -> list[str]:
+    """At most `MAX_ALTERNATIVES` queries' worth: the last one ORs whatever is left over."""
+    head = alternatives[: MAX_ALTERNATIVES - 1]
+    rest = alternatives[MAX_ALTERNATIVES - 1 :]
+    return head + ([" OR ".join(rest)] if rest else [])
+
+
+@dataclass(frozen=True)
+class SearchPlan:
+    """The Gmail queries one search runs.
+
+    `exact` together match what the query matches, its widest set of alternatives split one
+    to a query; `loose` each match part of it — every term on its own, with the filters
+    (`newer_than:`, `is:`, a `-`) kept on each — and run only when `exact` found nothing.
+    """
+
+    exact: list[str]
+    loose: list[str]
+
+
+def plan_search(query: str) -> SearchPlan:
+    """How to search Gmail for `query` so that no one broad term crowds out the rest."""
+    query = " ".join(query.split())
+    clauses = _clauses(query)
+    if not clauses:
+        return SearchPlan([query], [])
+    options = [_alternatives(clause) for clause in clauses]
+    written = [" OR ".join(clause) for clause in clauses]
+    widest = max(range(len(options)), key=lambda i: len(options[i]))
+    exact = [query]
+    if len(options[widest]) > 1:
+        rest = written[:widest] + written[widest + 1 :]
+        exact = [" ".join([*rest, alt]) for alt in _capped(options[widest])]
+    narrows = [len(clause) == 1 and bool(_FILTER_TERM.match(clause[0])) for clause in clauses]
+    filters = [w for w, narrow in zip(written, narrows, strict=True) if narrow]
+    about = [opts for opts, narrow in zip(options, narrows, strict=True) if not narrow]
+    loose: list[str] = []
+    if len(about) > 1:
+        terms = list(dict.fromkeys(alt for opts in about for alt in opts))
+        loose = [" ".join([*filters, term]) for term in _capped(terms)]
+    return SearchPlan(exact, loose)
+
+
+@dataclass
+class Found:
+    """What a search came to: the threads, and whether only part of the query matched."""
+
+    emails: list[Email]
+    loosened: bool = False
+
+
+async def search(api: GmailApi, query: str, *, loosen: bool = True) -> Found:
+    """Up to `MAX_SEARCH_CANDIDATES` threads matching `query`, the most promising in full.
+
+    Each query in the plan lists its newest matches, and the lists are taken in turn, so
+    every alternative gets its newest threads in before any gets a second round. With
+    `loosen`, a query that matched nothing is searched again term by term (`SearchPlan`).
+    """
+    gate = asyncio.Semaphore(CONCURRENCY)
+
+    async def fetch(path: str, params: Mapping[str, Any] | None = None) -> dict:
+        async with gate:
+            return await api.get(path, params)
+
+    async def threads_for(queries: list[str]) -> list[str]:
+        listed = await asyncio.gather(
+            *(fetch("messages", {"q": q, "maxResults": SEARCH_LISTED}) for q in queries)
+        )
+        lists = [[m["threadId"] for m in found.get("messages", [])] for found in listed]
+        return list(dict.fromkeys(tid for row in zip_longest(*lists) for tid in row if tid))
+
+    plan = plan_search(query)
+    thread_ids, profile = await asyncio.gather(threads_for(plan.exact), fetch("profile"))
+    loosened = False
+    if not thread_ids and loosen and plan.loose:
+        thread_ids = await threads_for(plan.loose)
+        loosened = bool(thread_ids)
+    me = str(profile.get("emailAddress", "")).lower()
     wanted = ["From", "To", "Subject", "Date", "List-Unsubscribe"]
     threads = await asyncio.gather(
         *(
-            api.get(f"threads/{tid}", {"format": "metadata", "metadataHeaders": wanted})
-            for tid in thread_ids
+            fetch(f"threads/{tid}", {"format": "metadata", "metadataHeaders": wanted})
+            for tid in thread_ids[:MAX_SEARCH_CANDIDATES]
         )
     )
     emails = [email for email in map(fold_search, threads) if email is not None]
+    # Ties keep the order the lists were taken in, which is newest first within each.
+    order = sorted(range(len(emails)), key=lambda i: -worth_reading(emails[i], me))
+    chosen = [emails[i] for i in order[:MAX_SEARCH_THREADS]]
     full = await asyncio.gather(
-        *(api.get(f"messages/{email.message_id}", {"format": "full"}) for email in emails)
+        *(fetch(f"messages/{email.message_id}", {"format": "full"}) for email in chosen)
     )
-    for email, message in zip(emails, full, strict=True):
+    for email, message in zip(chosen, full, strict=True):
         email.body = body_text(message.get("payload", {}))
-    return emails
+    return Found(emails, loosened)
 
 
 # ------------------------------------------------------------------------------ model
@@ -610,11 +763,23 @@ class EmailReader:
                 )
             counts = {"threads": collected.threads, "already_answered": collected.answered}
         else:
-            terms = query or question
-            emails, system = await search(self._api, terms), SEARCH_PROMPT
-            header = f"The {len(emails)} newest threads a search for [{terms}] found."
+            terms = " ".join((query or question).split())
+            # The question's own words are prose, not search terms: loosened one word at a
+            # time, they would bring back every email with "the" in it.
+            found = await search(self._api, terms, loosen=query is not None)
+            emails, system = found.emails, SEARCH_PROMPT
+            full = sum(1 for email in emails if email.body is not None)
+            header = (
+                f"Nothing matched a search for [{terms}] as a whole, so each of its terms was "
+                f"searched on its own; these {len(emails)} threads matched some of them."
+                if found.loosened
+                else f"A search for [{terms}] found these {len(emails)} threads."
+            ) + f" The {full} most promising come with their full text."
             if not emails:
-                answer = "No email matches that search."
+                answer = (
+                    f"No email matches a search for [{terms}]. Say what was searched for, so "
+                    "they can correct a misheard word, rather than that the email does not exist."
+                )
             counts = {"threads": len(emails)}
             label = "search"
         fetched = time.monotonic() - started

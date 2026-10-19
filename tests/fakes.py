@@ -223,11 +223,16 @@ class FakeVoiceSession:
         self.trust = trust
         self.error = error
         self.announced: list[str] = []
+        #: The `task_id` each announcement in `announced` was about (None: not a task's).
+        self.announced_tasks: list[int | None] = []
 
-    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+    async def announce(
+        self, text: str, *, needs: TrustLevel = TrustLevel.FULL, task_id: int | None = None
+    ) -> bool:
         if self.error is not None:
             raise self.error
         if not self.accepts or self.trust < needs:
             return False
         self.announced.append(text)
+        self.announced_tasks.append(task_id)
         return True

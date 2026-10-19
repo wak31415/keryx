@@ -64,7 +64,8 @@ MAX_DIGEST_REQUEST_CHARS = 100
 _DIGEST_HEADING = (
     "These finished while you were not talking to the owner, and the owner has not heard about "
     "them yet. Lead with them: say what landed in a sentence or two — not a recital — and then "
-    "call mark_reported with the ids you actually mentioned."
+    "call mark_reported with the ids you actually mentioned. Calling it is what records that "
+    "they heard; saying so does not, so never tell them you have marked anything."
 )
 _DIGEST_MORE = "\n\n(and {count} more waiting; these are the oldest.)"
 #: Appended to the message that opens the session, because a realtime model leads with

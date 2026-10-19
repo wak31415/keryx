@@ -184,6 +184,7 @@ async def test_a_live_phone_session_hears_the_result_and_nothing_else_goes_out(h
     await harness.finished(task, "the tests pass now")
 
     assert session.announced == [f"Task {task.id} finished: the tests pass now"]
+    assert session.announced_tasks == [task.id]  # so the call is asked to stamp it (#82)
     assert harness.twilio.sms == []
     assert harness.twilio.calls == []
     row = await harness.row(task)
