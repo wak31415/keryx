@@ -281,7 +281,9 @@ Four rulings, and `SECURITY.md` is the threat model:
   Two things can want that keypad, so `Keypad.armed` hands it a digit only while a menu is
   actually waiting on one, and `PIN_ENTRY_KEY` (`*`, which is neither part of a PIN nor a menu
   option) toggles it back to the PIN when one is. Both halves are needed: the first for the
-  call with no menu up, the second for the call with one. A spoken PIN was always the third
+  call with no menu up, the second for the call with one. A PIN already being typed when the
+  menu opens (a buffer younger than `DTMF_RESET_SECONDS`) finishes as a PIN: its digits never
+  answer the menu, or a PIN's `1` would approve. A spoken PIN was always the third
   way through — `submit_pin` is ungated at every level.
 
 What has not moved, and there is a test named after each: `mark_reported` below `POSSESSION`
@@ -311,7 +313,8 @@ Keryx knows at the top of a call is assembled every time by
   hearing it is not.
 - **The memory.** `keryx/continuity/memory.py` owns `data_dir/memory.md` outright — the
   file API *and* the writer. It subscribes to `SessionEnded` and, for an authorized call only,
-  dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file; the
+  dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file —
+  one at a time, each waiting for the last, because each rewrites the whole file; the
   next call reads it back through `briefing`. Its headings are nested one level when
   embedded, so its sections cannot be mistaken for instructions. `memory_skeleton(owner)` is
   the only place its sections are written down — the update prompt renders it, and
@@ -367,7 +370,8 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `[service_writable]`. `PROTECTED_KEYS` (every secret, the PIN, trust, approvals, publishing
   issues, spending, deletion, the network, the debug switches) can never be unlocked, and a hand edit that
   tries is ignored and reported by `doctor`. The service may tune a limit in
-  `permissions.NEVER_OFF` but never set it to 0 ("no limit"), and every write is checked
+  `permissions.NEVER_OFF` but never set it to 0 ("no limit") or above `NEVER_OFF_CEILING`
+  times its default, which is no limit by another name, and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
   `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove` — refuse outright under
@@ -442,7 +446,10 @@ that way, and keep every failure path landing somewhere a human can find it
 *process*: `SERVICE_MANAGER=auto` resolves from its own cgroup (systemd) or
 `XPC_SERVICE_NAME` (launchd), never from `systemctl` being on PATH, so a hand-started copy
 refuses rather than restart the installed one. Only `keryx restart` and `doctor`, which run
-outside the unit, ask whether it is installed.
+outside the unit, ask whether it is installed. A restart waits on `running` rows, so a row a
+killed process left behind would block every restart after it: `resume_queued` closes each one
+out as failed at startup (`INTERRUPTED_SUMMARY`), and a restart that waits too long fails out
+loud through `_failed`, never a silent `clear()`.
 
 "Did it load the change" is answered from `state_dir/running-version`, stamped by `mark_running()`
 at the top of `keryx serve` — *not* from `current_version()` at request time. The checkout moves
@@ -492,7 +499,8 @@ Four rulings hold it up, and none of them is a preference:
   the only thing in Keryx that can approve a tool call, it is reachable only from a call
   that has proved something — `FULL`, or the `POSSESSION` of a call Keryx placed to the
   owner's own number, which is what the escalation call itself is (`VoiceSession._on_dtmf`
-  routes there once `authorized`, or while `Keypad.armed`) — and an unrecognised key re-asks
+  routes there once `authorized`, or while `Keypad.armed` and no PIN is being typed) — and an
+  unrecognised key re-asks
   rather than agreeing. `policy.py`'s allowlist is already the "routine and reversible"
   filter, which is what licenses the second half.
 - **Failure is always "do nothing".** Broker down, socket missing, Twilio broken, call

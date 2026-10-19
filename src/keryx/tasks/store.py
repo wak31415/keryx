@@ -148,9 +148,16 @@ class TaskStore:
 
         Runs synchronously in `__init__`. Each step is guarded by the version it upgrades
         *from*, so a database two versions behind walks through both.
+
+        One `BEGIN IMMEDIATE` transaction, committed on leaving the `with conn` and rolled
+        back on an error: the connection is autocommit, so otherwise a process dying between
+        two `ALTER`s — or a second process upgrading the same file at once — leaves columns
+        without the version bump, and every later start fails on "duplicate column". The
+        version is read inside it, after any other upgrader has finished.
         """
-        with self._lock:
-            conn = self._conn
+        conn = self._conn
+        with self._lock, conn:
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(_CREATE_SCHEMA_VERSION_SQL)
             row = conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
@@ -317,7 +324,10 @@ class TaskStore:
         return row["n"]
 
     async def mark_reported(self, task_ids: Iterable[int], *, when: datetime) -> list[int]:
-        """Stamp `reported_at` on each id that exists and had none. Returns the ids stamped.
+        """Stamp `reported_at` on each finished id that had none. Returns the ids stamped.
+
+        Only `done`/`failed`: a queued or running task has no result to have told them yet,
+        and a stamp now would hide the one it is about to have.
 
         Already-reported tasks are left alone rather than re-stamped: the first time Keryx
         said it is the honest answer, and a second call must not move the timestamp.
@@ -332,12 +342,34 @@ class TaskStore:
         with self._lock:
             for task_id in task_ids:
                 cursor = self._conn.execute(
-                    "UPDATE tasks SET reported_at = ? WHERE id = ? AND reported_at IS NULL",
-                    (stamp, task_id),
+                    "UPDATE tasks SET reported_at = ? WHERE id = ? AND reported_at IS NULL "
+                    "AND status IN (?, ?)",
+                    (stamp, task_id, TaskStatus.DONE.value, TaskStatus.FAILED.value),
                 )
                 if cursor.rowcount:
                     stamped.append(task_id)
         return stamped
+
+    async def fail_interrupted(self, task_ids: Iterable[int], reason: str, when: datetime) -> None:
+        """Close out `task_ids` as failed with `reason`, each only while it is still
+        `running`: a row that finished since it was read keeps its result."""
+        await asyncio.to_thread(self._fail_interrupted_sync, list(task_ids), reason, when)
+
+    def _fail_interrupted_sync(self, task_ids: list[int], reason: str, when: datetime) -> None:
+        with self._lock:
+            for task_id in task_ids:
+                self._conn.execute(
+                    "UPDATE tasks SET status = ?, error = ?, summary = ?, finished_at = ? "
+                    "WHERE id = ? AND status = ?",
+                    (
+                        TaskStatus.FAILED.value,
+                        reason,
+                        reason,
+                        to_utc_iso(when),
+                        task_id,
+                        TaskStatus.RUNNING.value,
+                    ),
+                )
 
     async def list_for_session(self, session_id: str, *, limit: int = 20) -> list[Task]:
         """The tasks one voice session dispatched, oldest first. Housekeeping excluded."""

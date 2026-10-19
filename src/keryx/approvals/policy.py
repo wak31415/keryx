@@ -51,7 +51,18 @@ EDIT_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 #: URL) that the allowlisted `git commit` and `git push` run or obey, and in a worktree it
 #: is a file that says where all of that lives. `.claude` and `.mcp.json` hold the hooks,
 #: permissions and servers the Claude CLI runs by itself on the next tool call or session.
-EXECUTED_NAMES = frozenset({".git", ".claude", ".mcp.json"})
+#: The hook frameworks' files are `.git/hooks` by another route: `git commit` runs them too.
+#: shortcut: a denylist of names, so whatever a hook itself runs (a test file, `package.json`
+#: under husky v4, a lint-staged config) stays writable; refuse hooked commits if it bites.
+EXECUTED_NAMES = frozenset(
+    {".git", ".claude", ".mcp.json", ".pre-commit-config.yaml", ".husky"}
+    | {
+        f"{dot}{name}.{ext}"
+        for dot in ("", ".")
+        for name in ("lefthook", "lefthook-local")
+        for ext in ("yml", "yaml", "toml", "json", "jsonc")
+    }
+)
 #: The fields a `Bash` request may carry and still be escalated. Anything else may change
 #: how the command runs in a way the read-back never says, so an unknown field is refused;
 #: `dangerouslyDisableSandbox` is allowed only when it is not set.

@@ -14,10 +14,11 @@ Four rules hold the whole design up:
   `state_dir/approvals.sock`, mode 0600, is unreachable through the tunnel by construction,
   and filesystem permissions are the right authorization for a thing whose only legitimate
   client is a process already running as them.
-- **Failure is always "do nothing".** Every path that is not an explicit, PIN-gated,
-  keypad-confirmed answer ends with the waiting hook being told nothing — which leaves the
-  ordinary on-screen prompt exactly as it is today. Broker down, socket missing, Twilio
-  broken, call unanswered, wrong digit, timeout: all the same outcome.
+- **Failure is always "do nothing".** Every path that is not an explicit, keypad-confirmed
+  answer from a call that has proved something ends with the waiting hook being told
+  nothing — which leaves the ordinary on-screen prompt exactly as it is today. Broker
+  down, socket missing, Twilio broken, call unanswered, wrong digit, timeout: all the same
+  outcome.
 - **The keypad decides, never the transcription.** `arm()` only offers the menu; `digit()`
   is the one thing in this file that can approve anything. A television in the background
   cannot press a key, and neither can a mis-heard "yeah, sure".
@@ -86,15 +87,15 @@ RESOLVING_EVENTS = frozenset({"PostToolUse", "PermissionDenied", "Stop", "Sessio
 PRECISE_EVENTS = frozenset({"PostToolUse", "PermissionDenied"})
 
 APPROVED_MESSAGE = (
-    "Approved by the user by phone: Keryx called them, they gave the PIN and confirmed on the "
-    "keypad. This approval covers this one tool call and nothing else."
+    "Approved by the user by phone: Keryx called them and they confirmed on the keypad. This "
+    "approval covers this one tool call and nothing else."
 )
 REJECTED_MESSAGE = (
-    "Rejected by the user by phone (Keryx, PIN-verified keypad confirmation). Do not retry "
-    "it; ask them for another approach."
+    "Rejected by the user by phone (Keryx, keypad confirmation). Do not retry it; ask them "
+    "for another approach."
 )
 ANSWERED_MESSAGE = (
-    "Answered by the user over the phone (Keryx, PIN-verified keypad confirmation): {answer}."
+    "Answered by the user over the phone (Keryx, keypad confirmation): {answer}."
 )
 
 #: Read to them at the top of the escalation call. It has to carry the whole protocol: the
@@ -104,9 +105,9 @@ CALL_CONTEXT = (
     "their screen and has not had one. That is the only reason for this call.\n\n"
     "{requests}\n\n"
     "Greet them in a few words, say Claude is waiting on them, and read the request back once, "
-    "as it is written above — do not paraphrase it and do not embellish it. They have to give the "
-    "PIN before you can answer anything for them. Then call answer_approval with the request "
-    "number: it hands you back a keypad menu, which you read out. They decide with the keypad "
+    "as it is written above — do not paraphrase it and do not embellish it. Do not ask for the "
+    "PIN: this call needs none to answer it. Call answer_approval with the request number: it "
+    "hands you back a keypad menu, which you read out. They decide with the keypad "
     "and only with the keypad — if they say yes out loud, thank them and still ask them to press "
     "the digit. Never guess which option they mean, never press one on their behalf, and if they "
     "would rather leave it, say so and end the call: it stays on their screen either way."

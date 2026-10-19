@@ -81,6 +81,8 @@ PROTECTED_PATTERNS = (
 
 #: Service-writable limits whose 0 means "no limit": the service may change them, not lift them.
 NEVER_OFF = frozenset({"SUBAGENT_TIMEOUT_S", "MAX_CALL_SECONDS", "LOCAL_SILENCE_TIMEOUT"})
+#: How far above its default the service may raise one of those: further is "off" by size.
+NEVER_OFF_CEILING = 10
 
 
 def current_actor() -> str:
@@ -139,7 +141,8 @@ def refusal(
     outside that set is one `keryx serve` refuses to start with. And it may tune a limit
     in `NEVER_OFF` but never switch it off: 0 is "no limit" for each, which is a spending
     decision (an unbounded subagent, an unbounded realtime call), and spending is the
-    owner's.
+    owner's. Nor raise one past `NEVER_OFF_CEILING` times its default, which is the same
+    decision spelled with a large number.
     """
     if key in NOT_STORED:
         return (
@@ -153,6 +156,13 @@ def refusal(
         return f"the running service may not change {key}: {why}"
     if key in NEVER_OFF and value is not None and not value:
         return f"the running service may not switch {key} off (0 means no limit)"
+    if key in NEVER_OFF and value is not None and value > (
+        ceiling := NEVER_OFF_CEILING * Settings.model_fields[field_for(key)].default
+    ):
+        return (
+            f"the running service may not raise {key} above {ceiling:g} "
+            f"(ten times its default), which would be no limit in all but name"
+        )
     if key == "AGENT_BACKEND" and settings is not None and value not in settings.enabled_agents:
         enabled = ", ".join(settings.enabled_agents)
         return f"AGENT_BACKEND may only be switched among the enabled agents ({enabled})"

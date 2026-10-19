@@ -6,6 +6,54 @@ settings: a removed or renamed setting or command is a major bump.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-18
+
+Fixes from an audit of 0.1.0. Nothing to change on your side: no setting or command was
+renamed or removed.
+
+### Security
+
+- **Typing your PIN on an approval call can no longer approve anything.** When Keryx called
+  about a Claude Code prompt, a digit of your PIN typed after the keypad menu opened went to
+  the menu, so the PIN's first "1" could approve the request. Digits now reach the menu only
+  when no PIN entry is in progress, and the call no longer asks for the PIN first.
+- **A line break in speech can no longer mark a call as authorized.** Transcript lines are
+  written on one line, so nobody can make the assistant say the marker that `recall` reads.
+- **Hook-framework files are no longer approvable by phone.** A write to
+  `.pre-commit-config.yaml`, `.husky/` or any lefthook configuration is refused, as `.git`
+  already was: the `git commit` a keypad may approve next would run what is in them.
+- **The service can no longer re-enable approval calls or delete transcripts.**
+  `keryx approvals --enable` and `keryx forget` now refuse when a subagent runs them.
+  Anyone can still switch approvals off.
+- **A PIN said in pairs is now redacted from transcripts.** "Forty-two forty-two
+  forty-two" is replaced with `[PIN]` like single digits are. The transcript is also redacted
+  again before the memory update reads it, which covers the lines spoken before a first PIN
+  was set.
+
+### Fixed
+
+- **A follow-up's result is read out again.** A task re-run by `send_followup` is now owed
+  a call-back and a place in the next call's digest, instead of keeping the old "told"
+  stamp. Only a finished task can be marked as told.
+- **A restart that waits too long now fails visibly.** It used to give up after 40 minutes
+  and clear its record, so `keryx restart --status` read as if nothing had happened and the
+  call-back never came. It now records the failure and tells you.
+- **A crash no longer leaves a task "running" for ever.** At startup, Keryx marks any task
+  that was still running when it stopped as failed ("Keryx stopped while this was
+  running"), so it stops blocking restarts and follow-ups. You hear about it in your next
+  call.
+- **A database upgrade that is interrupted no longer stops Keryx from starting.** The
+  `tasks.db` upgrade now runs in one transaction.
+- **Two memory updates no longer overwrite each other.** When two calls end close
+  together, the second update now waits for the first, so neither call drops out of the
+  memory.
+- **Anthropic spend for a workspace now counts only that workspace.** `check_billing` used
+  to read the whole organization's spend and report it as the workspace's, against the
+  workspace's budget.
+- **The service can no longer lift a limit by setting it very high.** A limit it may tune,
+  such as `SUBAGENT_TIMEOUT_S`, is now refused above ten times its default. You can still
+  set any value yourself.
+
 ## [0.1.0] - 2026-09-30
 
 The first public release. You call a phone number and talk to your voice assistant, Lyra
@@ -56,5 +104,6 @@ calls, and calls you when there's news.
 - **Linux and macOS.** Keryx runs as a systemd or launchd service, keeps its files in the
   standard XDG directories, and stores secrets in files only you can read.
 
-[Unreleased]: https://github.com/wak31415/keryx/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/wak31415/keryx/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/wak31415/keryx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wak31415/keryx/releases/tag/v0.1.0

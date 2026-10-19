@@ -292,6 +292,7 @@ async def test_the_call_carries_the_request_and_the_menu(broker, twilio, tmp_pat
     assert "git push" in context
     assert "press 1 for approve" in context
     assert "keypad" in context
+    assert "give the PIN" not in context  # the call needs none, and asking first starts a PIN
     info = next(iter(token.values())).info
     assert confers_possession(info, "+15557000000") is True
 
@@ -607,6 +608,7 @@ async def test_one_on_the_keypad_approves(broker, tmp_path, hooks):
     answer = await hook.reply()
     assert answer["decision"]["behavior"] == "allow"
     assert "keypad" in answer["decision"]["message"]
+    assert "PIN" not in answer["decision"]["message"]  # the call that approved never needed it
 
 
 async def test_two_on_the_keypad_rejects(broker, tmp_path, hooks):
