@@ -13,6 +13,11 @@ keep them short: the owner's `hook/*` events, all but two `item/agentMessage/del
 but one `turn/diff/updated`, and all but two retrying `error`s. Every field name and nesting
 is as recorded.
 
+Not re-recorded for 0.158.0: its generated types (`openai_codex/generated/v2_all.py`, the
+only file that changed) differ from 0.157.1's only in two new enum values
+(`CodexErrorInfoValue.flexUnavailable`, `PlanType.promax`) and the removal of the plugin
+extension models, none of which the adapter reads.
+
 - `codex_app_run.jsonl` — a turn that runs a command, writes a file, calls a tool on a
   stand-in MCP server, and ends with `RESTART_REQUIRED:` and `SPOKEN_SUMMARY:`.
 - `codex_app_failed.jsonl` — a refused credential: retrying `error`s (`willRetry: true`,

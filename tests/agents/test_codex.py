@@ -810,7 +810,7 @@ def test_the_codex_cli_is_the_one_the_sdk_bundles(monkeypatch):
     import codex_cli_bin
 
     assert codex_cli() == str(codex_cli_bin.bundled_codex_path())
-    assert codex_cli_version() == "codex-cli 0.157.1"
+    assert codex_cli_version() == "codex-cli 0.158.0"
 
     def missing():
         raise FileNotFoundError("no binary")
