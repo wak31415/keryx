@@ -122,8 +122,9 @@ remember:
   reaches installed copies. The wizard's section is `setup/plugins.py`; `keryx plugins`
   is the command line.
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
-  The `can_text` gate is asserted there and nowhere else. Slack reaches the notifier (the
-  PIN-lockout alert) only through `plugins.slack.slack_route`, asked at alert time.
+  The `can_text` gate is asserted there and nowhere else. Slack reaches the notifiers (the
+  PIN-lockout alert, and every finished task's whole report) only through
+  `plugins.slack.slack_route`, asked at send time.
 - **integrations** — `integrations/` is one module per outside service (`billing`,
   `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is

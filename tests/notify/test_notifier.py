@@ -18,7 +18,7 @@ from fakes import FakeVoiceSession
 from keryx.config import Settings
 from keryx.events import EventBus, TaskCompleted, TaskFailed
 from keryx.inline_waits import InlineWaits
-from keryx.notify.notifier import SMS_BODY_LIMIT, Notifier
+from keryx.notify.notifier import SLACK_PREAMBLE, SMS_BODY_LIMIT, Notifier
 from keryx.notify.reports import report_token
 from keryx.session import SessionRegistry
 from keryx.stream_tokens import StreamTokenStore, confers_possession
@@ -122,6 +122,21 @@ class Harness:
         return self.twilio.sms[0][1]
 
 
+class FakeSlack:
+    """A `SlackSender` that records what it posted; `on` is the plugin, `error` a failure."""
+
+    def __init__(self) -> None:
+        self.on = True
+        self.error: Exception | None = None
+        self.sent: list[str] = []
+
+    async def send(self, text: str) -> bool:
+        if self.error is not None:
+            raise self.error
+        self.sent.append(text)
+        return True
+
+
 class FakeRestarter:
     """A `RestartCoordinator` that records what it was asked for and answers as told."""
 
@@ -151,14 +166,24 @@ async def harnesses(tmp_path) -> Callable[..., Harness]:
         tokens = StreamTokenStore()
         inline_waits = InlineWaits()
         restarter = FakeRestarter()
+        slack = FakeSlack()
         notifier = Notifier(
-            bus, store, sessions, twilio, settings, tokens, inline_waits, restarter
+            bus,
+            store,
+            sessions,
+            twilio,
+            settings,
+            tokens,
+            inline_waits,
+            restarter,
+            slack=lambda: slack if slack.on else None,
         )
         notifier.start()
         harness = Harness(
             notifier, bus, store, sessions, twilio, tokens, settings, inline_waits
         )
         harness.restarter = restarter
+        harness.slack = slack
         made.append(harness)
         return harness
 
@@ -626,6 +651,7 @@ async def test_an_internal_task_is_never_announced_texted_or_called_about(harnes
     assert session.announced == []
     assert harness.twilio.sms == []
     assert harness.twilio.calls == []
+    assert harness.slack.sent == []
 
 
 async def test_an_internal_task_that_fails_is_just_as_quiet(harness):
@@ -637,6 +663,57 @@ async def test_an_internal_task_that_fails_is_just_as_quiet(harness):
     assert harness.twilio.sms == []
     row = await harness.row(task)
     assert row.announced is False and row.sms_sent is False
+
+
+# --- (3) the report on Slack ------------------------------------------------
+
+
+async def test_the_whole_report_goes_to_slack_even_when_they_heard_it(harness):
+    harness.session(channel="phone")
+    task = await harness.task(origin_channel="phone", origin_caller=CALLER)
+    report = harness.settings.data_dir / "tasks" / "1.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# Task 1\n\nlook something up\n\n---\n\nthe whole of it\n")
+
+    await harness.finished(task, "found it")
+
+    assert harness.slack.sent == [
+        f"Task {task.id} finished: found it\n\n# Task 1\n\nlook something up\n\n---\n\n"
+        "the whole of it"
+    ]
+
+
+async def test_a_report_that_cannot_be_read_still_posts_the_summary(harness):
+    task = await harness.task()
+
+    await harness.failed(task, "it broke")
+
+    assert harness.slack.sent == [f"Task {task.id} failed: it broke"]
+
+
+@pytest.mark.parametrize("slack_on", [True, False])
+async def test_the_call_back_points_at_the_report_and_says_where_it_went(harness, slack_on):
+    harness.slack.on = slack_on
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "found it")
+
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
+    assert f"get_task_result for task {task.id}" in context
+    assert (SLACK_PREAMBLE in context) is slack_on
+
+
+async def test_a_slack_failure_costs_nothing_else(harness):
+    harness.slack.error = RuntimeError("slack is down")
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "found it")
+
+    assert len(harness.twilio.sms) == 1
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
+    assert SLACK_PREAMBLE not in context
 
 
 # --- (4) a task that changed Keryx's own code ------------------------------

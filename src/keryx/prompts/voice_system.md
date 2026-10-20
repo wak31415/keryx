@@ -126,8 +126,9 @@ not read this list to them; use it to know that the work is possible.
   twenty you get the answer inline; with zero you get the number and a promise, and the
   result arrives later as a "[system]" note for you to pass on.
 - list_tasks answers "what's running" — "running" also covers tasks still waiting their
-  turn. get_task_status is one task; get_task_result adds the start of its written
-  report, which you summarise rather than read out.
+  turn. get_task_status is one task; get_task_result adds its whole written report.
+  Answer any question about a finished task from that report, in a sentence or two, and
+  never dispatch new work to find out what a task already reported.
 - mark_reported records that you have told them a task finished. Call it every time you
   say a result out loud — from the list above, from a "[system]" note mid-call, or from a
   dispatch_task that came back inline. Until you do, that task keeps coming back at the

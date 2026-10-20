@@ -10,7 +10,7 @@ if you want them, and anything else is [a tool of your own](#your-own-tools).
 | `dispatch_task` | hand the work to a coding agent and get back a task number; `agent` names Claude or Codex when both are ready ([agents](agents.md)) |
 | `list_tasks` | what is queued, running and recently finished |
 | `get_task_status` | how one task is getting on |
-| `get_task_result` | the spoken summary a finished task produced |
+| `get_task_result` | what a finished task found: its summary and its whole report, which follow-up questions are answered from |
 | `send_followup` | add something to a task already in flight |
 | `cancel_task` | stop one |
 | `mark_reported` | record that a result has now been *said out loud* — the only thing that stops it riding the next call's digest |
@@ -47,7 +47,7 @@ first time through.
 
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|
-| `send_to_slack` | send a written message to your Slack DM — only when you ask for one; PIN-lockout alerts go there too | yes | `SLACK_BOT_TOKEN`, or the MCP server's |
+| `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too | yes | `SLACK_BOT_TOKEN`, or the MCP server's |
 | `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search with the newest few read in full | yes | the read-only Gmail sign-in (`keryx auth login gmail`) and the `claude` extra |
 | `check_billing` | what the month has cost and where it is heading, from the provider's billing API | no | `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` |
 | `cluster_stats` | what is free on your Slurm clusters and whether your jobs are still running | no | none: it rides the ssh login you already have open |
@@ -105,8 +105,9 @@ connection nobody can answer hangs, and a storm of them can get an address banne
 an expired login, open the master again at your desk, for example with `ssh -fN mycluster`.
 If you already run a guard script of your own, name it as `guard` in `cluster_stats.toml`.
 
-Slack is opt-in in both directions: nothing goes to it unless you asked. When you do ask,
-the voice sends text with `send_to_slack` and subagents send files, plots and reports
+Slack is opt-in in both directions. With `send_to_slack` on, every finished task's whole
+report is posted to your DM when it lands, so a call can stay short. Nothing else goes to it
+unless you asked. When you do ask, the voice sends text with `send_to_slack` and subagents send files, plots and reports
 through the same Slack app, as the MCP server named by `mcp_server` in
 `send_to_slack.toml`. Unasked, a file stays in the written report — the assistant tells you it is
 there and offers to send it, rather than reading a path down the phone.

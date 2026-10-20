@@ -154,6 +154,7 @@ def build_app_state(settings: Settings) -> AppState:
         stream_tokens,
         inline_waits,
         restart,
+        slack=lambda: slack_sender(settings),
     )
     state.notifier.start()
     state.pin_guard = PinGuard.for_settings(settings)

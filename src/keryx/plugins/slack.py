@@ -5,9 +5,10 @@ writing — so it needs the PIN. Its settings are `send_to_slack.toml` (`channel
 `mcp_server`); the bot token is `SLACK_BOT_TOKEN` in `secrets.toml`, or the named MCP
 server's own `env` in `~/.claude.json` (`integrations.slack.slack_credentials`).
 
-Three things besides the tool want Slack, and each asks `slack_route(settings)` rather than
+Four things besides the tool want Slack, and each asks `slack_route(settings)` rather than
 reading a setting: the PIN-lockout alert (`notify.pin_alert`, at alert time, so turning
-Slack on needs no restart), the subagent's Slack paragraph (`agents.base`), and the MCP
+Slack on needs no restart), every finished task's report (`notify.notifier`, the same way),
+the subagent's Slack paragraph (`agents.base`), and the MCP
 server a Codex subagent is handed (`agents.codex`). With the plugin off there is no route,
 and none of them reaches Slack.
 """
@@ -74,9 +75,11 @@ def description(owner: str) -> str:
         "writing, that is exactly what to send, with this tool. If something truly will not "
         'survive being spoken — a long link, a list of ten things — offer it in half a '
         'sentence ("want that on Slack?") and call this only once they say yes. When it '
-        "comes back sent, say so in a few words, once. For anything a subagent produced "
-        "(a file, a plot, a report), dispatch the sending to Claude instead: it can attach "
-        "the file itself."
+        "comes back sent, say so in a few words, once. A finished task's whole report is "
+        "posted to Slack by itself when the task lands: when they ask for one, say it is "
+        "there already — never send it again, and never dispatch work to send it. For a "
+        "file or a plot a subagent made, dispatch the sending to Claude: it can attach the "
+        "file itself."
     )
 
 
