@@ -129,11 +129,13 @@ class FakeSlack:
         self.on = True
         self.error: Exception | None = None
         self.sent: list[str] = []
+        self.fallbacks: list[str | None] = []
 
-    async def send(self, text: str) -> bool:
+    async def send(self, text: str, *, fallback: str | None = None) -> bool:
         if self.error is not None:
             raise self.error
         self.sent.append(text)
+        self.fallbacks.append(fallback)
         return True
 
 
@@ -668,27 +670,62 @@ async def test_an_internal_task_that_fails_is_just_as_quiet(harness):
 # --- (3) the report on Slack ------------------------------------------------
 
 
-async def test_the_whole_report_goes_to_slack_even_when_they_heard_it(harness):
+#: A subagent's report in the shapes they come in, with the lines it addresses to Keryx.
+REPORT = (
+    "## What I found\n\n"
+    "Two **open** issues, both [on the tracker](https://example.com/issues).\n\n"
+    "| Issue | State |\n|---|---|\n| 1 | open |\n| 2 | open |\n\n"
+    "1. the first\n2. the second"
+)
+MARKERS = "\n\nRESTART_REQUIRED: loads the new tool\n\nSPOKEN_SUMMARY: Two issues are open.\n"
+
+
+async def test_slack_gets_the_report_alone_even_when_they_heard_it(harness):
+    """Not the request above it, nor the spoken summary that is the report again."""
     harness.session(channel="phone")
-    task = await harness.task(origin_channel="phone", origin_caller=CALLER)
+    task = await harness.task(
+        origin_channel="phone",
+        origin_caller=CALLER,
+        description="Follow the steps in /home/someone/steps.md\n\n---\n\nthen stop.",
+    )
     report = harness.settings.data_dir / "tasks" / "1.md"
     report.parent.mkdir(parents=True)
-    report.write_text("# Task 1\n\nlook something up\n\n---\n\nthe whole of it\n")
+    report.write_text(f"# Task 1\n\n{task.description}\n\n---\n\n{REPORT}{MARKERS}")
 
-    await harness.finished(task, "found it")
+    await harness.finished(task, "Two issues are open.")
+
+    assert harness.slack.sent == [f"**Task {task.id} finished**\n\n{REPORT}"]
+    assert harness.slack.fallbacks == [f"Task {task.id} finished"]
+
+
+async def test_with_no_report_to_read_the_summary_is_posted(harness):
+    task = await harness.task()
+
+    await harness.finished(task, "Two issues are open.")
+
+    assert harness.slack.sent == [f"**Task {task.id} finished**\n\nTwo issues are open."]
+
+
+async def test_a_failure_leads_with_its_error_above_what_the_run_wrote(harness):
+    task = await harness.task()
+    report = harness.settings.data_dir / "tasks" / "1.md"
+    report.parent.mkdir(parents=True)
+    report.write_text(f"# Task 1\n\n{task.description}\n\n---\n\nI'll start with the logs.")
+
+    await harness.failed(task, "it broke")
 
     assert harness.slack.sent == [
-        f"Task {task.id} finished: found it\n\n# Task 1\n\nlook something up\n\n---\n\n"
-        "the whole of it"
+        f"**Task {task.id} failed: it broke**\n\nI'll start with the logs."
     ]
+    assert harness.slack.fallbacks == [f"Task {task.id} failed: it broke"]
 
 
-async def test_a_report_that_cannot_be_read_still_posts_the_summary(harness):
+async def test_a_failure_with_nothing_written_is_its_error_alone(harness):
     task = await harness.task()
 
     await harness.failed(task, "it broke")
 
-    assert harness.slack.sent == [f"Task {task.id} failed: it broke"]
+    assert harness.slack.sent == [f"**Task {task.id} failed: it broke**"]
 
 
 @pytest.mark.parametrize("slack_on", [True, False])

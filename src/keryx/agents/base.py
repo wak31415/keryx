@@ -220,6 +220,18 @@ def extract_restart_request(text: str) -> str | None:
     return _truncate(_clean(match.group("why")), MAX_RESTART_REASON_CHARS)
 
 
+def written_report(text: str) -> str:
+    """The subagent's report for reading: its final text without the lines it addressed to Keryx.
+
+    Everything from the last `SPOKEN_SUMMARY:` on is what `extract_spoken_summary` reads out,
+    and a `RESTART_REQUIRED:` line is a request to the notifier; neither is part of the report.
+    """
+    markers = list(_MARKER_RE.finditer(text))
+    if markers:
+        text = text[: markers[-1].start()]
+    return _RESTART_RE.sub("", text).strip()
+
+
 def failure_summary(error: str | None) -> str:
     """A spoken line for a task that blew up before it could summarise itself."""
     detail = _clean(error or "")

@@ -58,7 +58,7 @@ def slack_route(settings: Settings) -> SlackRoute | None:
 
 
 def slack_sender(settings: Settings) -> SlackSender | None:
-    """What the PIN-lockout alert posts with: None while the plugin is off or has no token."""
+    """What the notifiers post with: None while the plugin is off or has no token."""
     route = slack_route(settings)
     return route.sender() if route is not None else None
 

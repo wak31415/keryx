@@ -1,6 +1,6 @@
 """Getting a finished task to the user, by whatever route is open.
 
-Three stages, in order, on every `TaskCompleted` / `TaskFailed`:
+Four stages, in order, on every `TaskCompleted` / `TaskFailed`:
 
 1. **Announce** it into every live session, so somebody already talking to Keryx simply
    hears the result — except the session holding the line for this very task inside
@@ -8,9 +8,9 @@ Three stages, in order, on every `TaskCompleted` / `TaskFailed`:
 2. **Text** it, unless it was already delivered: a live *phone* session announced it, or
    somebody was holding the line for it. Otherwise a local (wake-word) session hearing it
    does not count: they may well have walked away from the Mac.
-3. **Post** the whole report to their Slack DM, while the `send_to_slack` plugin is on —
-   whatever else reached them, because a call carries a sentence and they want the rest in
-   writing. The call-back then says it is there, and follow-ups are answered from it.
+3. **Post** the subagent's report to their Slack DM, while the `send_to_slack` plugin is
+   on — whatever else reached them, because a call carries a sentence and they want the
+   rest in writing. The call-back then says it is there, and follow-ups are answered from it.
 4. **Call back**, if they asked to be called and have not had it already. The call
    carries a fresh single-use stream token whose `extra` tells the new session why it
    opened, so Keryx leads with the result instead of "hello?".
@@ -33,6 +33,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from keryx.agents.base import written_report
 from keryx.config import Settings
 from keryx.continuity.transcripts import read_tail
 from keryx.events import EventBus, TaskCompleted, TaskFailed
@@ -49,6 +50,7 @@ from keryx.notify.reports import report_token
 from keryx.notify.twilio_out import TwilioOut, stream_twiml
 from keryx.session import SessionRegistry
 from keryx.stream_tokens import StreamTokenStore, outbound_extra
+from keryx.tasks.manager import report_header
 from keryx.tasks.models import Task
 from keryx.tasks.store import TaskStore
 from keryx.trust import TrustLevel
@@ -59,7 +61,6 @@ if TYPE_CHECKING:  # pragma: no cover - `restart` imports this module for its ow
 log = logging.getLogger("keryx.notify.notifier")
 
 SMS_BODY_LIMIT = 1200  # characters of summary; the report link is appended after it
-SLACK_TEXT_LIMIT = 40_000  # chat.postMessage's own limit on `text`
 
 DONE_TEXT = "Task {task_id} finished: {detail}"
 FAILED_TEXT = "Task {task_id} failed: {detail}"
@@ -178,7 +179,7 @@ class Notifier:
         )
         delivered = await self._announce(task, text)
         await self._send_sms(task, text, delivered=delivered)
-        posted = await self._post_report(task, text)
+        posted = await self._post_report(task, detail, failed=failed)
         if not failed and await self._arm_restart(task):
             # The restart's confirmation call is this task's call-back, and it is a better
             # one: it can say whether the change they asked for is actually running. Two
@@ -256,11 +257,14 @@ class Notifier:
 
     # --- (3) the report on Slack -------------------------------------------
 
-    async def _post_report(self, task: Task, text: str) -> bool:
-        """Post the summary line and the whole report to Slack; True once it is there.
+    async def _post_report(self, task: Task, detail: str, *, failed: bool) -> bool:
+        """Post the subagent's report to Slack under a line naming the task; True once there.
 
         Not skipped when the result was delivered by voice: a call carries a sentence of it.
-        A report that cannot be read still leaves the summary line worth posting.
+        Only the report goes: not the request above it, which they know and which can be an
+        instruction to Keryx, and not the spoken summary, which is the report again for the
+        ear — unless there is no report to read, when the summary is all there is. A failure's
+        line carries its error, since what a failed run last wrote is rarely the reason.
         """
         try:
             sender = self._slack() if self._slack is not None else None
@@ -269,13 +273,17 @@ class Notifier:
             report = ""
             if task.report_path:
                 try:
-                    report = await asyncio.to_thread(
+                    text = await asyncio.to_thread(
                         Path(task.report_path).read_text, encoding="utf-8"
                     )
+                    report = written_report(text.removeprefix(report_header(task)))
                 except OSError:
                     log.warning("could not read the report of task %s for Slack", task.id)
-            body = f"{text}\n\n{report.strip()}" if report.strip() else text
-            return await sender.send(body[:SLACK_TEXT_LIMIT])
+            if failed:
+                header, body = FAILED_TEXT.format(task_id=task.id, detail=detail), report
+            else:
+                header, body = f"Task {task.id} finished", report or detail
+            return await sender.send(f"**{header}**\n\n{body}".strip(), fallback=header)
         except Exception:
             log.exception("could not post the report of task %s to Slack", task.id)
             return False

@@ -15,6 +15,7 @@ from keryx.agents.base import (
     extract_restart_request,
     extract_spoken_summary,
     render_subagent_suffix,
+    written_report,
 )
 from keryx.issues import IssueReporting
 from keryx.skills import CUSTOM_TOOLS_SKILL
@@ -230,6 +231,19 @@ def test_merely_talking_about_a_restart_is_not_asking_for_one():
 
 def test_the_reason_is_trimmed_to_something_sayable():
     assert len(extract_restart_request("RESTART_REQUIRED: " + "x " * 400)) <= 120
+
+
+def test_the_written_report_leaves_out_the_lines_addressed_to_keryx():
+    text = (
+        "## Found\n\nTwo things.\n\n**RESTART_REQUIRED:** loads the tool\n\n"
+        "SPOKEN_SUMMARY: I found two things.\nAnd a second line of it."
+    )
+
+    assert written_report(text) == "## Found\n\nTwo things."
+
+
+def test_a_report_without_markers_is_the_whole_text():
+    assert written_report("  Just the report.\n") == "Just the report."
 
 
 def test_the_subagent_suffix_carries_the_task_number_for_the_commit_trailer(settings):

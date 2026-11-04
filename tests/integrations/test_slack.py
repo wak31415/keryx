@@ -2,7 +2,7 @@
 
 import json
 
-from keryx.integrations.slack import SlackWebApi, slack_credentials
+from keryx.integrations.slack import SlackWebApi, markdown_pieces, slack_credentials
 
 #: A made-up server name: which MCP server carries Slack is the owner's setting, never ours.
 SERVER = "team-slack"
@@ -99,9 +99,65 @@ async def test_send_posts_the_message_to_the_channel():
 
     sender = SlackWebApi("xoxb-test", "D0TEST", post=fake_post)
 
-    assert await sender.send("the tests pass") is True
-    assert posted[0]["payload"] == {"channel": "D0TEST", "text": "the tests pass"}
+    assert await sender.send("the **tests** pass") is True
+    assert posted[0]["payload"] == {
+        "channel": "D0TEST",
+        "text": "the **tests** pass",
+        "blocks": [{"type": "markdown", "text": "the **tests** pass"}],
+        "unfurl_links": False,
+        "unfurl_media": False,
+    }
     assert posted[0]["token"] == "xoxb-test"
+
+
+async def test_a_long_message_goes_as_several_with_the_same_notification_line():
+    posted: list[dict] = []
+
+    def fake_post(url: str, payload: dict, token: str) -> dict:
+        posted.append(payload)
+        return {"ok": True}
+
+    long = "\n\n".join(["x" * 7000, "y" * 7000])
+
+    assert await SlackWebApi("t", "D", post=fake_post).send(long, fallback="Task 3") is True
+    assert [p["blocks"][0]["text"] for p in posted] == ["x" * 7000, "y" * 7000]
+    assert {p["text"] for p in posted} == {"Task 3"}
+
+
+async def test_a_refused_piece_stops_the_rest():
+    posted: list[dict] = []
+
+    def refuse(url: str, payload: dict, token: str) -> dict:
+        posted.append(payload)
+        return {"ok": False, "error": "msg_blocks_too_long"}
+
+    long = "\n\n".join(["x" * 7000, "y" * 7000])
+
+    assert await SlackWebApi("t", "D", post=refuse).send(long) is False
+    assert len(posted) == 1
+
+
+def test_markdown_is_cut_between_sections_and_never_inside_a_list_or_table():
+    results = "## Results\n\n" + "\n".join(["| a | b |", "|---|---|"] + ["| 1 | 2 |"] * 40)
+    steps = "## Steps\n\n" + "\n".join(f"{n}. step {n}" for n in range(1, 30))
+
+    pieces = markdown_pieces(f"{results}\n\n{steps}", limit=len(results) + 10)
+
+    assert pieces == [results, steps]
+
+
+def test_markdown_is_not_cut_inside_a_code_block():
+    code = "```\nfirst\n\nsecond\n```"
+
+    assert markdown_pieces(f"intro\n\n{code}\n\nafter", limit=25) == [
+        "intro",
+        code,
+        "after",
+    ]
+
+
+def test_only_a_paragraph_longer_than_a_message_is_cut_mid_way():
+    assert markdown_pieces("z" * 25, limit=10) == ["z" * 10, "z" * 10, "z" * 5]
 
 
 async def test_slack_refusing_the_message_is_a_failure_not_a_crash():
