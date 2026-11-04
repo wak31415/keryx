@@ -151,7 +151,10 @@ caller says or does changes anything or outlasts the call.
   during a call is announced under the same rule as the briefing. Restart confirmations and
   approval escalations go only to a call that has given the PIN or that Keryx placed to your
   number. A call that has proved neither never counts as you having been told: the
-  call-back is still placed, and the approval still rings.
+  call-back is still placed, and the approval still rings. When that call is on the number
+  the call-back would ring, the call-back waits for it to end, and a PIN given on it after
+  the result was spoken counts then. A spoofed caller ID can delay a call-back this way,
+  but never absorb it.
 - **Nothing outlasts the call.** **Keryx does not update its memory from the call.** A call
   that heard the memory read out still cannot rewrite it. This is the invariant that matters
   most: hearing what Keryx believes about you is recoverable, and an edit to it is not. The

@@ -1173,7 +1173,11 @@ class VoiceSession:
 
 
 class SessionRegistry:
-    """The sessions that are currently live, for announcements."""
+    """The sessions on the line, for announcements and for the call-backs that wait on them.
+
+    A session joins once its provider connects and leaves in `_teardown`, so one that is
+    hanging up is still here; `live()` is the ones that can still speak.
+    """
 
     def __init__(self) -> None:
         self._sessions: list[VoiceSession] = []
@@ -1189,6 +1193,19 @@ class SessionRegistry:
     def live(self) -> list[VoiceSession]:
         """Registered sessions that can still speak, oldest first."""
         return [session for session in self._sessions if session.is_live]
+
+    def on_the_line(self, number: str | None) -> VoiceSession | None:
+        """The phone session `number` is on, live or still saying goodbye, if there is one.
+
+        Registered rather than live on purpose: a session hanging up still holds the line,
+        and it leaves the registry only in `_teardown`, just before it publishes
+        `SessionEnded` — so whoever finds a session here will hear that it ended.
+        """
+        if not number:
+            return None
+        return next(
+            (s for s in self._sessions if s.channel == "phone" and s.caller == number), None
+        )
 
 
 def _dispatch_agents(schemas: list[dict]) -> list[str]:

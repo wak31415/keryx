@@ -215,8 +215,10 @@ class FakeVoiceSession:
         accepts: bool = True,
         trust: TrustLevel = TrustLevel.FULL,
         error: Exception | None = None,
+        caller: str | None = None,
     ) -> None:
         self.channel = channel
+        self.caller = caller
         self.session_id = session_id
         self.is_live = is_live
         self.accepts = accepts

@@ -913,6 +913,19 @@ def test_session_registry_lists_only_live_sessions(make_session, phone, provider
     sessions.remove(session)  # removing twice is fine
 
 
+def test_session_registry_finds_the_phone_session_on_a_number(make_session, phone, provider):
+    """Live or not: a registered session holds the line until it ends (#100)."""
+    sessions = SessionRegistry()
+    mac = FakeTransport(channel="local", caller=phone.caller, audio_format="audio/pcm")
+    at_the_mac, on_the_phone = make_session(mac, provider), make_session(phone, provider)
+    sessions.add(at_the_mac)
+    sessions.add(on_the_phone)
+
+    assert sessions.on_the_line(phone.caller) is on_the_phone  # the Mac is not a line
+    assert sessions.on_the_line("+15550000000") is None
+    assert sessions.on_the_line(None) is None
+
+
 async def test_the_session_takes_its_turn_detection_from_settings(
     make_session, phone, provider, settings
 ):

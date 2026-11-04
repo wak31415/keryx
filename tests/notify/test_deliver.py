@@ -122,6 +122,22 @@ async def test_a_skipped_session_counts_as_having_heard_it():
     assert skipped.announced == []
 
 
+async def test_it_says_which_sessions_heard_it():
+    """A call-back waiting on a call asks whether that call heard it (#100)."""
+    skipped = FakeVoiceSession(session_id="holding")
+    stranger = FakeVoiceSession(channel="phone", trust=TrustLevel.NONE, session_id="stranger")
+    leaving = FakeVoiceSession(channel="phone", accepts=False, session_id="leaving")
+
+    result = await announce_to_live_sessions(
+        FakeSessions(skipped, stranger, leaving),
+        "hello",
+        needs=TrustLevel.NONE,
+        skip=lambda session: session is skipped,
+    )
+
+    assert result.heard_by == (skipped, stranger)
+
+
 async def test_announced_is_truthy_only_when_something_heard_it():
     assert not Announced()
     assert Announced(heard=True)
