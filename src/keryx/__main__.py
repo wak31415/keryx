@@ -1,9 +1,10 @@
-"""`python -m keryx` — how the restart watchdog is started.
+"""`python -m keryx` — the `keryx` command, run by this venv's own interpreter.
 
-`systemd-run` is handed a fixed argv and no shell, so the watchdog is started as
-`sys.executable -m keryx restart-watch`: the interpreter of the venv this process is
-already running in, with no dependence on PATH or on where the `keryx` console script
-happened to be installed. Every other entry point goes through that console script.
+That is how a subagent is handed the command (`agents/base.py`): no dependence on PATH or
+on where the console script happened to be installed. The restart watchdog is no longer
+started this way, because this imports the whole application and the watchdog must start
+when that will not (`python -m keryx.restart.watchdog`); a unit an older build armed still
+runs `-m keryx restart-watch`, which is why that command remains.
 """
 
 from keryx.cli import app

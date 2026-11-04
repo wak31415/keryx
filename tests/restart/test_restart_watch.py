@@ -6,6 +6,10 @@ Twilio is the same fake the rest of the restart tests use.
 """
 
 import asyncio
+import contextvars
+import os
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from xml.etree import ElementTree
@@ -23,6 +27,7 @@ from keryx.restart.watchdog import (
     MUTE,
     NOTHING,
     REPORTED,
+    main,
     watch,
 )
 
@@ -338,3 +343,79 @@ async def test_with_texting_off_the_alert_is_the_call(tmp_path):
     words = spoken(harness.twilio.calls[0]["twiml"])
     assert "by text" not in words  # it must not point them at a message they will never get
     assert "Check the machine" in words
+
+
+# --- the entry point a restart arms (#35) ---------------------------------------------
+
+#: Every Keryx module the watchdog may load. It has to start when the code it is watching
+#: will not, so each one here is something a broken self-edit can take down with it: add
+#: to this on purpose, never just to make the test below pass.
+WATCHDOG_MODULES = {
+    "keryx",
+    "keryx.config",
+    "keryx.config.files",
+    "keryx.config.pin",
+    "keryx.config.settings",
+    "keryx.logging_util",
+    "keryx.notify",
+    "keryx.notify.deliver",
+    "keryx.notify.twilio_out",
+    "keryx.persona",
+    "keryx.restart",
+    "keryx.restart.health",
+    "keryx.restart.logscan",
+    "keryx.restart.store",
+    "keryx.restart.watchdog",
+    "keryx.trust",
+}
+#: The application's own third-party weight, which the watchdog never needs either.
+APPLICATION_PACKAGES = {
+    "claude_agent_sdk", "fastapi", "openai", "openai_codex", "typer", "uvicorn", "websockets"
+}
+#: Run as the unit runs it, with everything outside the footprint failing to import the
+#: way a broken self-edit does: not an `ImportError`, which a guard could swallow.
+BROKEN_APPLICATION = """
+import runpy, sys
+
+class Broken:
+    def find_spec(self, name, path=None, target=None):
+        ours = name == "keryx" or name.startswith("keryx.")
+        if (ours and name not in {allowed!r}) or name.split(".")[0] in {packages!r}:
+            raise SyntaxError(f"{{name}} will not import")
+        return None
+
+sys.meta_path.insert(0, Broken())
+runpy.run_module("keryx.restart.watchdog", run_name="__main__", alter_sys=True)
+"""
+
+
+def test_the_watchdog_starts_when_the_application_will_not_import():
+    """The case it exists for: the restart is loading a change that breaks `keryx.cli`,
+    `keryx.session` or anything else outside the footprint, and the watchdog's own process
+    still has to start, read the record and answer."""
+    script = BROKEN_APPLICATION.format(allowed=WATCHDOG_MODULES, packages=APPLICATION_PACKAGES)
+
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == NOTHING
+
+
+def test_the_entry_point_needs_neither_the_openai_key_nor_a_pin(tmp_path, monkeypatch, capsys):
+    """A service that will not start for want of either is one that never came back, and
+    the watchdog reads neither. Nor does a configuration file that does not parse stop
+    it: the record and the Twilio credentials are elsewhere."""
+    state = tmp_path / "state"
+    monkeypatch.setenv("STATE_DIR", str(state))
+    monkeypatch.setenv("KERYX_PIN", "12")  # not a PIN `keryx serve` would start with
+    home = Path(os.environ["KERYX_HOME"])
+    home.mkdir(parents=True)
+    (home / "config.toml").write_text("this is [not toml\n", encoding="utf-8")
+    state.mkdir()
+    RestartStore(state / RECORD_NAME).save(pending(state="failed"))
+
+    contextvars.copy_context().run(main)  # its file tolerance must not outlive the test
+
+    assert capsys.readouterr().out.strip() == REPORTED

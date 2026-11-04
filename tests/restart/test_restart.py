@@ -1320,7 +1320,7 @@ def test_the_watchdog_runs_this_interpreter_not_whatever_is_on_path(tmp_path):
     )
 
     assert plan is not None
-    assert plan.argv[-4:] == [sys.executable, "-m", "keryx", "restart-watch"]
+    assert plan.argv[-3:] == [sys.executable, "-m", "keryx.restart.watchdog"]
 
 
 def test_the_watchdogs_own_output_goes_somewhere_a_person_can_find(tmp_path):
@@ -1378,7 +1378,7 @@ def test_launchd_needs_no_help_escaping(tmp_path):
     plan = watch_command(make_settings(tmp_path), ServiceTarget("launchd", LAUNCHD_LABEL))
 
     assert plan is not None
-    assert plan.argv == [sys.executable, "-m", "keryx", "restart-watch"]
+    assert plan.argv == [sys.executable, "-m", "keryx.restart.watchdog"]
     assert plan.redirect  # nobody else will point its output anywhere
 
 
