@@ -137,6 +137,23 @@ async def test_a_refused_piece_stops_the_rest():
     assert len(posted) == 1
 
 
+async def test_a_refused_markdown_block_is_posted_again_as_plain_text():
+    """A workspace that refuses the block still gets the report, unrendered."""
+    posted: list[dict] = []
+
+    def no_blocks(url: str, payload: dict, token: str) -> dict:
+        posted.append(payload)
+        return {"ok": "blocks" not in payload, "error": "invalid_blocks"}
+
+    assert await SlackWebApi("t", "D", post=no_blocks).send("the **report**", fallback="Task 3")
+    assert posted[1] == {
+        "channel": "D",
+        "text": "the **report**",
+        "unfurl_links": False,
+        "unfurl_media": False,
+    }
+
+
 def test_markdown_is_cut_between_sections_and_never_inside_a_list_or_table():
     results = "## Results\n\n" + "\n".join(["| a | b |", "|---|---|"] + ["| 1 | 2 |"] * 40)
     steps = "## Steps\n\n" + "\n".join(f"{n}. step {n}" for n in range(1, 30))

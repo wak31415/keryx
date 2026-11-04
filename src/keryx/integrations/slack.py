@@ -131,17 +131,26 @@ class SlackWebApi:
 
     async def send(self, text: str, *, fallback: str | None = None) -> bool:
         for piece in markdown_pieces(text):
-            payload = {
+            plain = {
                 "channel": self._channel,
-                "text": fallback or piece,
-                "blocks": [{"type": "markdown", "text": piece}],
+                "text": piece,
                 "unfurl_links": False,
                 "unfurl_media": False,
+            }
+            payload = {
+                **plain,
+                "text": fallback or piece,
+                "blocks": [{"type": "markdown", "text": piece}],
             }
             try:
                 result = await asyncio.to_thread(
                     self._post, POST_MESSAGE_URL, payload, self._token
                 )
+                if str(result.get("error", "")).startswith("invalid_blocks"):
+                    # Slack pitches the markdown block at AI apps; one refused it still gets text.
+                    result = await asyncio.to_thread(
+                        self._post, POST_MESSAGE_URL, plain, self._token
+                    )
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
                 log.warning("could not post to Slack: %s", exc)
                 return False
