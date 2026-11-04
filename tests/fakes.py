@@ -62,7 +62,7 @@ class FakeProvider:
         self.tool_results: list[tuple[str, dict | str]] = []
         #: Whether each tool result asked for a spoken turn, in the same order.
         self.tool_responses: list[bool] = []
-        self.injected: list[tuple[str, bool, str | None]] = []
+        self.injected: list[tuple[str, bool]] = []
         self.truncations: list[tuple[str, int]] = []
         #: Every `update_instructions` call, in order; `config` stays what `connect` got.
         self.instruction_updates: list[str] = []
@@ -108,11 +108,9 @@ class FakeProvider:
         self.tool_results.append((call_id, output))
         self.tool_responses.append(respond)
 
-    async def inject_message(
-        self, text: str, *, respond: bool = True, response_instructions: str | None = None
-    ) -> None:
+    async def inject_message(self, text: str, *, respond: bool = True) -> None:
         self._guard()
-        self.injected.append((text, respond, response_instructions))
+        self.injected.append((text, respond))
 
     async def update_instructions(self, instructions: str) -> None:
         self._guard()

@@ -117,7 +117,7 @@ async def speak_a_goodbye(provider: FakeProvider, session: VoiceSession) -> None
 
 
 def texts(provider: FakeProvider) -> list[str]:
-    return [text for text, _respond, _instructions in provider.injected]
+    return [text for text, _respond in provider.injected]
 
 
 def assert_nothing_spoken_had_digits(provider: FakeProvider) -> None:

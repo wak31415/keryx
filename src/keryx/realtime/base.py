@@ -152,14 +152,13 @@ class RealtimeProvider(Protocol):
         """
         ...
 
-    async def inject_message(
-        self,
-        text: str,
-        *,
-        respond: bool = True,
-        response_instructions: str | None = None,
-    ) -> None:
-        """Insert a system message (e.g. a task announcement) and optionally speak it."""
+    async def inject_message(self, text: str, *, respond: bool = True) -> None:
+        """Insert a system message (e.g. a task announcement) and optionally speak it.
+
+        Never with a response's own `instructions`: those replace the session's for that
+        turn, so the turn speaking the message would have no voice prompt at all (#82).
+        Whatever the message needs said goes in the message.
+        """
         ...
 
     async def truncate(self, item_id: str, audio_end_ms: int) -> None:

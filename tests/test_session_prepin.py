@@ -61,10 +61,8 @@ class OrderedProvider(FakeProvider):
         await super().update_instructions(instructions)
         self.order.append(("instructions", instructions))
 
-    async def inject_message(self, text, *, respond=True, response_instructions=None) -> None:
-        await super().inject_message(
-            text, respond=respond, response_instructions=response_instructions
-        )
+    async def inject_message(self, text, *, respond=True) -> None:
+        await super().inject_message(text, respond=respond)
         self.order.append(("message", (text, respond)))
 
     async def submit_tool_result(self, call_id, output, *, respond=True) -> None:
@@ -279,7 +277,7 @@ async def test_a_keyed_pin_delivers_it_ahead_of_the_accepted_note(make_session, 
         await eventually(lambda: provider.injected != [])
         for digit in PIN:
             phone.feed(Dtmf(digit))
-        await eventually(lambda: (PIN_ACCEPTED_MESSAGE, True, None) in provider.injected)
+        await eventually(lambda: (PIN_ACCEPTED_MESSAGE, True) in provider.injected)
 
     sent = [value for kind, value in provider.order if kind != "tool_result"][1:]
     assert private(sent[0])
