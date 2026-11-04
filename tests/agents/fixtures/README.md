@@ -18,6 +18,13 @@ only file that changed) differ from 0.157.1's only in two new enum values
 (`CodexErrorInfoValue.flexUnavailable`, `PlanType.promax`) and the removal of the plugin
 extension models, none of which the adapter reads.
 
+Not re-recorded for 0.163.0 either. Its generated types add notifications
+(`thread/prediction/updated`, `thread/readState/changed`) and enum values (among them
+`CodexErrorInfoValue.tooManyDenials`) that the adapter does not read, plus
+`MessagePhase.partial_answer`. The adapter takes the final answer only from `final_answer`,
+and `agents/session.py` falls back to the last message's text when none arrives, so a turn
+that ends on a partial answer still keeps its text.
+
 - `codex_app_run.jsonl` — a turn that runs a command, writes a file, calls a tool on a
   stand-in MCP server, and ends with `RESTART_REQUIRED:` and `SPOKEN_SUMMARY:`.
 - `codex_app_failed.jsonl` — a refused credential: retrying `error`s (`willRetry: true`,
