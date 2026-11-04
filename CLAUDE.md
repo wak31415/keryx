@@ -316,8 +316,10 @@ Keryx knows at the top of a call is assembled every time by
   thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
   A result announced mid-call asks for the stamp in its own `[system]` note
   (`VoiceSession.announce`), never in a response's `instructions`, which replace the whole
-  voice prompt for that turn (#82). Do not stamp it from a delivery path — hearing
-  something twice is recoverable, never hearing it is not.
+  voice prompt for that turn (#82). One announced before the PIN cannot be stamped then;
+  the PIN asks for it, and keeps it out of the after-PIN nudge (`_brief_after_pin`). Do not
+  stamp it from a delivery path — hearing something twice is recoverable, never hearing it
+  is not.
 - **The memory.** `keryx/continuity/memory.py` owns `data_dir/memory.md` outright — the
   file API *and* the writer. It subscribes to `SessionEnded` and, for an authorized call only,
   dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file —

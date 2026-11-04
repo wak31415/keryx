@@ -96,6 +96,14 @@ ANNOUNCE_REPORT_INSTRUCTIONS = (
     "In the same turn, call mark_reported with task_ids [{task_id}]; that call is what "
     "records they heard it, and saying so does not, so never tell them you have."
 )
+#: Handed over with the PIN when this call heard a result before it and so could not stamp
+#: it then. Without it the result was in the digest the PIN let in, as news, and they were
+#: told it a second time straight after giving the PIN.
+HEARD_BEFORE_PIN_MESSAGE = (
+    "[system] They already heard {tasks} on this call, before the PIN: do not tell them "
+    "again. Call mark_reported with task_ids [{ids}] in your next turn, along with whatever "
+    "else you do, and say nothing about it."
+)
 
 # What the model is told about a PIN typed on the keypad. Never the digits themselves.
 PIN_LOCKOUT_MESSAGE = (
@@ -268,6 +276,8 @@ class VoiceSession:
         #: (a call-back, a restart's confirmation). Set only from a token Keryx minted, and
         #: the one task `mark_reported` may stamp before the PIN: the call opened by saying it.
         self.opening_task_id = opening_task_id
+        #: Results this call was told before it could stamp them; the PIN asks for those.
+        self._heard_before_pin: set[int] = set()
 
         self._state = SessionState.NEW
         self._finish_now = asyncio.Event()
@@ -453,9 +463,13 @@ class VoiceSession:
             return False
         log.info("session %s announcing: %s", self.session_id, text)
         note = f"[system] {text}\n{ANNOUNCE_INSTRUCTIONS}"
-        if task_id is not None and self.trust >= TrustLevel.POSSESSION:
+        may_stamp = self.trust >= TrustLevel.POSSESSION
+        if task_id is not None and may_stamp:
             note += " " + ANNOUNCE_REPORT_INSTRUCTIONS.format(task_id=task_id)
-        return await self._safe_call(self._provider.inject_message, note, respond=True)
+        spoken = await self._safe_call(self._provider.inject_message, note, respond=True)
+        if spoken and task_id is not None and not may_stamp:
+            self._heard_before_pin.add(task_id)
+        return spoken
 
     def request_end(self, reason: str = "user") -> None:
         """Ask for the session to end once the response that is speaking has finished."""
@@ -603,6 +617,9 @@ class VoiceSession:
         No nudge when the call already had its digest (`BRIEFING_BEFORE_PIN`, or a call
         Keryx placed). It was spoken at the greeting; nudging again is Keryx telling them
         the same news twice, which is the one thing the wording everywhere else forbids.
+        For the same reason a result announced into this call before the PIN is not news
+        either: it is left out of the nudge, and the stamp it could not have then is asked
+        for instead (`HEARD_BEFORE_PIN_MESSAGE`).
         """
         if self._state is not SessionState.RUNNING:
             return
@@ -611,9 +628,15 @@ class VoiceSession:
         await self._safe_call(
             self._provider.update_instructions, self._build_config().instructions
         )
-        nudge = "" if already_told else self._briefing.after_pin_nudge()
+        heard = sorted(self._heard_before_pin)
+        nudge = "" if already_told else self._briefing.after_pin_nudge(heard)
         if nudge:
             await self._safe_call(self._provider.inject_message, nudge, respond=False)
+        if heard:
+            ids = ", ".join(map(str, heard))
+            tasks = f"{'task' if len(heard) == 1 else 'tasks'} {ids}"
+            note = HEARD_BEFORE_PIN_MESSAGE.format(tasks=tasks, ids=ids)
+            await self._safe_call(self._provider.inject_message, note, respond=False)
 
     def _opening_message(self) -> str:
         """The message that opens the session, plus the nudge about anything unreported.

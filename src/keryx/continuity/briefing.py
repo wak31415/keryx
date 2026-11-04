@@ -44,6 +44,7 @@ empty parts, which renders as a prompt with those sections left out entirely.
 
 import asyncio
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
@@ -126,17 +127,24 @@ class Briefing:
         name that task: then the digest is full, and every task it names is another.
         """
         if opening_task_id is None:
-            return OPENING_NUDGE.format(count=self._count()) if self.pending_count else ""
+            count = self.pending_count
+            return OPENING_NUDGE.format(count=_count(count)) if count else ""
         others = self.pending_count - (opening_task_id in self.task_ids)
         return OTHERS_NUDGE if others > 0 else ""
 
-    def after_pin_nudge(self) -> str:
-        """The note to hand a phone call once the PIN has let its briefing in, if any."""
-        return AFTER_PIN_NUDGE.format(count=self._count()) if self.pending_count else ""
+    def after_pin_nudge(self, heard: Collection[int] = ()) -> str:
+        """The note to hand a phone call once the PIN has let its briefing in, if any.
 
-    def _count(self) -> str:
-        noun = "task" if self.pending_count == 1 else "tasks"
-        return f"{self.pending_count} {noun}"
+        `heard` is what the call was told before the PIN, which is not news to it. Only the
+        tasks the digest names are taken off, so a full digest may count one too many,
+        never one too few.
+        """
+        count = self.pending_count - len(set(heard) & set(self.task_ids))
+        return AFTER_PIN_NUDGE.format(count=_count(count)) if count > 0 else ""
+
+
+def _count(count: int) -> str:
+    return f"{count} {'task' if count == 1 else 'tasks'}"
 
 
 def _shorten(text: str, limit: int) -> str:
