@@ -63,12 +63,12 @@ make_dirs "$UNITS"
 for name in "${SERVICES[@]}"; do
   render "$TEMPLATES/$name.service" "$UNITS/$name.service" \
     "UV=$UV" "CLOUDFLARED=$CLOUDFLARED" "TUNNEL=$TUNNEL" "PORT=$PORT" \
-    "PATH=$(systemd_quoted "$PATH")" "LOGS=$(systemd_path "$LOGS")" \
-    "KERYX_HOME=$(systemd_quoted "$KERYX_HOME_DIR")" \
-    "XDG_CONFIG_HOME=$(systemd_quoted "$RESOLVED_XDG_CONFIG_HOME")" \
-    "XDG_DATA_HOME=$(systemd_quoted "$RESOLVED_XDG_DATA_HOME")" \
-    "XDG_STATE_HOME=$(systemd_quoted "$RESOLVED_XDG_STATE_HOME")" \
-    "XDG_CACHE_HOME=$(systemd_quoted "$RESOLVED_XDG_CACHE_HOME")"
+    "PATH=$PATH" "LOGS=$LOGS" \
+    "KERYX_HOME=$KERYX_HOME_DIR" \
+    "XDG_CONFIG_HOME=$RESOLVED_XDG_CONFIG_HOME" \
+    "XDG_DATA_HOME=$RESOLVED_XDG_DATA_HOME" \
+    "XDG_STATE_HOME=$RESOLVED_XDG_STATE_HOME" \
+    "XDG_CACHE_HOME=$RESOLVED_XDG_CACHE_HOME"
 done
 systemctl --user daemon-reload
 for name in "${SERVICES[@]}"; do

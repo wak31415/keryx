@@ -50,12 +50,12 @@ for label in "${LABELS[@]}"; do
   plist="$AGENTS/$label.plist"
   render "$TEMPLATES/$label.plist" "$plist" \
     "UV=$UV" "NGROK=$NGROK" "PUBLIC_HOST=$PUBLIC_HOST" "PORT=$PORT" \
-    "PATH=$(xml_escape "$PATH")" "LOGS=$(xml_escape "$LOGS")" \
-    "KERYX_HOME=$(xml_escape "$KERYX_HOME_DIR")" \
-    "XDG_CONFIG_HOME=$(xml_escape "$RESOLVED_XDG_CONFIG_HOME")" \
-    "XDG_DATA_HOME=$(xml_escape "$RESOLVED_XDG_DATA_HOME")" \
-    "XDG_STATE_HOME=$(xml_escape "$RESOLVED_XDG_STATE_HOME")" \
-    "XDG_CACHE_HOME=$(xml_escape "$RESOLVED_XDG_CACHE_HOME")"
+    "PATH=$PATH" "LOGS=$LOGS" \
+    "KERYX_HOME=$KERYX_HOME_DIR" \
+    "XDG_CONFIG_HOME=$RESOLVED_XDG_CONFIG_HOME" \
+    "XDG_DATA_HOME=$RESOLVED_XDG_DATA_HOME" \
+    "XDG_STATE_HOME=$RESOLVED_XDG_STATE_HOME" \
+    "XDG_CACHE_HOME=$RESOLVED_XDG_CACHE_HOME"
   # A previous version may still be loaded; booting it out first makes this re-runnable.
   launchctl bootout "gui/$UID/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$UID" "$plist"

@@ -11,7 +11,7 @@ Description=Cloudflare tunnel for Keryx
 
 [Service]
 Type=simple
-ExecStart=__CLOUDFLARED__ tunnel --no-autoupdate --protocol http2 run --url http://localhost:__PORT__ __TUNNEL__
+ExecStart="__CLOUDFLARED__" tunnel --no-autoupdate --protocol http2 run --url "http://localhost:__PORT__" "__TUNNEL__"
 Environment="PATH=__PATH__"
 Restart=always
 RestartSec=5

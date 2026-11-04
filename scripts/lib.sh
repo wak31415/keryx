@@ -135,7 +135,7 @@ xml_escape() {
 
 systemd_path() {
   # systemd_path VALUE — a path for a unit-file setting that takes one unquoted (such as
-  # StandardOutput=append:…), where only `%`, the specifier character, means anything.
+  # WorkingDirectory= or StandardOutput=append:…), where only `%`, the specifier, means anything.
   printf '%s' "$1" | sed -e 's/%/%%/g'
 }
 
@@ -146,17 +146,35 @@ systemd_quoted() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/%/%%/g'
 }
 
+systemd_arg() {
+  # systemd_arg VALUE — VALUE for inside "…" as an argument on an Exec*= line, which also
+  # expands `$VAR` and `${VAR}`. Not the executable before it, which is never expanded.
+  systemd_quoted "$1" | sed -e 's/\$/$$/g'
+}
+
 render() {
   # render TEMPLATE DEST [KEY=VALUE ...] — fill the template's __KEY__ placeholders.
-  # __REPO__ and __HOME__ are always substituted; every template uses both. Values go in
-  # literally, whatever they hold (a PATH can hold `|` and `&`); escaping them for the
-  # file's own syntax is the caller's business, because it differs by where they land.
+  # __REPO__ and __HOME__ are always substituted. Values are passed raw, whatever they hold,
+  # and escaped here for where they land, which the template's kind says: in a .plist,
+  # character data; in a .service, the inside of "…" on an Exec*= or Environment= line (the
+  # template writes the quotes) and a bare path on any other, such as WorkingDirectory=,
+  # which takes no quotes. Any other template gets them literally.
   local template="$1" dest="$2"
   shift 2
   local -a args=()
-  local pair
+  local pair key value
   for pair in "REPO=$REPO" "HOME=$HOME" "$@"; do
-    args+=(-e "s|__${pair%%=*}__|$(sed_literal "${pair#*=}")|g")
+    key="__${pair%%=*}__"
+    value="${pair#*=}"
+    case "$template" in
+      *.service)
+        args+=(-e "s|^\(Exec[A-Za-z]*=\"\)$key\"|\1$(sed_literal "$(systemd_quoted "$value")")\"|"
+               -e "/^Exec/s|$key|$(sed_literal "$(systemd_arg "$value")")|g"
+               -e "/^Environment=/s|$key|$(sed_literal "$(systemd_quoted "$value")")|g"
+               -e "s|$key|$(sed_literal "$(systemd_path "$value")")|g") ;;
+      *.plist) args+=(-e "s|$key|$(sed_literal "$(xml_escape "$value")")|g") ;;
+      *) args+=(-e "s|$key|$(sed_literal "$value")|g") ;;
+    esac
   done
   sed "${args[@]}" "$template" > "$dest"
 }
