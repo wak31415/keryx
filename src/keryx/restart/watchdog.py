@@ -24,6 +24,11 @@ its own media stream, and the media stream is served by the process that is not 
 Nothing here raises. It is the last thing standing on a machine where something has
 already gone wrong, and its own failure must land in a log rather than in a traceback
 nobody is left to catch.
+
+It is started as `python -m keryx.restart.watchdog` (`main`), never through `keryx.cli`:
+the change being loaded is a change to the application, and one that will not import
+must not take its own watchdog down with it. So this module imports its settings and the
+leaves below and nothing else, and `tests/restart/test_restart_watch.py` pins that list.
 """
 
 import asyncio
@@ -32,8 +37,9 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from keryx.config import Settings
-from keryx.logging_util import mask_number
+from keryx.config import PLACEHOLDER_KEY, Settings, load_settings
+from keryx.config.settings import tolerate_broken_files
+from keryx.logging_util import LOG_FORMAT, mask_number
 from keryx.notify.deliver import safe_send_sms
 from keryx.notify.twilio_out import TwilioOut, say_twiml
 from keryx.restart.health import health_probe
@@ -52,7 +58,7 @@ POLL_S = 3.0
 #: A text is one message, not three.
 MAX_SMS_CHARS = 900
 
-#: What happened, in one word — returned by `watch()` and printed by `keryx restart-watch`.
+#: What happened, in one word — returned by `watch()` and printed by `main()`.
 NOTHING = "nothing"  # there was no pending restart to watch
 CONFIRMED = "confirmed"  # Keryx came back and delivered the confirmation itself
 REPORTED = "reported"  # Keryx came back, knows it failed, and has already said so
@@ -74,6 +80,20 @@ DOWN_SPOKEN = "Keryx did not come back after the restart, and nothing is answeri
 STUCK_SPOKEN = "Keryx restarted but never confirmed it."
 SPOKEN_ALERT = "This is a Keryx alert. {headline} I have sent you the details by text."
 SPOKEN_ALERT_ONLY = "This is a Keryx alert. {headline} Check the machine when you can."
+
+
+def main() -> None:
+    """What the transient unit runs: load the settings, watch, print the outcome word.
+
+    Neither the OpenAI key nor the PIN is read here, so neither may stop it, and a
+    configuration file that does not parse is read past as `keryx doctor` reads past it:
+    a service that will not start for any of those is one more that never came back.
+    """
+    tolerate_broken_files.set(True)
+    settings = load_settings(openai_api_key=PLACEHOLDER_KEY, pin=None)
+    settings.ensure_dirs()
+    logging.basicConfig(level=settings.log_level.upper(), format=LOG_FORMAT)
+    print(asyncio.run(watch(settings)))
 
 
 async def watch(
@@ -215,3 +235,7 @@ async def _call(twilio: Any, settings: Settings, record: RestartRecord, spoken: 
         return False
     log.info("called %s about the restart that never landed", mask_number(to))
     return True
+
+
+if __name__ == "__main__":
+    main()

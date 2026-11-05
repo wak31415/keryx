@@ -298,7 +298,9 @@ def watch_command(
     on the record is better than starting something that will quietly die with us.
     """
     which = which or shutil.which  # late-bound, for the reason in `resolve_target`
-    inner = [sys.executable, "-m", "keryx", "restart-watch"]
+    # Not `-m keryx restart-watch`: that imports the application, which may be the very
+    # change that will not import (#35).
+    inner = [sys.executable, "-m", "keryx.restart.watchdog"]
     if target.manager != "systemd":
         return WatchPlan(inner, "detached", redirect=True)
     runner = which("systemd-run")

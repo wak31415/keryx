@@ -44,7 +44,7 @@ MAX_LINE_CHARS = 160
 MAX_SCAN_BYTES = 2_000_000
 
 _TRACEBACK_HEADER = "Traceback (most recent call last):"
-#: A log line at our own ERROR/CRITICAL level (`%(levelname)-7s` in `cli.LOG_FORMAT`).
+#: A log line at our own ERROR/CRITICAL level (`%(levelname)-7s` in `logging_util.LOG_FORMAT`).
 _LEVEL_RE = re.compile(r"\b(?:ERROR|CRITICAL)\b")
 #: The line that *ends* a traceback — `ModuleNotFoundError: No module named 'x'`. Anchored
 #: at column zero, which is what separates it from the indented frames above it.

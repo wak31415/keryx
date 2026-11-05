@@ -9,6 +9,6 @@ say what broke.
 
 Nothing is re-exported here; import from the modules themselves. A package whose members
 must be importable independently re-exports nothing, and this one's independence is
-load-bearing: `logscan`, `store` and `service` are leaves that `watchdog` needs when the
+load-bearing: `health`, `logscan` and `store` are leaves that `watchdog` needs when the
 application it is watching will not import.
 """

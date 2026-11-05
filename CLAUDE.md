@@ -471,11 +471,15 @@ The third half is `keryx/restart/watchdog.py`, and it exists because the first t
 *inside* Keryx. A restart is usually loading a change Keryx just made to its own code; a
 change that will not import means there is no new process, so nothing runs `resume()` and
 nobody is told anything — silence that reads exactly like success. So `_execute()` arms
-`keryx restart-watch` in a transient `systemd-run --user` unit *just before* handing over
-(a restart signals the whole cgroup; anything we merely fork dies with us), and it acts only
-on the case neither other half can see: a record still `pending` at the deadline. It alerts
-by text plus a plain `<Say>` call — never `<Connect><Stream>`, whose media stream is served
-by the process that is not running.
+`python -m keryx.restart.watchdog` in a transient `systemd-run --user` unit *just before*
+handing over (a restart signals the whole cgroup; anything we merely fork dies with us), and
+it acts only on the case neither other half can see: a record still `pending` at the
+deadline. It alerts by text plus a plain `<Say>` call — never `<Connect><Stream>`, whose
+media stream is served by the process that is not running. It is armed as a module, never
+through `keryx.cli`, because the change that will not import is a change to the application
+the CLI imports whole (#35): the watchdog loads its settings and a few leaves, and
+`WATCHDOG_MODULES` in `tests/restart/test_restart_watch.py` is that list — grow it only on
+purpose. `keryx restart-watch` stays, for a unit an older build armed.
 
 Two rulings that look like bugs if you do not know them. A **negative** exit code from the
 restart command is the restart working: `systemctl` is inside the cgroup it tears down, so it

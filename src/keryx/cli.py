@@ -49,7 +49,7 @@ from keryx.continuity.memory import memory_path, read_memory
 from keryx.continuity.retention import cutoff_for, prune, prune_with
 from keryx.doctor import fix_permissions, format_check, has_hard_failure, run_doctor_checks
 from keryx.events import EventBus
-from keryx.logging_util import mask_number
+from keryx.logging_util import LOG_FORMAT, mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
 from keryx.realtime.openai import OpenAIRealtimeClient
@@ -139,7 +139,6 @@ def main(
     """Keryx voice agent."""
 
 
-LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
 
@@ -537,10 +536,12 @@ def restart(
 
 @app.command("restart-watch", hidden=True)
 def restart_watch() -> None:
-    """Watch a pending restart from outside the service; started by the restart itself.
+    """Watch a pending restart from outside the service, as a unit an older build armed.
 
-    Not for hand use — `keryx restart` arms this, in a unit of its own so the restart
-    cannot kill it (see `keryx.restart.service.watch_command`). Deliberately without
+    Not for hand use. A restart now arms `python -m keryx.restart.watchdog` instead, which
+    does not import this module and so survives a change that breaks it (see
+    `keryx.restart.service.watch_command`); this stays for the restart that loads that
+    change, whose watchdog the build before it armed. Deliberately without
     `_add_file_logging`: its output belongs in `logs/restart-watch.log`, and writing its
     own "the restart never came back" into `keryx.log` would leave the next restart
     scanning that line back as a fault of Keryx's.

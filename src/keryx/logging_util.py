@@ -7,6 +7,9 @@ enough to tell two callers apart while reading a log. Everything that writes a n
 log or a terminal goes through here.
 """
 
+#: Every log line Keryx writes, the service's and the restart watchdog's alike.
+LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
+
 
 def mask_number(number: str | None) -> str:
     """A phone number as it may appear in a terminal or a log: last four digits only."""
