@@ -10,7 +10,9 @@ nothing reaches the machine's own service manager.
 
 The PATH the installer runs with carries a directory whose name holds the characters that
 break a naive render: `|` is `render`'s sed delimiter, `&` means "the whole match" to sed,
-`%` is a systemd specifier, and `&`/`<` are markup in a plist.
+`%` is a systemd specifier, and `&`/`<` are markup in a plist. The checkout and the stubs
+(so `uv`, `cloudflared` and `ngrok`) are under names as awkward as an executable may be: a
+space, a specifier, a variable a unit's command line would expand, and plist markup.
 """
 
 import json
@@ -32,6 +34,8 @@ BASH = shutil.which("bash")
 STUBS = ("systemctl", "loginctl", "launchctl", "cloudflared", "ngrok", "uv")
 #: A PATH entry nobody would choose, and a stranger's machine might still have.
 AWKWARD_DIR = '/opt/tools|x&y%z <v2> "q"\\w'
+#: Each of these changes visibly if a unit or a plist reads it as syntax rather than a name.
+AWKWARD_NAME = "%h $HOME &<x>"
 PLACEHOLDER = re.compile(r"__[A-Z_]+__")
 
 pytestmark = pytest.mark.skipif(BASH is None, reason="the installers are bash scripts")
@@ -42,10 +46,10 @@ def machine(tmp_path):
     """A scratch HOME and KERYX_HOME, a copy of the scripts, and stubs that record calls."""
     home = tmp_path / "home"
     home.mkdir()
-    repo = tmp_path / "re po"  # a space, which the default `uv` command must survive
+    repo = tmp_path / f"re po {AWKWARD_NAME}"
     for name in ("scripts", "ops"):
         shutil.copytree(SOURCE / name, repo / name)
-    stubs = tmp_path / "bin"
+    stubs = tmp_path / f"b in {AWKWARD_NAME}"
     stubs.mkdir()
     calls = tmp_path / "calls.log"
     for name in STUBS:
@@ -64,7 +68,7 @@ def machine(tmp_path):
         "CLAUDE_CONFIG_DIR": str(home / ".claude"),
     }
     machine = {"home": home, "repo": repo, "keryx_home": keryx_home, "env": environment,
-               "calls": calls}
+               "calls": calls, "stubs": stubs}
     configure(machine, PUBLIC_HOST="keryx.example.com", PORT=8080)
     return machine
 
@@ -88,10 +92,15 @@ def run(script: str, machine, *args: str) -> subprocess.CompletedProcess:
     return result
 
 
+def source_lib(machine) -> str:
+    """The line that sources the copy's `lib.sh`, whatever its path holds."""
+    return f"source {shlex.quote(str(machine['repo'] / 'scripts' / 'lib.sh'))}\n"
+
+
 def lib(machine, snippet: str) -> str:
     """Source `lib.sh` in a clean bash and run `snippet`; its stdout."""
     result = subprocess.run(
-        [BASH, "-c", f'source "{machine["repo"] / "scripts" / "lib.sh"}"\n{snippet}'],
+        [BASH, "-c", source_lib(machine) + snippet],
         env=machine["env"],
         capture_output=True,
         text=True,
@@ -106,6 +115,15 @@ def systemd_unquote(value: str) -> str:
     """What systemd makes of a quoted `Environment=` value: C escapes, then `%%`."""
     assert value.startswith('"') and value.endswith('"'), value
     return re.sub(r"\\(.)|%%", lambda m: m.group(1) or "%", value[1:-1])
+
+
+def systemd_command(line: str) -> list[str]:
+    """What systemd runs for an `Exec*=` line: its quoted words, C escapes, then `%%`, and
+    `$$` in each argument (the executable itself is never expanded)."""
+    executable, *arguments = shlex.split(line.split("=", 1)[1])
+    return [executable.replace("%%", "%")] + [
+        re.sub(r"%%|\$\$", lambda m: m.group()[0], argument) for argument in arguments
+    ]
 
 
 # --- where things are --------------------------------------------------------
@@ -201,6 +219,27 @@ def test_the_systemd_units_carry_this_shell_path_and_state_dir(machine):
     assert "systemctl --user enable --now keryx.service" in machine["calls"].read_text()
 
 
+def test_the_systemd_units_keep_awkward_paths_whole(machine):
+    configure(machine, PUBLIC_HOST="keryx.example.com", CLOUDFLARE_TUNNEL=f"tun {AWKWARD_NAME}")
+
+    run("install-systemd.sh", machine)
+
+    units = machine["home"] / ".config" / "systemd" / "user"
+    keryx = dict(line.split("=", 1) for line in (units / "keryx.service").read_text().splitlines()
+                 if line.startswith(("ExecStart=", "WorkingDirectory=")))
+    repo, stubs = str(machine["repo"]), machine["stubs"]
+    assert keryx["WorkingDirectory"].replace("%%", "%") == repo
+    assert systemd_command("ExecStart=" + keryx["ExecStart"]) == [
+        f"{stubs}/uv", "run", "--project", repo, "keryx", "serve"
+    ]
+    [tunnel] = [line for line in (units / "cloudflared.service").read_text().splitlines()
+                if line.startswith("ExecStart=")]
+    assert systemd_command(tunnel) == [
+        f"{stubs}/cloudflared", "tunnel", "--no-autoupdate", "--protocol", "http2", "run",
+        "--url", "http://localhost:8080", f"tun {AWKWARD_NAME}",
+    ]
+
+
 # --- launchd ------------------------------------------------------------------
 
 
@@ -226,6 +265,26 @@ def test_the_launch_agents_carry_this_shell_path_and_state_dir(machine, tmp_path
     assert environment["KERYX_HOME"] == str(machine["keryx_home"])
     assert environment["XDG_DATA_HOME"] == f"{machine['home']}/.local/share"
     assert environment["XDG_STATE_HOME"] == str(xdg_state)
+
+
+def test_the_launch_agents_keep_awkward_paths_whole(machine, tmp_path):
+    home = tmp_path / f"ho me {AWKWARD_NAME}"
+    home.mkdir()
+    machine["env"]["HOME"] = str(home)
+
+    run("install-launchd.sh", machine)
+
+    agents = home / "Library" / "LaunchAgents"
+    agent = plistlib.loads((agents / "dev.keryx.agent.plist").read_bytes())
+    tunnel = plistlib.loads((agents / "dev.keryx.tunnel.plist").read_bytes())
+    repo, stubs = str(machine["repo"]), machine["stubs"]
+    assert agent["ProgramArguments"] == [f"{stubs}/uv", "run", "--project", repo, "keryx", "serve"]
+    assert agent["WorkingDirectory"] == repo
+    assert tunnel["ProgramArguments"] == [
+        f"{stubs}/ngrok", "http", "--domain=keryx.example.com", "8080"
+    ]
+    for plist in (agent, tunnel):
+        assert plist["EnvironmentVariables"]["HOME"] == str(home)
 
 
 def test_the_units_carry_an_xdg_directory_the_shell_moved(machine):
@@ -341,14 +400,14 @@ def test_the_resolve_command_still_runs_when_nothing_is_pending(machine):
     assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
 
 
-def test_the_default_command_keeps_a_repository_path_with_a_space_whole(machine, tmp_path):
+def test_the_default_command_keeps_a_repository_path_with_a_space_whole(machine):
     """Without KERYX_CLI, `uv run --project <repo> keryx config get` — the path one argument."""
-    stub = tmp_path / "bin" / "uv"
+    stub = machine["stubs"] / "uv"
     stub.write_text('#!/bin/sh\nfor arg in "$@"; do echo "[$arg]"; done\n')
     env = {key: value for key, value in machine["env"].items() if key != "KERYX_CLI"}
 
     result = subprocess.run(
-        [BASH, "-c", f'source "{machine["repo"] / "scripts" / "lib.sh"}"\nconfig_value PORT'],
+        [BASH, "-c", source_lib(machine) + "config_value PORT"],
         env=env, capture_output=True, text=True, timeout=30, check=False,
     )
 
