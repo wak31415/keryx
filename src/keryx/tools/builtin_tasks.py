@@ -287,16 +287,18 @@ def register_task_tools(
             "status": task.status.value,
             "summary": task.summary,
         }
-        excerpt = await _report_excerpt(task)
-        if excerpt is not None:
-            result["report_excerpt"] = excerpt
+        report = await _report_excerpt(task)
+        if report is not None:
+            result["report"] = report
         return result
 
     registry.register(
         "get_task_result",
-        "What a finished task actually found, including the start of its written report. "
-        "Use it when the user wants more than the one-line summary. Summarise it in a "
-        "sentence or two; never read the report out.",
+        "What a finished task found: its summary and its whole written report. Call it for "
+        "any question about a finished task — what it found, where something is, what it "
+        "said about something — and answer from the report; never dispatch new work to find "
+        "out what a task already reported. Answer in a sentence or two; never read the "
+        "report out.",
         _TASK_ID_SCHEMA,
         get_task_result,
     )

@@ -60,8 +60,9 @@ log = logging.getLogger("keryx.tools.builtin")
 
 #: How much of a task description a spoken list may carry.
 MAX_DESCRIPTION_CHARS = 120
-#: How much of a report `get_task_result` hands back for the model to summarise.
-MAX_REPORT_CHARS = 1500
+#: How much of a report `get_task_result` hands back: all of one, as they run (11k at most so
+#: far), so a follow-up is answered from it instead of dispatched again.
+MAX_REPORT_CHARS = 12_000
 #: Default and maximum number of tasks `list_tasks` returns (short: this is spoken).
 DEFAULT_TASK_LIMIT = 5
 MAX_TASK_LIMIT = 20

@@ -139,6 +139,11 @@ def build_prompt(task: Task) -> str:
     )
 
 
+def report_header(task: Task) -> str:
+    """What `data_dir/tasks/<id>.md` carries above the subagent's report: the request."""
+    return f"# Task {task.id}\n\n{task.description}\n\n---\n\n"
+
+
 def executor_workers(settings: Settings) -> int:
     """How many threads the event loop's default executor needs under this manager.
 
@@ -588,9 +593,8 @@ class TaskManager:
     def _write_report(self, task: Task, result: RunResult) -> Path:
         """Write `data_dir/tasks/<id>.md`; always created, even for an empty result."""
         path = self._report_path(task.id)
-        header = f"# Task {task.id}\n\n{task.description}\n\n---\n\n"
         try:
-            path.write_text(header + (result.final_text or ""), encoding="utf-8")
+            path.write_text(report_header(task) + (result.final_text or ""), encoding="utf-8")
             secure_file(path)
         except OSError:
             log.exception("could not write the report of task %s", task.id)

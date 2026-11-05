@@ -986,7 +986,7 @@ async def test_get_task_status_describes_one_task(tools):
     assert result["line"].startswith("task 1 (done)")
 
 
-async def test_get_task_result_carries_an_excerpt_of_the_report(tools):
+async def test_get_task_result_carries_the_report(tools):
     await tools.dispatch(description="how tall is Everest")
     await tools.manager.wait_for(1, WAIT)
 
@@ -994,19 +994,19 @@ async def test_get_task_result_carries_an_excerpt_of_the_report(tools):
 
     assert result["status"] == "done"
     assert result["summary"] == "I finished the task."
-    assert "how tall is Everest" in result["report_excerpt"]
+    assert "how tall is Everest" in result["report"]
 
 
-async def test_a_long_report_is_cut_down_for_the_voice_model(make_tools):
-    long_report = RunResult(ok=True, final_text="x" * 5000, spoken_summary="done")
+async def test_only_an_outsized_report_is_cut_down_for_the_voice_model(make_tools):
+    long_report = RunResult(ok=True, final_text="x" * 20_000, spoken_summary="done")
     tools = make_tools(FakeAgentRunner([long_report]))
     await tools.dispatch(description="write a book")
     await tools.manager.wait_for(1, WAIT)
 
     result = await tools.call("get_task_result", {"task_id": 1})
 
-    assert len(result["report_excerpt"]) == 1500
-    assert result["report_excerpt"].endswith("…")
+    assert len(result["report"]) == 12_000
+    assert result["report"].endswith("…")
 
 
 async def test_get_task_result_without_a_report_says_nothing_about_one(make_tools):
@@ -1015,7 +1015,7 @@ async def test_get_task_result_without_a_report_says_nothing_about_one(make_tool
 
     result = await tools.call("get_task_result", {"task_id": 1})
 
-    assert "report_excerpt" not in result
+    assert "report" not in result
     assert result["status"] in {"queued", "running"}
 
 

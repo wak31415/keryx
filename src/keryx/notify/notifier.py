@@ -1,6 +1,6 @@
 """Getting a finished task to the user, by whatever route is open.
 
-Three stages, in order, on every `TaskCompleted` / `TaskFailed`:
+Four stages, in order, on every `TaskCompleted` / `TaskFailed`:
 
 1. **Announce** it into every live session, so somebody already talking to Keryx simply
    hears the result — except the session holding the line for this very task inside
@@ -8,11 +8,14 @@ Three stages, in order, on every `TaskCompleted` / `TaskFailed`:
 2. **Text** it, unless it was already delivered: a live *phone* session announced it, or
    somebody was holding the line for it. Otherwise a local (wake-word) session hearing it
    does not count: they may well have walked away from the Mac.
-3. **Call back**, if they asked to be called and have not had it already. The call
+3. **Post** the subagent's report to their Slack DM, while the `send_to_slack` plugin is
+   on — whatever else reached them, because a call carries a sentence and they want the
+   rest in writing. The call-back then says it is there, and follow-ups are answered from it.
+4. **Call back**, if they asked to be called and have not had it already. The call
    carries a fresh single-use stream token whose `extra` tells the new session why it
    opened, so Keryx leads with the result instead of "hello?".
 
-There is a fourth route, for the one task that cannot be delivered by the first three: a
+There is a fifth route, for the one task that cannot be delivered by the others: a
 task that changed Keryx's own code. Loading it means restarting, restarting means dropping
 whatever call would have carried the result, and confirming the restart means ringing them
 anyway. So a task whose subagent asked for a restart hands its call-back over to the
@@ -24,14 +27,18 @@ Every stage is independently guarded: a Twilio outage during the text must not c
 call-back, and nothing here may ever raise into the event bus.
 """
 
+import asyncio
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from keryx.agents.base import written_report
 from keryx.config import Settings
 from keryx.continuity.transcripts import read_tail
 from keryx.events import EventBus, TaskCompleted, TaskFailed
 from keryx.inline_waits import InlineWaits
+from keryx.integrations.slack import SlackSender
 from keryx.notify.callback import (
     CALLBACK_TOKEN_TTL_S,
     HISTORY_PREAMBLE,
@@ -43,6 +50,7 @@ from keryx.notify.reports import report_token
 from keryx.notify.twilio_out import TwilioOut, stream_twiml
 from keryx.session import SessionRegistry
 from keryx.stream_tokens import StreamTokenStore, outbound_extra
+from keryx.tasks.manager import report_header
 from keryx.tasks.models import Task
 from keryx.tasks.store import TaskStore
 from keryx.trust import TrustLevel
@@ -62,8 +70,8 @@ FAILED_TEXT = "Task {task_id} failed: {detail}"
 DONE_CONTEXT = (
     "You are calling the user back about task {task_id}, which they asked you for earlier "
     "on the phone and which has now finished. What they asked for: {request}. "
-    "Result: {detail}.{history} In your first turn, greet them, say in a sentence or two what "
-    "this is about and what came of it, then ask if they need anything else — do not stop "
+    "Result: {detail}.{history}{report} In your first turn, greet them, say in a sentence or two "
+    "what this is about and what came of it, then ask if they need anything else — do not stop "
     "after the greeting to wait for them: the result is why you rang. Say it once: no second "
     "greeting, and do not put the same result again in other words. This is a new call: they "
     "may have to give the PIN again before you can start more work."
@@ -71,12 +79,20 @@ DONE_CONTEXT = (
 FAILED_CONTEXT = (
     "You are calling the user back about task {task_id}, which they asked you for earlier "
     "on the phone and which has failed. What they asked for: {request}. "
-    "Error: {detail}.{history} In your first turn, greet them, say in a sentence or two what "
-    "this is about and what went wrong, then ask if they need anything else — do not stop "
+    "Error: {detail}.{history}{report} In your first turn, greet them, say in a sentence or two "
+    "what this is about and what went wrong, then ask if they need anything else — do not stop "
     "after the greeting to wait for them: the failure is why you rang. Say it once: no second "
     "greeting, and do not put the same explanation again in other words. This is a new call: "
     "they may have to give the PIN again before you can start more work."
 )
+#: Where the details are, so "where is the report?" has an answer and a follow-up is not
+#: dispatched as new work.
+REPORT_PREAMBLE = (
+    " For any question about it, call get_task_result for task {task_id} and answer from its "
+    "report; never dispatch new work to find out what this task already found."
+)
+#: Added to it once the report has been posted, for them to hear where it went.
+SLACK_PREAMBLE = " Its whole report is on their Slack already: say so in a few words."
 #: The note the earlier session left for this call, if it left one.
 NOTE_PREAMBLE = " Where you left off: {note}."
 #: Why the restart a finished task asks for is happening, read back on the confirmation.
@@ -100,6 +116,8 @@ class Notifier:
         stream_tokens: StreamTokenStore,
         inline_waits: InlineWaits,
         restart: "RestartCoordinator | None" = None,
+        *,
+        slack: Callable[[], SlackSender | None] | None = None,
     ) -> None:
         self._bus = bus
         self._store = store
@@ -109,6 +127,7 @@ class Notifier:
         self._stream_tokens = stream_tokens
         self._inline_waits = inline_waits
         self._restart = restart
+        self._slack = slack
         self._removals: list[Callable[[], None]] = []
 
     def start(self) -> None:
@@ -160,12 +179,13 @@ class Notifier:
         )
         delivered = await self._announce(task, text)
         await self._send_sms(task, text, delivered=delivered)
+        posted = await self._post_report(task, detail, failed=failed)
         if not failed and await self._arm_restart(task):
             # The restart's confirmation call is this task's call-back, and it is a better
             # one: it can say whether the change they asked for is actually running. Two
             # calls a minute apart about the same piece of work would be the alternative.
             return
-        await self._call_back(task, detail, failed=failed, delivered=delivered)
+        await self._call_back(task, detail, failed=failed, delivered=delivered, posted=posted)
 
     # --- (1) live sessions -------------------------------------------------
 
@@ -235,7 +255,40 @@ class Notifier:
         url = self.report_url(task.id) if task.report_path else None
         return f"{body}\n{url}" if url else body
 
-    # --- (4) hand the call-back to a restart --------------------------------
+    # --- (3) the report on Slack -------------------------------------------
+
+    async def _post_report(self, task: Task, detail: str, *, failed: bool) -> bool:
+        """Post the subagent's report to Slack under a line naming the task; True once there.
+
+        Not skipped when the result was delivered by voice: a call carries a sentence of it.
+        Only the report goes: not the request above it, which they know and which can be an
+        instruction to Keryx, and not the spoken summary, which is the report again for the
+        ear — unless there is no report to read, when the summary is all there is. A failure's
+        line carries its error, since what a failed run last wrote is rarely the reason.
+        """
+        try:
+            sender = self._slack() if self._slack is not None else None
+            if sender is None:
+                return False
+            report = ""
+            if task.report_path:
+                try:
+                    text = await asyncio.to_thread(
+                        Path(task.report_path).read_text, encoding="utf-8"
+                    )
+                    report = written_report(text.removeprefix(report_header(task)))
+                except OSError:
+                    log.warning("could not read the report of task %s for Slack", task.id)
+            if failed:
+                header, body = FAILED_TEXT.format(task_id=task.id, detail=detail), report
+            else:
+                header, body = f"Task {task.id} finished", report or detail
+            return await sender.send(f"**{header}**\n\n{body}".strip(), fallback=header)
+        except Exception:
+            log.exception("could not post the report of task %s to Slack", task.id)
+            return False
+
+    # --- (5) hand the call-back to a restart --------------------------------
 
     async def _arm_restart(self, task: Task) -> bool:
         """Ask for the restart this task needs; True when it is on and owns the call-back.
@@ -269,7 +322,7 @@ class Notifier:
             log.exception("could not clear the restart request on task %s", task.id)
         return True
 
-    # --- (3) the call-back -------------------------------------------------
+    # --- (4) the call-back -------------------------------------------------
 
     def _previous_call(self, task: Task) -> str:
         """What the session that asked for this call-back had said, if anything survives."""
@@ -285,7 +338,7 @@ class Notifier:
 
 
     async def _call_back(
-        self, task: Task, detail: str, *, failed: bool, delivered: bool
+        self, task: Task, detail: str, *, failed: bool, delivered: bool, posted: bool
     ) -> None:
         """Ring the user back with a session that already knows what happened."""
         host = self._settings.public_host
@@ -303,6 +356,8 @@ class Notifier:
                 request=request,
                 detail=no_trailing_stop(detail),
                 history=self._previous_call(task),
+                report=REPORT_PREAMBLE.format(task_id=task.id)
+                + (SLACK_PREAMBLE if posted else ""),
             )
             token = self._stream_tokens.issue(
                 caller=task.callback_number,
