@@ -6,6 +6,56 @@ settings: a removed or renamed setting or command is a major bump.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-04
+
+Fixes to how results reach you, finished tasks' reports on Slack, and updated dependencies.
+Nothing to change on your side: no setting or command was renamed or removed.
+
+### Security
+
+- **certifi 2026.10.18 drops the emSign root certificates** whose intermediate CA keys were
+  compromised (GHSA-6q48-6c7w-9gw2, critical). It is the certificate bundle that the HTTP
+  libraries under the OpenAI and Twilio clients trust by default.
+
+### Changed
+
+- **A finished task's whole report is posted to your Slack DM.** While the `send_to_slack`
+  plugin is on, each report is posted under a line naming the task, with its headings,
+  tables and links rendered and no link previews. The request and the spoken summary are
+  left out, and a long report is no longer split mid-list. On a call, questions about a
+  finished task are answered from its report instead of starting new work. Messages sent
+  with `send_to_slack` render Markdown the same way.
+- **Dependencies are updated.** The Codex agent runs on `openai-codex` 0.163.0 and its
+  bundled `codex` CLI. Twilio 9.12.0, websockets 17.2 and numpy 2.5.4 are updated
+  too.
+
+### Fixed
+
+- **No call-back on top of the call you are already on.** If a task you asked to be called
+  back about finished while you had rung Keryx again, your phone rang mid-call with the same
+  result. The call-back now waits for that call to end. It does not ring at all if you gave
+  the PIN on that call after hearing the result, or if the result was marked as heard.
+- **A result read out mid-call is recorded as heard.** It used to come back at the top of
+  the next call. The announcement replaced the assistant's instructions for that turn,
+  including the one that says to record it; it no longer does, and it now asks for the
+  record in the same turn.
+- **A result you heard before giving the PIN is not told to you again after it.** Once the
+  PIN is in, it is recorded as heard instead of being repeated.
+- **Asking about your email no longer misses the thread you meant because of one broad
+  word.** A search with alternatives now looks for each one separately, so newer mail
+  matching a common word cannot push out the thread you asked about, and the summary sees
+  more threads. When nothing matches, the assistant says what it searched for, so you can
+  correct a misheard name or word.
+- **The assistant asks when part of a request comes through garbled.** If a phrase
+  transcribes as nonsense, it asks one short question about that part instead of acting on
+  it.
+- **The restart watchdog starts on its own instead of through the whole app.** A code
+  change that breaks the import no longer silences the alert that Keryx never came back.
+- **The installers work from a path with a space or a `%` in it.** The systemd units quote
+  the checkout and the `uv` and `cloudflared` paths, and the launchd plists escape every
+  value, so a checkout such as `~/My Projects/keryx` no longer leaves a unit that will not
+  start.
+
 ## [0.1.1] - 2026-10-19
 
 Fixes from an audit of 0.1.0, and updated dependencies. Nothing to change on your side: no
@@ -114,6 +164,7 @@ calls, and calls you when there's news.
 - **Linux and macOS.** Keryx runs as a systemd or launchd service, keeps its files in the
   standard XDG directories, and stores secrets in files only you can read.
 
-[Unreleased]: https://github.com/wak31415/keryx/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wak31415/keryx/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/wak31415/keryx/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/wak31415/keryx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wak31415/keryx/releases/tag/v0.1.0
