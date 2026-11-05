@@ -6,6 +6,7 @@ care about is the flags that end up on the row and whether the minted token can 
 redeemed by the media socket afterwards.
 """
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -16,7 +17,7 @@ import pytest
 from fakes import FakeVoiceSession
 
 from keryx.config import Settings
-from keryx.events import EventBus, TaskCompleted, TaskFailed
+from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from keryx.inline_waits import InlineWaits
 from keryx.notify.notifier import SLACK_PREAMBLE, SMS_BODY_LIMIT, Notifier
 from keryx.notify.reports import report_token
@@ -117,6 +118,14 @@ class Harness:
     async def row(self, task: Task) -> Task:
         return await self.store.get(task.id)
 
+    async def hang_up(self, session: FakeVoiceSession, *, authorized: bool = False) -> None:
+        """End `session` the way `_teardown` does, and wait for what that set off."""
+        self.sessions.remove(session)
+        await self.bus.publish(
+            SessionEnded(session.session_id, "phone", session.caller, "hangup", authorized)
+        )
+        await asyncio.gather(*self.notifier._later)
+
     @property
     def sms_body(self) -> str:
         return self.twilio.sms[0][1]
@@ -211,6 +220,7 @@ async def test_a_live_phone_session_hears_the_result_and_nothing_else_goes_out(h
     await harness.finished(task, "the tests pass now")
 
     assert session.announced == [f"Task {task.id} finished: the tests pass now"]
+    assert session.announced_tasks == [task.id]  # so the call is asked to stamp it (#82)
     assert harness.twilio.sms == []
     assert harness.twilio.calls == []
     row = await harness.row(task)
@@ -892,3 +902,213 @@ async def test_an_unreported_task_still_rides_the_next_call(harness):
     row = await harness.row(task)
     assert row.reported_at is None
     assert await harness.store.list_unreported() == [row]
+
+
+# --- a call-back while they are on the line already (#100) --------------------
+
+
+async def test_a_call_back_waits_while_their_phone_is_on_a_call_with_keryx(harness):
+    """They rang in before the PIN and heard it: their phone is busy, and the call that
+    heard it proved nothing, so the call-back goes out once it ends rather than on top."""
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "the build is green")
+
+    assert on_the_line.announced == [f"Task {task.id} finished: the build is green"]
+    assert harness.twilio.calls == []
+
+    await harness.hang_up(on_the_line)
+
+    assert [call["to"] for call in harness.twilio.calls] == [CALLER]
+    info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
+    assert "Result: the build is green." in info.extra["opening_context"]
+    assert (await harness.row(task)).callback_requested is False
+
+
+async def test_a_pin_given_after_the_announcement_makes_that_call_the_delivery(harness):
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    first = await harness.task(callback_requested=True, callback_number=CALLER)
+    second = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(first)
+    await harness.finished(second)
+    await harness.hang_up(on_the_line, authorized=True)
+
+    assert harness.twilio.calls == []
+
+
+async def test_without_the_pin_every_waiting_call_back_rings(harness):
+    """As when several finish at once with nobody on the line: one call each."""
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    tasks = [await harness.task(callback_requested=True, callback_number=CALLER) for _ in "ab"]
+    for task in tasks:
+        await harness.finished(task)
+
+    await harness.hang_up(on_the_line)
+
+    assert [stream_parameters(c["twiml"])["task_id"] for c in harness.twilio.calls] == [
+        str(task.id) for task in tasks
+    ]
+
+
+async def test_a_result_marked_reported_on_that_call_is_not_rung_through(harness):
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task)
+    await harness.store.update(task.id, reported_at=datetime.now(UTC))
+    await harness.hang_up(on_the_line)
+
+    assert harness.twilio.calls == []
+
+
+@pytest.mark.parametrize(
+    "deaf",
+    [
+        {"is_live": False},  # hanging up already: still on the line, past hearing anything
+        {"accepts": False},  # refused it: `BRIEFING_BEFORE_PIN` off, before the PIN
+    ],
+    ids=["hanging-up", "refused"],
+)
+async def test_a_pin_on_a_call_that_never_heard_it_is_not_a_delivery(harness, deaf):
+    """The PIN says who they are, not that they heard this result: it rings after."""
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER, **deaf)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task)
+    assert (on_the_line.announced, harness.twilio.calls) == ([], [])
+
+    await harness.hang_up(on_the_line, authorized=True)
+
+    assert [call["to"] for call in harness.twilio.calls] == [CALLER]
+
+
+async def test_a_waiting_call_back_waits_again_for_the_next_call_on_that_phone(harness):
+    dropped = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    await harness.finished(task)
+
+    redialled = harness.session(
+        channel="phone", trust=TrustLevel.NONE, caller=CALLER, session_id="sess-2"
+    )
+    await harness.hang_up(dropped)
+    assert harness.twilio.calls == []
+
+    await harness.hang_up(redialled)
+    assert len(harness.twilio.calls) == 1
+
+
+async def test_waiting_on_the_next_call_still_knows_that_call_heard_it(harness):
+    """Two calls on the number, the one hanging up found first: the PIN on the one that
+    heard it still counts once the wait has moved on to it."""
+    leaving = harness.session(channel="phone", is_live=False, caller=CALLER)
+    listening = harness.session(
+        channel="phone", trust=TrustLevel.NONE, caller=CALLER, session_id="sess-2"
+    )
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    await harness.finished(task)
+
+    await harness.hang_up(leaving)
+    await harness.hang_up(listening, authorized=True)
+
+    assert listening.announced != []
+    assert harness.twilio.calls == []
+
+
+async def test_a_follow_up_finishing_on_the_same_call_still_rings_once(harness):
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "first")
+    await harness.finished(task, "second")
+    await harness.hang_up(on_the_line)
+
+    assert len(harness.twilio.calls) == 1
+    info = harness.tokens.redeem(stream_parameters(harness.twilio.calls[0]["twiml"])["token"])
+    assert "Result: second." in info.extra["opening_context"]
+
+
+async def test_a_follow_up_told_elsewhere_drops_the_call_back_still_waiting(harness):
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    await harness.finished(task, "first")
+
+    harness.session(channel="phone", caller=OWNER, session_id="sess-2")  # the PIN given
+    await harness.finished(task, "second")
+    await harness.hang_up(on_the_line)
+
+    assert harness.twilio.calls == []
+
+
+async def test_a_call_from_another_number_does_not_hold_the_call_back(harness):
+    harness.session(channel="phone", trust=TrustLevel.NONE, caller=OWNER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task)
+
+    assert [call["to"] for call in harness.twilio.calls] == [CALLER]
+
+
+async def test_each_waiting_call_back_waits_for_its_own_phone(harness):
+    mine = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    theirs = harness.session(
+        channel="phone", trust=TrustLevel.NONE, caller=OWNER, session_id="sess-2"
+    )
+    for number in (CALLER, OWNER):
+        await harness.finished(await harness.task(callback_requested=True, callback_number=number))
+
+    await harness.hang_up(mine)
+    assert [call["to"] for call in harness.twilio.calls] == [CALLER]
+
+    await harness.hang_up(theirs)
+    assert [call["to"] for call in harness.twilio.calls] == [CALLER, OWNER]
+
+
+async def test_stopping_drops_a_call_back_waiting_on_a_call(harness):
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    await harness.finished(task)
+
+    harness.notifier.stop()
+    await harness.hang_up(on_the_line)
+
+    assert harness.twilio.calls == []
+
+
+async def test_stopping_drops_a_call_back_the_end_of_a_call_set_off(harness):
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    await harness.finished(task)
+
+    harness.sessions.remove(on_the_line)
+    await harness.bus.publish(SessionEnded(on_the_line.session_id, "phone", CALLER, "hangup"))
+    harness.notifier.stop()
+    await asyncio.gather(*harness.notifier._later, return_exceptions=True)
+
+    assert harness.twilio.calls == []
+
+
+async def test_a_call_back_after_the_call_that_blows_up_raises_nothing(harness):
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    await harness.finished(task)
+
+    await harness.store.close()  # the row can no longer be read
+    await harness.hang_up(on_the_line)
+
+    assert harness.twilio.calls == []
+
+
+async def test_a_task_deleted_while_waiting_on_a_call_is_dropped(harness, monkeypatch):
+    on_the_line = harness.session(channel="phone", trust=TrustLevel.NONE, caller=CALLER)
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    await harness.finished(task)
+
+    async def gone(task_id):
+        return None
+
+    monkeypatch.setattr(harness.store, "get", gone)
+    await harness.hang_up(on_the_line)
+
+    assert harness.twilio.calls == []

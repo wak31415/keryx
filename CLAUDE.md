@@ -260,7 +260,11 @@ Four rulings, and `SECURITY.md` is the threat model:
   needs=…)` says which kind each announcement is: news needs nothing, an approval needs a
   call that could answer it. `Announced.delivered` still takes `POSSESSION`, because a
   stranger hearing the news is not the owner having been told, so the text and the call-back
-  still go out.
+  still go out. The call-back goes out *after* that call, though, when it is on the number
+  the call-back would ring (`SessionRegistry.on_the_line`): ringing a phone that is on the
+  line with Keryx is a second call on top of the one they are on. When it ends, a PIN given
+  on it after hearing the result counts as delivery, as it would have before; otherwise it
+  rings. A spoofer can delay a call-back that way, never absorb it.
 - **The read-only tools over that same material follow it.** `list_projects`, `list_tasks`,
   `get_task_status` and `get_task_result` are the caller asking for a bit of the briefing out
   loud, and gating them while the prompt states the same facts is incoherent; `read_gate` is
@@ -310,8 +314,12 @@ Keryx knows at the top of a call is assembled every time by
   (`reads_before_pin`; see "Trust has three levels" — a machine with no PIN at all is
   handed none of it). Exactly one
   thing stamps it: the voice model's `mark_reported` tool, after it has spoken the result.
-  Do not stamp it from a delivery path — hearing something twice is recoverable, never
-  hearing it is not.
+  A result announced mid-call asks for the stamp in its own `[system]` note
+  (`VoiceSession.announce`), never in a response's `instructions`, which replace the whole
+  voice prompt for that turn (#82). One announced before the PIN cannot be stamped then;
+  the PIN asks for it, and keeps it out of the after-PIN nudge (`_brief_after_pin`). Do not
+  stamp it from a delivery path — hearing something twice is recoverable, never hearing it
+  is not.
 - **The memory.** `keryx/continuity/memory.py` owns `data_dir/memory.md` outright — the
   file API *and* the writer. It subscribes to `SessionEnded` and, for an authorized call only,
   dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file —

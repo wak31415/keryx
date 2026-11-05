@@ -299,19 +299,6 @@ async def test_inject_message_creates_a_system_item_and_requests_a_response(conn
     assert response_creates(harness.ws) == [{"type": "response.create"}]
 
 
-async def test_inject_message_passes_response_instructions(connect):
-    harness = await connect()
-
-    await harness.client.inject_message(
-        "[system] connection was reset",
-        response_instructions="Briefly apologize and continue.",
-    )
-
-    assert response_creates(harness.ws) == [
-        {"type": "response.create", "response": {"instructions": "Briefly apologize and continue."}}
-    ]
-
-
 async def test_inject_message_without_respond_sends_no_response_create(connect):
     harness = await connect()
 
@@ -548,17 +535,13 @@ async def test_only_one_queued_request_is_drained_per_response_done(connect):
     harness = await connect()
 
     await harness.client.inject_message("first")
-    await harness.client.inject_message("second", response_instructions="be brief")
+    await harness.client.inject_message("second")
     await harness.client.inject_message("third")
 
     assert len(response_creates(harness.ws)) == 1
 
     harness.ws.feed(server_event("response_done"))
     await harness.next_event()
-    assert response_creates(harness.ws)[-1] == {
-        "type": "response.create",
-        "response": {"instructions": "be brief"},
-    }
     assert len(response_creates(harness.ws)) == 2
 
     harness.ws.feed(server_event("response_done"))

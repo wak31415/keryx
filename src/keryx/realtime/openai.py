@@ -446,11 +446,8 @@ class OpenAIRealtimeClient:
 
     # --- response queue ------------------------------------------------------
 
-    async def _request_response(self, instructions: str | None = None) -> None:
+    async def _request_response(self) -> None:
         payload: dict = {"type": "response.create"}
-        if instructions is not None:
-            payload["response"] = {"instructions": instructions}
-
         if self._active_response:
             self._pending_responses.append(payload)
             logger.debug(
@@ -546,13 +543,7 @@ class OpenAIRealtimeClient:
         if respond:
             await self._request_response()
 
-    async def inject_message(
-        self,
-        text: str,
-        *,
-        respond: bool = True,
-        response_instructions: str | None = None,
-    ) -> None:
+    async def inject_message(self, text: str, *, respond: bool = True) -> None:
         await self._send(
             {
                 "type": "conversation.item.create",
@@ -564,7 +555,7 @@ class OpenAIRealtimeClient:
             }
         )
         if respond:
-            await self._request_response(response_instructions)
+            await self._request_response()
 
     async def update_instructions(self, instructions: str) -> None:
         """Send a `session.update` carrying only the new instructions, and keep them.

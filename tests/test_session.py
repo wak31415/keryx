@@ -27,6 +27,8 @@ from keryx.realtime.base import (
     Transcript,
 )
 from keryx.session import (
+    ANNOUNCE_INSTRUCTIONS,
+    ANNOUNCE_REPORT_INSTRUCTIONS,
     OPENING_MESSAGE,
     RECONNECT_MESSAGE,
     SILENCE_MESSAGE,
@@ -214,7 +216,7 @@ async def test_session_opens_with_a_greeting_request(make_session, phone, provid
     async with running(session):
         await eventually(lambda: provider.injected)
 
-    assert provider.injected[0] == (OPENING_MESSAGE, True, None)
+    assert provider.injected[0] == (OPENING_MESSAGE, True)
 
 
 async def test_opening_context_replaces_the_greeting(make_session, phone, provider):
@@ -223,7 +225,7 @@ async def test_opening_context_replaces_the_greeting(make_session, phone, provid
     async with running(session):
         await eventually(lambda: provider.injected)
 
-    assert provider.injected[0] == ("[callback] Task 3 is done.", True, None)
+    assert provider.injected[0] == ("[callback] Task 3 is done.", True)
     assert "Task 3 is done." in provider.config.instructions
 
 
@@ -622,7 +624,7 @@ async def test_silence_ends_a_local_session_after_a_goodbye(
     task = asyncio.create_task(session.run())
     await eventually(lambda: session.is_live)
     provider.feed(ResponseDone(response_id="resp_1", status="completed"))
-    await eventually(lambda: any(text == SILENCE_MESSAGE for text, _, _ in provider.injected))
+    await eventually(lambda: any(text == SILENCE_MESSAGE for text, _ in provider.injected))
 
     provider.feed(ResponseDone(response_id="resp_2", status="completed"))
     await asyncio.wait_for(task, TIMEOUT)
@@ -641,7 +643,7 @@ async def test_a_local_session_ends_even_if_no_response_ever_arrives(
     task = asyncio.create_task(session.run())
     await asyncio.wait_for(task, TIMEOUT)  # not a single provider event ever arrives
 
-    assert [text for text, _, _ in provider.injected] == [OPENING_MESSAGE, SILENCE_MESSAGE]
+    assert [text for text, _ in provider.injected] == [OPENING_MESSAGE, SILENCE_MESSAGE]
     assert [event.reason for event in ended(published)] == ["silence"]
 
 
@@ -667,7 +669,7 @@ async def test_user_speech_cancels_the_silence_timer(make_session, local, provid
         provider.feed(SpeechStarted(item_id="item_1", audio_start_ms=0))
         await asyncio.sleep(0.1)
 
-        assert [text for text, _, _ in provider.injected] == [OPENING_MESSAGE]
+        assert [text for text, _ in provider.injected] == [OPENING_MESSAGE]
 
 
 async def test_speaking_after_the_silence_goodbye_keeps_the_session(
@@ -679,7 +681,7 @@ async def test_speaking_after_the_silence_goodbye_keeps_the_session(
 
     async with running(session) as task:
         provider.feed(ResponseDone(response_id="resp_1", status="completed"))
-        await eventually(lambda: any(text == SILENCE_MESSAGE for text, _, _ in provider.injected))
+        await eventually(lambda: any(text == SILENCE_MESSAGE for text, _ in provider.injected))
         provider.feed(SpeechStarted(item_id="item_1", audio_start_ms=0))
         await asyncio.sleep(0.01)
         provider.feed(ResponseDone(response_id="resp_2", status="completed"))
@@ -697,7 +699,7 @@ async def test_phone_sessions_have_no_silence_timeout(make_session, phone, provi
         provider.feed(ResponseDone(response_id="resp_1", status="completed"))
         await asyncio.sleep(0.1)
 
-        assert [text for text, _, _ in provider.injected] == [OPENING_MESSAGE]
+        assert [text for text, _ in provider.injected] == [OPENING_MESSAGE]
 
 
 async def test_a_zero_silence_timeout_disables_the_timer(make_session, local, provider, tmp_path):
@@ -708,7 +710,7 @@ async def test_a_zero_silence_timeout_disables_the_timer(make_session, local, pr
         provider.feed(ResponseDone(response_id="resp_1", status="completed"))
         await asyncio.sleep(0.05)
 
-        assert [text for text, _, _ in provider.injected] == [OPENING_MESSAGE]
+        assert [text for text, _ in provider.injected] == [OPENING_MESSAGE]
 
 
 # --- call duration guardrail ----------------------------------------------
@@ -723,8 +725,8 @@ async def test_max_call_seconds_warns_then_ends_the_call(
 
     task = asyncio.create_task(session.run())
     await eventually(lambda: session.is_live)
-    await eventually(lambda: any(text == WRAP_UP_MESSAGE for text, _, _ in provider.injected))
-    assert (WRAP_UP_MESSAGE, False, None) in provider.injected
+    await eventually(lambda: any(text == WRAP_UP_MESSAGE for text, _ in provider.injected))
+    assert (WRAP_UP_MESSAGE, False) in provider.injected
 
     await asyncio.wait_for(task, TIMEOUT)
     assert [event.reason for event in ended(published)] == ["max_duration"]
@@ -737,7 +739,7 @@ async def test_local_sessions_ignore_max_call_seconds(make_session, local, provi
     async with running(session):
         await asyncio.sleep(0.1)
 
-        assert [text for text, _, _ in provider.injected] == [OPENING_MESSAGE]
+        assert [text for text, _ in provider.injected] == [OPENING_MESSAGE]
 
 
 # --- announcements ---------------------------------------------------------
@@ -749,10 +751,24 @@ async def test_announce_injects_a_system_message(make_session, phone, provider):
     async with running(session):
         assert await session.announce("Task 3 finished.") is True
 
-    text, respond, instructions = provider.injected[-1]
-    assert text == "[system] Task 3 finished."
+    text, respond = provider.injected[-1]
+    assert text == f"[system] Task 3 finished.\n{ANNOUNCE_INSTRUCTIONS}"
     assert respond is True
-    assert instructions is not None
+    assert "mark_reported" not in text  # not a task's result: nothing to stamp
+
+
+async def test_a_task_announced_into_a_call_asks_for_its_stamp(make_session, phone, provider):
+    """#82: told only in the system prompt, the model stamped no mid-call result at all,
+    and the owner heard each one again at the top of the next call."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        assert await session.announce("Task 3 finished: done.", task_id=3) is True
+
+    text, _ = provider.injected[-1]
+    assert text.startswith("[system] Task 3 finished: done.\n")
+    assert ANNOUNCE_REPORT_INSTRUCTIONS.format(task_id=3) in text
+    assert "task_ids [3]" in text
 
 
 async def test_announce_is_false_before_and_after_the_session(make_session, phone, provider):
@@ -785,7 +801,7 @@ async def test_a_disconnect_reconnects_and_apologizes(make_session, phone, provi
         provider.feed(Disconnected("socket closed"))
         await eventually(lambda: provider.reconnects == 1)
         await eventually(
-            lambda: any(text == RECONNECT_MESSAGE for text, _, _ in provider.injected)
+            lambda: any(text == RECONNECT_MESSAGE for text, _ in provider.injected)
         )
         provider.feed(AudioDelta(item_id="item_1", audio=b"\x00" * 8))
         await eventually(lambda: phone.sent != [])
@@ -852,7 +868,7 @@ async def test_dtmf_digits_reach_the_hook_and_never_the_model(make_session, phon
         phone.feed(Dtmf("7"))
         await eventually(lambda: seen == ["7"])
 
-    assert [text for text, _, _ in provider.injected] == [OPENING_MESSAGE]
+    assert [text for text, _ in provider.injected] == [OPENING_MESSAGE]
     assert provider.sent_audio == []
 
 
@@ -882,6 +898,19 @@ def test_session_registry_lists_only_live_sessions(make_session, phone, provider
 
     sessions.remove(session)
     sessions.remove(session)  # removing twice is fine
+
+
+def test_session_registry_finds_the_phone_session_on_a_number(make_session, phone, provider):
+    """Live or not: a registered session holds the line until it ends (#100)."""
+    sessions = SessionRegistry()
+    mac = FakeTransport(channel="local", caller=phone.caller, audio_format="audio/pcm")
+    at_the_mac, on_the_phone = make_session(mac, provider), make_session(phone, provider)
+    sessions.add(at_the_mac)
+    sessions.add(on_the_phone)
+
+    assert sessions.on_the_line(phone.caller) is on_the_phone  # the Mac is not a line
+    assert sessions.on_the_line("+15550000000") is None
+    assert sessions.on_the_line(None) is None
 
 
 async def test_the_session_takes_its_turn_detection_from_settings(

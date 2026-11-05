@@ -43,6 +43,9 @@ class Announced:
 
     heard: bool = False
     delivered: bool = False
+    #: The sessions that heard it, skipped ones included: whether the one on the phone a
+    #: call-back would ring was among them is what decides that call-back once it ends.
+    heard_by: tuple = ()
 
     def __bool__(self) -> bool:
         return self.heard
@@ -54,6 +57,7 @@ async def announce_to_live_sessions(
     *,
     needs: TrustLevel = TrustLevel.FULL,
     skip: Any = None,
+    task_id: int | None = None,
 ) -> Announced:
     """Speak `text` into every live session that is trusted enough for it. Never raises.
 
@@ -71,23 +75,27 @@ async def announce_to_live_sessions(
     whose tool result is about to say the same thing, and hearing it twice in one breath
     is worse than not hearing it here.
 
+    `task_id` says the text is that finished task's result, so a session that may stamp it
+    asks the model to (`VoiceSession.announce`).
+
     An exception part-way through stops the loop rather than skipping to the next session,
     which is what the three copies of this did and is the safer of the two: whatever broke
     the first `announce` is likely to break the rest, and the caller's fallback is a text.
     """
-    heard = False
+    heard_by = []
     delivered = False
     try:
         for session in sessions.live():
             if skip is not None and skip(session):
-                heard = delivered = True
+                heard_by.append(session)
+                delivered = True
                 continue
-            spoken = await session.announce(text, needs=needs)
-            heard = heard or spoken
-            delivered = delivered or (spoken and _counts_as_delivery(session))
+            if await session.announce(text, needs=needs, task_id=task_id):
+                heard_by.append(session)
+                delivered = delivered or _counts_as_delivery(session)
     except Exception:
         log.exception("could not announce into the live sessions")
-    return Announced(heard, delivered)
+    return Announced(bool(heard_by), delivered, tuple(heard_by))
 
 
 def _counts_as_delivery(session: Any) -> bool:

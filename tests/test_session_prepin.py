@@ -20,6 +20,7 @@ from keryx.events import EventBus, SessionEnded
 from keryx.realtime.base import FunctionCall, Transcript
 from keryx.session import (
     ENROL_CONFIRM_MESSAGE,
+    HEARD_BEFORE_PIN_MESSAGE,
     OPENING_MESSAGE,
     PIN_ACCEPTED_MESSAGE,
     VoiceSession,
@@ -60,10 +61,8 @@ class OrderedProvider(FakeProvider):
         await super().update_instructions(instructions)
         self.order.append(("instructions", instructions))
 
-    async def inject_message(self, text, *, respond=True, response_instructions=None) -> None:
-        await super().inject_message(
-            text, respond=respond, response_instructions=response_instructions
-        )
+    async def inject_message(self, text, *, respond=True) -> None:
+        await super().inject_message(text, respond=respond)
         self.order.append(("message", (text, respond)))
 
     async def submit_tool_result(self, call_id, output, *, respond=True) -> None:
@@ -278,7 +277,7 @@ async def test_a_keyed_pin_delivers_it_ahead_of_the_accepted_note(make_session, 
         await eventually(lambda: provider.injected != [])
         for digit in PIN:
             phone.feed(Dtmf(digit))
-        await eventually(lambda: (PIN_ACCEPTED_MESSAGE, True, None) in provider.injected)
+        await eventually(lambda: (PIN_ACCEPTED_MESSAGE, True) in provider.injected)
 
     sent = [value for kind, value in provider.order if kind != "tool_result"][1:]
     assert private(sent[0])
@@ -459,6 +458,93 @@ async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone,
 
         assert await session.announce("Task 41 finished: 1,234 pounds", needs=NONE) is True
         assert "Task 41 finished" in provider.injected[-1][0]
+
+
+async def test_news_before_the_pin_is_not_asked_to_be_stamped(make_session, phone, provider):
+    """Whoever heard it may not be the owner, and `mark_reported` would refuse the task
+    anyway: it was not in the digest this call opened with."""
+    session = make_session(phone, provider)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert await session.announce("Task 41 finished.", needs=NONE, task_id=41) is True
+        assert "mark_reported" not in provider.injected[-1][0]
+
+
+async def test_a_call_keryx_placed_is_asked_to_stamp_news(make_session, phone, provider):
+    """Possession may stamp any task (`mark_reported`), so it is asked to, like `FULL`."""
+    session = make_session(phone, provider, possession=True)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+
+        assert await session.announce("Task 41 finished.", needs=NONE, task_id=41) is True
+        assert "mark_reported with task_ids [41]" in provider.injected[-1][0]
+
+
+async def test_a_result_heard_before_the_pin_is_not_news_after_it(make_session, phone):
+    """The digest it now finds names the result, but the call heard that already: the PIN
+    asks for the stamp it could not make before, and does not nudge them with it again."""
+    provider = OrderedProvider()
+    briefer = FakeBriefer(Briefing())
+    session = make_session(phone, provider, briefer=briefer)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+        assert await session.announce("Task 41 finished.", needs=NONE, task_id=41) is True
+        briefer.briefing = Briefing(pending=DIGEST, pending_count=1, task_ids=(41,))
+        await session.submit_pin(PIN)
+
+    notes = [value for kind, value in provider.order if kind == "message"][2:]
+    assert notes == [(HEARD_BEFORE_PIN_MESSAGE.format(tasks="task 41", ids="41"), False)]
+    assert "mark_reported with task_ids [41]" in notes[0][0]
+
+
+async def test_the_pin_still_nudges_with_what_the_call_has_not_heard(make_session, phone):
+    provider = OrderedProvider()
+    briefer = FakeBriefer(Briefing())
+    session = make_session(phone, provider, briefer=briefer)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+        await session.announce("Task 41 finished.", needs=NONE, task_id=41)
+        await session.announce("Task 43 finished.", needs=NONE, task_id=43)
+        briefer.briefing = Briefing(pending=DIGEST, pending_count=3, task_ids=(41, 42, 43))
+        await session.submit_pin(PIN)
+
+    nudge, heard = (value[0] for kind, value in provider.order[3:] if kind == "message")
+    assert nudge.startswith("[system] 1 task finished")
+    assert "task_ids [41, 43]" in heard and "tasks 41, 43" in heard
+
+
+async def test_the_pin_asks_for_the_stamp_beside_a_digest_already_given(make_session, phone):
+    """The greeting gave the digest, so no nudge; the result heard since is still owed."""
+    provider = OrderedProvider()
+    briefer = FakeBriefer(Briefing(pending=DIGEST, pending_count=1, task_ids=(40,)))
+    session = make_session(phone, provider, briefer=briefer)
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+        await session.announce("Task 41 finished.", needs=NONE, task_id=41)
+        briefer.briefing = Briefing(pending=DIGEST, pending_count=2, task_ids=(40, 41))
+        await session.submit_pin(PIN)
+
+    notes = [value[0] for kind, value in provider.order[2:] if kind == "message"]
+    assert notes == [HEARD_BEFORE_PIN_MESSAGE.format(tasks="task 41", ids="41")]
+
+
+async def test_a_call_asked_for_the_stamp_already_is_not_asked_again(make_session, phone):
+    provider = OrderedProvider()
+    session = make_session(phone, provider, possession=True, briefer=FakeBriefer(Briefing()))
+
+    async with running(session):
+        await eventually(lambda: provider.injected != [])
+        await session.announce("Task 41 finished.", needs=NONE, task_id=41)
+        await session.announce("Approve the push?", needs=NONE)  # not a task's result
+        await session.submit_pin(PIN)
+
+    assert not any("already heard" in text for text, *_ in provider.injected)
 
 
 async def test_with_the_briefing_off_nothing_is_announced_before_the_pin(

@@ -62,7 +62,7 @@ class FakeProvider:
         self.tool_results: list[tuple[str, dict | str]] = []
         #: Whether each tool result asked for a spoken turn, in the same order.
         self.tool_responses: list[bool] = []
-        self.injected: list[tuple[str, bool, str | None]] = []
+        self.injected: list[tuple[str, bool]] = []
         self.truncations: list[tuple[str, int]] = []
         #: Every `update_instructions` call, in order; `config` stays what `connect` got.
         self.instruction_updates: list[str] = []
@@ -108,11 +108,9 @@ class FakeProvider:
         self.tool_results.append((call_id, output))
         self.tool_responses.append(respond)
 
-    async def inject_message(
-        self, text: str, *, respond: bool = True, response_instructions: str | None = None
-    ) -> None:
+    async def inject_message(self, text: str, *, respond: bool = True) -> None:
         self._guard()
-        self.injected.append((text, respond, response_instructions))
+        self.injected.append((text, respond))
 
     async def update_instructions(self, instructions: str) -> None:
         self._guard()
@@ -215,19 +213,26 @@ class FakeVoiceSession:
         accepts: bool = True,
         trust: TrustLevel = TrustLevel.FULL,
         error: Exception | None = None,
+        caller: str | None = None,
     ) -> None:
         self.channel = channel
+        self.caller = caller
         self.session_id = session_id
         self.is_live = is_live
         self.accepts = accepts
         self.trust = trust
         self.error = error
         self.announced: list[str] = []
+        #: The `task_id` each announcement in `announced` was about (None: not a task's).
+        self.announced_tasks: list[int | None] = []
 
-    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+    async def announce(
+        self, text: str, *, needs: TrustLevel = TrustLevel.FULL, task_id: int | None = None
+    ) -> bool:
         if self.error is not None:
             raise self.error
         if not self.accepts or self.trust < needs:
             return False
         self.announced.append(text)
+        self.announced_tasks.append(task_id)
         return True

@@ -84,7 +84,26 @@ OPENING_MESSAGE = "[session opened] Greet the user briefly."
 RECONNECT_MESSAGE = "[system] The connection was reset; briefly apologize and continue."
 SILENCE_MESSAGE = "[system] The user has been silent; say a brief goodbye."
 WRAP_UP_MESSAGE = "[system] The call will end in 30 seconds; wrap up."
-ANNOUNCE_INSTRUCTIONS = "Briefly tell the user about this in one or two sentences."
+#: How an announcement is to be said. It rides in the note itself, never as the response's
+#: own `instructions`: the Realtime API's per-response instructions *replace* the session's,
+#: so the whole voice prompt — the persona, and the line that says to call mark_reported on a
+#: result from a "[system]" note — was gone for exactly the turn that needed it (#82).
+ANNOUNCE_INSTRUCTIONS = "Tell them about this briefly, in one or two sentences."
+#: Added when the note is a finished task this call may stamp: told only in the system
+#: prompt, the stamp was missed on every mid-call result in the logs, and the owner heard
+#: each again at the top of the next call.
+ANNOUNCE_REPORT_INSTRUCTIONS = (
+    "In the same turn, call mark_reported with task_ids [{task_id}]; that call is what "
+    "records they heard it, and saying so does not, so never tell them you have."
+)
+#: Handed over with the PIN when this call heard a result before it and so could not stamp
+#: it then. Without it the result was in the digest the PIN let in, as news, and they were
+#: told it a second time straight after giving the PIN.
+HEARD_BEFORE_PIN_MESSAGE = (
+    "[system] They already heard {tasks} on this call, before the PIN: do not tell them "
+    "again. Call mark_reported with task_ids [{ids}] in your next turn, along with whatever "
+    "else you do, and say nothing about it."
+)
 
 # What the model is told about a PIN typed on the keypad. Never the digits themselves.
 PIN_LOCKOUT_MESSAGE = (
@@ -257,6 +276,8 @@ class VoiceSession:
         #: (a call-back, a restart's confirmation). Set only from a token Keryx minted, and
         #: the one task `mark_reported` may stamp before the PIN: the call opened by saying it.
         self.opening_task_id = opening_task_id
+        #: Results this call was told before it could stamp them; the PIN asks for those.
+        self._heard_before_pin: set[int] = set()
 
         self._state = SessionState.NEW
         self._finish_now = asyncio.Event()
@@ -416,7 +437,9 @@ class VoiceSession:
             await self._stop_tasks([*pumps, finish], report=True)
             await self._teardown()
 
-    async def announce(self, text: str, *, needs: TrustLevel = TrustLevel.FULL) -> bool:
+    async def announce(
+        self, text: str, *, needs: TrustLevel = TrustLevel.FULL, task_id: int | None = None
+    ) -> bool:
         """Speak an out-of-band message. False when this call has not earned it.
 
         `needs` is what the announcement itself requires, because they are not alike. A
@@ -428,6 +451,10 @@ class VoiceSession:
         The False matters as much as the True: it is what stops a call counting as having
         told them, so the call-back or the text that would otherwise be skipped still goes
         out (`keryx.notify.deliver`).
+
+        `task_id` is the finished task the note is about. A call that may stamp it (the
+        same `POSSESSION` bar `mark_reported` holds a task outside its digest to) is asked
+        to, in the same turn; the stamp stays the model's to make, after it has spoken.
         """
         if not self.is_live or self.trust < needs:
             return False
@@ -435,12 +462,14 @@ class VoiceSession:
             # Only news gets this far, and the owner has said a stranger may not hear it.
             return False
         log.info("session %s announcing: %s", self.session_id, text)
-        return await self._safe_call(
-            self._provider.inject_message,
-            f"[system] {text}",
-            respond=True,
-            response_instructions=ANNOUNCE_INSTRUCTIONS,
-        )
+        note = f"[system] {text}\n{ANNOUNCE_INSTRUCTIONS}"
+        may_stamp = self.trust >= TrustLevel.POSSESSION
+        if task_id is not None and may_stamp:
+            note += " " + ANNOUNCE_REPORT_INSTRUCTIONS.format(task_id=task_id)
+        spoken = await self._safe_call(self._provider.inject_message, note, respond=True)
+        if spoken and task_id is not None and not may_stamp:
+            self._heard_before_pin.add(task_id)
+        return spoken
 
     def request_end(self, reason: str = "user") -> None:
         """Ask for the session to end once the response that is speaking has finished."""
@@ -588,6 +617,9 @@ class VoiceSession:
         No nudge when the call already had its digest (`BRIEFING_BEFORE_PIN`, or a call
         Keryx placed). It was spoken at the greeting; nudging again is Keryx telling them
         the same news twice, which is the one thing the wording everywhere else forbids.
+        For the same reason a result announced into this call before the PIN is not news
+        either: it is left out of the nudge, and the stamp it could not have then is asked
+        for instead (`HEARD_BEFORE_PIN_MESSAGE`).
         """
         if self._state is not SessionState.RUNNING:
             return
@@ -596,9 +628,15 @@ class VoiceSession:
         await self._safe_call(
             self._provider.update_instructions, self._build_config().instructions
         )
-        nudge = "" if already_told else self._briefing.after_pin_nudge()
+        heard = sorted(self._heard_before_pin)
+        nudge = "" if already_told else self._briefing.after_pin_nudge(heard)
         if nudge:
             await self._safe_call(self._provider.inject_message, nudge, respond=False)
+        if heard:
+            ids = ", ".join(map(str, heard))
+            tasks = f"{'task' if len(heard) == 1 else 'tasks'} {ids}"
+            note = HEARD_BEFORE_PIN_MESSAGE.format(tasks=tasks, ids=ids)
+            await self._safe_call(self._provider.inject_message, note, respond=False)
 
     def _opening_message(self) -> str:
         """The message that opens the session, plus the nudge about anything unreported.
@@ -1158,7 +1196,11 @@ class VoiceSession:
 
 
 class SessionRegistry:
-    """The sessions that are currently live, for announcements."""
+    """The sessions on the line, for announcements and for the call-backs that wait on them.
+
+    A session joins once its provider connects and leaves in `_teardown`, so one that is
+    hanging up is still here; `live()` is the ones that can still speak.
+    """
 
     def __init__(self) -> None:
         self._sessions: list[VoiceSession] = []
@@ -1174,6 +1216,19 @@ class SessionRegistry:
     def live(self) -> list[VoiceSession]:
         """Registered sessions that can still speak, oldest first."""
         return [session for session in self._sessions if session.is_live]
+
+    def on_the_line(self, number: str | None) -> VoiceSession | None:
+        """The phone session `number` is on, live or still saying goodbye, if there is one.
+
+        Registered rather than live on purpose: a session hanging up still holds the line,
+        and it leaves the registry only in `_teardown`, just before it publishes
+        `SessionEnded` — so whoever finds a session here will hear that it ended.
+        """
+        if not number:
+            return None
+        return next(
+            (s for s in self._sessions if s.channel == "phone" and s.caller == number), None
+        )
 
 
 def _dispatch_agents(schemas: list[dict]) -> list[str]:

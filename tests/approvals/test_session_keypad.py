@@ -97,7 +97,7 @@ async def test_what_the_keypad_decided_is_put_to_the_model(phone, provider, keyp
     async with running(session):
         phone.feed(Dtmf("1"))
         def pressed():
-            return any("They pressed" in text for text, _, _ in provider.injected)
+            return any("They pressed" in text for text, _ in provider.injected)
 
         await eventually(pressed)
 
@@ -108,7 +108,7 @@ async def test_a_digit_nobody_wanted_is_dropped(phone, provider, keypad, tmp_pat
     async with running(session):
         phone.feed(Dtmf("9"))
         await eventually(lambda: keypad.digits)
-    assert not any("pressed" in text for text, _, _ in provider.injected)
+    assert not any("pressed" in text for text, _ in provider.injected)
 
 
 async def test_the_digit_is_never_spoken_to_the_model(phone, provider, keypad, tmp_path):
@@ -119,7 +119,7 @@ async def test_the_digit_is_never_spoken_to_the_model(phone, provider, keypad, t
         phone.feed(Dtmf("7"))
         await eventually(lambda: keypad.digits)
         await eventually(lambda: len(provider.injected) > 1)
-    assert not any("7" in text for text, _, _ in provider.injected)
+    assert not any("7" in text for text, _ in provider.injected)
 
 
 async def test_a_broken_keypad_cannot_end_the_call(phone, provider, keypad, tmp_path):
@@ -146,7 +146,7 @@ async def test_a_session_with_no_keypad_behaves_as_before(phone, provider, tmp_p
     async with running(session):
         phone.feed(Dtmf("1"))
         await eventually(lambda: session.is_live)
-        assert [text for text, _, _ in provider.injected[1:]] == []
+        assert [text for text, _ in provider.injected[1:]] == []
 
 
 # --- a call Keryx placed ---------------------------------------------------

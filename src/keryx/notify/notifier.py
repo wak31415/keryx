@@ -13,7 +13,11 @@ Four stages, in order, on every `TaskCompleted` / `TaskFailed`:
    rest in writing. The call-back then says it is there, and follow-ups are answered from it.
 4. **Call back**, if they asked to be called and have not had it already. The call
    carries a fresh single-use stream token whose `extra` tells the new session why it
-   opened, so Keryx leads with the result instead of "hello?".
+   opened, so Keryx leads with the result instead of "hello?". If the phone it would ring
+   is already on a call with Keryx, it waits for that call to end: ringing a phone that is
+   on the line is a second call on top of the one they are on. It is dropped then if that
+   call told them — they heard it and gave the PIN, or it was marked reported — and goes
+   out otherwise, because a call that never proved who it was cannot have absorbed it.
 
 There is a fifth route, for the one task that cannot be delivered by the others: a
 task that changed Keryx's own code. Loading it means restarting, restarting means dropping
@@ -36,7 +40,7 @@ from typing import TYPE_CHECKING
 from keryx.agents.base import written_report
 from keryx.config import Settings
 from keryx.continuity.transcripts import read_tail
-from keryx.events import EventBus, TaskCompleted, TaskFailed
+from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from keryx.inline_waits import InlineWaits
 from keryx.integrations.slack import SlackSender
 from keryx.notify.callback import (
@@ -45,10 +49,10 @@ from keryx.notify.callback import (
     MAX_REQUEST_CHARS,
     no_trailing_stop,
 )
-from keryx.notify.deliver import announce_to_live_sessions, safe_send_sms
+from keryx.notify.deliver import Announced, announce_to_live_sessions, safe_send_sms
 from keryx.notify.reports import report_token
 from keryx.notify.twilio_out import TwilioOut, stream_twiml
-from keryx.session import SessionRegistry
+from keryx.session import SessionRegistry, VoiceSession
 from keryx.stream_tokens import StreamTokenStore, outbound_extra
 from keryx.tasks.manager import report_header
 from keryx.tasks.models import Task
@@ -129,6 +133,10 @@ class Notifier:
         self._restart = restart
         self._slack = slack
         self._removals: list[Callable[[], None]] = []
+        #: task id → the call-back waiting for the call on its number to end: that session,
+        #: the sessions that heard the result, and `_call_back`'s arguments.
+        self._busy: dict[int, tuple[VoiceSession, tuple, str, bool, bool]] = {}
+        self._later: set[asyncio.Task] = set()
 
     def start(self) -> None:
         """Subscribe to the completion events. Idempotent."""
@@ -137,13 +145,20 @@ class Notifier:
         self._removals = [
             self._bus.subscribe(TaskCompleted, self._on_task_event),
             self._bus.subscribe(TaskFailed, self._on_task_event),
+            self._bus.subscribe(SessionEnded, self._on_session_ended),
         ]
 
     def stop(self) -> None:
-        """Unsubscribe from the bus. Idempotent."""
+        """Unsubscribe from the bus and drop the call-backs still waiting. Idempotent.
+
+        A result never rung through still reaches them in the next call's digest.
+        """
         for remove in self._removals:
             remove()
         self._removals.clear()
+        self._busy.clear()
+        for later in self._later:
+            later.cancel()
 
     def report_url(self, task_id: int) -> str | None:
         """The tokenized report link, or None when there is no public host to serve it."""
@@ -177,7 +192,8 @@ class Notifier:
         text = (FAILED_TEXT if failed else DONE_TEXT).format(
             task_id=task.id, detail=detail
         )
-        delivered = await self._announce(task, text)
+        announced = await self._announce(task, text)
+        delivered = announced.delivered
         await self._send_sms(task, text, delivered=delivered)
         posted = await self._post_report(task, detail, failed=failed)
         if not failed and await self._arm_restart(task):
@@ -185,12 +201,19 @@ class Notifier:
             # one: it can say whether the change they asked for is actually running. Two
             # calls a minute apart about the same piece of work would be the alternative.
             return
-        await self._call_back(task, detail, failed=failed, delivered=delivered, posted=posted)
+        await self._call_back(
+            task,
+            detail,
+            failed=failed,
+            delivered=delivered,
+            posted=posted,
+            heard_by=announced.heard_by,
+        )
 
     # --- (1) live sessions -------------------------------------------------
 
-    async def _announce(self, task: Task, text: str) -> bool:
-        """Speak `text` into every live session; True if the owner has it either way.
+    async def _announce(self, task: Task, text: str) -> Announced:
+        """Speak `text` into every live session; `delivered` if the owner has it either way.
 
         A session holding the line for this task is skipped and counts as delivered: the
         `dispatch_task` tool result is about to say the same thing, and hearing it twice
@@ -210,13 +233,14 @@ class Notifier:
             text,
             needs=TrustLevel.NONE,
             skip=holding_the_line,
+            task_id=task.id,
         )
         if announced.heard:
             try:
                 await self._store.update(task.id, announced=True)
             except Exception:
                 log.exception("could not record that task %s was announced", task.id)
-        return announced.delivered
+        return announced
 
     # --- (2) the text ------------------------------------------------------
 
@@ -324,6 +348,37 @@ class Notifier:
 
     # --- (4) the call-back -------------------------------------------------
 
+    def _on_session_ended(self, event: SessionEnded) -> None:
+        """Pick up the call-backs that were waiting for this call to end."""
+        for task_id, (line, heard_by, *rest) in list(self._busy.items()):
+            if line.session_id != event.session_id:
+                continue
+            del self._busy[task_id]
+            # The PIN is what makes hearing it count (`Announced.delivered`), as it stands at
+            # the end: a call that gave it after the announcement told them as surely.
+            told = event.authorized and line in heard_by
+            later = asyncio.create_task(self._after_the_call(task_id, told, heard_by, *rest))
+            self._later.add(later)
+            later.add_done_callback(self._later.discard)
+
+    async def _after_the_call(
+        self, task_id: int, told: bool, heard_by: tuple, detail: str, failed: bool, posted: bool
+    ) -> None:
+        """Ring about `task_id` now the line is free, unless that call told them. Never raises."""
+        try:
+            task = await self._store.get(task_id)
+            if task is None:
+                return
+            if told or task.reported_at is not None:
+                log.info("task %s was told on the call it waited for; no call-back", task_id)
+                return
+            # They may be on another call by now (a dropped call, redialled): it waits again.
+            await self._call_back(
+                task, detail, failed=failed, delivered=False, posted=posted, heard_by=heard_by
+            )
+        except Exception:
+            log.exception("could not call back about task %s after the call", task_id)
+
     def _previous_call(self, task: Task) -> str:
         """What the session that asked for this call-back had said, if anything survives."""
         parts = []
@@ -338,14 +393,30 @@ class Notifier:
 
 
     async def _call_back(
-        self, task: Task, detail: str, *, failed: bool, delivered: bool, posted: bool
+        self,
+        task: Task,
+        detail: str,
+        *,
+        failed: bool,
+        delivered: bool,
+        posted: bool,
+        heard_by: tuple = (),
     ) -> None:
         """Ring the user back with a session that already knows what happened."""
         host = self._settings.public_host
+        # A newer result (a follow-up) replaces a call-back still waiting on a call.
+        self._busy.pop(task.id, None)
         if delivered or not task.callback_requested or not self._twilio.configured:
             return
         if not task.callback_number or not host:
             log.info("cannot call back about task %s: no number or no public host", task.id)
+            return
+        line = self._sessions.on_the_line(task.callback_number)
+        if line is not None:
+            # Nothing awaited since the lookup, so that session's `SessionEnded` is still to
+            # come (`SessionRegistry.on_the_line`).
+            self._busy[task.id] = (line, heard_by, detail, failed, posted)
+            log.info("call-back for task %s waits for session %s", task.id, line.session_id)
             return
         try:
             request = task.description
