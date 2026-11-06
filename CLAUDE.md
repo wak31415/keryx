@@ -8,8 +8,12 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 
 ## Commands
 
-- Install: `uv sync` (every coding agent, via the default `agents` group); one agent only:
-  `uv sync --no-group agents --extra codex` (or `claude`); with pip, `keryx[all|claude|codex]`
+- Install, for a user: `curl -fsSL …/install.sh | sh` (`install.sh`: `uv tool install
+  keryx-voice[all]`, then `keryx setup`); update with `uv run keryx upgrade` (an installer
+  install only; it restarts the service onto the new release)
+- Install, in a clone: `uv sync` (every coding agent, via the default `agents` group); one
+  agent only: `uv sync --no-group agents --extra codex` (or `claude`); with pip,
+  `keryx-voice[all|claude|codex]`
 - Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 96%)
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run keryx --help`
@@ -33,7 +37,7 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
 - Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`; a hidden
   `--no-wakeword` is accepted and ignored, for units installed before it left `main`); `scripts/dev.sh` adds the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
-  the kill switch); install the Claude hook with `scripts/install-claude-hook.sh`
+  the kill switch); `--install-hook` / `--uninstall-hook` puts the Claude hook in or out
 - Inspect tasks: `uv run keryx tasks list [--status …] [--limit N] [--internal]`,
   `uv run keryx tasks show <id>` (the `TOLD` column is `NO` until the assistant has said it)
 - What the tasks spent, per project: `uv run keryx tasks usage [--days N] [--json]` (by the
@@ -59,19 +63,18 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   `uv run keryx restart --status` for the last one, including what the logs said
 - Regenerate `docs/configuration.md` with
   `uv run python -m keryx.config.reference > docs/configuration.md`
-- Background service: `scripts/install-systemd.sh [--uninstall]` on Linux,
-  `scripts/install-launchd.sh [--uninstall]` on macOS
+- Background service: `uv run keryx service install|uninstall` (systemd user units on
+  Linux, launchd agents on macOS, each with its tunnel)
 
 ## Layout
 
 Source lives under `src/keryx/` (installable package, `src/` layout). Tests
 live under `tests/`, mirroring the package structure. `cli.py` stays argument
 parsing plus wiring: the `doctor` checks live in `keryx/doctor.py`, everything behind
-`keryx setup` and `keryx auth` in `keryx/setup/`, and the settings in `keryx/config/`. Service
-templates are in `ops/systemd/` (Linux) and `ops/launchd/` (macOS), rendered by the matching
-`scripts/install-*.sh`; `scripts/lib.sh` holds the scaffolding those scripts share
-(argument parsing, `config_value` — every setting read through `keryx config get`, never a
-grep — the PATH checks, `render`), so an installer is only its platform-specific half.
+`keryx setup` and `keryx auth` in `keryx/setup/`, and the settings in `keryx/config/`. The
+service's units are written by `setup/service.py` (`keryx service install`, which the wizard's
+last section runs), escaped for systemd or by `plistlib`; `install.sh` at the root is the
+one-line installer, and `scripts/dev.sh` is a contributor's foreground loop.
 
 Nine groups are named here because the file you want is rarely the one whose name you
 remember:
@@ -493,8 +496,8 @@ is killed handing over and returns `-15`. And "back up" is not "working" —
 Everything else in Keryx carries a result *outwards* from work the owner asked for.
 `keryx/approvals/` is the opposite: a Claude Code session on their own screen has stopped
 and asked *them* something, and they are not at the keyboard. A hook in `~/.claude/hooks/`
-(canonical copy: `scripts/claude_hooks/keryx_approval.py`, installed by
-`scripts/install-claude-hook.sh`) hands the pending prompt to the broker over a Unix socket
+(canonical copy: `scripts/claude_hooks/keryx_approval.py`, shipped in the wheel beside
+`approvals/hook_install.py`, which `keryx approvals --install-hook` runs) hands the pending prompt to the broker over a Unix socket
 and blocks; five minutes later, if they still have not answered, Keryx rings them.
 
 Four rulings hold it up, and none of them is a preference:
@@ -639,9 +642,33 @@ The coding agents are optional the same way, by choice rather than platform: eac
 extra (`claude`, `codex`, `all`), because each bundles a CLI of hundreds of megabytes. So
 `claude_agent_sdk` and `openai_codex` are imported only where an agent runs, never at module
 scope, and an agent whose package is missing is `registry.installed() == False`: shown as
-not installed with its `uv sync --extra` command, never offered, refused as `AGENT_BACKEND`
+not installed with the command that adds it, never offered, refused as `AGENT_BACKEND`
 by `Settings.agent_refusal`. `tests/agents/conftest.py` skips a backend's own tests without
 its SDK, and a test that is not about installation asks for `every_agent_installed`.
+
+## Installed from PyPI, developed from a clone
+
+The owner installs Keryx with `install.sh`: the package `keryx-voice`, from PyPI, installed by
+`uv tool install` into an environment of its own (a tag publishes it: `release.yml`).
+Contributors clone it and run `uv run keryx`. `keryx/install.py::how_installed` tells the
+three apart (a clone has `pyproject.toml` at `SOURCE_ROOT`, the installer's environment has
+uv's `uv-receipt.toml`, anything else is pip), and every message that names a command asks
+it first. Three rulings:
+
+- **The owner of an installer install never types or reads `uv`.** Every command is
+  `keryx …`; uv is the installer's business. A machine without uv gets one at
+  `XDG_DATA_HOME/keryx/bin/uv`, off PATH (`install.private_uv`), and `keryx upgrade` drives
+  it. A hint for an installer install names `keryx` or re-running the installer, never uv.
+- **The wheel is self-sufficient.** What a clone keeps beside `src/` and an install needs —
+  `skills/` and the approval hook — is copied in by `force-include`; each lookup takes the
+  packaged copy and falls back to the clone's. The CI build job asserts both are in the
+  wheel. An installed unit runs `sys.executable -m keryx serve`, which survives an upgrade
+  and needs nothing on PATH; a clone's runs `uv run --project <clone>`, so a pull that moved
+  the dependencies is synced on restart.
+- **Only a clone edits Keryx's own code.** An installer install has no source tree to
+  restart into, and `keryx upgrade` would overwrite one: that loop, and issue reports that
+  read the code (`KERYX_CHECKOUT`), are a clone's. `current_version` is the release outside
+  a clone and never asks `git` there, which would describe a home directory kept in git.
 
 ## Testing rule
 

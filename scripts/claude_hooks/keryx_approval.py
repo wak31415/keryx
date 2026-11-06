@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Claude Code half of the approval bridge — the *canonical* copy.
 
-`scripts/install-claude-hook.sh` copies this into `~/.claude/hooks/` and that copy is what
+`keryx approvals --install-hook` copies this into `~/.claude/hooks/` and that copy is what
 the CLI runs, deliberately: this repository is a shared checkout that several agents edit
 at once, and a hook read straight out of it would change under a live session mid-prompt.
 

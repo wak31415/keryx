@@ -6,6 +6,30 @@ settings: a removed or renamed setting or command is a major bump.
 
 ## [Unreleased]
 
+Keryx installs with one line and no clone, and every command starts with `keryx`. An
+installed service needs nothing done: the new commands write the same units the scripts did.
+
+### Added
+
+- **A one-line install:**
+  `curl -fsSL https://raw.githubusercontent.com/wak31415/keryx/main/install.sh | sh`. It
+  installs the `keryx` command with both coding agents and starts `keryx setup`. It needs no
+  Python, uv or clone: it brings its own. Keryx is published on PyPI as `keryx-voice`, so a
+  tool of your own can have Keryx in its editor with `pip install keryx-voice`.
+- **`keryx service install`** installs and starts the background service with its tunnel
+  (systemd on Linux, launchd on macOS), and **`keryx service uninstall`** removes them. The
+  last section of `keryx setup` runs it.
+- **`keryx upgrade`** updates an installed Keryx and restarts the service onto the new
+  version. It checks that the new version starts before it restarts anything.
+- **`keryx approvals --install-hook`** installs the approval bridge's hook into Claude Code,
+  and `--uninstall-hook` takes it out.
+
+### Removed
+
+- `scripts/install-systemd.sh`, `scripts/install-launchd.sh`,
+  `scripts/install-claude-hook.sh` and `scripts/lib.sh`, replaced by the commands above.
+  `scripts/dev.sh` stays, for working on Keryx from a clone.
+
 ## [0.1.2] - 2026-11-04
 
 Fixes to how results reach you, finished tasks' reports on Slack, and updated dependencies.

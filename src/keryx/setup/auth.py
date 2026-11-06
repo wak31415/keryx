@@ -127,7 +127,7 @@ def _agent_login(
         raise AuthError(f"{spec.label} is not installed: {install_command(name)}")
     cli = spec.find_cli()
     if cli is None:
-        raise AuthError(f"the {name} CLI is missing: {spec.install_hint}")
+        raise AuthError(f"the {name} CLI is missing: {registry.install_hint(name)}")
     argv = agents.login_argv(name, cli, headless=options.headless)
     echo(f"running `{' '.join([name, *argv[1:]])}` — finish the sign-in it asks for.")
     code = run_login(argv)

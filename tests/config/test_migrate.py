@@ -597,7 +597,7 @@ def test_a_service_the_installer_already_started_is_not_started_twice(machine):
 
     def installer_starts_it():
         manager.running = True
-        return ["install-systemd.sh: done"]
+        return ["the service: done"]
 
     report = migrate(machine, service=service, rerender=installer_starts_it)
 
@@ -653,8 +653,9 @@ def command(machine, monkeypatch):
     """`keryx migrate` run from the machine's checkout, with nothing real to re-render."""
     monkeypatch.chdir(machine.repo)
     monkeypatch.setattr(cli, "repo_root", lambda: machine.repo)
-    ran: list[list[str]] = []
-    monkeypatch.setattr(cli, "run_command", lambda argv: ran.append(argv) or 0)
+    ran: list[str] = []
+    monkeypatch.setattr(cli.service_units, "install", lambda settings, **_: ran.append("service"))
+    monkeypatch.setattr(cli, "install_hook", lambda state_dir, **_: ran.append("hook"))
     monkeypatch.setattr(cli, "health_probe", lambda settings: None)
     return ran
 
@@ -680,7 +681,7 @@ def test_the_command_migrates_and_says_what_is_left(machine, command):
     assert (machine.config / "pin").is_file()
     assert "sessions are gone" in result.output and "#2" in result.output
     assert "token.json" in result.output
-    assert [Path(argv[0]).name for argv in command] == ["install-claude-hook.sh"]
+    assert command == ["hook"]
     assert PIN not in result.output
     assert "nothing to migrate" in runner.invoke(cli.app, ["migrate"]).output
 
@@ -695,7 +696,7 @@ def test_the_command_rerenders_an_installed_service(machine, command, monkeypatc
     result = runner.invoke(cli.app, ["migrate", "--yes"])
 
     assert result.exit_code == 0, result.output
-    assert [Path(argv[0]).name for argv in command] == ["install-systemd.sh"]
+    assert command == ["service"]
     assert "the service is running again" in result.output
 
 
@@ -719,14 +720,21 @@ def test_the_command_summarises_a_long_list_and_a_service_that_did_not_come_back
 
 
 def test_an_installer_that_fails_says_to_run_it_again(machine, command, monkeypatch):
-    monkeypatch.setattr(cli, "run_command", lambda argv: 1)
+    def no_tunnel(settings, **_):
+        raise cli.service_units.ServiceError("cloudflared is not on PATH")
+
+    def read_only(state_dir, **_):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(cli.service_units, "install", no_tunnel)
+    monkeypatch.setattr(cli, "install_hook", read_only)
     claude = machine.home / ".claude"
     claude.mkdir()
     (claude / "settings.json").write_text("keryx_approval.py")
 
     assert cli._rerender(ServiceTarget("systemd", "keryx.service")) == [
-        "install-systemd.sh: exited 1, run it again",
-        "approval hook: exited 1, run it again",
+        "the service: cloudflared is not on PATH; run `keryx service install` again",
+        "approval hook: read-only file system; run `keryx approvals --install-hook` again",
     ]
 
 
@@ -984,7 +992,7 @@ def test_jarvis_unit_is_stopped_first_and_retired_for_keryxs(jarvis):
 
     report = run(
         make_plan([]), service=old, successor=new, retire=retire, fix_permissions=lambda: [],
-        rerender=lambda: order.append("install") or ["install-systemd.sh: done"], today=TODAY,
+        rerender=lambda: order.append("install") or ["the service: done"], today=TODAY,
     )
 
     assert units.log[1] == ["systemctl", "--user", "stop", "jarvis.service"]
@@ -993,7 +1001,7 @@ def test_jarvis_unit_is_stopped_first_and_retired_for_keryxs(jarvis):
     assert ["systemctl", "--user", "daemon-reload"] in units.log
     assert not (unit_dir / "jarvis.service").exists()
     assert units.running == {"keryx.service"} and report.started is True
-    assert report.rerendered == ["jarvis.service: retired", "install-systemd.sh: done"]
+    assert report.rerendered == ["jarvis.service: retired", "the service: done"]
 
 
 def test_launchd_retires_the_agent_and_its_tunnel(tmp_path):
@@ -1029,8 +1037,8 @@ def test_the_old_unit_is_found_only_for_the_default_one(monkeypatch):
 
 def test_the_command_hands_jarvis_unit_over_to_keryx(jarvis, monkeypatch):
     units = Units(jarvis)
-    ran: list[list[str]] = []
-    monkeypatch.setattr(cli, "run_command", lambda argv: ran.append(argv) or 0)
+    ran: list[str] = []
+    monkeypatch.setattr(cli.service_units, "install", lambda settings, **_: ran.append("service"))
     monkeypatch.setattr(cli, "health_probe", lambda settings: None)
     monkeypatch.setattr(cli, "resolve_target", lambda settings, **_: None)
     monkeypatch.setattr(cli, "candidate_target",
@@ -1046,7 +1054,7 @@ def test_the_command_hands_jarvis_unit_over_to_keryx(jarvis, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert "systemd jarvis.service: stopped first, and retired" in result.output
-    assert [Path(argv[0]).name for argv in ran] == ["install-systemd.sh"]
+    assert ran == ["service"]
     assert "jarvis.service: retired" in result.output
     assert units.running == {"keryx.service"}
     assert "the service is running again" in result.output

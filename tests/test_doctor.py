@@ -398,7 +398,7 @@ def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeyp
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "not installed" in check.detail
-    assert "install-" in check.detail  # which installer puts it there
+    assert "keryx service install" in check.detail  # what puts it there
     assert "restart_service" in check.detail
 
 

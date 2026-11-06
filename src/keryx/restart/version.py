@@ -21,6 +21,7 @@ import subprocess
 from pathlib import Path
 
 from keryx.config.files import write_private
+from keryx.install import Install, how_installed, release
 from keryx.restart.logscan import marks
 
 log = logging.getLogger("keryx.restart")
@@ -34,7 +35,11 @@ GIT_TIMEOUT_S = 2.0
 
 
 def current_version(repo: Path | None = None) -> str | None:
-    """`git describe` of the checkout we are running from — decoration, never required."""
+    """`git describe` of the checkout we are running from, else the installed release —
+    decoration, never required. Never `git` outside a clone: an install under a home
+    directory kept in git would report the dotfiles' commit."""
+    if repo is None and how_installed() is not Install.CLONE:
+        return release()
     root = repo or Path(__file__).resolve().parents[2]
     try:
         done = subprocess.run(

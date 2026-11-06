@@ -30,12 +30,9 @@ from keryx.config.files import HOME_ENV, XDG_HOMES
 
 log = logging.getLogger("keryx.restart")
 
-#: Default unit/label names, matching `ops/systemd/keryx.service` and
-#: `ops/launchd/dev.keryx.agent.plist`.
+#: The unit and label `keryx service install` writes (`keryx.setup.service`).
 SYSTEMD_UNIT = "keryx.service"
 LAUNCHD_LABEL = "dev.keryx.agent"
-#: What puts each one there, for the messages that say it is missing.
-INSTALLERS = {"systemd": "scripts/install-systemd.sh", "launchd": "scripts/install-launchd.sh"}
 
 #: Where Linux says which cgroup this process is in. Under systemd the cgroup is the unit.
 PROC_SELF_CGROUP = Path("/proc/self/cgroup")
@@ -57,8 +54,7 @@ UNSUPPORTED_HINT = """no installed Keryx service to restart on this machine.
 
 Install the service first (it is what starts Keryx again after it stops):
 
-  scripts/install-systemd.sh    # Linux
-  scripts/install-launchd.sh    # macOS
+  keryx service install
 
 Or `keryx config set SERVICE_MANAGER … SERVICE_UNIT …` if the unit is named something else. To
 restart by hand instead, stop the process and start `keryx serve` again — nothing else
