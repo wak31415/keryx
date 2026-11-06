@@ -16,6 +16,7 @@ from keryx.agents.base import RunResult
 from keryx.issues import GhStatus
 from keryx.notify.twilio_out import TwilioError, TwilioNumber
 from keryx.setup.context import Probes
+from keryx.setup.service import ServiceError
 from keryx.setup.ui import Choice
 
 
@@ -162,7 +163,7 @@ class FakeWorld:
     )
     task_result: RunResult = field(default_factory=lambda: RunResult(ok=True))
     login_code: int = 0
-    script_code: int = 0
+    service_error: str | None = None
     headless: bool = False
     gmail: str = "sam@example.com"
     #: `~/.ssh/config` as `plugins.ssh_hosts.discover` would read it, whose masters are up
@@ -205,6 +206,11 @@ class FakeWorld:
             self.calls.append(("gh",))
             return self.gh.pop(0) if len(self.gh) > 1 else self.gh[0]
 
+        def install_service(settings, echo):
+            self.calls.append(("service",))
+            if self.service_error:
+                raise ServiceError(self.service_error)
+
         def openai(key):
             self.calls.append(("openai", key))
             return self.openai_problem
@@ -215,7 +221,7 @@ class FakeWorld:
             smoke=smoke,
             run_task=run_task,
             run_login=record("login", self.login_code),
-            run_script=record("script", self.script_code),
+            install_service=install_service,
             headless=lambda: self.headless,
             gmail_address=gmail_address,
             workspace_signin=workspace,

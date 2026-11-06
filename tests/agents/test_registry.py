@@ -16,6 +16,7 @@ from keryx.agents.registry import (
     agent_for_model,
     auth_status,
     build_agent_runner,
+    install_hint,
     installed,
     offered_agents,
     ready_backends,
@@ -191,7 +192,7 @@ def test_an_agent_whose_extra_is_missing_is_not_installed_and_says_how(monkeypat
 
     assert not installed(agent)
     assert BACKENDS[agent].find_cli() is None
-    assert BACKENDS[agent].install_hint.startswith(f"uv sync --extra {agent} ")
+    assert install_hint(agent).startswith(f"uv sync --extra {agent} (")
 
 
 @pytest.mark.parametrize("agent", ["claude", "codex"])

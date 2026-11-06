@@ -25,7 +25,13 @@ from dataclasses import dataclass
 from keryx.agents import registry
 from keryx.agents.auth import AuthMode, AuthStatus
 from keryx.agents.base import AgentOpenError, RunResult
-from keryx.agents.registry import BACKENDS, auth_status, install_command, resolve_model
+from keryx.agents.registry import (
+    BACKENDS,
+    auth_status,
+    install_command,
+    install_hint,
+    resolve_model,
+)
 from keryx.config import Settings
 from keryx.config.permissions import ACTOR_ENV, SERVICE
 from keryx.setup.context import SetupContext
@@ -259,7 +265,7 @@ def _sign_in(ctx: SetupContext, state: AgentState) -> AgentState:
         ctx.ui.success(f"{spec.label}: {state.auth.detail}")
         return state
     if state.cli is None:
-        ctx.ui.error(f"{spec.label}: its CLI is missing — {spec.install_hint}")
+        ctx.ui.error(f"{spec.label}: its CLI is missing — {install_hint(state.name)}")
         return state
     options = [
         Choice("subscription", "Subscription", hint=f"sign in with {SUBSCRIPTION[state.name]}"),

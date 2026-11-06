@@ -781,7 +781,7 @@ def test_restart_without_a_service_manager_says_how_to_install_one(
     result = runner.invoke(app, ["restart"])
 
     assert result.exit_code == 1
-    assert "install-systemd.sh" in result.output
+    assert "keryx service install" in result.output
     assert calls == []
 
 

@@ -9,6 +9,9 @@ Security problems do **not** go in an issue — see [SECURITY.md](SECURITY.md).
 
 ## Getting set up
 
+Working on Keryx means a clone and [uv](https://docs.astral.sh/uv/), not the one-line
+installer, and every `keryx` command runs as `uv run keryx` from the checkout:
+
 ```bash
 uv sync                            # Python 3.12
 uv run pytest -q                   # must be green, with no warnings
@@ -84,19 +87,22 @@ rules of its own in `CLAUDE.md`; this section is about docs people read.
 
 ## Releases
 
-There is no package index in this story. Keryx is installed from a clone, so a release is
-a tag and a set of notes, not an upload.
+A release is a tag. Pushing it publishes that commit to PyPI as `keryx-voice`
+(`.github/workflows/release.yml`), which is what the installer and `keryx upgrade` fetch, so
+tag only a commit CI has passed on `main`.
 
 1. Bump `version` in `pyproject.toml` by hand. Semantic versioning, and the only public
    contract it describes is the CLI plus the settings: a removed or renamed setting or command is
    a major bump, a new one is a minor bump, everything else is a patch.
 2. Add the entry to `CHANGELOG.md` under the new version, with the date.
-3. Commit (`chore: release vX.Y.Z`), tag it `vX.Y.Z`, and push both.
+3. Commit (`chore: release vX.Y.Z`), tag it `vX.Y.Z`, and push both. The workflow refuses
+   a tag that does not match `pyproject.toml`'s version.
 4. Cut a GitHub Release from the tag, with the `CHANGELOG.md` entry as its body.
 
-**Nothing is published to PyPI or any other index**, deliberately: this is a
-single-tenant service you run from a clone, not a library to depend on. `pyproject.toml`
-carries the `Private :: Do Not Upload` classifier so that an accidental `uv publish` is refused by the index rather than quietly succeeding.
+PyPI trusts the workflow, not a token (trusted publishing): the project's publisher on
+pypi.org names this repository, `release.yml` and the `pypi` environment. A version once
+uploaded can never be uploaded again, even after it is deleted, so a broken release is fixed
+by the next patch.
 
 ## Coverage
 

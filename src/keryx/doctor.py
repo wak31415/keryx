@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from keryx import plugins
-from keryx.agents.registry import BACKENDS, auth_status, installed
+from keryx.agents.registry import BACKENDS, auth_status, install_hint, installed
 from keryx.config import (
     DATA_DIR_MODE,
     DATA_FILE_MODE,
@@ -45,10 +45,11 @@ from keryx.config.permissions import is_protected
 from keryx.config.settings import LEGACY_ENV_FILE
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
+from keryx.install import Install, how_installed
 from keryx.integrations.gmail import token_path
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
 from keryx.logging_util import mask_number
-from keryx.restart.service import INSTALLERS, candidate_target, resolve_target
+from keryx.restart.service import candidate_target, resolve_target
 
 Severity = Literal["hard", "soft"]
 
@@ -224,7 +225,7 @@ def _agent_checks(settings: Settings) -> list[Check]:
                 Check(
                     label,
                     False,
-                    f"not installed — {spec.install_hint}",
+                    f"not installed — {install_hint(name)}",
                     severity=severity,
                     section="agents",
                     unset=True,
@@ -232,7 +233,7 @@ def _agent_checks(settings: Settings) -> list[Check]:
             )
             continue
         if cli is None:
-            detail = f"{name} CLI not found — {spec.install_hint}"
+            detail = f"{name} CLI not found — {install_hint(name)}"
             checks.append(Check(label, False, detail, severity=severity, section="agents"))
             continue
         status = auth_status(name, settings)
@@ -469,7 +470,7 @@ def service_manager_check(settings: Settings) -> Check:
         elif candidate is None:
             why = "no service manager on this machine"
         else:
-            why = f"{candidate.unit} is not installed ({INSTALLERS[candidate.manager]})"
+            why = f"{candidate.unit} is not installed (`keryx service install`)"
         return Check(
             "service manager",
             False,
@@ -480,7 +481,7 @@ def service_manager_check(settings: Settings) -> Check:
             unset=True,
         )
     detail = target.describe()
-    if shutil.which("git") is None:
+    if shutil.which("git") is None and how_installed() is Install.CLONE:
         # `current_version` is decoration and degrades quietly; say so once, here, rather
         # than leave someone wondering why every restart reports an unknown version.
         detail += " — but no git on PATH, so versions will report as unknown"

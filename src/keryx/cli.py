@@ -26,6 +26,7 @@ from pydantic import ValidationError
 from keryx import plugins
 from keryx.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
+from keryx.approvals.hook_install import hook_installed, install_hook
 from keryx.config import (
     GROUPS,
     PLACEHOLDER_KEY,
@@ -37,7 +38,7 @@ from keryx.config import (
     secure_dir,
     secure_file,
 )
-from keryx.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
+from keryx.config.files import HOME_ENV, XDG_HOMES, xdg_home
 from keryx.config.migrate import MigrationError, make_plan, old_target, retire_old_units
 from keryx.config.migrate import Report as MigrationReport
 from keryx.config.migrate import Service as MigratingService
@@ -49,6 +50,15 @@ from keryx.continuity.memory import memory_path, read_memory
 from keryx.continuity.retention import cutoff_for, prune, prune_with
 from keryx.doctor import fix_permissions, format_check, has_hard_failure, run_doctor_checks
 from keryx.events import EventBus
+from keryx.install import (
+    DISTRIBUTION,
+    INSTALL_COMMAND,
+    Install,
+    find_uv,
+    how_installed,
+    keryx_command,
+    release,
+)
 from keryx.logging_util import LOG_FORMAT, mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
@@ -57,7 +67,6 @@ from keryx.restart.health import health_probe, wait_until_serving
 from keryx.restart.logscan import errors_since
 from keryx.restart.logscan import marks as log_marks
 from keryx.restart.service import (
-    INSTALLERS,
     UNSUPPORTED_HINT,
     candidate_target,
     resolve_target,
@@ -71,6 +80,7 @@ from keryx.server import create_app
 from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
 from keryx.setup import profile
+from keryx.setup import service as service_units
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
@@ -99,6 +109,10 @@ plugins_app = typer.Typer(
     help="The optional voice tools (Slack, email, billing, cluster stats): on, off, set up."
 )
 app.add_typer(plugins_app, name="plugins")
+service_app = typer.Typer(
+    help="The background service that starts Keryx at boot and brings it back if it stops."
+)
+app.add_typer(service_app, name="service")
 log = logging.getLogger("keryx.cli")
 
 
@@ -532,6 +546,71 @@ def restart(
     else:
         typer.echo("restarting; no call back was asked for")
     typer.echo("if the call never comes: keryx restart --status")
+
+
+@service_app.command("install")
+def service_install() -> None:
+    """Install and start the service (systemd on Linux, launchd on macOS), and its tunnel.
+
+    Run it again after your PATH changes: the service gets this shell's, so the tasks it
+    runs find what your terminal finds.
+    """
+    _owner_only("install the service")
+    try:
+        service_units.install(_configure_readonly(), echo=typer.echo)
+    except service_units.ServiceError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+
+
+@service_app.command("uninstall")
+def service_uninstall() -> None:
+    """Stop the service and its tunnel and remove them. Your settings and data stay."""
+    _owner_only("remove the service")
+    service_units.uninstall(echo=typer.echo)
+
+
+@app.command()
+def upgrade() -> None:
+    """Update Keryx to the latest release, and restart the service onto it."""
+    _owner_only("upgrade Keryx")
+    kind = how_installed()
+    if kind is Install.CLONE:
+        typer.echo(f"this Keryx runs from a clone ({repo_root()}): pull there, then "
+                   "`keryx restart`", err=True)
+        raise typer.Exit(1)
+    if kind is Install.PIP:
+        typer.echo(f"this Keryx was installed with pip: `pip install --upgrade {DISTRIBUTION}`, "
+                   "then `keryx restart`", err=True)
+        raise typer.Exit(1)
+    uv = find_uv()
+    if uv is None:
+        typer.echo(f"could not find what installed Keryx; run the installer again:\n  "
+                   f"{INSTALL_COMMAND}", err=True)
+        raise typer.Exit(1)
+    before = release()
+    typer.echo("checking for a newer Keryx…")
+    if subprocess.run([uv, "tool", "upgrade", "--quiet", DISTRIBUTION], check=False).returncode:
+        typer.echo("the upgrade failed; Keryx is unchanged", err=True)
+        raise typer.Exit(1)
+    # Asked of the new code, which also proves it runs before the service is moved onto it.
+    check = subprocess.run([*keryx_command(), "--version"], capture_output=True, text=True,
+                           check=False)
+    if check.returncode != 0:
+        typer.echo(f"the new version does not start, so the service was left as it is:\n"
+                   f"{check.stderr.strip()}", err=True)
+        raise typer.Exit(1)
+    after = check.stdout.split()[-1]
+    if after == before:
+        typer.echo(f"keryx {before} is the latest")
+        return
+    typer.echo(f"keryx {before} → {after}")
+    if resolve_target(_load_settings_optional(), from_outside=True) is None:
+        return
+    restarted = subprocess.run(
+        [*keryx_command(), "restart", "--reason", f"upgraded to {after}"], check=False
+    )
+    raise typer.Exit(restarted.returncode)
 
 
 @app.command("restart-watch", hidden=True)
@@ -1577,27 +1656,22 @@ def migrate(
     _echo_migration(report)
 
 
-#: The approval hook's file name, and what it was called before the service was Keryx: a
-#: settings file naming either has the hook installed, and the installer replaces both.
-HOOK_NAMES = ("keryx_approval.py", "jarvis_approval.py")
-
-
 def _rerender(target) -> list[str]:
     """Re-install what names the old paths: the service's unit, and the approval hook."""
     done = []
-    scripts = repo_root() / "scripts"
+    settings = _load_settings_optional()
     if target is not None:
-        installer = scripts / Path(INSTALLERS[target.manager]).name
-        code = run_command([str(installer)])
-        done.append(f"{installer.name}: {'done' if code == 0 else f'exited {code}, run it again'}")
-    try:
-        hooks = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
-        hooked = any(name in hooks for name in HOOK_NAMES)
-    except OSError:
-        hooked = False
-    if hooked:
-        code = run_command([str(scripts / "install-claude-hook.sh")])
-        done.append(f"approval hook: {'done' if code == 0 else f'exited {code}, run it again'}")
+        try:
+            service_units.install(settings, echo=typer.echo)
+            done.append("the service: done")
+        except service_units.ServiceError as error:
+            done.append(f"the service: {error}; run `keryx service install` again")
+    if hook_installed():
+        try:
+            install_hook(settings.state_dir)
+            done.append("approval hook: done")
+        except (OSError, ValueError) as error:
+            done.append(f"approval hook: {error}; run `keryx approvals --install-hook` again")
     return done
 
 
@@ -1751,6 +1825,12 @@ def approvals(
     enable: Annotated[
         bool, typer.Option("--enable", help="Undo --disable.")
     ] = False,
+    install: Annotated[
+        bool, typer.Option("--install-hook", help="Install the hook into Claude Code.")
+    ] = False,
+    uninstall: Annotated[
+        bool, typer.Option("--uninstall-hook", help="Take the hook out of Claude Code.")
+    ] = False,
 ) -> None:
     """What the approval bridge has done, and the kill switch that stops it.
 
@@ -1761,9 +1841,20 @@ def approvals(
     settings = _configure_readonly()
     state_dir = settings.state_dir / STATE_DIR_NAME
     switch = state_dir / KILL_SWITCH_NAME
-    if disable and enable:
-        typer.echo("pick one of --disable and --enable")
+    if disable + enable + install + uninstall > 1:
+        typer.echo("pick one of --disable, --enable, --install-hook and --uninstall-hook")
         raise typer.Exit(code=2)
+    if install or uninstall:
+        _owner_only("change Claude Code's hooks")
+        try:
+            changed = install_hook(settings.state_dir, uninstall=uninstall)
+        except (OSError, ValueError) as error:  # ValueError: a settings.json that is not JSON
+            typer.echo(f"could not change Claude Code's settings: {error}", err=True)
+            raise typer.Exit(1) from None
+        typer.echo(f"{'removed' if uninstall else 'installed'} the approval hook in {changed}")
+        if install:
+            typer.echo("turn it off at any time with: keryx approvals --disable")
+        return
     if disable:
         secure_dir(state_dir)
         switch.touch()

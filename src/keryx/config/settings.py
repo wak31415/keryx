@@ -527,8 +527,8 @@ class Settings(BaseSettings):
     )
     cloudflare_tunnel: str = setting(
         "keryx",
-        "The Cloudflare tunnel the service scripts run (`scripts/dev.sh`, "
-        "`scripts/install-systemd.sh`).",
+        "The Cloudflare tunnel the service runs beside Keryx on Linux "
+        "(`keryx service install`, and `scripts/dev.sh` in a clone).",
         group="phone",
     )
     host: str = setting("127.0.0.1", "The address the phone server binds.", group="phone")
@@ -632,7 +632,7 @@ class Settings(BaseSettings):
     approvals_enabled: bool = setting(
         True,
         "Whether a Claude Code prompt left unanswered on your screen may become a call. "
-        "The hook is installed separately (`scripts/install-claude-hook.sh`).",
+        "The hook is installed separately (`keryx approvals --install-hook`).",
         group="approvals",
     )
     approval_escalate_seconds: float = setting(

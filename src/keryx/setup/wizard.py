@@ -288,7 +288,10 @@ def summary(ctx: SetupContext) -> int:
                  f"{settings.assistant_name}: run `keryx setup` again to set up calls; "
                  f"{agent} will do the work.")
         return 0
-    ui.outro(f"Ready. Start Keryx with `scripts/dev.sh`; {agent} will do the work.")
+    if any(check.name == "service manager" and check.ok for check in checks):
+        ui.outro(f"Ready: call your number. {agent} will do the work.")
+    else:
+        ui.outro(f"Ready. Start Keryx with `keryx service install`; {agent} will do the work.")
     return 0
 
 

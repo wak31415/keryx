@@ -5,7 +5,7 @@ where its credentials come from, and where it keeps its instructions and skills.
 router, the manager, the voice tools, `doctor` and `keryx setup` read this table and
 nothing else (see docs/agents.md, "Adding a third agent").
 
-Each agent's SDK is an optional extra of the same name (`uv sync --extra codex`), so an
+Each agent's SDK is an optional extra of the same name (`keryx-voice[codex]`), so an
 agent can be simply not installed; `installed` says so, and such an agent is never ready,
 never offered, and refused as the default.
 """
@@ -30,6 +30,7 @@ from keryx.agents.codex import (
 from keryx.agents.router import RoutingAgentRunner
 from keryx.config import Settings
 from keryx.config.files import claude_config_dir
+from keryx.install import add_agent_command
 
 log = logging.getLogger("keryx.agents.registry")
 
@@ -71,8 +72,8 @@ class BackendSpec:
     auth: AuthSource
     #: The agent's CLI, or None when it is not installed.
     find_cli: Callable[[], str | None]
-    #: How to install that CLI, for when it is not.
-    install_hint: str
+    #: Where that CLI comes from, for when it is missing (`install_hint`).
+    bundles: str
     #: The instructions file the agent reads on every run, and its skills directory.
     instructions_file: Callable[[], Path]
     skills_dir: Callable[[Settings], Path]
@@ -96,7 +97,7 @@ BACKENDS: dict[str, BackendSpec] = {
         make_runner=ClaudeAgentRunner,
         auth=CLAUDE_AUTH,
         find_cli=claude_cli,
-        install_hint="uv sync --extra claude (the Claude Agent SDK bundles the claude CLI)",
+        bundles="the Claude Agent SDK bundles the claude CLI",
         instructions_file=lambda: claude_config_dir() / "CLAUDE.md",
         # `SKILLS_DIR`, which predates a second agent and is Claude's.
         skills_dir=lambda settings: settings.skills_dir,
@@ -114,7 +115,7 @@ BACKENDS: dict[str, BackendSpec] = {
         make_runner=CodexAgentRunner,
         auth=CODEX_AUTH,
         find_cli=codex_cli,
-        install_hint="uv sync --extra codex (the openai-codex SDK bundles the codex CLI)",
+        bundles="the openai-codex SDK bundles the codex CLI",
         instructions_file=lambda: codex_home() / "AGENTS.md",
         skills_dir=lambda settings: codex_home() / "skills",
         login_commands=(("codex", "login"),),
@@ -157,8 +158,13 @@ def installed(agent: str) -> bool:
 
 
 def install_command(agent: str) -> str:
-    """What installs `agent`: its extra."""
-    return f"uv sync --extra {agent}"
+    """What installs `agent`: its extra, the way this Keryx was installed."""
+    return add_agent_command(agent)
+
+
+def install_hint(agent: str) -> str:
+    """How to get `agent`'s CLI back, and where it comes from."""
+    return f"{install_command(agent)} ({BACKENDS[agent].bundles})"
 
 
 def is_ready(agent: str, settings: Settings) -> bool:

@@ -13,7 +13,6 @@ never leaves the machine with no PIN and an open door.
 """
 
 import json
-import sys
 import typing
 from pathlib import Path
 from typing import Any
@@ -40,6 +39,7 @@ from keryx.doctor import service_manager_check
 from keryx.persona import DEFAULT_VOICE, PERSONAS
 from keryx.setup.context import SetupContext
 from keryx.setup.phone import numbers_problem
+from keryx.setup.service import ServiceError
 from keryx.setup.ui import Choice, Prompter
 
 #: Settings the manual walk does not offer: each has a section, or a door, of its own.
@@ -350,7 +350,7 @@ def _new_pin(ctx: SetupContext) -> str | None:
 
 
 def repo_root() -> Path:
-    """The checkout Keryx runs from, where `scripts/` is."""
+    """The checkout Keryx runs from, when it runs from one."""
     return Path(keryx.__file__).resolve().parents[2]
 
 
@@ -360,20 +360,16 @@ def run_service(ctx: SetupContext) -> None:
     if check.ok:
         ui.success(f"installed: {check.detail}")
         return
-    ui.note("A background service starts Keryx at boot, restarts it if it dies, and lets it "
-            "restart itself after a change to its own code.")
-    name = "install-launchd.sh" if sys.platform == "darwin" else "install-systemd.sh"
-    script = repo_root() / "scripts" / name
-    if not script.is_file():
-        ui.note(f"Run scripts/{name} from a clone of the repository.")
-        return
+    ui.note("A background service starts Keryx at boot, brings it back if it stops, and lets "
+            "it restart itself.")
     if not settings.public_host:
         ui.note("It runs the phone channel and its tunnel, so it needs the phone set up first.")
         return
-    if not ui.confirm(f"Install it now ({name})?", default=True):
+    if not ui.confirm("Install it now?", default=True):
         return
-    code = ctx.probes.run_script([str(script)])
-    if code == 0:
-        ui.success("the service is installed and running")
-    else:
-        ui.error(f"{name} exited with {code}")
+    try:
+        ctx.probes.install_service(settings, ui.note)
+    except ServiceError as error:
+        ui.error(str(error))
+        return
+    ui.success("the service is installed and running")
