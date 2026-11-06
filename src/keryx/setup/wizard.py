@@ -53,7 +53,6 @@ class Section:
 
 
 SECTIONS: tuple[Section, ...] = (
-    Section("import", "Move to the XDG directories", sections.run_import),
     Section("voice", "Voice", sections.run_voice, required=True),
     Section("agents", "Coding agents", agents.run_section, required=True),
     Section("settings", "Settings", sections.run_settings),
@@ -74,10 +73,6 @@ def statuses(ctx: SetupContext, checks: list[Check]) -> dict[str, str]:
     found: dict[str, str] = {}
     for section in SECTIONS:
         key = section.key
-        if key == "import":
-            if settings.storage_refusal() is not None:
-                found[key] = MISSING
-            continue
         if key == "settings":
             found[key] = DONE if key in ctx.store.walked_sections() else MISSING
         elif key == "issues" and key not in ctx.store.walked_sections():
@@ -126,13 +121,6 @@ def run_wizard(ctx: SetupContext, *, review_all: bool = False) -> int:
         "Keryx setup",
         f"Saved in {ctx.store.home} as you go. Ctrl-C stops at any question.",
     )
-    if (refusal := ctx.settings.storage_refusal()) is not None:
-        # Before anything is saved: what setup would write lands where `keryx migrate`
-        # is about to move the old files, and would stand in its way.
-        ui.error(refusal)
-        ui.outro("Run `keryx migrate` first (`--dry-run` shows what it would move), then "
-                 "`keryx setup` again.")
-        return 1
     records: dict[str, list[Entry]] = {}
     walked = False
     if review_all:

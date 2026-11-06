@@ -274,27 +274,6 @@ def test_the_checklist_locks_and_unlocks_what_changed(make_ctx):
 # --- import --------------------------------------------------------------------------------
 
 
-def test_files_from_before_the_xdg_layout_point_at_migrate(make_ctx, tmp_path):
-    """Not moved from here: a migration stops the service, and wants a plan read first."""
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-old\nOWNER_NAME=Ada\n")
-    ctx = make_ctx([])
-
-    sections.run_import(ctx)
-
-    assert ctx.ui.asked == []
-    assert ConfigStore().stored() == {}
-    assert (tmp_path / ".env").exists()
-    assert any(".env" in line for line in ctx.ui.lines("warn"))
-    assert any("keryx migrate" in line for line in ctx.ui.lines("note"))
-
-
-def test_nothing_from_before_asks_nothing(make_ctx):
-    ctx = make_ctx([])
-    sections.run_import(ctx)
-    assert ctx.ui.asked == []
-    assert ctx.ui.lines("success") == ["everything is where Keryx looks for it"]
-
-
 # --- the service -----------------------------------------------------------------------------
 
 

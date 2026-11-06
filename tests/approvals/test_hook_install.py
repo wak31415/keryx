@@ -11,7 +11,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from keryx.approvals.hook_install import hook_installed, hook_source, install_hook
+from keryx.approvals.hook_install import hook_source, install_hook
 from keryx.cli import app
 
 
@@ -43,30 +43,26 @@ def test_the_hook_is_always_told_where_the_state_dir_is(tmp_path):
     assert f"exec {commands['PermissionRequest']};" in shell[2]
     assert target.read_bytes() == hook_source().read_bytes()
     assert os.access(target, os.X_OK)
-    assert hook_installed()
 
 
-def test_the_hook_from_before_the_rename_is_replaced_not_joined(tmp_path):
-    """Two hooks would hand every prompt to the broker twice, and the old one's socket is
-    gone; somebody else's hook on the same event is left alone, and the settings are kept."""
-    (claude() / "hooks").mkdir(parents=True)
-    old = claude() / "hooks" / "jarvis_approval.py"
-    old.write_text("# the old hook\n")
+def test_installing_again_replaces_the_hook_and_leaves_the_rest(tmp_path):
+    """Two hooks would hand every prompt to the broker twice; somebody else's hook on the
+    same event is left alone, and the rest of the settings are kept."""
+    claude().mkdir(parents=True)
     theirs = {"hooks": [{"type": "command", "command": "their-own-hook"}]}
-    old_group = {"hooks": [{"type": "command", "command": f"python3 {old}"}]}
-    before = {"model": "opus",
-              "hooks": {"PermissionRequest": [theirs, old_group], "Stop": [old_group]}}
+    before = {"model": "opus", "hooks": {"PermissionRequest": [theirs]}}
     (claude() / "settings.json").write_text(json.dumps(before))
 
     install_hook(tmp_path / "state")
-
-    settings = json.loads((claude() / "settings.json").read_text())
-    assert "jarvis_approval.py" not in json.dumps(settings) and not old.exists()
-    assert settings["model"] == "opus"
-    assert settings["hooks"]["PermissionRequest"][0] == theirs
-    assert len(settings["hooks"]["Stop"]) == 1
     [backup] = (claude() / "backups").iterdir()
     assert json.loads(backup.read_text()) == before
+    install_hook(tmp_path / "state")
+
+    settings = json.loads((claude() / "settings.json").read_text())
+    assert settings["model"] == "opus"
+    assert settings["hooks"]["PermissionRequest"][0] == theirs
+    assert len(settings["hooks"]["PermissionRequest"]) == 2
+    assert len(settings["hooks"]["Stop"]) == 1
 
 
 def test_uninstall_takes_out_only_the_hook(tmp_path):
@@ -79,7 +75,6 @@ def test_uninstall_takes_out_only_the_hook(tmp_path):
 
     assert json.loads((claude() / "settings.json").read_text()) == {"hooks": {"Stop": [theirs]}}
     assert not (claude() / "hooks" / "keryx_approval.py").exists()
-    assert not hook_installed()
 
 
 def test_the_resolve_command_still_runs_when_nothing_is_pending(tmp_path):

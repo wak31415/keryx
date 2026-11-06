@@ -80,9 +80,6 @@ Issues = "https://github.com/wak31415/keryx/issues"
 
 [project.scripts]
 keryx = "keryx.cli:app"
-# The old name, for one release: it says what happened and exits, so a unit or a habit
-# that still runs `jarvis` is told to run `keryx migrate` rather than "command not found".
-jarvis = "keryx.cli:renamed"
 
 [tool.uv]
 # macOS and Linux, the two platforms the service installers support.

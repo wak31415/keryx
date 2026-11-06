@@ -11,7 +11,7 @@ import pytest
 
 from keryx.config import Settings, keryx_home, pin_file, read_enrolled_pin, write_enrolled_pin
 from keryx.config.files import dump_toml, read_toml, write_private
-from keryx.config.settings import ConfigFileError, env_var_name, field_for
+from keryx.config.settings import ConfigFileError
 from keryx.config.store import (
     FROM_DEFAULT,
     FROM_ENV,
@@ -182,7 +182,7 @@ def test_the_environment_beats_both_files_and_secrets_beat_config(store, monkeyp
 
 
 def test_a_env_in_the_working_directory_is_never_read(store):
-    """A checkout is the one place a secret must never live; `keryx migrate` moves it."""
+    """A checkout is the one place a secret must never live; `import-env` moves it."""
     Path(".env").write_text("OPENAI_VOICE=from-dotenv\nPORT=7000\n")
 
     settings = Settings(openai_api_key="x")
@@ -322,27 +322,6 @@ def test_import_env_moves_the_pin_to_its_own_file(store, tmp_path):
     assert report.pin == "moved to KERYX_HOME/pin"
     assert pin_file(store.home).read_text().strip() == "482915"
     assert "KERYX_PIN" not in store.stored()
-
-
-def test_a_env_from_before_the_rename_imports_under_the_new_names(store, tmp_path):
-    env = write_env(tmp_path, "JARVIS_PIN=482915\nJARVIS_CHECKOUT=/srv/keryx\n")
-
-    report = store.import_env(env)
-
-    assert report.pin == "moved to KERYX_HOME/pin"
-    assert pin_file(store.home).read_text().strip() == "482915"
-    assert store.stored() == {"KERYX_CHECKOUT": "/srv/keryx"}
-
-
-def test_an_old_name_in_the_environment_is_read_and_the_new_one_wins(store, monkeypatch):
-    monkeypatch.setenv("JARVIS_PIN", "482915")
-
-    assert Settings(openai_api_key="x").pin == "482915"
-    assert store.source_of("KERYX_PIN") == FROM_ENV
-    assert field_for("JARVIS_PIN") == "pin" and env_var_name("pin") == "KERYX_PIN"
-
-    monkeypatch.setenv("KERYX_PIN", "13572468")
-    assert Settings(openai_api_key="x").pin == "13572468"
 
 
 def test_import_env_refuses_everything_over_a_different_enrolled_pin(store, tmp_path):

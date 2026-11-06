@@ -3,7 +3,8 @@
 Keryx: a Twilio phone voice-assistant service, backed by the OpenAI Realtime API and Claude
 Agent SDK subagents. The assistant it puts on the line has a name of its own
 (`ASSISTANT_NAME`, Lyra by default; see "Two names"). Until 2026-09-29 the service was called
-Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is not part of
+Jarvis; nothing reads that name any more, but older commits and trailers use it. The local
+wake-word channel is developed on `feat/local-wakeword` and is not part of
 `main`.
 
 ## Commands
@@ -27,10 +28,6 @@ Jarvis. The local wake-word channel is developed on `feat/local-wakeword` and is
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config import-env [PATH]`, `config lock|unlock KEY` (what the running service may change)
-- Move a Jarvis install to Keryx — its XDG directories (`~/.config/jarvis`, …), or an older
-  `~/.jarvis` and a checkout `.env`: `uv run keryx migrate [--dry-run] [--yes]` (stops the
-  service, moves, retires `jarvis.service` for `keryx.service`, re-renders the unit and the
-  approval hook, starts it again; `serve` refuses to start until it has run)
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run keryx auth status [--json] [--smoke]`
@@ -136,8 +133,8 @@ remember:
   a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
   `permissions` (what the running service may change; `PROTECTED_KEYS`), `pin`
-  (`KERYX_HOME/pin`), `files` (the XDG directories, the modes and atomic writes), `migrate`
-  (`keryx migrate`) and `reference` (generates `docs/configuration.md`). The package
+  (`KERYX_HOME/pin`), `files` (the XDG directories, the modes and atomic writes) and
+  `reference` (generates `docs/configuration.md`). The package
   re-exports the old `keryx.config` names.
 - **setup** — `setup/` is `keryx setup` and `keryx auth`: `wizard` (section order, what is
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
@@ -217,14 +214,11 @@ other built-in persona, or any name of the owner's. Three rulings:
   the organization may not use is refused with the whole `session.update`, instructions and
   tools included, so a persona's voice is a constant that has been heard, never a guess. A
   coding agent's name is refused as an assistant's.
-- **The old name is read, never written, for one release.** `JARVIS_ACTOR=service` is the
-  service as much as `KERYX_ACTOR` (a security point: a subagent of either build running the
-  other's command must stay the service), and `serve` sets both. `JARVIS_PIN` and
-  `JARVIS_CHECKOUT` are read under the new names, a `.jarvis-brief.md` still describes a
-  project without a `.keryx-brief.md`, and a `jarvis` command says to run `keryx migrate`. A
-  `JARVIS_HOME` is never followed: `serve` refuses until it is renamed. The same holds for a setting renamed later:
-  its old name is an alias (`FAKE_AGENTS` → `DEMO_MODE`), `canonical_key` turns it into the
-  current one wherever a rule is asked, and nothing is ever stored under it.
+- **A renamed setting's old name is read, never written, for one release.** It is an alias
+  (`FAKE_AGENTS` → `DEMO_MODE`), `canonical_key` turns it into the current one wherever a
+  rule is asked, and nothing is ever stored under it. The service's own old name went the
+  same way: `JARVIS_*`, `~/.jarvis`, `.jarvis-brief.md` and `keryx migrate` are gone, and
+  a Jarvis install moves with 0.1.2's `keryx migrate` first.
 
 ## Trust has three levels
 
@@ -386,14 +380,15 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   times its default, which is no limit by another name, and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `config import-env`, `auth login`,
-  `memory seed`, `setup`, `config lock|unlock`, `migrate`, `plugins install|remove` — refuse outright under
+  `memory seed`, `setup`, `config lock|unlock`, `service install|uninstall`, `upgrade`,
+  `approvals --install-hook`, `plugins install|remove` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
   `tests/config/test_permissions.py` names the writable set.
 - **The PIN is not a setting.** It stays in `KERYX_HOME/pin`, a write-once file of its own
-  and never a key in `config.toml`; `config set KERYX_PIN` is refused, `import-env` (and
-  `migrate`, through it) moves a `.env` PIN there — and refuses the whole import when a
+  and never a key in `config.toml`; `config set KERYX_PIN` is refused, `import-env`
+  moves a `.env` PIN there — and refuses the whole import when a
   different PIN is already enrolled, because silently switching would lock the owner out.
 
 `keryx setup` reads `doctor`'s checks to decide what is left (each has a `section`, and is
@@ -419,27 +414,17 @@ relative one ignored as the specification says (`config/files.py::xdg_home`):
 - `~/.cache/keryx` — `CACHE_DIR`: what can be downloaded again (on `feat/local-wakeword`,
   the wake-word models).
 
-Four rulings:
+Three rulings:
 
 - **The PIN is in the configuration directory, not the data one.** Where the PIN is must not
   depend on a setting: at `DATA_DIR/pin`, a `DATA_DIR` pointed at an empty directory found
   no PIN, and no PIN is an open enrolment door. `pin-failures.json` stays with the data,
   not the state, because people treat state as disposable and losing it hands a guesser a
   fresh budget.
-- **Nothing is read from the working directory.** No `.env`, no `.secrets/`. `serve` (and
-  every command that reads the data) refuses while one is there, while `~/.jarvis` still
-  holds its files, or while one of Jarvis's XDG directories still holds a file
-  (`Settings.storage_refusal`). The signal is the old files being
-  there, never the new directory missing — `ensure_dirs` makes that on any command.
-- **`keryx migrate` plans before it touches anything, and can run twice.** A conflict
-  stops it before the service is stopped; an entry already moved is not in the next plan.
-  Nothing is deleted but a stale socket: `~/.jarvis` is renamed aside with its leftovers,
-  and each of Jarvis's XDG directories moves whole — whole, because what is in them has
-  outgrown any list of names. Claude sessions that ran in the old workspace are let go, so a
-  follow-up starts afresh, and the imports of the tools in `DATA_DIR/tools` are rewritten
-  (their import lines only). `CLOUDFLARE_TUNNEL` is pinned to `jarvis` when it was the
-  default, and Jarvis's unit is retired before Keryx's is installed, so two tunnels never
-  run at once.
+- **Nothing is read from the working directory.** No `.env`, no `.secrets/`:
+  `keryx config import-env` moves an old `.env` into the store. Nothing refuses to start
+  beside one either, because an installed service starts in the owner's home directory,
+  where a `.env` is as likely to be another tool's.
 - **The service resolves what its installer's terminal resolved.** The units render
   `KERYX_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is
   handed them with `--setenv`: a user manager's environment is not the service's. A
@@ -728,8 +713,8 @@ inside functions, not imported at module scope, so the suite runs without them.
   twice, by an atomic rename (`pin.replace_pin_at_keyboard`) so no failure leaves no PIN.
   A running service keeps the PIN it started with until it restarts, and setup says so. The
   digits are keyed twice and compared (`session._enrol_keypad_pin`), never spoken: a
-  mishearing here is unfixable. Any `KERYX_HOME/pin` shuts the door, usable or not, and so
-  does a PIN still in an unmigrated `~/.jarvis`; only the owner at the keyboard re-opens it.
+  mishearing here is unfixable. Any `KERYX_HOME/pin` shuts the door, usable or not; only the
+  owner at the keyboard re-opens it.
   Until a PIN exists nothing of theirs is read out (`reads_before_pin`), and SECURITY.md
   carries the accepted risk.
   Wrong PINs also count across calls (`keryx/pin_guard.py`): while that has PIN entry locked

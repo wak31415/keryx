@@ -208,9 +208,7 @@ hashing would suggest a protection that does not exist. The file sits beside
 **Where the PIN is kept does not depend on a setting.** It is in the configuration
 directory, which only the `KERYX_HOME` environment variable can move. It is not in
 `DATA_DIR`, which a setting can move. When the PIN was kept at `DATA_DIR/pin`, pointing
-`DATA_DIR` at an empty directory found no PIN, and no PIN means enrollment is open. A PIN
-still in an old `~/.jarvis` directory also keeps enrollment closed, until `keryx migrate`
-moves it.
+`DATA_DIR` at an empty directory found no PIN, and no PIN means enrollment is open.
 
 **What a coding agent can and cannot do to the PIN.** A coding agent runs as you with full
 permissions, so it can delete `KERYX_HOME/pin`, as it can edit any of your files. It cannot
@@ -371,8 +369,7 @@ approval socket), and the cache. `keryx doctor` warns when:
 
 Keryx reads nothing from the working directory. It used to read a `.env` in the checkout,
 and a checkout is the one place where a secret is one `git add` away from leaving the
-machine. `keryx serve` refuses to start while a `.env` is there, or while files remain in an
-old `~/.jarvis`, until `keryx migrate` has moved them.
+machine. `keryx config import-env` moves an old one into the store.
 
 A secret is never put on a command line, where `ps` and your shell history would keep it.
 `keryx config set KEY --stdin` reads it from standard input, and `--from-env VAR` reads it
@@ -410,8 +407,9 @@ This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as
 shell, and can edit `config.toml` directly, as it can edit any of your files. What the rule
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
-service-writable keys. `config import-env`, `auth login`, `memory seed`, `setup`, `migrate`,
-`plugins install`, `plugins remove`, and `config lock|unlock` refuse the service outright.
+service-writable keys. `config import-env`, `auth login`, `memory seed`, `setup`, `service`,
+`upgrade`, `approvals --install-hook`, `plugins install`, `plugins remove`, and
+`config lock|unlock` refuse the service outright.
 
 ### Your own tools and plugins
 

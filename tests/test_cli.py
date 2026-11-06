@@ -88,17 +88,6 @@ def test_version_prints_the_installed_package_version():
     assert result.output.strip() == f"keryx {importlib.metadata.version('keryx-voice')}"
 
 
-def test_the_old_command_says_what_happened_and_fails(capsys):
-    """A unit from before the rename must not start a service from the old directories."""
-    from keryx.cli import renamed
-
-    with pytest.raises(SystemExit) as exit_info:
-        renamed()
-
-    assert exit_info.value.code == 1
-    assert "Jarvis is now Keryx: run `keryx migrate`" in capsys.readouterr().err
-
-
 def test_help_documents_version():
     assert "--version" in runner.invoke(app, ["--help"]).output
 
@@ -178,39 +167,6 @@ def test_serve_refuses_a_default_agent_whose_extra_is_not_installed(settings_stu
         result.output
     )
     assert "config" not in built
-
-
-def test_serve_refuses_until_the_old_files_are_migrated(settings_stub, monkeypatch):
-    """Started now it would find no tasks, no memory, and no PIN: an open enrolment door."""
-    built: dict = {}
-    stub_uvicorn(monkeypatch, built)
-    Path(".env").write_text("OPENAI_API_KEY=sk-old\n")
-
-    result = runner.invoke(app, ["serve"])
-
-    assert result.exit_code == 2, result.output
-    assert "keryx migrate" in result.output
-    assert "config" not in built
-    assert not (settings_stub.state_dir / "logs" / "keryx.log").exists()
-
-
-@pytest.mark.parametrize(
-    "command",
-    [["tasks", "list"], ["tasks", "show", "1"], ["tasks", "usage"], ["memory"],
-     ["forget", "--yes"], ["approvals"], ["restart", "--status"], ["auth", "status"]],
-)
-def test_what_reads_the_data_waits_for_the_migration_too(settings_stub, command):
-    """It would answer from an empty directory, and `tasks` would make a `tasks.db` there for
-    the migration to trip over."""
-    legacy = Path.home() / ".jarvis"
-    legacy.mkdir(parents=True)
-    (legacy / "tasks.db").touch()
-
-    result = runner.invoke(app, command)
-
-    assert result.exit_code == 2, result.output
-    assert "keryx migrate" in result.output
-    assert not (settings_stub.data_dir / "tasks.db").exists()
 
 
 def stub_uvicorn(monkeypatch, built: dict) -> None:

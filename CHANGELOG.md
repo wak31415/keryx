@@ -29,6 +29,8 @@ installed service needs nothing done: the new commands write the same units the 
 - `scripts/install-systemd.sh`, `scripts/install-launchd.sh`,
   `scripts/install-claude-hook.sh` and `scripts/lib.sh`, replaced by the commands above.
   `scripts/dev.sh` stays, for working on Keryx from a clone.
+- `keryx migrate`, and the refusal to start beside a `.env` in the working directory.
+  `keryx config import-env` still imports one.
 
 ## [0.1.2] - 2026-11-04
 

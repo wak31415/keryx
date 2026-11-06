@@ -123,7 +123,6 @@ def run_doctor_checks(
     problems = config_problems or {}
     store = store or ConfigStore()
     checks = [
-        _storage_check(settings),
         _config_check(store),
         _openai_key_check(settings),
         _agent_config_check(settings),
@@ -160,22 +159,10 @@ def run_doctor_checks(
 # --- configuration ---------------------------------------------------------
 
 
-def _storage_check(settings: Settings) -> Check:
-    """Whether an install from before the XDG layout is still waiting for `keryx migrate`.
-
-    Hard, because `keryx serve` refuses to start in that state (`storage_refusal`), and
-    missing rather than failed: nothing is broken, a step has not been taken yet.
-    """
-    refusal = settings.storage_refusal()
-    if refusal is not None:
-        return Check("storage", False, refusal, section="import", unset=True)
-    return Check("storage", True, "the XDG directories", section="import")
-
-
 def _config_check(store: ConfigStore) -> Check:
     """Where the configuration lives."""
     where = store.config_path if store.config_path.is_file() else store.home
-    return Check("configuration", True, str(where), severity="soft", section="import")
+    return Check("configuration", True, str(where), severity="soft", section="settings")
 
 
 def _openai_key_check(settings: Settings) -> Check:

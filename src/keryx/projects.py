@@ -21,9 +21,6 @@ log = logging.getLogger("keryx.projects")
 #: the wrong thing to paste here — thousands of tokens of build detail that the subagent
 #: reads for itself anyway, and that would drown a receptionist's prompt.
 BRIEF_FILE = ".keryx-brief.md"
-#: Its name before the service was Keryx, still read when a repository has no `BRIEF_FILE`:
-#: it lives in the owner's repositories, which no migration of ours should be editing.
-LEGACY_BRIEF_FILE = ".jarvis-brief.md"
 #: Where `keryx setup` keeps the summaries it drafted, one `<project>.md` each, under
 #: `data_dir`: for the projects whose repository carries no brief of its own. A repository's
 #: own `BRIEF_FILE` always wins — it travels with the code and is somebody's decision.
@@ -97,7 +94,7 @@ def discover_briefs(
 ) -> list[ProjectBrief]:
     """The brief of every project that has one; the rest simply have none.
 
-    A project's brief is its own `BRIEF_FILE` (or `LEGACY_BRIEF_FILE`), else
+    A project's brief is its own `BRIEF_FILE`, else
     `summaries/<name>.md` when a directory of summaries is given.
 
     Taken in discovery order (configured projects first) until `MAX_BRIEFS_CHARS`: a brief
@@ -109,8 +106,6 @@ def discover_briefs(
     total = 0
     for name, path in projects.items():
         brief = path / BRIEF_FILE
-        if not brief.is_file():
-            brief = path / LEGACY_BRIEF_FILE
         if not brief.is_file() and summaries is not None:
             brief = summaries / f"{name}.md"
         try:
