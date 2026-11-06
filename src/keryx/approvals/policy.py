@@ -227,7 +227,7 @@ def classify(event: dict, settings) -> dict | None:
     if "truncated" not in event:
         log.warning(
             "not escalating a %s prompt: the approval hook that sent it does not say whether "
-            "it trimmed the request — re-run scripts/install-claude-hook.sh",
+            "it trimmed the request — run `keryx approvals --install-hook` again",
             tool or "?",
         )
         return None

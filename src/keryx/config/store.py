@@ -423,7 +423,7 @@ class ConfigStore:
         """Everything `import_env` could refuse about `path`, asked without writing a thing.
 
         Returns the `.env`'s PIN, if it has one, for a caller that has PINs of its own to
-        compare it with (`keryx migrate`, before it moves anything).
+        compare it with.
         """
         return _read_env(path.resolve()).pin
 

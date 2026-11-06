@@ -30,12 +30,9 @@ from keryx.config.files import HOME_ENV, XDG_HOMES
 
 log = logging.getLogger("keryx.restart")
 
-#: Default unit/label names, matching `ops/systemd/keryx.service` and
-#: `ops/launchd/dev.keryx.agent.plist`.
+#: The unit and label `keryx service install` writes (`keryx.setup.service`).
 SYSTEMD_UNIT = "keryx.service"
 LAUNCHD_LABEL = "dev.keryx.agent"
-#: What puts each one there, for the messages that say it is missing.
-INSTALLERS = {"systemd": "scripts/install-systemd.sh", "launchd": "scripts/install-launchd.sh"}
 
 #: Where Linux says which cgroup this process is in. Under systemd the cgroup is the unit.
 PROC_SELF_CGROUP = Path("/proc/self/cgroup")
@@ -57,8 +54,7 @@ UNSUPPORTED_HINT = """no installed Keryx service to restart on this machine.
 
 Install the service first (it is what starts Keryx again after it stops):
 
-  scripts/install-systemd.sh    # Linux
-  scripts/install-launchd.sh    # macOS
+  keryx service install
 
 Or `keryx config set SERVICE_MANAGER … SERVICE_UNIT …` if the unit is named something else. To
 restart by hand instead, stop the process and start `keryx serve` again — nothing else
@@ -84,20 +80,6 @@ class ServiceTarget:
 
     def describe(self) -> str:
         return f"{self.manager} {self.unit}"
-
-    def stop_command(self) -> list[str]:
-        """Stop it and keep it stopped: `bootout` on launchd, where `KeepAlive` would
-        start a merely killed job again."""
-        if self.manager == "systemd":
-            return ["systemctl", "--user", "stop", self.unit]
-        return ["launchctl", "bootout", f"gui/{os.getuid()}/{self.unit}"]
-
-    def start_command(self) -> list[str]:
-        """Start it again after `stop_command`."""
-        if self.manager == "systemd":
-            return ["systemctl", "--user", "start", self.unit]
-        plist = Path.home() / "Library" / "LaunchAgents" / f"{self.unit}.plist"
-        return ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)]
 
 
 def resolve_target(
@@ -221,29 +203,6 @@ def is_installed(
     if result.returncode != 0:
         return False
     return target.manager != "systemd" or result.stdout.strip() == "loaded"
-
-
-def is_active(
-    target: ServiceTarget, *, run: Callable[..., object] = subprocess.run
-) -> bool:
-    """Whether the service is running, or on its way up or down. Asks; changes nothing.
-
-    Anything short of a clear "stopped" counts as running — `activating`, `deactivating`,
-    a probe that timed out — because the one caller (`keryx migrate`) must not move a
-    database out from under a process that still has it open.
-    """
-    if target.manager == "systemd":
-        command = ["systemctl", "--user", "is-active", target.unit]
-    else:
-        command = ["launchctl", "print", f"gui/{os.getuid()}/{target.unit}"]
-    try:
-        result = run(command, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
-    except (OSError, subprocess.SubprocessError):
-        return True
-    if target.manager == "systemd":
-        return result.stdout.strip() not in ("inactive", "failed", "unknown")
-    # launchd: not loaded at all is stopped; loaded is running unless it says otherwise.
-    return result.returncode == 0 and "state = not running" not in result.stdout
 
 
 # --- the watchdog that outlives the restart ---------------------------------

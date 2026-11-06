@@ -17,10 +17,6 @@ keywords = [
     "speech-to-speech",
 ]
 classifiers = [
-    # Not a library: a single-tenant service, installed from a clone. The `Private ::`
-    # classifier is the standard hard stop — PyPI rejects any distribution carrying one,
-    # so an accidental `uv publish` fails at the index rather than succeeding quietly.
-    "Private :: Do Not Upload",
     "Development Status :: 4 - Beta",
     "Environment :: No Input/Output (Daemon)",
     "Intended Audience :: Developers",
@@ -84,9 +80,6 @@ Issues = "https://github.com/wak31415/keryx/issues"
 
 [project.scripts]
 keryx = "keryx.cli:app"
-# The old name, for one release: it says what happened and exits, so a unit or a habit
-# that still runs `jarvis` is told to run `keryx migrate` rather than "command not found".
-jarvis = "keryx.cli:renamed"
 
 [tool.uv]
 # macOS and Linux, the two platforms the service installers support.
@@ -117,6 +110,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/keryx"]
 
+# What a clone keeps beside `src/` and an install still needs: the skills every subagent's
+# prompt points at, and the approval hook `keryx approvals --install-hook` copies out.
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "keryx/bundled_skills"
+"scripts/claude_hooks/keryx_approval.py" = "keryx/approvals/keryx_approval.py"
+
 [tool.hatch.build.targets.sdist]
 # An explicit list rather than "the checkout": `.gitignore` keeps out what it names, but any
 # untracked file it does not name — a local `.claude/` full of worktrees, say — would ship.
@@ -124,7 +123,6 @@ only-include = [
     "src",
     "tests",
     "docs",
-    "ops",
     "scripts",
     "skills",
     ".python-version",
@@ -135,6 +133,7 @@ only-include = [
     "LICENSE",
     "README.md",
     "SECURITY.md",
+    "install.sh",
     "pyproject.toml",
     "uv.lock",
 ]

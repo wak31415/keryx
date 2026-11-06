@@ -1,0 +1,36 @@
+name: Release
+
+# A version tag (v0.2.0) publishes that commit to PyPI as keryx-voice, which is what
+# install.sh and `keryx upgrade` install. Trusted publishing: PyPI trusts this workflow in
+# the `pypi` environment, so no token is stored anywhere. Tag a commit CI has passed on main.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    name: publish to PyPI
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/keryx-voice
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e  # v10.3.2
+
+      - name: The tag names the version in pyproject.toml
+        run: test "v$(uv version --short)" = "$GITHUB_REF_NAME"
+
+      - name: Build the sdist and wheel
+        run: uv build
+
+      - name: Publish
+        run: uv publish --trusted-publishing always

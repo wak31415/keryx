@@ -140,7 +140,7 @@ async def test_session_config_follows_the_phone_transport(make_session, phone, p
 async def test_starting_a_session_never_logs_the_callers_number(
     make_session, phone, provider, caplog
 ):
-    """The start line names the caller; `~/.jarvis/logs/keryx.log` is not the place for one."""
+    """The start line names the caller; `keryx.log` is not the place for one."""
     with caplog.at_level(logging.INFO, logger="keryx.session"):
         session = make_session(phone, provider)
         async with running(session):

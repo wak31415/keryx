@@ -75,8 +75,8 @@ billing: OpenAI wants an Admin key from the organization's admin-keys page, and 
 wants an `sk-ant-admin…` key. To turn it on by hand:
 
 ```bash
-uv run keryx config set OPENAI_ADMIN_KEY --stdin     # or ANTHROPIC_ADMIN_KEY
-uv run keryx plugins install check_billing --set monthly_budget=40
+keryx config set OPENAI_ADMIN_KEY --stdin     # or ANTHROPIC_ADMIN_KEY
+keryx plugins install check_billing --set monthly_budget=40
 ```
 
 The spend it reports is the whole organization's, or one project's or workspace's if you
@@ -167,6 +167,13 @@ the whole contract: the file, the wording, credentials, and how to check it. In 
   hands the model an error it can say.
 - **`keryx tools`** lists what the directory holds and what the next call would refuse,
   and exits 1 while anything is refused.
+
+**Writing one yourself** needs no clone and no build: the file runs inside Keryx, so save it
+in `~/.local/share/keryx/tools/` and call. For completion and type checking in your editor,
+install Keryx into the editor's environment too (`pip install keryx-voice`, or
+`uv add --dev keryx-voice` in a project of your own). Inside the service a tool can import
+only the standard library, `httpx`, `numpy`, `pydantic` and `keryx`, so it cannot bring a
+dependency of its own.
 
 Skills are often a better answer than a tool. Anything under `SKILLS_DIR` is listed in the
 voice prompt, so a subagent already knows what it's good at without you naming it. A new

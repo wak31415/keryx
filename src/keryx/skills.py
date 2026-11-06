@@ -18,8 +18,11 @@ from pathlib import Path
 log = logging.getLogger("keryx.skills")
 
 SKILL_FILE = "SKILL.md"
-#: The skills that ship in the Keryx repository, beside `src/`.
-BUNDLED_SKILLS = Path(__file__).resolve().parents[2] / "skills"
+#: The skills that ship with Keryx: `skills/` beside `src/` in a clone, and copied into the
+#: package for an install (`pyproject.toml`'s `force-include`).
+_PACKAGED_SKILLS = Path(__file__).resolve().parent / "bundled_skills"
+_CLONE_SKILLS = Path(__file__).resolve().parents[2] / "skills"
+BUNDLED_SKILLS = _PACKAGED_SKILLS if _PACKAGED_SKILLS.is_dir() else _CLONE_SKILLS
 #: How to write the owner's own voice tools; its path is in every subagent's prompt.
 CUSTOM_TOOLS_SKILL = BUNDLED_SKILLS / "keryx-custom-tools" / SKILL_FILE
 #: Descriptions are written for a reader with a screen; the prompt only needs the gist.

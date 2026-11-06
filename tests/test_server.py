@@ -193,7 +193,7 @@ def test_the_default_line_limit_takes_two_calls(client, state):
 
 
 def test_an_inbound_call_never_writes_the_caller_number_to_the_log(client, caplog):
-    """`~/.jarvis/logs/keryx.log` and the journal are not a place for a phone number."""
+    """`keryx.log` and the journal are not a place for a phone number."""
     with caplog.at_level(logging.INFO, logger="keryx.server"):
         post_signed(client, "/twilio/voice", {"From": CALLER, "CallSid": CALL_SID})
 

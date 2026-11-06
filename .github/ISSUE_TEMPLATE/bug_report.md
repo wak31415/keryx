@@ -12,12 +12,12 @@ labels: bug
 
 **Reproducing it**
 
-<!-- The smallest sequence that shows it. `uv run keryx serve --demo` spends no agent
+<!-- The smallest sequence that shows it. `keryx serve --demo` spends no agent
 tokens and reproduces most things that are not provider-specific. -->
 
 **`keryx doctor`**
 
-<!-- Paste `uv run keryx doctor`. It never prints a secret — it says "set" or
+<!-- Paste `keryx doctor`. It never prints a secret — it says "set" or
 "not set" — so it is safe to include, and it answers half of the questions that would
 otherwise be asked here. -->
 
@@ -27,7 +27,7 @@ otherwise be asked here. -->
 **Environment**
 
 - OS and version:
-- `uv run keryx --version` or the commit:
+- `keryx --version` or the commit:
 
 **Anything from the logs**
 

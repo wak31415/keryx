@@ -87,6 +87,9 @@ jobs:
           grep -q 'keryx/prompts/voice_system\.md' <<<"$contents"
           grep -q 'keryx/prompts/subagent_suffix\.md' <<<"$contents"
           grep -q 'keryx/prompts/memory_update\.md' <<<"$contents"
+          # What a clone keeps beside src/ and an install still needs (force-include).
+          grep -q 'keryx/bundled_skills/keryx-custom-tools/SKILL\.md' <<<"$contents"
+          grep -q 'keryx/approvals/keryx_approval\.py' <<<"$contents"
 
       # `uv venv --python 3.12`, not the runner's `python`: `requires-python` is
       # `>=3.12,<3.13`, so a runner image that has moved on to 3.13 would fail the install
@@ -99,3 +102,10 @@ jobs:
           uv pip install --python /tmp/wheel-venv/bin/python dist/*.whl
           # From `/tmp`, so nothing resolves against the checkout.
           cd /tmp && /tmp/wheel-venv/bin/keryx --help
+
+      - name: install.sh installs the wheel the way a user gets it
+        run: |
+          set -euo pipefail
+          wheel="$(ls "$PWD"/dist/*.whl)"
+          KERYX_PACKAGE="keryx-voice @ file://$wheel" sh install.sh
+          "$(uv tool dir --bin)/keryx" --version

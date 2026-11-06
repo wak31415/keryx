@@ -46,7 +46,7 @@ def test_every_command_the_skill_names_exists():
 
 
 def test_the_skill_starts_from_the_machines_own_instructions(flat):
-    assert "uv run keryx setup --agent-instructions" in flat
+    assert "keryx setup --agent-instructions" in flat
 
 
 def test_the_skill_keeps_secrets_off_the_command_line_and_out_of_its_hands(flat):
@@ -80,7 +80,7 @@ def test_the_skill_quotes_this_repositorys_caps(flat):
 
 def test_the_skill_leaves_the_pin_to_them_and_hands_over_to_setup(flat):
     assert "Never choose a PIN for them" in flat
-    assert "Run `uv run keryx setup`" in flat
+    assert "Run `keryx setup`" in flat
     assert "first call" in flat
 
 

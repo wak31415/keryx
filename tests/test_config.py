@@ -385,23 +385,18 @@ def test_demo_mode_env(monkeypatch, tmp_path, name):
 def test_an_old_name_in_the_config_file_is_read_and_the_new_one_wins(tmp_path):
     store = ConfigStore()
     store.config_path.parent.mkdir(parents=True, exist_ok=True)
-    store.config_path.write_text('FAKE_AGENTS = true\nJARVIS_CHECKOUT = "/srv/old"\n')
+    store.config_path.write_text("FAKE_AGENTS = true\n")
 
-    settings = Settings(_env_file=None, openai_api_key="x")
-    assert (settings.demo_mode, settings.keryx_checkout) == (True, Path("/srv/old"))
+    assert Settings(_env_file=None, openai_api_key="x").demo_mode is True
 
-    store.config_path.write_text(
-        'JARVIS_CHECKOUT = "/srv/old"\nKERYX_CHECKOUT = "/srv/new"\nFAKE_AGENTS = true\n'
-        "DEMO_MODE = false\n"
-    )
-    settings = Settings(_env_file=None, openai_api_key="x")
-    assert (settings.demo_mode, settings.keryx_checkout) == (False, Path("/srv/new"))
+    store.config_path.write_text("FAKE_AGENTS = true\nDEMO_MODE = false\n")
+    assert Settings(_env_file=None, openai_api_key="x").demo_mode is False
 
 
-def test_a_pin_in_the_config_file_is_no_pin_under_its_old_name_either(tmp_path):
+def test_a_pin_in_the_config_file_is_no_pin(tmp_path):
     store = ConfigStore()
     store.config_path.parent.mkdir(parents=True, exist_ok=True)
-    store.config_path.write_text('JARVIS_PIN = "482915"\nKERYX_PIN = "482915"\n')
+    store.config_path.write_text('KERYX_PIN = "482915"\n')
 
     assert Settings(_env_file=None, openai_api_key="x").pin is None
 
@@ -755,64 +750,6 @@ def test_a_pin_file_that_cannot_be_read_is_no_pin(tmp_path):
     assert make(tmp_path).pin is None
 
 
-def test_an_install_from_before_the_xdg_layout_may_not_start(tmp_path):
-    legacy = Path.home() / ".jarvis"
-    legacy.mkdir(parents=True)
-    for name in ("tasks.db", "calls", "memory.md", "pin"):
-        (legacy / name).touch()
-
-    refusal = make(tmp_path).storage_refusal()
-
-    assert refusal is not None and "keryx migrate" in refusal
-    assert "calls, memory.md, pin, …" in refusal
-
-
-def test_what_is_not_keryxs_in_the_old_home_stops_nothing(tmp_path):
-    legacy = Path.home() / ".jarvis"
-    legacy.mkdir(parents=True)
-    (legacy / "restart-after-task7.sh").touch()
-
-    assert make(tmp_path).storage_refusal() is None
-
-
-def test_an_old_home_still_named_on_purpose_is_in_use_not_legacy(tmp_path):
-    legacy = Path.home() / ".jarvis"
-    legacy.mkdir(parents=True)
-    (legacy / "tasks.db").touch()
-
-    in_use = Settings(_env_file=None, openai_api_key="test", data_dir=legacy)
-
-    assert in_use.storage_refusal() is None
-
-
-def test_the_old_home_variable_is_named_and_never_followed(tmp_path, monkeypatch):
-    """Following it would find the old directory; ignoring it would start with none of
-    their settings. Neither is what they meant, so `serve` stops and says which."""
-    monkeypatch.delenv("KERYX_HOME")
-    monkeypatch.setenv("JARVIS_HOME", "/srv/assistant-config")
-
-    refusal = make(tmp_path).storage_refusal()
-
-    assert refusal is not None
-    assert "JARVIS_HOME=/srv/assistant-config" in refusal and "KERYX_HOME" in refusal
-    assert make(tmp_path).config_dir != Path("/srv/assistant-config")
-
-    monkeypatch.setenv("KERYX_HOME", str(tmp_path / "home"))
-    assert make(tmp_path).storage_refusal() is None
-
-
-@pytest.mark.parametrize("name", [".env", ".secrets/client_secret.json"])
-def test_configuration_in_the_working_directory_may_not_be_started_beside(name, tmp_path):
-    working = tmp_path / "checkout"
-    (working / name).parent.mkdir(parents=True, exist_ok=True)
-    (working / name).write_text("{}")
-
-    refusal = make(tmp_path).storage_refusal(working)
-
-    assert refusal is not None and name in refusal and "keryx migrate" in refusal
-    assert make(tmp_path).storage_refusal(tmp_path / "elsewhere") is None
-
-
 def test_moving_data_dir_neither_loses_the_pin_nor_opens_the_door(tmp_path):
     """Where the PIN is must not depend on a setting. It used to be `DATA_DIR/pin`, so a
     `DATA_DIR` pointed at an empty directory found no PIN — and no PIN is an open door."""
@@ -823,19 +760,6 @@ def test_moving_data_dir_neither_loses_the_pin_nor_opens_the_door(tmp_path):
     assert moved.pin == "123456"
     assert moved.pin_enrolment_open is False
     assert moved.enrol_pin("654321") is False
-
-
-def test_a_pin_left_in_the_legacy_home_keeps_the_door_shut(tmp_path):
-    """That machine has a PIN; it has not been moved yet (`keryx migrate`), and a caller
-    must not be the one to choose a new one in the meantime."""
-    legacy = Path.home() / ".jarvis"
-    legacy.mkdir(parents=True)
-    (legacy / "pin").write_text("123456\n")
-
-    settings = make(tmp_path)
-
-    assert settings.pin is None  # never read from there: `keryx migrate` moves it
-    assert settings.pin_enrolment_open is False
 
 
 def test_nothing_of_the_owners_is_read_out_before_a_pin_exists(tmp_path):

@@ -34,11 +34,6 @@ from keryx.config.settings import (
 
 #: Set in the environment of `keryx serve`, and so inherited by every subagent it runs.
 ACTOR_ENV = "KERYX_ACTOR"
-#: Its name before the service was Keryx. Either one marks the service, and `serve` sets
-#: both: a subagent of the old service that runs the new command, or of the new service
-#: that runs an old one from another checkout, must still be the service, never the owner.
-LEGACY_ACTOR_ENV = "JARVIS_ACTOR"
-ACTOR_ENVS = (ACTOR_ENV, LEGACY_ACTOR_ENV)
 OWNER = "owner"
 SERVICE = "service"
 
@@ -86,10 +81,8 @@ NEVER_OFF_CEILING = 10
 
 
 def current_actor() -> str:
-    """`service` inside anything `keryx serve` (or `jarvis serve`) started, else `owner`."""
-    if any(os.environ.get(name) == SERVICE for name in ACTOR_ENVS):
-        return SERVICE
-    return OWNER
+    """`service` inside anything `keryx serve` started, else `owner`."""
+    return SERVICE if os.environ.get(ACTOR_ENV) == SERVICE else OWNER
 
 
 def is_protected(key: str) -> bool:

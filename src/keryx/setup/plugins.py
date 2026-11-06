@@ -67,7 +67,7 @@ def run_section(ctx: SetupContext) -> None:
     for name, spec in plugins.PLUGINS.items():
         disabled = None
         if name == "check_email" and not claude_ready:
-            disabled = "needs the Claude extra: uv sync --extra claude"
+            disabled = f"needs Claude Code: {registry.install_command('claude')}"
         hint = spec.summary + (" · recommended" if spec.default and not on[name] else "")
         checked = on[name] or (first and spec.default and disabled is None)
         choices.append(Choice(name, f"{spec.title} ({name})", hint=hint, checked=checked,
