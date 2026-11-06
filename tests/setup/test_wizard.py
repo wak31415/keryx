@@ -178,27 +178,6 @@ def test_the_voice_key_is_asked_until_it_is_there(make_ctx, claude_signed_in):
     assert "voice" in [section.key for section in pending(ctx, found)]
 
 
-def test_the_import_section_appears_only_with_something_to_migrate(make_ctx, tmp_path):
-    ctx = make_ctx([])
-    assert "import" not in statuses(ctx, [])
-
-    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
-
-    assert statuses(ctx, [])["import"] == MISSING
-
-
-def test_nothing_is_set_up_until_the_old_files_are_migrated(make_ctx, tmp_path):
-    """What setup saves would land where `keryx migrate` is about to move things."""
-    (tmp_path / ".env").write_text("OWNER_NAME=Ada\n")
-    ctx = make_ctx([])
-
-    assert run_wizard(ctx) == 1
-
-    assert ctx.ui.asked == [] and ConfigStore().stored() == {}
-    assert ".env" in ctx.ui.lines("error")[0]
-    assert "keryx migrate" in ctx.ui.lines("outro")[0]
-
-
 def test_review_walks_every_section_and_asks_again(make_ctx, claude_signed_in, monkeypatch):
     walked = []
 

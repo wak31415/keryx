@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from keryx import plugins
 from keryx.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
-from keryx.approvals.hook_install import hook_installed, install_hook
+from keryx.approvals.hook_install import install_hook
 from keryx.config import (
     GROUPS,
     PLACEHOLDER_KEY,
@@ -39,11 +39,7 @@ from keryx.config import (
     secure_file,
 )
 from keryx.config.files import HOME_ENV, XDG_HOMES, xdg_home
-from keryx.config.migrate import MigrationError, make_plan, old_target, retire_old_units
-from keryx.config.migrate import Report as MigrationReport
-from keryx.config.migrate import Service as MigratingService
-from keryx.config.migrate import run as run_migration
-from keryx.config.permissions import ACTOR_ENVS, SERVICE, current_actor
+from keryx.config.permissions import ACTOR_ENV, SERVICE, current_actor
 from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
@@ -68,7 +64,6 @@ from keryx.restart.logscan import errors_since
 from keryx.restart.logscan import marks as log_marks
 from keryx.restart.service import (
     UNSUPPORTED_HINT,
-    candidate_target,
     resolve_target,
     spawn_watchdog,
     watch_command,
@@ -114,22 +109,6 @@ service_app = typer.Typer(
 )
 app.add_typer(service_app, name="service")
 log = logging.getLogger("keryx.cli")
-
-
-#: What the old command says, for one release (`pyproject.toml`'s `jarvis` script).
-RENAMED_MESSAGE = (
-    "Jarvis is now Keryx: run `keryx migrate`, then `keryx` wherever you ran `jarvis`."
-)
-
-
-def renamed() -> None:
-    """The `jarvis` command: whatever it was asked, say what happened and fail.
-
-    It fails rather than forwarding, so a unit installed before the rename stops in a
-    restart loop that names the fix, instead of starting a service from the old directories.
-    """
-    typer.echo(RENAMED_MESSAGE, err=True)
-    raise SystemExit(1)
 
 
 def _print_version(value: bool) -> None:
@@ -261,23 +240,14 @@ def _load_settings_optional() -> Settings:
     return _load_settings_reporting()[0]
 
 
-def _configure_readonly(*, quiet: bool = True, migrated: bool = True) -> Settings:
+def _configure_readonly(*, quiet: bool = True) -> Settings:
     """`_configure` for the read-only commands (no `OPENAI_API_KEY` required).
 
     `quiet` because these print an answer, and `LOG_LEVEL` is the service's setting: the
     INFO lines it wants in `keryx.log` (a schema created, a migration run) are noise above
     a table. Warnings still show, and `LOG_LEVEL=DEBUG` still means everything.
-
-    `migrated` refuses, like `serve`, while `keryx migrate` has yet to run: before it, the
-    data these commands read is still in the old place, so they would answer from an empty
-    one — and `keryx tasks list` would create a new `tasks.db` for the migration to trip
-    over. The restart watchdog, which must report whatever it finds, passes False, and so
-    does `setup`, whose wizard says it in its own words.
     """
     settings = _load_settings_optional()
-    if migrated and (refusal := settings.storage_refusal()):
-        typer.echo(f"keryx cannot do that yet: {refusal}", err=True)
-        raise typer.Exit(2)
     settings.ensure_dirs()
     level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
     if quiet and level != logging.DEBUG:
@@ -343,9 +313,6 @@ def serve(
     if refusal := settings.agent_refusal():
         typer.echo(f"keryx cannot start: {refusal}", err=True)
         raise typer.Exit(2)
-    if refusal := settings.storage_refusal():
-        typer.echo(f"keryx cannot start: {refusal}", err=True)
-        raise typer.Exit(2)
     _add_file_logging(settings)
     if leftover := plugins.retired_in(ConfigStore()):
         # Ignored, never fatal: they are plugin settings now, and the plugin is off until
@@ -356,9 +323,8 @@ def serve(
             ", ".join(leftover),
         )
     # Everything this process starts — every subagent — is the service, not the owner, when
-    # it runs `keryx config set` (keryx.config.permissions), and under the old name too.
-    for name in ACTOR_ENVS:
-        os.environ[name] = SERVICE
+    # it runs `keryx config set` (keryx.config.permissions).
+    os.environ[ACTOR_ENV] = SERVICE
     asyncio.run(_serve(settings))
 
 
@@ -625,7 +591,7 @@ def restart_watch() -> None:
     own "the restart never came back" into `keryx.log` would leave the next restart
     scanning that line back as a fault of Keryx's.
     """
-    settings = _configure_readonly(quiet=False, migrated=False)
+    settings = _configure_readonly(quiet=False)
     typer.echo(asyncio.run(watch(settings)))
 
 
@@ -1323,7 +1289,7 @@ def setup(
     Everything it saves goes to KERYX_HOME as you go, so stopping part way loses nothing.
     A coding agent setting Keryx up uses the commands instead: --agent-instructions.
     """
-    settings = _configure_readonly(migrated=False)  # the wizard says so, in its own words
+    settings = _configure_readonly()
     if instructions:
         typer.echo(agent_instructions(settings, ConfigStore()))
         return
@@ -1589,121 +1555,6 @@ def config_import_env(
 
 #: How many of the tasks that lost their sessions are named one by one.
 MAX_LOST_SESSIONS_LISTED = 10
-
-
-@app.command()
-def migrate(
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Print what would move, and change nothing.")
-    ] = False,
-    yes: Annotated[bool, typer.Option("--yes", help="Do not ask before starting.")] = False,
-) -> None:
-    """Move a Jarvis install to Keryx's directories: ~/.config/jarvis and its siblings, or
-    ~/.jarvis and a .env here.
-
-    Stops the service while it moves things, re-renders it and the approval hook, and
-    starts it again; Jarvis's unit is retired, and Keryx's installed in its place. Run it
-    from the checkout the service runs in. Nothing is deleted: ~/.jarvis is renamed aside
-    with whatever is left in it.
-    """
-    _owner_only("migrate Keryx's files")
-    plan = make_plan([Path.cwd(), repo_root()])
-    if plan.empty and not plan.conflicts:
-        typer.echo("nothing to migrate: Keryx already keeps everything where it should")
-        return
-    for line in plan.describe():
-        typer.echo(line)
-    settings = _load_settings_optional()
-    target = resolve_target(settings, from_outside=True)
-    predecessor = old_target(candidate_target(settings))
-    if predecessor is not None:
-        target = target or candidate_target(settings)
-        typer.echo(f"  {predecessor.describe()}: stopped first, and retired once everything "
-                   f"has moved; {target.describe()} installed and started in its place")
-    elif target is not None:
-        typer.echo(f"  {target.describe()}: stopped first, re-rendered, and started again")
-    if plan.conflicts:
-        typer.echo("\nNothing can move until these are settled:", err=True)
-        for conflict in plan.conflicts:
-            typer.echo(f"  {conflict}", err=True)
-        raise typer.Exit(1)
-    if dry_run:
-        return
-    if (live := health_probe(settings)) and target is not None:
-        typer.echo(f"{live} live call(s): migrating stops the service and would cut them off. "
-                   "Run it again once the line is clear.", err=True)
-        raise typer.Exit(1)
-    if not yes:
-        if not _interactive():
-            typer.echo("pass --yes to migrate without a terminal to ask at", err=True)
-            raise typer.Exit(2)
-        if not typer.confirm("\nGo ahead?", default=False):
-            raise typer.Exit(1)
-    try:
-        stopping = predecessor or target
-        report = run_migration(
-            plan,
-            service=MigratingService(stopping) if stopping is not None else None,
-            successor=MigratingService(target) if predecessor and target else None,
-            retire=(lambda: retire_old_units(predecessor.manager)) if predecessor else list,
-            fix_permissions=lambda: fix_permissions(_load_settings_optional(), ConfigStore()),
-            rerender=lambda: _rerender(target),
-            echo=typer.echo,
-        )
-    except MigrationError as error:
-        typer.echo(f"keryx migrate: {error}", err=True)
-        raise typer.Exit(1) from None
-    _echo_migration(report)
-
-
-def _rerender(target) -> list[str]:
-    """Re-install what names the old paths: the service's unit, and the approval hook."""
-    done = []
-    settings = _load_settings_optional()
-    if target is not None:
-        try:
-            service_units.install(settings, echo=typer.echo)
-            done.append("the service: done")
-        except service_units.ServiceError as error:
-            done.append(f"the service: {error}; run `keryx service install` again")
-    if hook_installed():
-        try:
-            install_hook(settings.state_dir)
-            done.append("approval hook: done")
-        except (OSError, ValueError) as error:
-            done.append(f"approval hook: {error}; run `keryx approvals --install-hook` again")
-    return done
-
-
-def _echo_migration(report: MigrationReport) -> None:
-    typer.echo(f"\nmoved {len(report.moved)} entr{'y' if len(report.moved) == 1 else 'ies'}")
-    for line in report.imported:
-        typer.echo(f"imported {line}")
-    if report.rewritten:
-        typer.echo(f"tasks.db: {report.rewritten} path(s) rewritten")
-    for line in report.notes + report.tightened + report.rerendered:
-        typer.echo(line)
-    if report.lost_sessions:
-        typer.echo(
-            f"\n{len(report.lost_sessions)} Claude task(s) ran in the old workspace, so their "
-            "sessions are gone; a follow-up to one starts afresh:"
-        )
-        for task_id, status, description in report.lost_sessions[:MAX_LOST_SESSIONS_LISTED]:
-            what = _shorten(description, MAX_DESCRIPTION_CHARS)
-            typer.echo(f"  #{task_id:<5} {status:<9} {what}")
-        if len(report.lost_sessions) > MAX_LOST_SESSIONS_LISTED:
-            typer.echo(f"  … and {len(report.lost_sessions) - MAX_LOST_SESSIONS_LISTED} more")
-    if report.retired_to is not None:
-        typer.echo(f"\nthe old directory is now {report.retired_to}")
-    if report.leftovers:
-        typer.echo("\nNothing reads these any more. Delete them once you are sure (and revoke a "
-                   "token before you delete it):")
-        for path in report.leftovers:
-            typer.echo(f"  {path}")
-    if report.started is True:
-        typer.echo("\nthe service is running again")
-    elif report.started is False:
-        typer.echo("\nthe service did not start: `keryx doctor`, and its logs, say why")
 
 
 def _owner_only(verb: str) -> None:

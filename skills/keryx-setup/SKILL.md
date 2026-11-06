@@ -40,7 +40,7 @@ Everything below is those instructions plus the rules for talking to the owner.
   in your environment, do not ask them to paste it to you — `keryx setup` asks for it
   hidden, and that is theirs to run.
 - **Never read Keryx's own directories** — `~/.config/keryx/`, `~/.local/share/keryx/`,
-  `~/.local/state/keryx/`, or an old `~/.jarvis/`: `secrets.toml` and `pin` are every key
+  or `~/.local/state/keryx/`: `secrets.toml` and `pin` are every key
   and the PIN, and the call transcripts carry the spoken PIN. The one place you write there
   is `~/.local/share/keryx/projects/<name>.md` (`keryx config path` says where, if
   `DATA_DIR` moved it).
@@ -61,9 +61,7 @@ keryx auth status --json
 
 `config list` is every setting with whether it is set and where from — a secret's value is
 never in it. `doctor` groups each check by `section` with a `state` of ok, missing or failed.
-`auth status` is every sign-in. If `doctor`'s `storage` check fails, an old `~/.jarvis` or
-a `.env` in the checkout is still about: ask them to run `keryx migrate` (it stops the
-service while it moves things), and carry on once it has.
+`auth status` is every sign-in.
 
 Then tell them, in three or four sentences: what Keryx does with what you are about to
 collect, that it goes to the realtime provider on every call, and that nothing is written

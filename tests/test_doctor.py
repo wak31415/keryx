@@ -91,33 +91,6 @@ def test_a_fully_configured_install_passes_every_check(healthy):
     assert has_hard_failure(checks) is False
 
 
-def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
-    legacy = Path.home() / ".jarvis"
-    legacy.mkdir(parents=True)
-    (legacy / "tasks.db").touch()
-
-    check = by_name(run_doctor_checks(healthy))["storage"]
-
-    assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
-    assert "keryx migrate" in check.detail and str(legacy) in check.detail
-    assert check.section == "import"
-
-
-def test_a_env_in_the_working_directory_is_a_migration_still_to_run(healthy):
-    Path(".env").write_text("OPENAI_VOICE=marin\n")
-
-    check = by_name(run_doctor_checks(healthy))["storage"]
-
-    assert check.ok is False and "keryx migrate" in check.detail
-
-
-def test_nothing_legacy_is_fine(healthy):
-    checks = by_name(run_doctor_checks(healthy))
-
-    assert checks["storage"].ok is True
-    assert checks["configuration"].ok is True
-
-
 def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
     from keryx import doctor
 

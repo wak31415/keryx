@@ -2,9 +2,9 @@
 
 Two things, both additive and both undone by `--uninstall-hook`: copy the hook script to
 `~/.claude/hooks/keryx_approval.py`, and merge its entries into `~/.claude/settings.json`,
-which is backed up into `~/.claude/backups/` first. Anyone else's hooks are left alone. The
-hook from before the rename (`jarvis_approval.py`) is replaced, never joined: two would hand
-every prompt to the broker twice, and the old one's socket is gone.
+which is backed up into `~/.claude/backups/` first. Anyone else's hooks are left alone, and
+installing again replaces the hook's own entries rather than adding a second set, which
+would hand every prompt to the broker twice.
 
 The hook runs as a copy, never out of a checkout, because a checkout several agents edit at
 once would change under a live session mid-prompt.
@@ -21,8 +21,6 @@ from keryx.config.files import claude_config_dir
 from keryx.config.settings import SOURCE_ROOT
 
 HOOK_FILE = "keryx_approval.py"
-#: A settings file naming either has the hook installed, and installing replaces both.
-HOOK_NAMES = (HOOK_FILE, "jarvis_approval.py")
 #: The permission prompt is the one that blocks; the rest only ever cancel an escalation, so
 #: they get a short timeout and cost one `stat` when nothing is pending.
 WANTED = {
@@ -74,8 +72,7 @@ def install_hook(state_dir: Path, *, uninstall: bool = False) -> Path:
     else:
         settings = {}
 
-    for name in HOOK_NAMES:
-        (hooks_dir / name).unlink(missing_ok=True)
+    target.unlink(missing_ok=True)
     if not uninstall:
         shutil.copyfile(hook_source(), target)
         target.chmod(0o755)
@@ -85,8 +82,8 @@ def install_hook(state_dir: Path, *, uninstall: bool = False) -> Path:
     for event, timeout in WANTED.items():
         groups = [
             group for group in hooks.get(event, [])
-            if not any(name in str(hook.get("command", ""))
-                       for hook in group.get("hooks", []) for name in HOOK_NAMES)
+            if not any(HOOK_FILE in str(hook.get("command", ""))
+                       for hook in group.get("hooks", []))
         ]
         if not uninstall:
             command = raise_command if event == "PermissionRequest" else resolve_command
@@ -100,12 +97,3 @@ def install_hook(state_dir: Path, *, uninstall: bool = False) -> Path:
         settings.pop("hooks", None)
     settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return settings_path
-
-
-def hook_installed() -> bool:
-    """Whether Claude Code's settings name the hook, under either name."""
-    try:
-        text = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return any(name in text for name in HOOK_NAMES)

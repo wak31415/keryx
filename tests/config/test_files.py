@@ -15,7 +15,6 @@ from keryx.config.files import (
     default_state_dir,
     dump_toml,
     keryx_home,
-    legacy_entries,
     xdg_home,
 )
 
@@ -82,24 +81,6 @@ def test_claude_config_dir_moves_the_directory_and_the_user_config(monkeypatch, 
 
     assert claude_config_dir() == tmp_path / "claude"
     assert claude_user_config() == tmp_path / "claude" / ".claude.json"
-
-
-def test_legacy_entries_are_only_the_names_keryx_wrote(tmp_path):
-    legacy = tmp_path / "legacy"
-    legacy.mkdir()
-    for name in ("tasks.db", "calls", "restart-after-task7.sh", "memory.md.real"):
-        (legacy / name).touch()
-
-    assert legacy_entries(legacy) == ["calls", "tasks.db"]
-    assert legacy_entries(tmp_path / "not-there") == []
-
-
-def test_legacy_entries_default_to_the_home_directorys(monkeypatch):
-    legacy = Path.home() / ".jarvis"
-    legacy.mkdir(parents=True)
-    (legacy / "pin").touch()
-
-    assert legacy_entries() == ["pin"]
 
 
 # --- TOML -------------------------------------------------------------------------------

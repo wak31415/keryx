@@ -297,7 +297,7 @@ def test_the_context_is_resolved_once_from_the_task_and_settings(settings, tmp_p
             "command": "uvx",
             "env": {
                 "GOOGLE_OAUTH_CLIENT_SECRET": "GOCSPX-google-client-secret",
-                "GOOGLE_MCP_CREDENTIALS_DIR": "/home/ada/.jarvis/google",
+                "GOOGLE_MCP_CREDENTIALS_DIR": "/home/ada/.local/share/keryx/google",
                 "GOOGLE_OAUTH_REDIRECT_URI": "http://localhost:8000/oauth2callback",
             },
         },

@@ -113,22 +113,14 @@ def test_the_actor_is_the_service_only_inside_keryx_serve(monkeypatch):
     assert current_actor() == "service"
 
 
-def test_a_subagent_of_the_old_service_is_still_the_service(monkeypatch):
-    """Security, not courtesy: `jarvis serve` marks its subagents with the old name, and
-    one of them running the new command must not be taken for the owner at a terminal."""
-    monkeypatch.setenv("JARVIS_ACTOR", "service")
-
-    assert current_actor() == "service"
-
-
-@pytest.mark.parametrize("old", ["FAKE_AGENTS", "JARVIS_CHECKOUT", "JARVIS_PIN"])
-def test_an_old_name_is_protected_exactly_as_the_current_one(old):
+def test_an_old_name_is_protected_exactly_as_the_current_one():
     """A setting's rules are the same whatever name it is asked for by."""
+    old = "FAKE_AGENTS"
     new = canonical_key(old)
     overrides = {old: True, new: True}
     assert is_protected(old) == is_protected(new)
     assert service_writable(old, overrides) == service_writable(new, overrides)
-    assert is_protected("FAKE_AGENTS") and is_protected("JARVIS_PIN")
+    assert is_protected(old)
 
 
 def test_an_old_name_cannot_be_unlocked_or_written_by_the_service():

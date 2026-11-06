@@ -48,26 +48,6 @@ NOT_MANUAL = frozenset(
 )
 
 
-# --- import ----------------------------------------------------------------------------
-
-
-def run_import(ctx: SetupContext) -> None:
-    """Point at `keryx migrate`, when files from before the XDG layout are still about.
-
-    Not done from here: a migration stops the service and moves the database under it,
-    which wants the owner's attention on its own, and a plan they can read first.
-    """
-    refusal = ctx.settings.storage_refusal()
-    if refusal is None:
-        ctx.ui.success("everything is where Keryx looks for it")
-        return
-    ctx.ui.warn(refusal)
-    ctx.ui.note(
-        "`keryx migrate --dry-run` shows what would move; `keryx migrate` moves it, "
-        "stopping and restarting the service around it."
-    )
-
-
 # --- voice -----------------------------------------------------------------------------
 
 

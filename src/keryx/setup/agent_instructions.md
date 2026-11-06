@@ -11,8 +11,7 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    A secret never goes on the command line: `keryx config set OPENAI_API_KEY --from-env VAR`
    (a variable already in your environment) or `… --stdin`. If you do not have a secret,
    ask the person to run `keryx setup`, which asks for it hidden; do not ask them to paste
-   it to you. If `doctor` fails its `storage` check, files from before the XDG layout are
-   still about: ask the person to run `keryx migrate`, which stops the service for it.
+   it to you.
 3. **Sign-ins.** `keryx auth status --json` lists each one. For a coding agent,
    `keryx auth login claude|codex` runs its own login on the terminal. For Gmail,
    `keryx auth login gmail --client-file PATH` prints a link: relay it; the person
