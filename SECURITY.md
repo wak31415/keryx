@@ -405,9 +405,10 @@ This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as
 shell, and can edit `config.toml` directly, as it can edit any of your files. What the rule
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
-service-writable keys. `auth login`, `memory seed`, `setup`, `service`, `upgrade`,
+service-writable keys. `auth login`, `memory seed`, `setup`, `service`,
 `approvals --install-hook`, `plugins install`, `plugins remove`, and `config lock|unlock`
-refuse the service outright.
+refuse the service outright. `keryx upgrade` does not: you can ask for an upgrade on a
+call, and it installs nothing but the newest release of Keryx itself.
 
 ### Your own tools and plugins
 

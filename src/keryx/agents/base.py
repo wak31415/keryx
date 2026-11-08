@@ -39,6 +39,7 @@ SUBAGENT_SLACK_PROMPT = "subagent_slack.md"
 SUBAGENT_CUSTOM_TOOLS_PROMPT = "subagent_custom_tools.md"
 #: Spliced in only when there is a repository to file on (`keryx.issues`).
 SUBAGENT_ISSUES_PROMPT = "subagent_issues.md"
+SUBAGENT_UPGRADE_PROMPT = "subagent_upgrade.md"
 
 SPOKEN_SUMMARY_MARKER = "SPOKEN_SUMMARY:"
 #: How a subagent says "I changed Keryx's own code, and only a restart loads it". The
@@ -290,6 +291,7 @@ def render_subagent_suffix(
         slack=slack,
         custom_tools=custom_tools,
         issues=_issues_section(task, issues),
+        upgrade=render_prompt(SUBAGENT_UPGRADE_PROMPT, keryx=f"{sys.executable} -m keryx").strip(),
     )
 
 

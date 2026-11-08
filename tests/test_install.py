@@ -195,12 +195,30 @@ def test_upgrade_without_the_installers_uv_points_at_the_installer(upgrading):
     assert INSTALL_COMMAND in result.output
 
 
-def test_the_service_may_not_upgrade_keryx(upgrading, monkeypatch):
+def test_a_task_upgrades_and_asks_for_the_restart_instead_of_restarting(upgrading, monkeypatch):
+    """On a call the task runs inside the service, where a restart would kill it."""
     monkeypatch.setenv("KERYX_ACTOR", "service")
     commands = Commands()
 
-    assert upgrading(commands).exit_code == 1
-    assert commands.ran == []
+    result = upgrading(commands)
+
+    assert result.exit_code == 0, result.output
+    assert commands.words() == ["upgrade", "--version"]
+    assert "`RESTART_REQUIRED: upgraded Keryx to 0.2.0` above your SPOKEN_SUMMARY:" in (
+        result.output
+    )
+
+
+@pytest.mark.parametrize("kind", [Install.CLONE, Install.PIP])
+def test_a_task_outside_the_installer_is_told_to_ask_for_the_restart(upgrading, monkeypatch,
+                                                                      kind):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    result = upgrading(Commands(), kind=kind)
+
+    assert result.exit_code == 1
+    assert "then a `RESTART_REQUIRED:` line" in result.output
+    assert "keryx restart" not in result.output
 
 
 # --- keryx service ------------------------------------------------------------------------

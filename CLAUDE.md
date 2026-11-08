@@ -11,7 +11,8 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
 
 - Install, for a user: `curl -fsSL …/install.sh | sh` (`install.sh`: `uv tool install
   keryx-voice[all]`, then `keryx setup`); update with `keryx upgrade` (an installer install
-  only; it restarts the service onto the new release)
+  only; it restarts the service onto the new release, and a task asked for on a call runs
+  it too)
 - Install, in a clone: `uv sync` (every coding agent, via the default `agents` group); one
   agent only: `uv sync --no-group agents --extra codex` (or `claude`); with pip,
   `keryx-voice[all|claude|codex]`
@@ -375,8 +376,9 @@ stay protected in `secrets.toml`. Four rulings:
   `permissions.NEVER_OFF` but never set it to 0 ("no limit") or above `NEVER_OFF_CEILING`
   times its default, which is no limit by another name, and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
-  commands that write what the service may not — `auth login`, `memory seed`, `setup`, `config lock|unlock`, `service install|uninstall`, `upgrade`,
-  `approvals --install-hook`, `plugins install|remove` — refuse outright under
+  commands that write what the service may not — `auth login`, `memory seed`, `setup`,
+  `config lock|unlock`, `service install|uninstall`, `approvals --install-hook`, `plugins
+  install|remove` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
@@ -630,7 +632,7 @@ The owner installs Keryx with `install.sh`: the package `keryx-voice`, from PyPI
 Contributors clone it and run `uv run keryx`. `keryx/install.py::how_installed` tells the
 three apart (a clone has `pyproject.toml` at `SOURCE_ROOT`, the installer's environment has
 uv's `uv-receipt.toml`, anything else is pip), and every message that names a command asks
-it first. Three rulings:
+it first. Four rulings:
 
 - **The owner of an installer install never types or reads `uv`.** Every command is
   `keryx …`; uv is the installer's business. A machine without uv gets one at
@@ -646,6 +648,11 @@ it first. Three rulings:
   restart into, and `keryx upgrade` would overwrite one: that loop, and issue reports that
   read the code (`KERYX_CHECKOUT`), are a clone's. `current_version` is the release outside
   a clone and never asks `git` there, which would describe a home directory kept in git.
+- **An upgrade can be asked for on a call, as a task.** `keryx upgrade` under
+  `KERYX_ACTOR=service` installs and checks the release like the owner's, then leaves the
+  restart to the task's `RESTART_REQUIRED:` line (`prompts/subagent_upgrade.md`), because a
+  restart from inside the unit kills the task asking for it. It is not owner-only: it
+  installs nothing but Keryx's own newest release, which a task's shell could do anyway.
 
 ## Testing rule
 

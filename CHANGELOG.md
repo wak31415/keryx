@@ -20,7 +20,9 @@ installed service needs nothing done: the new commands write the same units the 
   (systemd on Linux, launchd on macOS), and **`keryx service uninstall`** removes them. The
   last section of `keryx setup` runs it.
 - **`keryx upgrade`** updates an installed Keryx and restarts the service onto the new
-  version. It checks that the new version starts before it restarts anything.
+  version. It checks that the new version starts before it restarts anything. You can also
+  ask for an upgrade on a call; the restart waits until the call ends, and Keryx rings you
+  back on the new version.
 - **`keryx approvals --install-hook`** installs the approval bridge's hook into Claude Code,
   and `--uninstall-hook` takes it out.
 

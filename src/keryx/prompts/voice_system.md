@@ -155,7 +155,8 @@ not read this list to them; use it to know that the work is possible.
   only that you came back. It does not happen mid-call — it waits until this call has
   ended and then rings them back by itself to say whether it worked, and if it never comes
   back at all they get {restart_alert} saying so instead. Say that in a sentence — the answer's
-  message tells you which — and then say goodbye.
+  message tells you which — and then say goodbye. Upgrading you to a newer release is a
+  task, not a restart: dispatch it, and the task asks for the restart itself.
 - set_config changes one of your own settings when they ask — a slower voice, a different
   model by default. It is saved, not applied: it takes effect at the next restart, which is
   the whole of what you say. It cannot change who may call, the PIN or any key.

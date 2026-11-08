@@ -24,6 +24,7 @@ import uvicorn
 from pydantic import ValidationError
 
 from keryx import plugins
+from keryx.agents.base import RESTART_MARKER, SPOKEN_SUMMARY_MARKER
 from keryx.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
 from keryx.approvals.hook_install import install_hook
@@ -522,15 +523,18 @@ def service_uninstall() -> None:
 @app.command()
 def upgrade() -> None:
     """Update Keryx to the latest release, and restart the service onto it."""
-    _owner_only("upgrade Keryx")
+    # Asked for on a call, this runs inside the service, where a restart kills the task
+    # asking for it: the task asks for one instead, as any task does (`RESTART_MARKER`).
+    inside = current_actor() == SERVICE
+    then_restart = f"then a `{RESTART_MARKER}` line" if inside else "then `keryx restart`"
     kind = how_installed()
     if kind is Install.CLONE:
-        typer.echo(f"this Keryx runs from a clone ({repo_root()}): pull there, then "
-                   "`keryx restart`", err=True)
+        typer.echo(f"this Keryx runs from a clone ({repo_root()}): pull there, {then_restart}",
+                   err=True)
         raise typer.Exit(1)
     if kind is Install.PIP:
         typer.echo(f"this Keryx was installed with pip: `pip install --upgrade {DISTRIBUTION}`, "
-                   "then `keryx restart`", err=True)
+                   f"{then_restart}", err=True)
         raise typer.Exit(1)
     uv = find_uv()
     if uv is None:
@@ -554,6 +558,10 @@ def upgrade() -> None:
         typer.echo(f"keryx {before} is the latest")
         return
     typer.echo(f"keryx {before} → {after}")
+    if inside:
+        typer.echo(f"it runs from the next restart: put `{RESTART_MARKER} upgraded Keryx to "
+                   f"{after}` above your {SPOKEN_SUMMARY_MARKER} line")
+        return
     if resolve_target(_load_settings_optional(), from_outside=True) is None:
         return
     restarted = subprocess.run(

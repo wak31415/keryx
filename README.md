@@ -117,7 +117,8 @@ enable both, you can say "have Codex do it" on a call.
 
 2. Call your Twilio number.
 
-`keryx upgrade` updates Keryx and restarts the service onto the new version.
+`keryx upgrade` updates Keryx and restarts the service onto the new version. You can also
+ask for an upgrade on a call.
 
 If a coding agent is setting Keryx up for you, point it at
 `keryx setup --agent-instructions`, or, in a clone, give Claude Code the `skills/keryx-setup`
