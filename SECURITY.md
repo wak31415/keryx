@@ -364,12 +364,10 @@ approval socket), and the cache. `keryx doctor` warns when:
 - any of these can be read by anyone else (`--fix` tightens the permissions and changes
   nothing else);
 - one of them is inside a git working tree;
-- a secret has been written into `config.toml` by hand;
-- an imported copy of an old `.env` is still on disk.
+- a secret has been written into `config.toml` by hand.
 
-Keryx reads nothing from the working directory. It used to read a `.env` in the checkout,
-and a checkout is the one place where a secret is one `git add` away from leaving the
-machine. `keryx config import-env` moves an old one into the store.
+Keryx reads nothing from the working directory, such as a `.env`: a checkout is the one
+place where a secret is one `git add` away from leaving the machine.
 
 A secret is never put on a command line, where `ps` and your shell history would keep it.
 `keryx config set KEY --stdin` reads it from standard input, and `--from-env VAR` reads it
@@ -407,9 +405,9 @@ This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as
 shell, and can edit `config.toml` directly, as it can edit any of your files. What the rule
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
-service-writable keys. `config import-env`, `auth login`, `memory seed`, `setup`, `service`,
-`upgrade`, `approvals --install-hook`, `plugins install`, `plugins remove`, and
-`config lock|unlock` refuse the service outright.
+service-writable keys. `auth login`, `memory seed`, `setup`, `service`, `upgrade`,
+`approvals --install-hook`, `plugins install`, `plugins remove`, and `config lock|unlock`
+refuse the service outright.
 
 ### Your own tools and plugins
 

@@ -40,7 +40,7 @@ XDG data, state and cache directories below.
 
 **Which value wins**, first to last: the process environment (a systemd `Environment=`,
 say), `secrets.toml`, `config.toml`, and the default below. Nothing is read from the
-working directory: `keryx config import-env` moves an old `.env` into the store.
+working directory, so a `.env` there is ignored.
 
 **What the running service may change.** Keryx can change some of its own settings — the
 voice model's `set_config` tool, or a subagent running `keryx config set` in a task — and

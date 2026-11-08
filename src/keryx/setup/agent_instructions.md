@@ -24,8 +24,7 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a
    ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin` or
-   `keryx auth login gmail`. Settings from before plugins: `keryx plugins install
-   --from-settings`.
+   `keryx auth login gmail`.
    Filing bug reports and feature requests about Keryx as GitHub issues is not yours to
    turn on: it is theirs, in `keryx setup` (Issue reports), and you never set
    `ISSUE_REPORTING` or `ISSUE_REPO`.

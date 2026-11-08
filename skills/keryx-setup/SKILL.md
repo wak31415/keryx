@@ -92,8 +92,7 @@ A plugin's secret is never a `--set`: Slack's bot token and the billing admin ke
 it), and email needs `keryx auth login gmail` (the sign-ins step of the instructions). Offer
 `cluster_stats` only a host whose `control_master` is true — Keryx never opens a
 connection of its own — and ask them which partition its GPUs are in rather than guessing.
-If `doctor` names retired settings, `keryx plugins install --from-settings` moves
-them. Every other setting of a plugin is in the TOML file `keryx plugins` names.
+Every other setting of a plugin is in the TOML file `keryx plugins` names.
 
 Keryx can also file bug reports and feature requests about itself — something they tell
 it on a call — as issues on its GitHub repository. That one is not yours to turn on, even

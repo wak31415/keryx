@@ -10,8 +10,8 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
 ## Commands
 
 - Install, for a user: `curl -fsSL …/install.sh | sh` (`install.sh`: `uv tool install
-  keryx-voice[all]`, then `keryx setup`); update with `uv run keryx upgrade` (an installer
-  install only; it restarts the service onto the new release)
+  keryx-voice[all]`, then `keryx setup`); update with `keryx upgrade` (an installer install
+  only; it restarts the service onto the new release)
 - Install, in a clone: `uv sync` (every coding agent, via the default `agents` group); one
   agent only: `uv sync --no-group agents --extra codex` (or `claude`); with pip,
   `keryx-voice[all|claude|codex]`
@@ -27,12 +27,12 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
 - Settings: `uv run keryx config list [--json] [--group G]`, `config get KEY… [--shell]`
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
-  `config import-env [PATH]`, `config lock|unlock KEY` (what the running service may change)
+  `config lock|unlock KEY` (what the running service may change)
 - Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
   [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
   the browser landed on), `uv run keryx auth status [--json] [--smoke]`
-- Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`; a hidden
-  `--no-wakeword` is accepted and ignored, for units installed before it left `main`); `scripts/dev.sh` adds the Cloudflare tunnel
+- Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`); `scripts/dev.sh` adds
+  the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
   the kill switch); `--install-hook` / `--uninstall-hook` puts the Claude hook in or out
 - Inspect tasks: `uv run keryx tasks list [--status …] [--limit N] [--internal]`,
@@ -44,8 +44,7 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
 - The plugins (Slack, email, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
-  install [NAME] --from-settings` (moves the settings they replaced), `plugins remove NAME
-  [--yes]`; install and remove refuse the running service
+  remove NAME [--yes]`; install and remove refuse the running service
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]
@@ -113,8 +112,7 @@ remember:
 - **plugins** — `plugins/` is the optional voice tools (`send_to_slack`, `check_email`,
   `check_billing`, `cluster_stats`), none registered from the source tree. `PLUGINS` in
   `plugins/__init__.py` is the table everything reads (its `important` keys are what the
-  wizard asks; `retired` the settings each replaced), with the file helpers (`install`,
-  `remove`, `write_config`, `status`, `move_from_settings`). One module per plugin builds its
+  wizard asks), with the file helpers (`install`, `remove`, `write_config`, `status`). One module per plugin builds its
   tool (`<name>_tool(config_path, fake=…)`), `ssh_hosts` reads `~/.ssh/config`, and
   `templates/` is data — a one-line `.py` and a commented `.toml` per plugin, copied into
   `DATA_DIR/tools`, never imported from there. So a plugin *is* a custom tool: loaded per
@@ -215,7 +213,7 @@ other built-in persona, or any name of the owner's. Three rulings:
   tools included, so a persona's voice is a constant that has been heard, never a guess. A
   coding agent's name is refused as an assistant's.
 - **A renamed setting's old name is read, never written, for one release.** It is an alias
-  (`FAKE_AGENTS` → `DEMO_MODE`), `canonical_key` turns it into the current one wherever a
+  (`AliasChoices(NEW, OLD)`), `canonical_key` turns it into the current one wherever a
   rule is asked, and nothing is ever stored under it. The service's own old name went the
   same way: `JARVIS_*`, `~/.jarvis`, `.jarvis-brief.md` and `keryx migrate` are gone, and
   a Jarvis install moves with 0.1.2's `keryx migrate` first.
@@ -355,9 +353,7 @@ settings are the exception: every one but its secret lives in `DATA_DIR/tools/<n
 beside it, written only by `keryx.plugins` (validated, then quoted, so no value can add a
 key), and so out of `set_config`'s reach — the budget and the email model included, an
 accepted cost. Its secrets (`SLACK_BOT_TOKEN`, `OPENAI_ADMIN_KEY`, `ANTHROPIC_ADMIN_KEY`)
-stay protected in `secrets.toml`. A setting a plugin replaced (`plugins.RETIRED_KEYS`) is
-ignored where it is left, named by `doctor`, and moved by `keryx plugins install
---from-settings`, which only `ConfigStore.drop_retired` then removes. Four rulings:
+stay protected in `secrets.toml`. Four rulings:
 
 - **Secrets in a 0600 file, not a keyring.** Plain settings in `KERYX_HOME/config.toml`,
   every `repr=False` field in `secrets.toml`, both 0600 in an 0700 directory and replaced
@@ -379,17 +375,14 @@ ignored where it is left, named by `doctor`, and moved by `keryx plugins install
   `permissions.NEVER_OFF` but never set it to 0 ("no limit") or above `NEVER_OFF_CEILING`
   times its default, which is no limit by another name, and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
-  commands that write what the service may not — `config import-env`, `auth login`,
-  `memory seed`, `setup`, `config lock|unlock`, `service install|uninstall`, `upgrade`,
+  commands that write what the service may not — `auth login`, `memory seed`, `setup`, `config lock|unlock`, `service install|uninstall`, `upgrade`,
   `approvals --install-hook`, `plugins install|remove` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
   `tests/config/test_permissions.py` names the writable set.
 - **The PIN is not a setting.** It stays in `KERYX_HOME/pin`, a write-once file of its own
-  and never a key in `config.toml`; `config set KERYX_PIN` is refused, `import-env`
-  moves a `.env` PIN there — and refuses the whole import when a
-  different PIN is already enrolled, because silently switching would lock the owner out.
+  and never a key in `config.toml`; `config set KERYX_PIN` is refused.
 
 `keryx setup` reads `doctor`'s checks to decide what is left (each has a `section`, and is
 `missing` or `failed`), walks only that, and remembers what it has walked
@@ -421,9 +414,8 @@ Three rulings:
   no PIN, and no PIN is an open enrolment door. `pin-failures.json` stays with the data,
   not the state, because people treat state as disposable and losing it hands a guesser a
   fresh budget.
-- **Nothing is read from the working directory.** No `.env`, no `.secrets/`:
-  `keryx config import-env` moves an old `.env` into the store. Nothing refuses to start
-  beside one either, because an installed service starts in the owner's home directory,
+- **Nothing is read from the working directory.** No `.env`, no `.secrets/`. Nothing
+  refuses to start beside one either, because an installed service starts in the owner's home directory,
   where a `.env` is as likely to be another tool's.
 - **The service resolves what its installer's terminal resolved.** The units render
   `KERYX_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is

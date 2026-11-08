@@ -371,26 +371,14 @@ def test_skipping_signatures_behind_a_public_host_is_refused(tmp_path):
     assert "\n" not in refusal
 
 
-@pytest.mark.parametrize("name", ["DEMO_MODE", "FAKE_AGENTS"])  # the old name, for a release
-def test_demo_mode_env(monkeypatch, tmp_path, name):
+def test_demo_mode_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test")
-    monkeypatch.setenv(name, "true")
+    monkeypatch.setenv("DEMO_MODE", "true")
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "keryx"))
 
     settings = Settings(_env_file=None)
 
     assert settings.demo_mode is True
-
-
-def test_an_old_name_in_the_config_file_is_read_and_the_new_one_wins(tmp_path):
-    store = ConfigStore()
-    store.config_path.parent.mkdir(parents=True, exist_ok=True)
-    store.config_path.write_text("FAKE_AGENTS = true\n")
-
-    assert Settings(_env_file=None, openai_api_key="x").demo_mode is True
-
-    store.config_path.write_text("FAKE_AGENTS = true\nDEMO_MODE = false\n")
-    assert Settings(_env_file=None, openai_api_key="x").demo_mode is False
 
 
 def test_a_pin_in_the_config_file_is_no_pin(tmp_path):

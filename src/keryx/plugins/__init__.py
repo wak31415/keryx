@@ -15,9 +15,8 @@ the store (`keryx config set KEY --stdin`), and a Gmail sign-in in its own token
 
 `PLUGINS` is the table everything else reads, in the style of `agents.registry.BACKENDS`:
 what each is called, what the wizard asks (`important`; the rest stay in the file, with
-their comments), which secrets it uses, and which of the settings it replaced
-(`retired`) — the upgrade path from before 2026-09-29, when these were settings of their
-own. `keryx plugins` and the Plugins section of `keryx setup` are the two ways in.
+their comments) and which secrets it uses. `keryx plugins` and the Plugins section of
+`keryx setup` are the two ways in.
 
 Every file is written through `config.files.write_private`, 0600, because the loader refuses
 a file anyone else could write. A value is validated before it is written (bare words,
@@ -29,7 +28,7 @@ import os
 import re
 import tomllib
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -38,7 +37,6 @@ from keryx.config.files import read_toml, toml_key, toml_value, write_private
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from keryx.config import Settings
-    from keryx.config.store import ConfigStore
 
 #: What a word in a plugin's settings has to be: a cluster alias or partition, a channel id,
 #: a model name. The first two reach a remote shell, so anything else is refused on write.
@@ -83,8 +81,6 @@ class Plugin:
     keys: tuple[Key, ...]
     #: The `keryx.plugins` module that builds its tool.
     module: str
-    #: The settings it replaced: `{OLD_KEY: toml key}`.
-    retired: Mapping[str, str] = field(default_factory=dict)
     #: What must hold before it can be installed, beyond each key being valid.
     problem: Callable[[dict[str, Any]], str | None] = lambda _values: None
 
@@ -116,7 +112,6 @@ PLUGINS: dict[str, Plugin] = {
                 "The user-scope MCP server in ~/.claude.json that gives subagents Slack"),
         ),
         module="slack",
-        retired={"SLACK_CHANNEL_ID": "channel_id", "SLACK_MCP_SERVER": "mcp_server"},
         problem=_slack_problem,
     ),
     "check_email": Plugin(
@@ -131,7 +126,6 @@ PLUGINS: dict[str, Plugin] = {
             Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
         ),
         module="email",
-        retired={"EMAIL_MODEL": "model", "EMAIL_EFFORT": "effort"},
     ),
     "check_billing": Plugin(
         name="check_billing",
@@ -149,13 +143,6 @@ PLUGINS: dict[str, Plugin] = {
             Key("anthropic_workspace_id", "word", "", "Narrows Anthropic spend to one workspace"),
         ),
         module="billing",
-        retired={
-            "BILLING_PROVIDER": "provider",
-            "BILLING_MONTHLY_BUDGET": "monthly_budget",
-            "OPENAI_BILLING_PROJECT_ID": "openai_project_id",
-            "OPENAI_BILLING_API_KEY_ID": "openai_api_key_id",
-            "ANTHROPIC_BILLING_WORKSPACE_ID": "anthropic_workspace_id",
-        },
     ),
     "cluster_stats": Plugin(
         name="cluster_stats",
@@ -171,17 +158,9 @@ PLUGINS: dict[str, Plugin] = {
                 positive=True),
         ),
         module="cluster",
-        retired={
-            "CLUSTERS": "clusters",
-            "CLUSTER_SSH_GUARD": "guard",
-            "CLUSTER_QUERY_TIMEOUT_S": "timeout_s",
-        },
         problem=_cluster_problem,
     ),
 }
-
-#: Every setting a plugin replaced. `serve` ignores them; `doctor` names them.
-RETIRED_KEYS = frozenset(key for plugin in PLUGINS.values() for key in plugin.retired)
 
 
 def plugin(name: str) -> Plugin:
@@ -508,79 +487,7 @@ def secret(settings: "Settings", name: str) -> str | None:
     return None
 
 
-# --- from before plugins -----------------------------------------------------------------
-
-
-def retired_in(store: "ConfigStore") -> dict[str, Any]:
-    """Every retired setting the store still holds, by key."""
-    stored = store.stored()
-    return {key: stored[key] for key in sorted(RETIRED_KEYS) if key in stored}
-
-
-def from_retired(name: str, stored: Mapping[str, Any]) -> dict[str, Any]:
-    """The plugin's TOML values its retired settings imply."""
-    values = {}
-    for old, key in plugin(name).retired.items():
-        if old in stored and stored[old] not in (None, ""):
-            values[key] = stored[old]
-    return values
-
-
-def was_offered(settings: "Settings", store: "ConfigStore", name: str) -> bool:
-    """Whether the tool was offered before it was a plugin: what `--from-settings` moves.
-
-    Retired settings for it, or for the two that took none, what made them appear: a Gmail
-    sign-in, an admin key.
-    """
-    if from_retired(name, retired_in(store)):
-        return True
-    if name == "check_email":
-        from keryx.integrations.gmail import token_path
-
-        return token_path(settings).is_file()
-    if name == "check_billing":
-        return bool(settings.openai_admin_key or settings.anthropic_admin_key)
-    return False
-
-
-@dataclass(frozen=True)
-class Moved:
-    """What `move_from_settings` did for one plugin: its TOML, and why it is not on if not."""
-
-    name: str
-    config_file: Path
-    values: dict[str, Any]
-    problem: str | None
-
-
-def move_from_settings(
-    settings: "Settings", store: "ConfigStore", names: list[str] | None = None
-) -> list[Moved]:
-    """Write each plugin's TOML from the settings it replaced, turn it on, and drop them.
-
-    `names` None is every plugin that was offered before (`was_offered`). A retired setting
-    leaves the store only once its plugin's TOML holds its value, so a plugin that could not
-    be turned on keeps its old settings for the next try.
-    """
-    retired = retired_in(store)
-    chosen = names if names is not None else [
-        name for name in PLUGINS if was_offered(settings, store, name)
-    ]
-    moved: list[Moved] = []
-    dropping: list[str] = []
-    for name in chosen:
-        values = from_retired(name, retired)
-        path = write_config(settings, name, values)
-        dropping += [key for key in plugin(name).retired if key in retired]
-        try:
-            install(settings, name)
-            problem = None
-        except PluginConfigError as error:
-            problem = str(error)
-        moved.append(Moved(name, path, values, problem))
-    if dropping:
-        store.drop_retired(dropping)
-    return moved
+# --- the command line --------------------------------------------------------------------
 
 
 def parse_assignment(text: str, *, what: str = "KEY=VALUE") -> tuple[str, str]:

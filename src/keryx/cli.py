@@ -273,11 +273,6 @@ def _add_file_logging(settings: Settings) -> None:
 
 @app.command()
 def serve(
-    no_wakeword: Annotated[
-        # Accepted and ignored: service units installed before the wake word left `main`
-        # still pass it, and a restart must not fail on an unknown option.
-        bool, typer.Option("--no-wakeword", hidden=True)
-    ] = False,
     demo: Annotated[
         bool,
         typer.Option(
@@ -285,10 +280,6 @@ def serve(
             help="Try the phone before a coding agent is set up: every task comes back with "
             "a sample answer, and no agent tokens are spent.",
         ),
-    ] = False,
-    fake_agents: Annotated[
-        # Its name until 2026-09-29, kept for one release.
-        bool, typer.Option("--fake-agents", hidden=True)
     ] = False,
     host: Annotated[
         str | None, typer.Option("--host", help="Override HOST for the phone server.")
@@ -300,7 +291,7 @@ def serve(
     """Run Keryx: the Twilio phone server."""
     # Only pass overrides that were actually asked for; everything else is the store's.
     overrides: dict[str, object] = {}
-    if demo or fake_agents:
+    if demo:
         overrides["demo_mode"] = True
     if host is not None:
         overrides["host"] = host
@@ -314,14 +305,6 @@ def serve(
         typer.echo(f"keryx cannot start: {refusal}", err=True)
         raise typer.Exit(2)
     _add_file_logging(settings)
-    if leftover := plugins.retired_in(ConfigStore()):
-        # Ignored, never fatal: they are plugin settings now, and the plugin is off until
-        # they are moved into its file.
-        log.warning(
-            "config.toml still holds %s, which are plugin settings now: "
-            "`keryx plugins install --from-settings`",
-            ", ".join(leftover),
-        )
     # Everything this process starts — every subagent — is the service, not the owner, when
     # it runs `keryx config set` (keryx.config.permissions).
     os.environ[ACTOR_ENV] = SERVICE
@@ -1060,18 +1043,13 @@ def plugins_install(
     guard: Annotated[
         str | None, typer.Option("--guard", help="cluster_stats: a guard script of your own.")
     ] = None,
-    from_settings: Annotated[
-        bool,
-        typer.Option("--from-settings", help="Move the settings it replaced into its file; "
-                     "with no NAME, every plugin that was offered before."),
-    ] = False,
     template: Annotated[
         bool,
         typer.Option("--template", help="Write its settings file and a draft to edit, and "
                      "leave it off until `keryx plugins install NAME`."),
     ] = False,
 ) -> None:
-    """Turn a plugin on, from its settings file, the values given here, or the old settings.
+    """Turn a plugin on, from its settings file or the values given here.
 
     With no values, a settings file already edited by hand (and a `--template` draft) is
     what is turned on. A secret is never taken here: `keryx config set KEY --stdin`, or
@@ -1080,17 +1058,6 @@ def plugins_install(
     _owner_only("install a plugin")
     settings = _configure_readonly()
     try:
-        if from_settings:
-            names = None if name is None else [plugins.plugin(name).name]
-            moved = plugins.move_from_settings(settings, ConfigStore(), names)
-            if not moved:
-                typer.echo("nothing to move: no plugin was set up in the old settings")
-            for one in moved:
-                typer.echo(f"{one.name}: settings in {one.config_file}")
-                if one.problem:
-                    typer.echo(f"  {one.problem}")
-            _echo_plugin_states(settings, [one.name for one in moved])
-            return
         if name is None:
             typer.echo("which plugin? (`keryx plugins`)", err=True)
             raise typer.Exit(2)
@@ -1521,40 +1488,6 @@ def config_path(
     ]
     for name, path in rows:
         typer.echo(f"{name:<12} {path}")
-
-
-@config_app.command("import-env")
-def config_import_env(
-    path: Annotated[
-        Path, typer.Argument(help="The legacy env file.", exists=True, dir_okay=False)
-    ] = Path(".env"),
-) -> None:
-    """Move a legacy .env (and .secrets/client_secret.json) into the store, then rename it."""
-    _owner_only("import settings")
-    try:
-        report = ConfigStore().import_env(path)
-    except ConfigError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(1) from None
-    typer.echo(f"imported: {', '.join(report.imported) or 'nothing'}")
-    if report.defaults:
-        typer.echo(f"left at their defaults: {', '.join(report.defaults)}")
-    if report.kept:
-        typer.echo(f"already set in the store, kept as they were: {', '.join(report.kept)}")
-    if report.pin:
-        typer.echo(f"PIN: {report.pin}")
-    if report.client_file:
-        typer.echo(f"Google client file: {report.client_file}")
-    if report.unknown:
-        typer.echo(f"not settings, not imported: {', '.join(report.unknown)}")
-    typer.echo(f"{path} is now {report.renamed_to}; delete it once Keryx runs from the store.")
-
-
-# --- migrate ---------------------------------------------------------------
-
-
-#: How many of the tasks that lost their sessions are named one by one.
-MAX_LOST_SESSIONS_LISTED = 10
 
 
 def _owner_only(verb: str) -> None:

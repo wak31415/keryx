@@ -170,7 +170,7 @@ def test_list_by_group_as_a_table(home):
     assert run("config", "list", "--group", "nope").exit_code == 2
 
 
-# --- lock / unlock / path / import-env -------------------------------------------------------
+# --- lock / unlock / path -------------------------------------------------------------------
 
 
 def test_lock_and_unlock(home):
@@ -244,25 +244,6 @@ def test_path_for_a_shell_is_every_directory_quoted_for_eval(home, monkeypatch):
         "XDG_STATE_HOME": str(Path.home() / ".local/state"),
         "XDG_CACHE_HOME": str(Path.home() / ".cache"),
     }
-
-
-def test_import_env_moves_a_legacy_file(home, tmp_path):
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-old\nOPENAI_VOICE=marin\nWHO=me\n")
-
-    result = run("config", "import-env")
-
-    assert result.exit_code == 0, result.output
-    assert "imported: OPENAI_API_KEY, OPENAI_VOICE" in result.output
-    assert "not settings, not imported: WHO" in result.output
-    assert not (tmp_path / ".env").exists()
-    assert home.stored()["OPENAI_VOICE"] == "marin"
-
-
-def test_import_env_that_is_refused_exits_1(home, tmp_path):
-    (tmp_path / ".env").write_text("PORT=eighty\n")
-
-    assert run("config", "import-env").exit_code == 1
-    assert (tmp_path / ".env").exists()
 
 
 # --- doctor --json / --fix --------------------------------------------------------------------
@@ -444,21 +425,6 @@ def test_a_secret_typed_at_a_terminal_is_asked_for_hidden(home, monkeypatch):
     assert asked == [True]
 
 
-def test_import_env_says_where_the_pin_and_client_went(home, tmp_path):
-    data_dir = tmp_path / "keryx"
-    (tmp_path / ".env").write_text(f"KERYX_PIN=482915\nDATA_DIR={data_dir}\nPORT=8080\n")
-    (tmp_path / ".secrets").mkdir()
-    (tmp_path / ".secrets" / "client_secret.json").write_text(
-        '{"installed": {"client_id": "i", "client_secret": "s"}}'
-    )
-
-    result = run("config", "import-env")
-
-    assert "PIN: moved to KERYX_HOME/pin" in result.output
-    assert "Google client file:" in result.output
-    assert "left at their defaults: PORT" in result.output
-
-
 def test_lock_of_a_key_that_is_not_there_is_refused(home):
     assert run("config", "lock", "KERYX_PIN").exit_code == 1
 
@@ -492,14 +458,12 @@ def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch
 @pytest.mark.parametrize(
     "args",
     [
-        ("config", "import-env"),
         ("auth", "login", "google-workspace"),
         ("memory", "seed", "--file", "-", "--force"),
         ("setup",),
     ],
 )
-def test_inside_a_task_the_owners_commands_are_refused(home, tmp_path, monkeypatch, args):
-    (tmp_path / ".env").write_text("ALLOWED_CALLERS=+15550000000\n")
+def test_inside_a_task_the_owners_commands_are_refused(home, monkeypatch, args):
     monkeypatch.setenv("KERYX_ACTOR", "service")
 
     result = run(*args, input="A fact.\n")
@@ -507,7 +471,6 @@ def test_inside_a_task_the_owners_commands_are_refused(home, tmp_path, monkeypat
     assert result.exit_code == 1
     assert "only the owner" in result.output
     assert home.stored() == {}
-    assert (tmp_path / ".env").exists()
 
 
 def test_config_get_refuses_a_config_that_does_not_parse(home):

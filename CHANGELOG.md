@@ -29,8 +29,11 @@ installed service needs nothing done: the new commands write the same units the 
 - `scripts/install-systemd.sh`, `scripts/install-launchd.sh`,
   `scripts/install-claude-hook.sh` and `scripts/lib.sh`, replaced by the commands above.
   `scripts/dev.sh` stays, for working on Keryx from a clone.
-- `keryx migrate`, and the refusal to start beside a `.env` in the working directory.
-  `keryx config import-env` still imports one.
+- `keryx migrate`, `keryx config import-env` and `keryx plugins install --from-settings`,
+  which moved settings from before 0.1.0, and the refusal to start beside a `.env` in the
+  working directory.
+- `FAKE_AGENTS`, the old name of `DEMO_MODE`, and the hidden `serve` options
+  `--fake-agents` and `--no-wakeword`.
 
 ## [0.1.2] - 2026-11-04
 

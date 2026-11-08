@@ -42,7 +42,6 @@ from keryx.config import (
     pin_file,
 )
 from keryx.config.permissions import is_protected
-from keryx.config.settings import LEGACY_ENV_FILE
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
 from keryx.install import Install, how_installed
@@ -145,12 +144,10 @@ def run_doctor_checks(
         _git_check(settings, store),
         _secrets_in_config_check(store),
         _unlocked_check(store),
-        _imported_env_check(),
         _google_check(settings),
         _memory_check(settings),
         _projects_root_check(settings),
         *plugin_checks(settings),
-        _retired_check(store),
         _issues_check(settings),
     ]
     return checks
@@ -668,20 +665,6 @@ def _unlocked_check(store: ConfigStore) -> Check:
                  section="security")
 
 
-def _imported_env_check() -> Check:
-    leftovers = sorted(Path.cwd().glob(f"{LEGACY_ENV_FILE.name}.imported-*"))
-    if leftovers:
-        return Check(
-            "old .env",
-            False,
-            f"{', '.join(str(path) for path in leftovers)} still hold the secrets that were "
-            "imported — delete them once Keryx runs from the store",
-            severity="soft",
-            section="security",
-        )
-    return Check("old .env", True, "none left behind", severity="soft", section="security")
-
-
 # --- google, and what Keryx knows -----------------------------------------------
 
 
@@ -849,25 +832,6 @@ def plugin_checks(settings: Settings) -> list[Check]:
                 severity="soft", section="plugins", unset=True,
             ))
     return checks
-
-
-def _retired_check(store: ConfigStore) -> Check:
-    """Settings a plugin replaced, still in `config.toml`: ignored, and so a plugin that is
-    off without its owner knowing. The upgrade path is one command."""
-    try:
-        leftover = plugins.retired_in(store)
-    except Exception:  # a config.toml that does not parse is `_config_check`'s to report
-        leftover = {}
-    if leftover:
-        return Check(
-            "retired settings",
-            False,
-            f"{', '.join(leftover)} are plugin settings now and nothing reads them — "
-            "`keryx plugins install --from-settings`",
-            severity="soft",
-            section="plugins",
-        )
-    return Check("retired settings", True, "none", severity="soft", section="plugins")
 
 
 def _issues_check(settings: Settings) -> Check:

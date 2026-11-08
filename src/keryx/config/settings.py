@@ -15,9 +15,8 @@ A value is taken from the first of these that has one (`settings_customise_sourc
 3. `KERYX_HOME/secrets.toml`, then `KERYX_HOME/config.toml` (`keryx config set`);
 4. the default below.
 
-Nothing is read from the working directory. A `.env` there used to be a fifth source, and a
-checkout is the one place a secret must never live; `keryx config import-env` moves one into
-the store.
+Nothing is read from the working directory: a checkout is the one place a secret must never
+live.
 """
 
 import json
@@ -134,10 +133,6 @@ GOOGLE_CLIENT_FILE = "google_client_secret.json"
 #: would be resolved against whatever directory a process happened to start in, and the
 #: service, the CLI and the installers would each find a different one.
 DIRECTORY_FIELDS = ("data_dir", "state_dir", "cache_dir")
-#: What a working directory held when it was configuration: never read now, and imported
-#: into the store by `keryx config import-env`.
-LEGACY_ENV_FILE = Path(".env")
-LEGACY_CLIENT_FILE = Path(".secrets") / "client_secret.json"
 #: Where a problem with Keryx is filed unless `ISSUE_REPO` says otherwise: its own tracker.
 UPSTREAM_REPO = "wak31415/keryx"
 #: An assistant's name: a letter, then up to 31 letters, spaces, apostrophes or hyphens.
@@ -191,7 +186,7 @@ class _TomlLayer(PydanticBaseSettingsSource):
         return None, field_name, False  # pragma: no cover - `__call__` does the reading
 
     def __call__(self) -> dict[str, Any]:
-        # An older name (`FAKE_AGENTS`) is read too, and the current one wins over it.
+        # A renamed setting's older name is read too, and the current one wins over it.
         fields = {
             key: name
             for name in self.settings_cls.model_fields
@@ -763,8 +758,6 @@ class Settings(BaseSettings):
         "was a demo. No agent runs and no agent tokens are spent. `keryx serve --demo` turns "
         "it on for one run.",
         group="debug",
-        # `FAKE_AGENTS` until 2026-09-29, still read for one release.
-        validation_alias=AliasChoices("DEMO_MODE", "FAKE_AGENTS"),
     )
 
     # --- validation ----------------------------------------------------------------------
@@ -1155,8 +1148,8 @@ def env_var_name(field_name: str) -> str:
 def env_var_names(field_name: str) -> tuple[str, ...]:
     """Every name the environment may set a field under: `env_var_name`, then older ones.
 
-    An older name (`FAKE_AGENTS`) is only ever read: the store, the CLI and every message
-    use the first.
+    A renamed setting keeps its older name as a pydantic `AliasChoices` for one release, and
+    it is only ever read: the store, the CLI and every message use the first.
     """
     field = Settings.model_fields.get(field_name)
     alias = getattr(field, "validation_alias", None) if field is not None else None
@@ -1168,7 +1161,7 @@ def env_var_names(field_name: str) -> tuple[str, ...]:
 def field_for(key: str) -> str | None:
     """The `Settings` field a key names (`KERYX_PIN` → `pin`), or None for no setting.
 
-    An older name (`FAKE_AGENTS`) names its field too, so an old `.env` still imports.
+    An older name names its field too.
     """
     wanted = key.strip().upper()
     for name in Settings.model_fields:
@@ -1178,8 +1171,8 @@ def field_for(key: str) -> str | None:
 
 
 def canonical_key(key: str) -> str:
-    """`key` as the store and every rule name it: an older name (`FAKE_AGENTS`) becomes the
-    current one (`DEMO_MODE`), so no rule can be passed by typing the old one."""
+    """`key` as the store and every rule name it: an older name becomes the current one, so
+    no rule can be passed by typing the old one."""
     wanted = key.strip().upper()
     name = field_for(wanted)
     return env_var_name(name) if name is not None else wanted
