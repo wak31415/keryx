@@ -23,6 +23,8 @@ from keryx.config import Settings
 from keryx.restart.coordinator import (
     EXEC_CONFIRM_S,
     MAX_CALLBACK_ATTEMPTS,
+    UPGRADE_MESSAGE,
+    UPGRADE_UNSUPPORTED_MESSAGE,
     RestartCoordinator,
 )
 from keryx.restart.health import health_probe, wait_until_serving
@@ -684,6 +686,62 @@ async def test_a_second_request_does_not_stack(tmp_path):
     result = await harness.coordinator.request()
 
     assert result["status"] == "already_pending"
+
+
+UPGRADE = [("it did not install", ["uv", "tool", "upgrade"]), ("it does not start", ["v"])]
+
+
+async def test_an_upgrade_installs_during_the_call_and_restarts_once_it_ends(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("keryx.restart.coordinator.upgrade_steps", lambda: UPGRADE)
+    harness = Harness(make_settings(tmp_path))
+    session = FakeVoiceSession(channel="phone")
+    harness.sessions.add(session)
+    harness.sleep.hook = lambda calls: session.__setattr__("is_live", False)
+
+    result = await harness.coordinator.request(origin_channel="phone", upgrade=True)
+    await harness.settle()
+
+    assert (result["status"], result["message"]) == ("deferred", UPGRADE_MESSAGE)
+    assert harness.spawn.commands == [
+        ["uv", "tool", "upgrade"], ["v"], ["systemctl", "--user", "restart", SYSTEMD_UNIT],
+    ]
+    assert harness.sleep.calls  # the restart waited for the call, the install did not
+
+
+async def test_an_upgrade_that_fails_restarts_nothing_and_says_why(tmp_path, monkeypatch):
+    monkeypatch.setattr("keryx.restart.coordinator.upgrade_steps", lambda: UPGRADE)
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1))
+
+    await harness.coordinator.request(upgrade=True)
+    await harness.settle()
+
+    assert harness.spawn.commands == [["uv", "tool", "upgrade"]]
+    record = harness.record()
+    assert (record.state, record.error) == ("failed", "it did not install")
+    assert "it did not install" in harness.twilio.sms[0][1]
+
+
+async def test_an_upgrade_step_that_cannot_run_restarts_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr("keryx.restart.coordinator.upgrade_steps", lambda: UPGRADE)
+    harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(error=FileNotFoundError("uv")))
+
+    await harness.coordinator.request(upgrade=True)
+    await harness.settle()
+
+    assert harness.record().error == "it did not install"
+
+
+async def test_an_upgrade_outside_the_installer_is_refused_and_writes_nothing(
+    harness, monkeypatch
+):
+    monkeypatch.setattr("keryx.restart.coordinator.upgrade_steps", lambda: None)
+
+    result = await harness.coordinator.request(upgrade=True)
+
+    assert (result["status"], result["message"]) == ("unsupported", UPGRADE_UNSUPPORTED_MESSAGE)
+    assert harness.record() is None and harness.spawn.commands == []
 
 
 async def test_no_service_manager_refuses_and_writes_nothing(tmp_path):

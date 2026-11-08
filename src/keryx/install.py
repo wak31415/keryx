@@ -73,3 +73,18 @@ def find_uv() -> str | None:
 def keryx_command() -> list[str]:
     """How to run this Keryx's command, whatever PATH holds (`python -m keryx`)."""
     return [sys.executable, "-m", "keryx"]
+
+
+def upgrade_steps() -> list[tuple[str, list[str]]] | None:
+    """An upgrade asked for on a call: install the newest release, then prove it starts.
+
+    Each command comes with what its failing means, in words the owner hears. None when
+    this is not an installer install, which is upgraded where it was installed.
+    """
+    uv = find_uv()
+    if how_installed() is not Install.INSTALLER or uv is None:
+        return None
+    return [
+        ("the newest release did not install", [uv, "tool", "upgrade", "--quiet", DISTRIBUTION]),
+        ("the newest release does not start", [*keryx_command(), "--version"]),
+    ]

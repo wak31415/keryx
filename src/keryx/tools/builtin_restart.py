@@ -35,14 +35,16 @@ def register_restart_tools(
                 origin_channel=ctx.channel,
                 origin_session_id=ctx.session.session_id,
                 task_id=_task_id(arguments),
+                upgrade=arguments.get("upgrade") is True,
             )
 
         registry.register(
             "restart_service",
-            "Restart yourself — the service behind this call — when they ask for one, or "
-            "when work they asked for has changed your own code and only a restart loads "
-            "it. The restart drops this call, so it waits until the call has ended "
-            "and then rings them back by itself to say whether it worked; the answer tells "
+            "Restart yourself — the service behind this call — when they ask for one, to "
+            "upgrade to your newest release, or when work they asked for has changed your "
+            "own code and only a restart loads it. The restart drops this call, so it waits "
+            "until the call has ended and then rings them back by itself to say whether it "
+            "worked; the answer tells "
             "you what to say. Never reach for it to fix something you were not asked to fix.",
             {
                 "type": "object",
@@ -51,6 +53,11 @@ def register_restart_tools(
                         "type": "string",
                         "description": "Why it is being restarted, in a few words — they "
                         "hear this back on the confirmation call.",
+                    },
+                    "upgrade": {
+                        "type": "boolean",
+                        "description": "True when they asked to upgrade you: the newest "
+                        "release is installed during this call and the restart moves onto it.",
                     },
                     "task_id": {
                         "type": "integer",

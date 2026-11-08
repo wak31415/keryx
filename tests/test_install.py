@@ -18,6 +18,7 @@ from keryx.install import (
     how_installed,
     private_uv,
     release,
+    upgrade_steps,
 )
 from keryx.restart import version
 from keryx.restart.service import ServiceTarget
@@ -63,6 +64,26 @@ def test_the_installers_own_uv_comes_before_the_machines(monkeypatch):
     private_uv().parent.mkdir(parents=True)
     private_uv().write_text("")
     assert find_uv() == str(private_uv())
+
+
+@pytest.mark.parametrize(("kind", "uv"), [
+    (Install.CLONE, "/usr/bin/uv"), (Install.PIP, "/usr/bin/uv"), (Install.INSTALLER, None),
+])
+def test_only_an_installer_install_upgrades_itself_on_a_call(monkeypatch, kind, uv):
+    monkeypatch.setattr(install_module, "how_installed", lambda: kind)
+    monkeypatch.setattr(install_module, "find_uv", lambda: uv)
+
+    assert upgrade_steps() is None
+
+
+def test_an_upgrade_installs_then_proves_the_new_release_starts(monkeypatch):
+    monkeypatch.setattr(install_module, "how_installed", lambda: Install.INSTALLER)
+    monkeypatch.setattr(install_module, "find_uv", lambda: "/data/keryx/bin/uv")
+
+    assert [command for _, command in upgrade_steps()] == [
+        ["/data/keryx/bin/uv", "tool", "upgrade", "--quiet", "keryx-voice"],
+        [sys.executable, "-m", "keryx", "--version"],
+    ]
 
 
 def test_a_release_with_no_metadata_is_unknown(monkeypatch):
@@ -195,30 +216,12 @@ def test_upgrade_without_the_installers_uv_points_at_the_installer(upgrading):
     assert INSTALL_COMMAND in result.output
 
 
-def test_a_task_upgrades_and_asks_for_the_restart_instead_of_restarting(upgrading, monkeypatch):
-    """On a call the task runs inside the service, where a restart would kill it."""
+def test_the_service_may_not_upgrade_keryx(upgrading, monkeypatch):
     monkeypatch.setenv("KERYX_ACTOR", "service")
     commands = Commands()
 
-    result = upgrading(commands)
-
-    assert result.exit_code == 0, result.output
-    assert commands.words() == ["upgrade", "--version"]
-    assert "`RESTART_REQUIRED: upgraded Keryx to 0.2.0` above your SPOKEN_SUMMARY:" in (
-        result.output
-    )
-
-
-@pytest.mark.parametrize("kind", [Install.CLONE, Install.PIP])
-def test_a_task_outside_the_installer_is_told_to_ask_for_the_restart(upgrading, monkeypatch,
-                                                                      kind):
-    monkeypatch.setenv("KERYX_ACTOR", "service")
-
-    result = upgrading(Commands(), kind=kind)
-
-    assert result.exit_code == 1
-    assert "then a `RESTART_REQUIRED:` line" in result.output
-    assert "keryx restart" not in result.output
+    assert upgrading(commands).exit_code == 1
+    assert commands.ran == []
 
 
 # --- keryx service ------------------------------------------------------------------------

@@ -1464,6 +1464,7 @@ async def test_restart_service_hands_the_reason_and_the_caller_over(make_tools):
             "origin_channel": "phone",
             "origin_session_id": harness.session.session_id,
             "task_id": None,
+            "upgrade": False,
         }
     ]
 
@@ -1476,6 +1477,16 @@ async def test_restart_service_names_the_task_whose_change_it_is_loading(make_to
     await harness.call("restart_service", {"reason": "new tool", "task_id": 42}, channel="phone")
 
     assert restarter.requests[0]["task_id"] == 42
+
+
+@pytest.mark.parametrize(("value", "upgrade"), [(True, True), ("yes", False), (None, False)])
+async def test_restart_service_upgrades_only_when_told_to_exactly(make_tools, value, upgrade):
+    restarter = FakeRestarter()
+    harness = make_tools(restarter=restarter)
+
+    await harness.call("restart_service", {"upgrade": value}, channel="phone")
+
+    assert restarter.requests[0]["upgrade"] is upgrade
 
 
 async def test_a_made_up_task_id_on_a_restart_is_dropped(make_tools):

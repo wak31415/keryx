@@ -44,8 +44,6 @@ job, not theirs.
 
 {issues}
 
-{upgrade}
-
 ## If you changed Keryx's own code
 
 Keryx is a running service, and it loaded its Python when it started. If your work

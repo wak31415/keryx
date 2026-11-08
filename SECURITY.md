@@ -246,8 +246,8 @@ On such a call, beyond what any call may hear, you can:
   already limits what a key can run, its denylist still takes precedence, and
   `keryx approvals --disable` overrides everything.
 
-You cannot start new work, search your past calls, send to Slack, restart Keryx, or call a
-number chosen during the call. Those need the PIN. This level still matters with
+You cannot start new work, search your past calls, send to Slack, restart or upgrade Keryx,
+or call a number chosen during the call. Those need the PIN. This level still matters with
 `BRIEFING_BEFORE_PIN=false`: it is what lets a call-back read you the result it called about.
 
 **Voicemail is the remaining risk, and it is handled.** An answering machine can pick up an
@@ -405,10 +405,9 @@ This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as
 shell, and can edit `config.toml` directly, as it can edit any of your files. What the rule
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
-service-writable keys. `auth login`, `memory seed`, `setup`, `service`,
+service-writable keys. `auth login`, `memory seed`, `setup`, `service`, `upgrade`,
 `approvals --install-hook`, `plugins install`, `plugins remove`, and `config lock|unlock`
-refuse the service outright. `keryx upgrade` does not: you can ask for an upgrade on a
-call, and it installs nothing but the newest release of Keryx itself.
+refuse the service outright.
 
 ### Your own tools and plugins
 

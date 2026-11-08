@@ -273,12 +273,6 @@ def test_the_subagent_suffix_tells_it_not_to_restart_keryx_itself(settings):
     assert "Do not restart it yourself" in suffix
 
 
-def test_the_subagent_suffix_names_this_keryxs_own_upgrade_command():
-    suffix = render_subagent_suffix(Task(id=1, kind=TaskKind.AGENT, description="upgrade"))
-
-    assert f"`{sys.executable} -m keryx upgrade`" in suffix
-
-
 def test_the_subagent_suffix_says_whom_the_work_is_for():
     task = Task(id=1, kind=TaskKind.AGENT, description="x")
 

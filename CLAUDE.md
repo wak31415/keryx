@@ -11,8 +11,8 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
 
 - Install, for a user: `curl -fsSL …/install.sh | sh` (`install.sh`: `uv tool install
   keryx-voice[all]`, then `keryx setup`); update with `keryx upgrade` (an installer install
-  only; it restarts the service onto the new release, and a task asked for on a call runs
-  it too)
+  only; it restarts the service onto the new release), or on a call (`restart_service` with
+  `upgrade`)
 - Install, in a clone: `uv sync` (every coding agent, via the default `agents` group); one
   agent only: `uv sync --no-group agents --extra codex` (or `claude`); with pip,
   `keryx-voice[all|claude|codex]`
@@ -377,8 +377,8 @@ stay protected in `secrets.toml`. Four rulings:
   times its default, which is no limit by another name, and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `auth login`, `memory seed`, `setup`,
-  `config lock|unlock`, `service install|uninstall`, `approvals --install-hook`, `plugins
-  install|remove` — refuse outright under
+  `config lock|unlock`, `service install|uninstall`, `upgrade`, `approvals --install-hook`,
+  `plugins install|remove` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and
@@ -648,11 +648,12 @@ it first. Four rulings:
   restart into, and `keryx upgrade` would overwrite one: that loop, and issue reports that
   read the code (`KERYX_CHECKOUT`), are a clone's. `current_version` is the release outside
   a clone and never asks `git` there, which would describe a home directory kept in git.
-- **An upgrade can be asked for on a call, as a task.** `keryx upgrade` under
-  `KERYX_ACTOR=service` installs and checks the release like the owner's, then leaves the
-  restart to the task's `RESTART_REQUIRED:` line (`prompts/subagent_upgrade.md`), because a
-  restart from inside the unit kills the task asking for it. It is not owner-only: it
-  installs nothing but Keryx's own newest release, which a task's shell could do anyway.
+- **An upgrade asked for on a call is a restart, not a task.** `restart_service` with
+  `upgrade` has the coordinator run `install.upgrade_steps()` (install the newest release,
+  then prove it starts) in the background while the call goes on, then restart as usual
+  once the line clears. A step that fails restarts nothing and is said through `_failed`,
+  so the old version keeps running. No subagent is involved, so `keryx upgrade` stays
+  owner-only.
 
 ## Testing rule
 
