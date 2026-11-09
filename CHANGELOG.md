@@ -2,9 +2,12 @@
 
 Notable changes, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [semantic versioning](https://semver.org/) over the command line and the
-settings: a removed or renamed setting or command is a major bump.
+settings: a removed or renamed setting or command is a major bump, or a minor one while
+the version starts with 0.
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-11-09
 
 Keryx installs with one line and no clone, and every command starts with `keryx`. An
 installed service needs nothing done: the new commands write the same units the scripts did.
@@ -196,7 +199,8 @@ calls, and calls you when there's news.
 - **Linux and macOS.** Keryx runs as a systemd or launchd service, keeps its files in the
   standard XDG directories, and stores secrets in files only you can read.
 
-[Unreleased]: https://github.com/wak31415/keryx/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/wak31415/keryx/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wak31415/keryx/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/wak31415/keryx/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/wak31415/keryx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wak31415/keryx/releases/tag/v0.1.0
