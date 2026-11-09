@@ -377,8 +377,8 @@ stay protected in `secrets.toml`. Four rulings:
   times its default, which is no limit by another name, and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
   commands that write what the service may not — `auth login`, `memory seed`, `setup`,
-  `config lock|unlock`, `service install|uninstall`, `upgrade`, `approvals --install-hook`,
-  `plugins install|remove` — refuse outright under
+  `config lock|unlock`, `service install|uninstall`, `upgrade`, `forget`, `approvals
+  --enable|--install-hook|--uninstall-hook`, `plugins install|remove` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
   context) run as the service. This binds Keryx's own tools; it is not a
   sandbox (SECURITY.md). A new field decides its `service_writable` on purpose, and

@@ -38,14 +38,15 @@ enough for anything here. If a fix lands sooner, you may disclose sooner.
 
 ## Supported versions
 
-Only the `main` branch is supported. There are no maintenance branches and no backports:
-fixes land on `main`, and you update by pulling. Tagged releases mark points in that
-history. They are not supported separately.
+The latest release and the `main` branch are supported. There are no maintenance branches
+and no backports: fixes land on `main` and go out in the next release. Update with
+`keryx upgrade`, or by pulling if you work from a clone.
 
 | Version | Supported |
 |---|---|
+| The latest release | ✅ |
 | `main` | ✅ |
-| tagged releases | ❌ — update to `main` |
+| Older releases | ❌ — update with `keryx upgrade` |
 
 ## Scope
 
@@ -406,8 +407,8 @@ shell, and can edit `config.toml` directly, as it can edit any of your files. Wh
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
 service-writable keys. `auth login`, `memory seed`, `setup`, `service`, `upgrade`,
-`approvals --install-hook`, `plugins install`, `plugins remove`, and `config lock|unlock`
-refuse the service outright.
+`forget`, `approvals --enable`, `approvals --install-hook`, `plugins install`,
+`plugins remove`, and `config lock|unlock` refuse the service outright.
 
 ### Your own tools and plugins
 
