@@ -176,7 +176,7 @@ describes, never in a public issue.
 
 ## Roadmap
 
-v0.2.0 plans to add local models for the voice and the agents. v0.3.0 plans to let you
+v0.3.0 plans to add local models for the voice and the agents. v0.4.0 plans to let you
 talk to the assistant at a Mac, without a phone. A move to OpenAI's GPT-Live is being
 considered but isn't scheduled. [docs/roadmap.md](docs/roadmap.md) has the checklist for
 each.

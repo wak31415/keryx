@@ -1,6 +1,6 @@
 # Roadmap
 
-## v0.2.0: local models
+## v0.3.0: local models
 
 Run the work and the voice on your own hardware, so a call and what it starts can stay on
 your machine.
@@ -11,7 +11,7 @@ your machine.
 - [ ] The PIN, the keypad, the call-backs, and interruptions working on the local voice
 - [ ] `keryx setup` and `keryx doctor` set up and check the local models
 
-## v0.3.0: talking to it at a Mac
+## v0.4.0: talking to it at a Mac
 
 Say a wake word and talk to the assistant through the Mac's microphone and speaker, with no
 phone and no Twilio. The work is on the
