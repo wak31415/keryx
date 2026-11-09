@@ -22,7 +22,8 @@ installed service needs nothing done: the new commands write the same units the 
 - **`keryx upgrade`** updates an installed Keryx and restarts the service onto the new
   version. It checks that the new version starts before it restarts anything. You can also
   ask for an upgrade on a call: Keryx installs it while you talk, restarts once the call
-  ends, and rings you back to say which version it is on.
+  ends, and rings you back to say which version it is on. If nothing newer exists, it
+  tells you at once.
 - **`keryx approvals --install-hook`** installs the approval bridge's hook into Claude Code,
   and `--uninstall-hook` takes it out.
 

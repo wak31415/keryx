@@ -36,7 +36,7 @@ from typing import Any
 
 from keryx.config import Settings
 from keryx.continuity.transcripts import read_tail
-from keryx.install import upgrade_steps
+from keryx.install import newest_release, upgrade_steps
 from keryx.logging_util import mask_number
 from keryx.notify.callback import (
     CALLBACK_TOKEN_TTL_S,
@@ -150,6 +150,10 @@ UPGRADE_MESSAGE = (
     "restart onto it once this call ends, and will ring them back to say which version you "
     "are on."
 )
+UP_TO_DATE_MESSAGE = (
+    "Tell them, in one sentence, that you are already on {version}, your newest release, so "
+    "there is nothing to upgrade."
+)
 UPGRADE_UNSUPPORTED_MESSAGE = (
     "Tell them, in one sentence, that you cannot upgrade yourself: this copy of you was not "
     "installed with the Keryx installer, so it is upgraded at their terminal."
@@ -220,6 +224,8 @@ class RestartCoordinator:
 
         `upgrade` installs the newest release first (`install.upgrade_steps`), in the
         background while the call goes on, so a failure is said on it and nothing restarts.
+        When PyPI says the running version is the newest, it is `up_to_date` and nothing
+        is written; when PyPI cannot say, the upgrade goes ahead.
         """
         target = resolve_target(self._settings)
         if target is None:
@@ -230,6 +236,9 @@ class RestartCoordinator:
         steps = upgrade_steps() if upgrade else []
         if steps is None:
             return {"status": "unsupported", "message": UPGRADE_UNSUPPORTED_MESSAGE}
+        version = await asyncio.to_thread(loaded_version, self._settings.state_dir)
+        if steps and version and version == await asyncio.to_thread(newest_release):
+            return {"status": "up_to_date", "message": UP_TO_DATE_MESSAGE.format(version=version)}
 
         callback_number = number or self._settings.owner_number
         record = RestartRecord(
@@ -239,7 +248,7 @@ class RestartCoordinator:
             origin_channel=origin_channel,
             origin_session_id=origin_session_id,
             target=target.describe(),
-            version=await asyncio.to_thread(loaded_version, self._settings.state_dir),
+            version=version,
             task_id=task_id,
             log_marks=await asyncio.to_thread(marks, self._settings.state_dir),
         )

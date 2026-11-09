@@ -16,6 +16,8 @@ import sys
 from enum import StrEnum
 from pathlib import Path
 
+import httpx
+
 from keryx.config.files import xdg_home
 from keryx.config.settings import SOURCE_ROOT
 
@@ -24,6 +26,8 @@ INSTALL_URL = "https://raw.githubusercontent.com/wak31415/keryx/main/install.sh"
 INSTALL_COMMAND = f"curl -fsSL {INSTALL_URL} | sh"
 #: What `uv tool install` writes into every environment it makes.
 UV_RECEIPT = "uv-receipt.toml"
+PYPI_JSON = f"https://pypi.org/pypi/{DISTRIBUTION}/json"
+PYPI_TIMEOUT_S = 5.0
 
 
 class Install(StrEnum):
@@ -56,6 +60,17 @@ def release() -> str | None:
     try:
         return importlib.metadata.version(DISTRIBUTION)
     except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def newest_release(transport: httpx.BaseTransport | None = None) -> str | None:
+    """The newest release on PyPI, or None when PyPI could not say."""
+    try:
+        with httpx.Client(transport=transport, timeout=PYPI_TIMEOUT_S) as client:
+            response = client.get(PYPI_JSON)
+            response.raise_for_status()
+            return response.json()["info"]["version"]
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
         return None
 
 

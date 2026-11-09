@@ -652,8 +652,9 @@ it first. Four rulings:
   `upgrade` has the coordinator run `install.upgrade_steps()` (install the newest release,
   then prove it starts) in the background while the call goes on, then restart as usual
   once the line clears. A step that fails restarts nothing and is said through `_failed`,
-  so the old version keeps running. No subagent is involved, so `keryx upgrade` stays
-  owner-only.
+  so the old version keeps running. It asks PyPI first (`install.newest_release`): when
+  the running version is the newest, it says so on the call and writes nothing; when PyPI
+  cannot say, it goes ahead. No subagent is involved, so `keryx upgrade` stays owner-only.
 
 ## Testing rule
 

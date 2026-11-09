@@ -5,6 +5,7 @@ import importlib.metadata
 import subprocess
 import sys
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -16,6 +17,7 @@ from keryx.install import (
     add_agent_command,
     find_uv,
     how_installed,
+    newest_release,
     private_uv,
     release,
     upgrade_steps,
@@ -84,6 +86,26 @@ def test_an_upgrade_installs_then_proves_the_new_release_starts(monkeypatch):
         ["/data/keryx/bin/uv", "tool", "upgrade", "--quiet", "keryx-voice"],
         [sys.executable, "-m", "keryx", "--version"],
     ]
+
+
+def pypi(status=200, body=b'{"info": {"version": "0.2.0"}}'):
+    return httpx.MockTransport(lambda request: httpx.Response(status, content=body))
+
+
+def offline(request):
+    raise httpx.ConnectError("offline")
+
+
+def test_the_newest_release_is_what_pypi_says():
+    assert newest_release(pypi()) == "0.2.0"
+
+
+@pytest.mark.parametrize("transport", [
+    pypi(404), pypi(body=b"<html>"), pypi(body=b'{"info": {}}'), pypi(body=b"[]"),
+    httpx.MockTransport(offline),
+])
+def test_the_newest_release_is_unknown_when_pypi_cannot_say(transport):
+    assert newest_release(transport) is None
 
 
 def test_a_release_with_no_metadata_is_unknown(monkeypatch):

@@ -23,6 +23,7 @@ from keryx.config import Settings
 from keryx.restart.coordinator import (
     EXEC_CONFIRM_S,
     MAX_CALLBACK_ATTEMPTS,
+    UP_TO_DATE_MESSAGE,
     UPGRADE_MESSAGE,
     UPGRADE_UNSUPPORTED_MESSAGE,
     RestartCoordinator,
@@ -691,10 +692,18 @@ async def test_a_second_request_does_not_stack(tmp_path):
 UPGRADE = [("it did not install", ["uv", "tool", "upgrade"]), ("it does not start", ["v"])]
 
 
-async def test_an_upgrade_installs_during_the_call_and_restarts_once_it_ends(
-    tmp_path, monkeypatch
-):
+@pytest.fixture
+def upgradable(monkeypatch):
+    """An installer install, and PyPI has a newer release than the one running."""
     monkeypatch.setattr("keryx.restart.coordinator.upgrade_steps", lambda: UPGRADE)
+    monkeypatch.setattr("keryx.restart.coordinator.newest_release", lambda: "v2-def5678")
+
+
+@pytest.mark.parametrize("newest", ["v2-def5678", None])  # None: PyPI could not say
+async def test_an_upgrade_installs_during_the_call_and_restarts_once_it_ends(
+    tmp_path, monkeypatch, upgradable, newest
+):
+    monkeypatch.setattr("keryx.restart.coordinator.newest_release", lambda: newest)
     harness = Harness(make_settings(tmp_path))
     session = FakeVoiceSession(channel="phone")
     harness.sessions.add(session)
@@ -710,8 +719,7 @@ async def test_an_upgrade_installs_during_the_call_and_restarts_once_it_ends(
     assert harness.sleep.calls  # the restart waited for the call, the install did not
 
 
-async def test_an_upgrade_that_fails_restarts_nothing_and_says_why(tmp_path, monkeypatch):
-    monkeypatch.setattr("keryx.restart.coordinator.upgrade_steps", lambda: UPGRADE)
+async def test_an_upgrade_that_fails_restarts_nothing_and_says_why(tmp_path, upgradable):
     harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(code=1))
 
     await harness.coordinator.request(upgrade=True)
@@ -723,14 +731,24 @@ async def test_an_upgrade_that_fails_restarts_nothing_and_says_why(tmp_path, mon
     assert "it did not install" in harness.twilio.sms[0][1]
 
 
-async def test_an_upgrade_step_that_cannot_run_restarts_nothing(tmp_path, monkeypatch):
-    monkeypatch.setattr("keryx.restart.coordinator.upgrade_steps", lambda: UPGRADE)
+async def test_an_upgrade_step_that_cannot_run_restarts_nothing(tmp_path, upgradable):
     harness = Harness(make_settings(tmp_path), spawn=FakeSpawn(error=FileNotFoundError("uv")))
 
     await harness.coordinator.request(upgrade=True)
     await harness.settle()
 
     assert harness.record().error == "it did not install"
+
+
+async def test_an_upgrade_with_nothing_newer_says_so_and_writes_nothing(
+    harness, monkeypatch, upgradable
+):
+    monkeypatch.setattr("keryx.restart.coordinator.newest_release", lambda: VERSION)
+
+    result = await harness.coordinator.request(upgrade=True)
+
+    assert result == {"status": "up_to_date", "message": UP_TO_DATE_MESSAGE.format(version=VERSION)}
+    assert harness.record() is None and harness.spawn.commands == []
 
 
 async def test_an_upgrade_outside_the_installer_is_refused_and_writes_nothing(
