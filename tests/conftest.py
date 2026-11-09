@@ -5,8 +5,7 @@ import dataclasses
 import pytest
 
 from keryx.config import Settings
-from keryx.config.files import LEGACY_HOME_ENV
-from keryx.config.permissions import ACTOR_ENVS
+from keryx.config.permissions import ACTOR_ENV
 from keryx.config.settings import env_var_names
 
 
@@ -60,10 +59,8 @@ def _isolated_env(monkeypatch, tmp_path):
     subagent of the live service inherits `service`, and would be refused as one.
 
     `HOME`, every `XDG_*_HOME` and the working directory move into the test's own
-    directory as well. Every default
-    Keryx has for where it keeps things is derived from them, and one check looks for a
-    legacy `~/.jarvis` — which on a developer's machine really is there, holding every call
-    they ever made.
+    directory as well: every default Keryx has for where it keeps things is derived from
+    them, and on a developer's machine those hold every call they ever made.
     """
     for name in _settings_env_var_names():
         monkeypatch.delenv(name, raising=False)
@@ -72,12 +69,11 @@ def _isolated_env(monkeypatch, tmp_path):
     for name, relative in XDG_HOMES.items():
         monkeypatch.setenv(name, str(home / relative))
     monkeypatch.setenv("KERYX_HOME", str(tmp_path / "keryx-home"))
-    for name in (*ACTOR_ENVS, LEGACY_HOME_ENV):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv(ACTOR_ENV, raising=False)
     # The Claude CLI's own directory is derived from `HOME` unless this moves it.
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    # And the working directory: a `.env` in the checkout the suite runs from is what
-    # `keryx serve` refuses to start beside, and what `keryx migrate` would import.
+    # And the working directory: a `.env` in the checkout the suite runs from must never
+    # take part in a test.
     working = tmp_path / "cwd"
     working.mkdir()
     monkeypatch.chdir(working)
@@ -151,9 +147,8 @@ def every_agent_installed(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_checkout_env(monkeypatch, tmp_path):
-    """`keryx migrate` reads a `.env` and `.secrets/` in the checkout the service runs in,
-    and in a test that checkout would be this one — a developer's real one, with every key
-    in it. Pointed at a directory of the test's own instead."""
+    """The checkout Keryx runs from, which in a test would be this one — a developer's
+    real one, with every key in it. Pointed at a directory of the test's own instead."""
     monkeypatch.setattr("keryx.cli.repo_root", lambda: tmp_path / "checkout")
 
 

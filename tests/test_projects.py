@@ -75,22 +75,6 @@ def test_a_project_with_a_brief_describes_itself(settings, tmp_path):
     ]
 
 
-def test_a_brief_written_before_the_rename_is_still_read_and_the_new_name_wins(
-    settings, tmp_path
-):
-    root = tmp_path / "projects"
-    (root / "old").mkdir(parents=True)
-    (root / "old" / ".jarvis-brief.md").write_text("Written long ago.\n", encoding="utf-8")
-    (root / "both").mkdir()
-    (root / "both" / ".jarvis-brief.md").write_text("Stale.\n", encoding="utf-8")
-    (root / "both" / ".keryx-brief.md").write_text("Current.\n", encoding="utf-8")
-    settings.projects_root = root
-
-    briefs = dict((b.name, b.text) for b in discover_briefs(discover_projects(settings)))
-
-    assert briefs == {"old": "Written long ago.", "both": "Current."}
-
-
 def test_a_very_long_brief_is_capped(settings, tmp_path):
     root = tmp_path / "projects"
     (root / "verbose").mkdir(parents=True)

@@ -2,9 +2,44 @@
 
 Notable changes, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [semantic versioning](https://semver.org/) over the command line and the
-settings: a removed or renamed setting or command is a major bump.
+settings: a removed or renamed setting or command is a major bump, or a minor one while
+the version starts with 0.
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-11-09
+
+Keryx installs with one line and no clone, and every command starts with `keryx`. An
+installed service needs nothing done: the new commands write the same units the scripts did.
+
+### Added
+
+- **A one-line install:**
+  `curl -fsSL https://raw.githubusercontent.com/wak31415/keryx/main/install.sh | sh`. It
+  installs the `keryx` command with both coding agents and starts `keryx setup`. It needs no
+  Python, uv or clone: it brings its own. Keryx is published on PyPI as `keryx-voice`, so a
+  tool of your own can have Keryx in its editor with `pip install keryx-voice`.
+- **`keryx service install`** installs and starts the background service with its tunnel
+  (systemd on Linux, launchd on macOS), and **`keryx service uninstall`** removes them. The
+  last section of `keryx setup` runs it.
+- **`keryx upgrade`** updates an installed Keryx and restarts the service onto the new
+  version. It checks that the new version starts before it restarts anything. You can also
+  ask for an upgrade on a call: Keryx installs it while you talk, restarts once the call
+  ends, and rings you back to say which version it is on. If nothing newer exists, it
+  tells you at once.
+- **`keryx approvals --install-hook`** installs the approval bridge's hook into Claude Code,
+  and `--uninstall-hook` takes it out.
+
+### Removed
+
+- `scripts/install-systemd.sh`, `scripts/install-launchd.sh`,
+  `scripts/install-claude-hook.sh` and `scripts/lib.sh`, replaced by the commands above.
+  `scripts/dev.sh` stays, for working on Keryx from a clone.
+- `keryx migrate`, `keryx config import-env` and `keryx plugins install --from-settings`,
+  which moved settings from before 0.1.0, and the refusal to start beside a `.env` in the
+  working directory.
+- `FAKE_AGENTS`, the old name of `DEMO_MODE`, and the hidden `serve` options
+  `--fake-agents` and `--no-wakeword`.
 
 ## [0.1.2] - 2026-11-04
 
@@ -164,7 +199,8 @@ calls, and calls you when there's news.
 - **Linux and macOS.** Keryx runs as a systemd or launchd service, keeps its files in the
   standard XDG directories, and stores secrets in files only you can read.
 
-[Unreleased]: https://github.com/wak31415/keryx/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/wak31415/keryx/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wak31415/keryx/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/wak31415/keryx/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/wak31415/keryx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wak31415/keryx/releases/tag/v0.1.0

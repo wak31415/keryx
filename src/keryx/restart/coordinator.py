@@ -36,6 +36,7 @@ from typing import Any
 
 from keryx.config import Settings
 from keryx.continuity.transcripts import read_tail
+from keryx.install import newest_release, upgrade_steps
 from keryx.logging_util import mask_number
 from keryx.notify.callback import (
     CALLBACK_TOKEN_TTL_S,
@@ -144,6 +145,19 @@ UNSUPPORTED_MESSAGE = (
     "you was not started by a service manager, so nothing would start it again."
 )
 ALREADY_PENDING_MESSAGE = "Tell them a restart is already scheduled for when this call ends."
+UPGRADE_MESSAGE = (
+    "Tell them, in one sentence, that you are installing your newest release now, will "
+    "restart onto it once this call ends, and will ring them back to say which version you "
+    "are on."
+)
+UP_TO_DATE_MESSAGE = (
+    "Tell them, in one sentence, that you are already on {version}, your newest release, so "
+    "there is nothing to upgrade."
+)
+UPGRADE_UNSUPPORTED_MESSAGE = (
+    "Tell them, in one sentence, that you cannot upgrade yourself: this copy of you was not "
+    "installed with the Keryx installer, so it is upgraded at their terminal."
+)
 
 # --- the coordinator --------------------------------------------------------
 
@@ -195,6 +209,7 @@ class RestartCoordinator:
         origin_session_id: str | None = None,
         task_id: int | None = None,
         force: bool = False,
+        upgrade: bool = False,
     ) -> dict:
         """Schedule a restart of this service. Never raises; the status says what happened.
 
@@ -206,6 +221,11 @@ class RestartCoordinator:
         `task_id` is the work this restart exists to load, when it exists to load any. It
         turns the confirmation from "the process came back" into "the change you asked for
         is running", and it is what licenses the version check in `status_summary`.
+
+        `upgrade` installs the newest release first (`install.upgrade_steps`), in the
+        background while the call goes on, so a failure is said on it and nothing restarts.
+        When PyPI says the running version is the newest, it is `up_to_date` and nothing
+        is written; when PyPI cannot say, the upgrade goes ahead.
         """
         target = resolve_target(self._settings)
         if target is None:
@@ -213,6 +233,12 @@ class RestartCoordinator:
             return {"status": "unsupported", "message": UNSUPPORTED_MESSAGE}
         if self._deferred is not None and not self._deferred.done():
             return {"status": "already_pending", "message": ALREADY_PENDING_MESSAGE}
+        steps = upgrade_steps() if upgrade else []
+        if steps is None:
+            return {"status": "unsupported", "message": UPGRADE_UNSUPPORTED_MESSAGE}
+        version = await asyncio.to_thread(loaded_version, self._settings.state_dir)
+        if steps and version and version == await asyncio.to_thread(newest_release):
+            return {"status": "up_to_date", "message": UP_TO_DATE_MESSAGE.format(version=version)}
 
         callback_number = number or self._settings.owner_number
         record = RestartRecord(
@@ -222,7 +248,7 @@ class RestartCoordinator:
             origin_channel=origin_channel,
             origin_session_id=origin_session_id,
             target=target.describe(),
-            version=await asyncio.to_thread(loaded_version, self._settings.state_dir),
+            version=version,
             task_id=task_id,
             log_marks=await asyncio.to_thread(marks, self._settings.state_dir),
         )
@@ -232,6 +258,11 @@ class RestartCoordinator:
             return {"status": "failed", "message": "Tell them the restart could not be set up."}
 
         message = RESTARTING_MESSAGE if self._can_call_back(record) else NO_CALLBACK_MESSAGE
+        if steps:
+            self._deferred = asyncio.create_task(
+                self._restart_when_quiet(target, steps), name="restart"
+            )
+            return {"status": "deferred", "message": UPGRADE_MESSAGE, "target": target.describe()}
         if await self._blocker() is not None and not force:
             log.info("holding the restart until the line is clear")
             self._deferred = asyncio.create_task(self._restart_when_quiet(target), name="restart")
@@ -249,8 +280,20 @@ class RestartCoordinator:
             and self._twilio.configured
         )
 
-    async def _restart_when_quiet(self, target: ServiceTarget) -> None:
-        """Wait for the machine to be idle, then restart. Give up rather than cut work off."""
+    async def _restart_when_quiet(
+        self, target: ServiceTarget, steps: Sequence[tuple[str, Sequence[str]]] = ()
+    ) -> None:
+        """Run `steps`, wait for the machine to be idle, then restart. Give up rather than
+        cut work off, and restart nothing when a step fails: the old version keeps running."""
+        for failure, command in steps:
+            try:
+                code = await self._spawn(command)
+            except Exception:
+                log.exception("could not run %s", command[0])
+                code = -1
+            if code:
+                await self._failed(failure)
+                return
         blocker = await self._wait_until_idle(DEFER_TIMEOUT_S)
         if blocker is not None:
             # Failed, not cleared: a cleared record reads as success, and the call-back a

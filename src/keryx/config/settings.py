@@ -15,9 +15,8 @@ A value is taken from the first of these that has one (`settings_customise_sourc
 3. `KERYX_HOME/secrets.toml`, then `KERYX_HOME/config.toml` (`keryx config set`);
 4. the default below.
 
-Nothing is read from the working directory. A `.env` there used to be a fifth source, and a
-checkout is the one place a secret must never live; `keryx migrate` moves one into the
-store, and `storage_refusal` keeps `keryx serve` from starting while one is still there.
+Nothing is read from the working directory: a checkout is the one place a secret must never
+live.
 """
 
 import json
@@ -40,22 +39,15 @@ from pydantic_settings import (
 )
 
 from keryx.config.files import (
-    HOME_ENV,
-    LEGACY_HOME_ENV,
     claude_config_dir,
     config_file,
     default_cache_dir,
     default_data_dir,
     default_state_dir,
-    holds_files,
     keryx_home,
-    legacy_entries,
-    legacy_home,
     read_toml,
-    renamed_dirs,
     secrets_file,
     secure_dir,
-    stray_legacy_home_env,
     write_private,
 )
 from keryx.config.pin import (
@@ -141,11 +133,6 @@ GOOGLE_CLIENT_FILE = "google_client_secret.json"
 #: would be resolved against whatever directory a process happened to start in, and the
 #: service, the CLI and the installers would each find a different one.
 DIRECTORY_FIELDS = ("data_dir", "state_dir", "cache_dir")
-#: What a working directory held when it was configuration: never read now, and `serve`
-#: refuses to start while either is there (`storage_refusal`), until `keryx migrate`.
-LEGACY_ENV_FILE = Path(".env")
-LEGACY_CLIENT_FILE = Path(".secrets") / "client_secret.json"
-LEGACY_WORKING_FILES = (LEGACY_ENV_FILE, LEGACY_CLIENT_FILE)
 #: Where a problem with Keryx is filed unless `ISSUE_REPO` says otherwise: its own tracker.
 UPSTREAM_REPO = "wak31415/keryx"
 #: An assistant's name: a letter, then up to 31 letters, spaces, apostrophes or hyphens.
@@ -199,7 +186,7 @@ class _TomlLayer(PydanticBaseSettingsSource):
         return None, field_name, False  # pragma: no cover - `__call__` does the reading
 
     def __call__(self) -> dict[str, Any]:
-        # An older name (`FAKE_AGENTS`) is read too, and the current one wins over it.
+        # A renamed setting's older name is read too, and the current one wins over it.
         fields = {
             key: name
             for name in self.settings_cls.model_fields
@@ -217,8 +204,7 @@ class _TomlLayer(PydanticBaseSettingsSource):
         ))
         for key, value in current:
             name = fields.get(key)
-            # Checked by the current name: `JARVIS_PIN` in a file is no more a PIN than
-            # `KERYX_PIN` would be.
+            # Checked by the current name: a PIN in a file is never a PIN.
             if name is None or env_var_name(name) in NOT_STORED or value == "":
                 continue
             values[name] = value
@@ -473,9 +459,7 @@ class Settings(BaseSettings):
         "environment, overrides that file. With no PIN anywhere nothing of yours is read "
         "out on the phone and every dispatch is refused.",
         group="owner",
-        # `JARVIS_PIN` was its name before the service was Keryx, and a unit or a shell
-        # profile from then still sets it: read, never written, and the new name wins.
-        validation_alias=AliasChoices("KERYX_PIN", "JARVIS_PIN"),
+        validation_alias=AliasChoices("KERYX_PIN"),
         repr=False,
     )
     pin_failure_limit: int = setting(
@@ -527,8 +511,8 @@ class Settings(BaseSettings):
     )
     cloudflare_tunnel: str = setting(
         "keryx",
-        "The Cloudflare tunnel the service scripts run (`scripts/dev.sh`, "
-        "`scripts/install-systemd.sh`).",
+        "The Cloudflare tunnel the service runs beside Keryx on Linux "
+        "(`keryx service install`, and `scripts/dev.sh` in a clone).",
         group="phone",
     )
     host: str = setting("127.0.0.1", "The address the phone server binds.", group="phone")
@@ -613,7 +597,6 @@ class Settings(BaseSettings):
         "The Keryx repository on this machine, which a subagent reads when it reports a "
         "problem with Keryx. Unset: the checkout Keryx runs from, when it runs from one.",
         group="projects",
-        validation_alias=AliasChoices("KERYX_CHECKOUT", "JARVIS_CHECKOUT"),
     )
     issue_reporting: bool = setting(
         False,
@@ -632,7 +615,7 @@ class Settings(BaseSettings):
     approvals_enabled: bool = setting(
         True,
         "Whether a Claude Code prompt left unanswered on your screen may become a call. "
-        "The hook is installed separately (`scripts/install-claude-hook.sh`).",
+        "The hook is installed separately (`keryx approvals --install-hook`).",
         group="approvals",
     )
     approval_escalate_seconds: float = setting(
@@ -775,8 +758,6 @@ class Settings(BaseSettings):
         "was a demo. No agent runs and no agent tokens are spent. `keryx serve --demo` turns "
         "it on for one run.",
         group="debug",
-        # `FAKE_AGENTS` until 2026-09-29, still read for one release.
-        validation_alias=AliasChoices("DEMO_MODE", "FAKE_AGENTS"),
     )
 
     # --- validation ----------------------------------------------------------------------
@@ -945,17 +926,8 @@ class Settings(BaseSettings):
 
         Both halves, because they are different facts. An unusable file is no PIN *and* no
         enrolment: it seals the door exactly as a good one does (`write_enrolled_pin`).
-
-        A PIN still in the legacy `~/.jarvis` seals it too. That machine has a PIN; it has
-        simply not been moved yet (`keryx migrate`), and a caller must not be the one to
-        choose a new one in the meantime. `serve` refuses to start in that state anyway
-        (`storage_refusal`); this is the door's own belt to that.
         """
-        return (
-            not self.pin
-            and not pin_file(self.config_dir).exists()
-            and not pin_file(legacy_home()).exists()
-        )
+        return not self.pin and not pin_file(self.config_dir).exists()
 
     @property
     def reads_before_pin(self) -> bool:
@@ -1057,47 +1029,6 @@ class Settings(BaseSettings):
                 "DEBUG_SKIP_TWILIO_VALIDATION is on while PUBLIC_HOST is set, so anyone who "
                 "can reach the tunnel could pose as Twilio — turn it off"
             )
-        return None
-
-    def storage_refusal(self, working_dir: Path | None = None) -> str | None:
-        """Why `keryx serve` must not start until `keryx migrate` has run; None if it may.
-
-        Two states, both of an install from before the XDG layout. `~/.jarvis` still holding
-        what Keryx put there, while neither `KERYX_HOME` nor `DATA_DIR` names it: started
-        now, the service would find an empty data directory — no tasks, no memory, and no
-        PIN, which is an open enrolment door. Or a `.env` or `.secrets/client_secret.json`
-        in the working directory: configuration this build never reads, so it would start
-        without it.
-
-        The signal is the old files being there, never the new directory being missing:
-        `ensure_dirs` creates that on the first command of any kind. A `JARVIS_HOME` with no
-        `KERYX_HOME` beside it is refused as well: it names a configuration directory under
-        the old name, which is never followed.
-        """
-        if stray := stray_legacy_home_env():
-            return (
-                f"{LEGACY_HOME_ENV}={stray} is set and {HOME_ENV} is not — Keryx reads only "
-                f"{HOME_ENV}, so rename it"
-            )
-        in_use = (self.config_dir, self.data_dir, self.state_dir, self.cache_dir)
-        for old in renamed_dirs().values():
-            if old not in in_use and holds_files(old):
-                return (
-                    f"{old} still holds Keryx's files from when it was Jarvis — run "
-                    "`keryx migrate`"
-                )
-        legacy = legacy_home()
-        found = legacy_entries(legacy)
-        if found and legacy not in (self.config_dir, self.data_dir):
-            shown = ", ".join(found[:3]) + (", …" if len(found) > 3 else "")
-            return f"{legacy} still holds Keryx's files ({shown}) — run `keryx migrate`"
-        working = Path.cwd() if working_dir is None else working_dir
-        for name in LEGACY_WORKING_FILES:
-            if (working / name).is_file():
-                return (
-                    f"{working / name} is configuration Keryx no longer reads — run "
-                    "`keryx migrate`"
-                )
         return None
 
     @property
@@ -1217,8 +1148,8 @@ def env_var_name(field_name: str) -> str:
 def env_var_names(field_name: str) -> tuple[str, ...]:
     """Every name the environment may set a field under: `env_var_name`, then older ones.
 
-    An older name (`JARVIS_PIN`) is only ever read: the store, the CLI and every message
-    use the first.
+    A renamed setting keeps its older name as a pydantic `AliasChoices` for one release, and
+    it is only ever read: the store, the CLI and every message use the first.
     """
     field = Settings.model_fields.get(field_name)
     alias = getattr(field, "validation_alias", None) if field is not None else None
@@ -1230,8 +1161,7 @@ def env_var_names(field_name: str) -> tuple[str, ...]:
 def field_for(key: str) -> str | None:
     """The `Settings` field a key names (`KERYX_PIN` → `pin`), or None for no setting.
 
-    An older name (`JARVIS_PIN`) names its field too, so a `.env` from before the rename
-    imports, and `config set JARVIS_PIN` is refused as the PIN it is.
+    An older name names its field too.
     """
     wanted = key.strip().upper()
     for name in Settings.model_fields:
@@ -1241,8 +1171,8 @@ def field_for(key: str) -> str | None:
 
 
 def canonical_key(key: str) -> str:
-    """`key` as the store and every rule name it: an older name (`FAKE_AGENTS`) becomes the
-    current one (`DEMO_MODE`), so no rule can be passed by typing the old one."""
+    """`key` as the store and every rule name it: an older name becomes the current one, so
+    no rule can be passed by typing the old one."""
     wanted = key.strip().upper()
     name = field_for(wanted)
     return env_var_name(name) if name is not None else wanted

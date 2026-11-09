@@ -284,21 +284,6 @@ def test_with_no_control_master_only_a_template_or_nothing_is_offered(make_ctx, 
     assert "# One line per host" in plugins.config_path(ctx.settings, "cluster_stats").read_text()
 
 
-def test_the_old_clusters_are_the_defaults_and_leave_once_it_is_on(make_ctx, world):
-    ConfigStore().config_path.parent.mkdir(parents=True, exist_ok=True)
-    ConfigStore().config_path.write_text('[CLUSTERS]\nbeta = "gpu"\n')
-    ctx = cluster_ctx(make_ctx, world, [
-        ("Which hosts", DEFAULT), ("GPU partition on beta", DEFAULT), ("Install this?", "install"),
-    ])
-
-    section.run_section(ctx)
-
-    [beta] = [c for c in ctx.ui.choices["Which hosts should cluster_stats ask?"] if c.checked]
-    assert beta.value == "beta"
-    assert toml(ctx, "cluster_stats")["clusters"] == {"beta": "gpu"}
-    assert plugins.retired_in(ConfigStore()) == {}
-
-
 def test_going_back_replays_the_ssh_probes_rather_than_running_them_again(make_ctx, world):
     """Esc at the last question goes back to the partition, not back to reading ssh."""
     ctx = cluster_ctx(make_ctx, world, [

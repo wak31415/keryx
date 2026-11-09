@@ -37,21 +37,12 @@ def _is_on(ctx: SetupContext, name: str) -> bool:
 
 
 def current_values(ctx: SetupContext, name: str) -> dict[str, Any]:
-    """What the plugin's file holds, else what the settings it replaced held, else defaults."""
-    settings = ctx.settings
+    """What the plugin's file holds, else its defaults."""
     try:
-        values = plugins.read_config(settings, name)
+        return plugins.read_config(ctx.settings, name)
     except plugins.PluginConfigError as error:
         ctx.ui.warn(str(error))
-        values = plugins.defaults(name)
-    held = plugins.config_path(settings, name).exists() or plugins.off_path(settings, name).exists()
-    if not held:
-        retired = plugins.from_retired(name, plugins.retired_in(ctx.store))
-        try:
-            values |= plugins.clean(name, retired)
-        except plugins.PluginConfigError:
-            pass
-    return values
+        return plugins.defaults(name)
 
 
 def run_section(ctx: SetupContext) -> None:
@@ -67,7 +58,7 @@ def run_section(ctx: SetupContext) -> None:
     for name, spec in plugins.PLUGINS.items():
         disabled = None
         if name == "check_email" and not claude_ready:
-            disabled = "needs the Claude extra: uv sync --extra claude"
+            disabled = f"needs Claude Code: {registry.install_command('claude')}"
         hint = spec.summary + (" · recommended" if spec.default and not on[name] else "")
         checked = on[name] or (first and spec.default and disabled is None)
         choices.append(Choice(name, f"{spec.title} ({name})", hint=hint, checked=checked,
@@ -101,9 +92,6 @@ def _finish(ctx: SetupContext, name: str, values: dict[str, Any]) -> bool:
     except plugins.PluginConfigError as error:
         ui.error(str(error))
         return False
-    retired = [key for key in plugins.PLUGINS[name].retired if key in plugins.retired_in(ctx.store)]
-    if retired:
-        ctx.store.drop_retired(retired)
     status = next(one for one in plugins.status(settings) if one.name == name)
     if status.on:
         ui.success(f"{name} is on, from the next call")

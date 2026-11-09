@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from keryx import plugins
-from keryx.agents.registry import BACKENDS, auth_status, installed
+from keryx.agents.registry import BACKENDS, auth_status, install_hint, installed
 from keryx.config import (
     DATA_DIR_MODE,
     DATA_FILE_MODE,
@@ -42,13 +42,13 @@ from keryx.config import (
     pin_file,
 )
 from keryx.config.permissions import is_protected
-from keryx.config.settings import LEGACY_ENV_FILE
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
+from keryx.install import Install, how_installed
 from keryx.integrations.gmail import token_path
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
 from keryx.logging_util import mask_number
-from keryx.restart.service import INSTALLERS, candidate_target, resolve_target
+from keryx.restart.service import candidate_target, resolve_target
 
 Severity = Literal["hard", "soft"]
 
@@ -122,7 +122,6 @@ def run_doctor_checks(
     problems = config_problems or {}
     store = store or ConfigStore()
     checks = [
-        _storage_check(settings),
         _config_check(store),
         _openai_key_check(settings),
         _agent_config_check(settings),
@@ -145,12 +144,10 @@ def run_doctor_checks(
         _git_check(settings, store),
         _secrets_in_config_check(store),
         _unlocked_check(store),
-        _imported_env_check(),
         _google_check(settings),
         _memory_check(settings),
         _projects_root_check(settings),
         *plugin_checks(settings),
-        _retired_check(store),
         _issues_check(settings),
     ]
     return checks
@@ -159,22 +156,10 @@ def run_doctor_checks(
 # --- configuration ---------------------------------------------------------
 
 
-def _storage_check(settings: Settings) -> Check:
-    """Whether an install from before the XDG layout is still waiting for `keryx migrate`.
-
-    Hard, because `keryx serve` refuses to start in that state (`storage_refusal`), and
-    missing rather than failed: nothing is broken, a step has not been taken yet.
-    """
-    refusal = settings.storage_refusal()
-    if refusal is not None:
-        return Check("storage", False, refusal, section="import", unset=True)
-    return Check("storage", True, "the XDG directories", section="import")
-
-
 def _config_check(store: ConfigStore) -> Check:
     """Where the configuration lives."""
     where = store.config_path if store.config_path.is_file() else store.home
-    return Check("configuration", True, str(where), severity="soft", section="import")
+    return Check("configuration", True, str(where), severity="soft", section="settings")
 
 
 def _openai_key_check(settings: Settings) -> Check:
@@ -224,7 +209,7 @@ def _agent_checks(settings: Settings) -> list[Check]:
                 Check(
                     label,
                     False,
-                    f"not installed — {spec.install_hint}",
+                    f"not installed — {install_hint(name)}",
                     severity=severity,
                     section="agents",
                     unset=True,
@@ -232,7 +217,7 @@ def _agent_checks(settings: Settings) -> list[Check]:
             )
             continue
         if cli is None:
-            detail = f"{name} CLI not found — {spec.install_hint}"
+            detail = f"{name} CLI not found — {install_hint(name)}"
             checks.append(Check(label, False, detail, severity=severity, section="agents"))
             continue
         status = auth_status(name, settings)
@@ -469,7 +454,7 @@ def service_manager_check(settings: Settings) -> Check:
         elif candidate is None:
             why = "no service manager on this machine"
         else:
-            why = f"{candidate.unit} is not installed ({INSTALLERS[candidate.manager]})"
+            why = f"{candidate.unit} is not installed (`keryx service install`)"
         return Check(
             "service manager",
             False,
@@ -480,7 +465,7 @@ def service_manager_check(settings: Settings) -> Check:
             unset=True,
         )
     detail = target.describe()
-    if shutil.which("git") is None:
+    if shutil.which("git") is None and how_installed() is Install.CLONE:
         # `current_version` is decoration and degrades quietly; say so once, here, rather
         # than leave someone wondering why every restart reports an unknown version.
         detail += " — but no git on PATH, so versions will report as unknown"
@@ -680,20 +665,6 @@ def _unlocked_check(store: ConfigStore) -> Check:
                  section="security")
 
 
-def _imported_env_check() -> Check:
-    leftovers = sorted(Path.cwd().glob(f"{LEGACY_ENV_FILE.name}.imported-*"))
-    if leftovers:
-        return Check(
-            "old .env",
-            False,
-            f"{', '.join(str(path) for path in leftovers)} still hold the secrets that were "
-            "imported — delete them once Keryx runs from the store",
-            severity="soft",
-            section="security",
-        )
-    return Check("old .env", True, "none left behind", severity="soft", section="security")
-
-
 # --- google, and what Keryx knows -----------------------------------------------
 
 
@@ -861,25 +832,6 @@ def plugin_checks(settings: Settings) -> list[Check]:
                 severity="soft", section="plugins", unset=True,
             ))
     return checks
-
-
-def _retired_check(store: ConfigStore) -> Check:
-    """Settings a plugin replaced, still in `config.toml`: ignored, and so a plugin that is
-    off without its owner knowing. The upgrade path is one command."""
-    try:
-        leftover = plugins.retired_in(store)
-    except Exception:  # a config.toml that does not parse is `_config_check`'s to report
-        leftover = {}
-    if leftover:
-        return Check(
-            "retired settings",
-            False,
-            f"{', '.join(leftover)} are plugin settings now and nothing reads them — "
-            "`keryx plugins install --from-settings`",
-            severity="soft",
-            section="plugins",
-        )
-    return Check("retired settings", True, "none", severity="soft", section="plugins")
 
 
 def _issues_check(settings: Settings) -> Check:

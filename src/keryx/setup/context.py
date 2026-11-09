@@ -75,6 +75,12 @@ def _workspace(settings: Settings, echo: Callable[[str], None]) -> bool:
     return run_google_setup(settings, echo=echo)
 
 
+def _install_service(settings: Settings, echo: Callable[[str], None]) -> None:
+    from keryx.setup.service import install
+
+    install(settings, echo=echo)
+
+
 def _ssh_hosts() -> list:
     from keryx.plugins.ssh_hosts import discover
 
@@ -108,7 +114,8 @@ class Probes:
     smoke: Callable[[Settings, str], Awaitable[RunResult]] = _smoke
     run_task: Callable[[Settings, str, str], Awaitable[RunResult]] = _task
     run_login: Callable[[Sequence[str]], int] = run_command
-    run_script: Callable[[Sequence[str]], int] = run_command
+    #: `keryx service install`; raises `ServiceError` with what to fix.
+    install_service: Callable[[Settings, Callable[[str], None]], None] = _install_service
     headless: Callable[[], bool] = _headless
     gmail_address: Callable[[Settings], Awaitable[str]] = _gmail_address
     workspace_signin: Callable[[Settings, Callable[[str], None]], bool] = _workspace

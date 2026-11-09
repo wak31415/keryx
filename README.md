@@ -97,33 +97,57 @@ enable both, you can say "have Codex do it" on a call.
 
 - Linux or macOS, on a machine that stays on, such as a desktop or home server where your
   projects live. Keryx can't answer calls, keep working, or call you back while it sleeps.
-- Python 3.12 and [uv](https://docs.astral.sh/uv/).
 - An OpenAI API key with Realtime access.
-- Claude Code or Codex.
+- A Claude or ChatGPT plan, or an API key, for the coding agent. Claude Code and Codex both
+  come with Keryx.
 - A Twilio phone number.
-- A tunnel that gives Twilio a public address: Cloudflare Tunnel or ngrok.
+- A tunnel that gives Twilio a public address: Cloudflare Tunnel on Linux, ngrok on macOS.
 
 ### Install and set up
 
-1. Clone the repository:
+1. Install Keryx:
 
    ```bash
-   git clone https://github.com/wak31415/keryx.git && cd keryx
+   curl -fsSL https://raw.githubusercontent.com/wak31415/keryx/main/install.sh | sh
    ```
 
-2. Run the setup wizard. It asks only for what's still missing, and you can run it again
-   at any time:
+   It installs the `keryx` command and starts `keryx setup`, a wizard that asks only for
+   what's still missing and ends by installing the background service. Run `keryx setup`
+   again at any time.
 
-   ```bash
-   uv run keryx setup
-   ```
+2. Call your Twilio number.
 
-3. Call your Twilio number.
+`keryx upgrade` updates Keryx and restarts the service onto the new version. You can also
+ask for an upgrade on a call.
 
 If a coding agent is setting Keryx up for you, point it at
-`uv run keryx setup --agent-instructions`, or give Claude Code the `skills/keryx-setup`
+`keryx setup --agent-instructions`, or, in a clone, give Claude Code the `skills/keryx-setup`
 skill. The [Setup guide](https://github.com/wak31415/keryx/wiki/Setup) on the wiki covers
 each step in detail.
+
+### Developer install
+
+Clone Keryx instead of installing it, and the service runs your checkout. That adds what an
+installed copy can't do:
+
+- **Changes to Keryx's own code by phone.** Ask on a call, for example "make the call-back
+  name the project", and the task edits the checkout, restarts Keryx onto the change, and
+  calls you back to say whether it came up.
+- **Better bug reports.** With issue reports turned on in `keryx setup`, the task reads
+  Keryx's code and logs before it files the issue.
+- The test suite, and branches of your own.
+
+It needs [uv](https://docs.astral.sh/uv/), and every command runs as `uv run keryx` from the
+checkout:
+
+```bash
+git clone https://github.com/wak31415/keryx.git && cd keryx
+uv sync
+uv run keryx setup
+```
+
+To update, pull and then run `uv run keryx restart`. [CONTRIBUTING.md](CONTRIBUTING.md) has
+the rest.
 
 ## Documentation
 
@@ -142,7 +166,7 @@ each step in detail.
 
 ## Getting help
 
-1. Run `uv run keryx doctor`. It checks the whole setup and says what's missing.
+1. Run `keryx doctor`. It checks the whole setup and says what's missing.
 2. Read [Troubleshooting](https://github.com/wak31415/keryx/wiki/Troubleshooting) on the
    wiki.
 3. If that doesn't solve it, [open an issue](https://github.com/wak31415/keryx/issues).
@@ -152,7 +176,7 @@ describes, never in a public issue.
 
 ## Roadmap
 
-v0.2.0 plans to add local models for the voice and the agents. v0.3.0 plans to let you
+v0.3.0 plans to add local models for the voice and the agents. v0.4.0 plans to let you
 talk to the assistant at a Mac, without a phone. A move to OpenAI's GPT-Live is being
 considered but isn't scheduled. [docs/roadmap.md](docs/roadmap.md) has the checklist for
 each.

@@ -81,7 +81,7 @@ def test_a_hook_that_does_not_say_whether_it_trimmed_is_never_eligible(
     del event["truncated"]
     with caplog.at_level("WARNING", logger="keryx.approvals.policy"):
         assert classify(event, settings) is None
-    assert "install-claude-hook.sh" in caplog.text
+    assert "keryx approvals --install-hook" in caplog.text
 
 
 # --- the denylist ----------------------------------------------------------

@@ -91,33 +91,6 @@ def test_a_fully_configured_install_passes_every_check(healthy):
     assert has_hard_failure(checks) is False
 
 
-def test_files_left_in_the_old_home_are_a_migration_still_to_run(healthy):
-    legacy = Path.home() / ".jarvis"
-    legacy.mkdir(parents=True)
-    (legacy / "tasks.db").touch()
-
-    check = by_name(run_doctor_checks(healthy))["storage"]
-
-    assert (check.ok, check.severity, check.state) == (False, "hard", "missing")
-    assert "keryx migrate" in check.detail and str(legacy) in check.detail
-    assert check.section == "import"
-
-
-def test_a_env_in_the_working_directory_is_a_migration_still_to_run(healthy):
-    Path(".env").write_text("OPENAI_VOICE=marin\n")
-
-    check = by_name(run_doctor_checks(healthy))["storage"]
-
-    assert check.ok is False and "keryx migrate" in check.detail
-
-
-def test_nothing_legacy_is_fine(healthy):
-    checks = by_name(run_doctor_checks(healthy))
-
-    assert checks["storage"].ok is True
-    assert checks["configuration"].ok is True
-
-
 def test_a_missing_openai_key_is_reported_not_raised(healthy, monkeypatch):
     from keryx import doctor
 
@@ -398,7 +371,7 @@ def test_a_service_manager_with_nothing_installed_is_not_a_tick(healthy, monkeyp
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "not installed" in check.detail
-    assert "install-" in check.detail  # which installer puts it there
+    assert "keryx service install" in check.detail  # what puts it there
     assert "restart_service" in check.detail
 
 
@@ -616,17 +589,6 @@ def test_email_signed_in_without_the_claude_cli_is_refused_with_how(healthy, mon
     assert "uv sync --extra claude" in check.detail
 
 
-def test_settings_a_plugin_replaced_point_at_the_one_command(healthy):
-    ConfigStore().config_path.parent.mkdir(parents=True, exist_ok=True)
-    ConfigStore().config_path.write_text('SLACK_MCP_SERVER = "chat"\n\n[CLUSTERS]\na = "b"\n')
-
-    check = by_name(run_doctor_checks(healthy))["retired settings"]
-
-    assert (check.ok, check.severity, check.section) == (False, "soft", "plugins")
-    assert "CLUSTERS, SLACK_MCP_SERVER" in check.detail
-    assert "keryx plugins install --from-settings" in check.detail
-
-
 # --- formatting ------------------------------------------------------------
 
 
@@ -647,7 +609,6 @@ def test_a_formatted_check_carries_its_name_and_detail():
 
 
 def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
-    from keryx.config.store import ConfigStore
     from keryx.doctor import fix_permissions
 
     store = ConfigStore()
@@ -675,7 +636,6 @@ def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
 
 
 def test_a_config_inside_a_git_work_tree_warns(healthy, tmp_path, monkeypatch):
-    from keryx.config.store import ConfigStore
 
     (tmp_path / "repo" / ".git").mkdir(parents=True)
     store = ConfigStore(tmp_path / "repo" / "keryx-home")
@@ -688,7 +648,6 @@ def test_a_config_inside_a_git_work_tree_warns(healthy, tmp_path, monkeypatch):
 
 def test_a_relative_config_path_that_steps_out_of_a_work_tree_does_not_warn(healthy):
     """`fresh/../jh` is not inside `fresh`, even before it exists."""
-    from keryx.config.store import ConfigStore
 
     (Path("fresh") / ".git").mkdir(parents=True)
     store = ConfigStore(Path("fresh/../jh"))
@@ -698,7 +657,6 @@ def test_a_relative_config_path_that_steps_out_of_a_work_tree_does_not_warn(heal
 
 def test_a_secret_written_into_config_toml_by_hand_warns(healthy):
     from keryx.config.files import dump_toml, write_private
-    from keryx.config.store import ConfigStore
 
     store = ConfigStore()
     write_private(store.config_path, dump_toml({"TWILIO_AUTH_TOKEN": "tok"}))
@@ -711,7 +669,6 @@ def test_a_secret_written_into_config_toml_by_hand_warns(healthy):
 
 def test_a_protected_key_unlocked_by_hand_is_reported(healthy):
     from keryx.config.files import dump_toml, write_private
-    from keryx.config.store import ConfigStore
 
     store = ConfigStore()
     write_private(store.config_path, dump_toml({"service_writable": {"PORT": True}}))
@@ -722,16 +679,6 @@ def test_a_protected_key_unlocked_by_hand_is_reported(healthy):
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "PORT" in check.detail
-
-
-def test_an_imported_env_left_behind_is_reported(healthy, tmp_path, monkeypatch):
-    monkeypatch.setitem(Settings.model_config, "env_file", str(tmp_path / ".env"))
-    (tmp_path / ".env.imported-2026-09-27").write_text("OPENAI_API_KEY=sk\n")
-
-    check = by_name(run_doctor_checks(healthy))["old .env"]
-
-    assert (check.ok, check.severity) == (False, "soft")
-    assert ".env.imported-2026-09-27" in check.detail
 
 
 # --- the Twilio webhook -----------------------------------------------------------

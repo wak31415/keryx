@@ -26,6 +26,7 @@ from pydantic import ValidationError
 from keryx import plugins
 from keryx.app import TASK_DB_NAME, AppState, build_app_state, shutdown_app_state
 from keryx.approvals.broker import AUDIT_NAME, KILL_SWITCH_NAME, STATE_DIR_NAME
+from keryx.approvals.hook_install import install_hook
 from keryx.config import (
     GROUPS,
     PLACEHOLDER_KEY,
@@ -37,18 +38,23 @@ from keryx.config import (
     secure_dir,
     secure_file,
 )
-from keryx.config.files import HOME_ENV, XDG_HOMES, claude_config_dir, xdg_home
-from keryx.config.migrate import MigrationError, make_plan, old_target, retire_old_units
-from keryx.config.migrate import Report as MigrationReport
-from keryx.config.migrate import Service as MigratingService
-from keryx.config.migrate import run as run_migration
-from keryx.config.permissions import ACTOR_ENVS, SERVICE, current_actor
+from keryx.config.files import HOME_ENV, XDG_HOMES, xdg_home
+from keryx.config.permissions import ACTOR_ENV, SERVICE, current_actor
 from keryx.config.settings import ConfigFileError, tolerate_broken_files
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
 from keryx.continuity.retention import cutoff_for, prune, prune_with
 from keryx.doctor import fix_permissions, format_check, has_hard_failure, run_doctor_checks
 from keryx.events import EventBus
+from keryx.install import (
+    DISTRIBUTION,
+    INSTALL_COMMAND,
+    Install,
+    find_uv,
+    how_installed,
+    keryx_command,
+    release,
+)
 from keryx.logging_util import LOG_FORMAT, mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
@@ -57,9 +63,7 @@ from keryx.restart.health import health_probe, wait_until_serving
 from keryx.restart.logscan import errors_since
 from keryx.restart.logscan import marks as log_marks
 from keryx.restart.service import (
-    INSTALLERS,
     UNSUPPORTED_HINT,
-    candidate_target,
     resolve_target,
     spawn_watchdog,
     watch_command,
@@ -71,6 +75,7 @@ from keryx.server import create_app
 from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
 from keryx.setup import profile
+from keryx.setup import service as service_units
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
@@ -99,23 +104,11 @@ plugins_app = typer.Typer(
     help="The optional voice tools (Slack, email, billing, cluster stats): on, off, set up."
 )
 app.add_typer(plugins_app, name="plugins")
-log = logging.getLogger("keryx.cli")
-
-
-#: What the old command says, for one release (`pyproject.toml`'s `jarvis` script).
-RENAMED_MESSAGE = (
-    "Jarvis is now Keryx: run `keryx migrate`, then `keryx` wherever you ran `jarvis`."
+service_app = typer.Typer(
+    help="The background service that starts Keryx at boot and brings it back if it stops."
 )
-
-
-def renamed() -> None:
-    """The `jarvis` command: whatever it was asked, say what happened and fail.
-
-    It fails rather than forwarding, so a unit installed before the rename stops in a
-    restart loop that names the fix, instead of starting a service from the old directories.
-    """
-    typer.echo(RENAMED_MESSAGE, err=True)
-    raise SystemExit(1)
+app.add_typer(service_app, name="service")
+log = logging.getLogger("keryx.cli")
 
 
 def _print_version(value: bool) -> None:
@@ -247,23 +240,14 @@ def _load_settings_optional() -> Settings:
     return _load_settings_reporting()[0]
 
 
-def _configure_readonly(*, quiet: bool = True, migrated: bool = True) -> Settings:
+def _configure_readonly(*, quiet: bool = True) -> Settings:
     """`_configure` for the read-only commands (no `OPENAI_API_KEY` required).
 
     `quiet` because these print an answer, and `LOG_LEVEL` is the service's setting: the
     INFO lines it wants in `keryx.log` (a schema created, a migration run) are noise above
     a table. Warnings still show, and `LOG_LEVEL=DEBUG` still means everything.
-
-    `migrated` refuses, like `serve`, while `keryx migrate` has yet to run: before it, the
-    data these commands read is still in the old place, so they would answer from an empty
-    one — and `keryx tasks list` would create a new `tasks.db` for the migration to trip
-    over. The restart watchdog, which must report whatever it finds, passes False, and so
-    does `setup`, whose wizard says it in its own words.
     """
     settings = _load_settings_optional()
-    if migrated and (refusal := settings.storage_refusal()):
-        typer.echo(f"keryx cannot do that yet: {refusal}", err=True)
-        raise typer.Exit(2)
     settings.ensure_dirs()
     level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
     if quiet and level != logging.DEBUG:
@@ -289,11 +273,6 @@ def _add_file_logging(settings: Settings) -> None:
 
 @app.command()
 def serve(
-    no_wakeword: Annotated[
-        # Accepted and ignored: service units installed before the wake word left `main`
-        # still pass it, and a restart must not fail on an unknown option.
-        bool, typer.Option("--no-wakeword", hidden=True)
-    ] = False,
     demo: Annotated[
         bool,
         typer.Option(
@@ -301,10 +280,6 @@ def serve(
             help="Try the phone before a coding agent is set up: every task comes back with "
             "a sample answer, and no agent tokens are spent.",
         ),
-    ] = False,
-    fake_agents: Annotated[
-        # Its name until 2026-09-29, kept for one release.
-        bool, typer.Option("--fake-agents", hidden=True)
     ] = False,
     host: Annotated[
         str | None, typer.Option("--host", help="Override HOST for the phone server.")
@@ -316,7 +291,7 @@ def serve(
     """Run Keryx: the Twilio phone server."""
     # Only pass overrides that were actually asked for; everything else is the store's.
     overrides: dict[str, object] = {}
-    if demo or fake_agents:
+    if demo:
         overrides["demo_mode"] = True
     if host is not None:
         overrides["host"] = host
@@ -329,22 +304,10 @@ def serve(
     if refusal := settings.agent_refusal():
         typer.echo(f"keryx cannot start: {refusal}", err=True)
         raise typer.Exit(2)
-    if refusal := settings.storage_refusal():
-        typer.echo(f"keryx cannot start: {refusal}", err=True)
-        raise typer.Exit(2)
     _add_file_logging(settings)
-    if leftover := plugins.retired_in(ConfigStore()):
-        # Ignored, never fatal: they are plugin settings now, and the plugin is off until
-        # they are moved into its file.
-        log.warning(
-            "config.toml still holds %s, which are plugin settings now: "
-            "`keryx plugins install --from-settings`",
-            ", ".join(leftover),
-        )
     # Everything this process starts — every subagent — is the service, not the owner, when
-    # it runs `keryx config set` (keryx.config.permissions), and under the old name too.
-    for name in ACTOR_ENVS:
-        os.environ[name] = SERVICE
+    # it runs `keryx config set` (keryx.config.permissions).
+    os.environ[ACTOR_ENV] = SERVICE
     asyncio.run(_serve(settings))
 
 
@@ -534,6 +497,71 @@ def restart(
     typer.echo("if the call never comes: keryx restart --status")
 
 
+@service_app.command("install")
+def service_install() -> None:
+    """Install and start the service (systemd on Linux, launchd on macOS), and its tunnel.
+
+    Run it again after your PATH changes: the service gets this shell's, so the tasks it
+    runs find what your terminal finds.
+    """
+    _owner_only("install the service")
+    try:
+        service_units.install(_configure_readonly(), echo=typer.echo)
+    except service_units.ServiceError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1) from None
+
+
+@service_app.command("uninstall")
+def service_uninstall() -> None:
+    """Stop the service and its tunnel and remove them. Your settings and data stay."""
+    _owner_only("remove the service")
+    service_units.uninstall(echo=typer.echo)
+
+
+@app.command()
+def upgrade() -> None:
+    """Update Keryx to the latest release, and restart the service onto it."""
+    _owner_only("upgrade Keryx")
+    kind = how_installed()
+    if kind is Install.CLONE:
+        typer.echo(f"this Keryx runs from a clone ({repo_root()}): pull there, then "
+                   "`keryx restart`", err=True)
+        raise typer.Exit(1)
+    if kind is Install.PIP:
+        typer.echo(f"this Keryx was installed with pip: `pip install --upgrade {DISTRIBUTION}`, "
+                   "then `keryx restart`", err=True)
+        raise typer.Exit(1)
+    uv = find_uv()
+    if uv is None:
+        typer.echo(f"could not find what installed Keryx; run the installer again:\n  "
+                   f"{INSTALL_COMMAND}", err=True)
+        raise typer.Exit(1)
+    before = release()
+    typer.echo("checking for a newer Keryx…")
+    if subprocess.run([uv, "tool", "upgrade", "--quiet", DISTRIBUTION], check=False).returncode:
+        typer.echo("the upgrade failed; Keryx is unchanged", err=True)
+        raise typer.Exit(1)
+    # Asked of the new code, which also proves it runs before the service is moved onto it.
+    check = subprocess.run([*keryx_command(), "--version"], capture_output=True, text=True,
+                           check=False)
+    if check.returncode != 0:
+        typer.echo(f"the new version does not start, so the service was left as it is:\n"
+                   f"{check.stderr.strip()}", err=True)
+        raise typer.Exit(1)
+    after = check.stdout.split()[-1]
+    if after == before:
+        typer.echo(f"keryx {before} is the latest")
+        return
+    typer.echo(f"keryx {before} → {after}")
+    if resolve_target(_load_settings_optional(), from_outside=True) is None:
+        return
+    restarted = subprocess.run(
+        [*keryx_command(), "restart", "--reason", f"upgraded to {after}"], check=False
+    )
+    raise typer.Exit(restarted.returncode)
+
+
 @app.command("restart-watch", hidden=True)
 def restart_watch() -> None:
     """Watch a pending restart from outside the service, as a unit an older build armed.
@@ -546,7 +574,7 @@ def restart_watch() -> None:
     own "the restart never came back" into `keryx.log` would leave the next restart
     scanning that line back as a fault of Keryx's.
     """
-    settings = _configure_readonly(quiet=False, migrated=False)
+    settings = _configure_readonly(quiet=False)
     typer.echo(asyncio.run(watch(settings)))
 
 
@@ -1015,18 +1043,13 @@ def plugins_install(
     guard: Annotated[
         str | None, typer.Option("--guard", help="cluster_stats: a guard script of your own.")
     ] = None,
-    from_settings: Annotated[
-        bool,
-        typer.Option("--from-settings", help="Move the settings it replaced into its file; "
-                     "with no NAME, every plugin that was offered before."),
-    ] = False,
     template: Annotated[
         bool,
         typer.Option("--template", help="Write its settings file and a draft to edit, and "
                      "leave it off until `keryx plugins install NAME`."),
     ] = False,
 ) -> None:
-    """Turn a plugin on, from its settings file, the values given here, or the old settings.
+    """Turn a plugin on, from its settings file or the values given here.
 
     With no values, a settings file already edited by hand (and a `--template` draft) is
     what is turned on. A secret is never taken here: `keryx config set KEY --stdin`, or
@@ -1035,17 +1058,6 @@ def plugins_install(
     _owner_only("install a plugin")
     settings = _configure_readonly()
     try:
-        if from_settings:
-            names = None if name is None else [plugins.plugin(name).name]
-            moved = plugins.move_from_settings(settings, ConfigStore(), names)
-            if not moved:
-                typer.echo("nothing to move: no plugin was set up in the old settings")
-            for one in moved:
-                typer.echo(f"{one.name}: settings in {one.config_file}")
-                if one.problem:
-                    typer.echo(f"  {one.problem}")
-            _echo_plugin_states(settings, [one.name for one in moved])
-            return
         if name is None:
             typer.echo("which plugin? (`keryx plugins`)", err=True)
             raise typer.Exit(2)
@@ -1244,7 +1256,7 @@ def setup(
     Everything it saves goes to KERYX_HOME as you go, so stopping part way loses nothing.
     A coding agent setting Keryx up uses the commands instead: --agent-instructions.
     """
-    settings = _configure_readonly(migrated=False)  # the wizard says so, in its own words
+    settings = _configure_readonly()
     if instructions:
         typer.echo(agent_instructions(settings, ConfigStore()))
         return
@@ -1478,160 +1490,6 @@ def config_path(
         typer.echo(f"{name:<12} {path}")
 
 
-@config_app.command("import-env")
-def config_import_env(
-    path: Annotated[
-        Path, typer.Argument(help="The legacy env file.", exists=True, dir_okay=False)
-    ] = Path(".env"),
-) -> None:
-    """Move a legacy .env (and .secrets/client_secret.json) into the store, then rename it."""
-    _owner_only("import settings")
-    try:
-        report = ConfigStore().import_env(path)
-    except ConfigError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(1) from None
-    typer.echo(f"imported: {', '.join(report.imported) or 'nothing'}")
-    if report.defaults:
-        typer.echo(f"left at their defaults: {', '.join(report.defaults)}")
-    if report.kept:
-        typer.echo(f"already set in the store, kept as they were: {', '.join(report.kept)}")
-    if report.pin:
-        typer.echo(f"PIN: {report.pin}")
-    if report.client_file:
-        typer.echo(f"Google client file: {report.client_file}")
-    if report.unknown:
-        typer.echo(f"not settings, not imported: {', '.join(report.unknown)}")
-    typer.echo(f"{path} is now {report.renamed_to}; delete it once Keryx runs from the store.")
-
-
-# --- migrate ---------------------------------------------------------------
-
-
-#: How many of the tasks that lost their sessions are named one by one.
-MAX_LOST_SESSIONS_LISTED = 10
-
-
-@app.command()
-def migrate(
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Print what would move, and change nothing.")
-    ] = False,
-    yes: Annotated[bool, typer.Option("--yes", help="Do not ask before starting.")] = False,
-) -> None:
-    """Move a Jarvis install to Keryx's directories: ~/.config/jarvis and its siblings, or
-    ~/.jarvis and a .env here.
-
-    Stops the service while it moves things, re-renders it and the approval hook, and
-    starts it again; Jarvis's unit is retired, and Keryx's installed in its place. Run it
-    from the checkout the service runs in. Nothing is deleted: ~/.jarvis is renamed aside
-    with whatever is left in it.
-    """
-    _owner_only("migrate Keryx's files")
-    plan = make_plan([Path.cwd(), repo_root()])
-    if plan.empty and not plan.conflicts:
-        typer.echo("nothing to migrate: Keryx already keeps everything where it should")
-        return
-    for line in plan.describe():
-        typer.echo(line)
-    settings = _load_settings_optional()
-    target = resolve_target(settings, from_outside=True)
-    predecessor = old_target(candidate_target(settings))
-    if predecessor is not None:
-        target = target or candidate_target(settings)
-        typer.echo(f"  {predecessor.describe()}: stopped first, and retired once everything "
-                   f"has moved; {target.describe()} installed and started in its place")
-    elif target is not None:
-        typer.echo(f"  {target.describe()}: stopped first, re-rendered, and started again")
-    if plan.conflicts:
-        typer.echo("\nNothing can move until these are settled:", err=True)
-        for conflict in plan.conflicts:
-            typer.echo(f"  {conflict}", err=True)
-        raise typer.Exit(1)
-    if dry_run:
-        return
-    if (live := health_probe(settings)) and target is not None:
-        typer.echo(f"{live} live call(s): migrating stops the service and would cut them off. "
-                   "Run it again once the line is clear.", err=True)
-        raise typer.Exit(1)
-    if not yes:
-        if not _interactive():
-            typer.echo("pass --yes to migrate without a terminal to ask at", err=True)
-            raise typer.Exit(2)
-        if not typer.confirm("\nGo ahead?", default=False):
-            raise typer.Exit(1)
-    try:
-        stopping = predecessor or target
-        report = run_migration(
-            plan,
-            service=MigratingService(stopping) if stopping is not None else None,
-            successor=MigratingService(target) if predecessor and target else None,
-            retire=(lambda: retire_old_units(predecessor.manager)) if predecessor else list,
-            fix_permissions=lambda: fix_permissions(_load_settings_optional(), ConfigStore()),
-            rerender=lambda: _rerender(target),
-            echo=typer.echo,
-        )
-    except MigrationError as error:
-        typer.echo(f"keryx migrate: {error}", err=True)
-        raise typer.Exit(1) from None
-    _echo_migration(report)
-
-
-#: The approval hook's file name, and what it was called before the service was Keryx: a
-#: settings file naming either has the hook installed, and the installer replaces both.
-HOOK_NAMES = ("keryx_approval.py", "jarvis_approval.py")
-
-
-def _rerender(target) -> list[str]:
-    """Re-install what names the old paths: the service's unit, and the approval hook."""
-    done = []
-    scripts = repo_root() / "scripts"
-    if target is not None:
-        installer = scripts / Path(INSTALLERS[target.manager]).name
-        code = run_command([str(installer)])
-        done.append(f"{installer.name}: {'done' if code == 0 else f'exited {code}, run it again'}")
-    try:
-        hooks = (claude_config_dir() / "settings.json").read_text(encoding="utf-8")
-        hooked = any(name in hooks for name in HOOK_NAMES)
-    except OSError:
-        hooked = False
-    if hooked:
-        code = run_command([str(scripts / "install-claude-hook.sh")])
-        done.append(f"approval hook: {'done' if code == 0 else f'exited {code}, run it again'}")
-    return done
-
-
-def _echo_migration(report: MigrationReport) -> None:
-    typer.echo(f"\nmoved {len(report.moved)} entr{'y' if len(report.moved) == 1 else 'ies'}")
-    for line in report.imported:
-        typer.echo(f"imported {line}")
-    if report.rewritten:
-        typer.echo(f"tasks.db: {report.rewritten} path(s) rewritten")
-    for line in report.notes + report.tightened + report.rerendered:
-        typer.echo(line)
-    if report.lost_sessions:
-        typer.echo(
-            f"\n{len(report.lost_sessions)} Claude task(s) ran in the old workspace, so their "
-            "sessions are gone; a follow-up to one starts afresh:"
-        )
-        for task_id, status, description in report.lost_sessions[:MAX_LOST_SESSIONS_LISTED]:
-            what = _shorten(description, MAX_DESCRIPTION_CHARS)
-            typer.echo(f"  #{task_id:<5} {status:<9} {what}")
-        if len(report.lost_sessions) > MAX_LOST_SESSIONS_LISTED:
-            typer.echo(f"  … and {len(report.lost_sessions) - MAX_LOST_SESSIONS_LISTED} more")
-    if report.retired_to is not None:
-        typer.echo(f"\nthe old directory is now {report.retired_to}")
-    if report.leftovers:
-        typer.echo("\nNothing reads these any more. Delete them once you are sure (and revoke a "
-                   "token before you delete it):")
-        for path in report.leftovers:
-            typer.echo(f"  {path}")
-    if report.started is True:
-        typer.echo("\nthe service is running again")
-    elif report.started is False:
-        typer.echo("\nthe service did not start: `keryx doctor`, and its logs, say why")
-
-
 def _owner_only(verb: str) -> None:
     """Refuse inside anything `keryx serve` started: this command is the owner's alone.
 
@@ -1751,6 +1609,12 @@ def approvals(
     enable: Annotated[
         bool, typer.Option("--enable", help="Undo --disable.")
     ] = False,
+    install: Annotated[
+        bool, typer.Option("--install-hook", help="Install the hook into Claude Code.")
+    ] = False,
+    uninstall: Annotated[
+        bool, typer.Option("--uninstall-hook", help="Take the hook out of Claude Code.")
+    ] = False,
 ) -> None:
     """What the approval bridge has done, and the kill switch that stops it.
 
@@ -1761,9 +1625,20 @@ def approvals(
     settings = _configure_readonly()
     state_dir = settings.state_dir / STATE_DIR_NAME
     switch = state_dir / KILL_SWITCH_NAME
-    if disable and enable:
-        typer.echo("pick one of --disable and --enable")
+    if disable + enable + install + uninstall > 1:
+        typer.echo("pick one of --disable, --enable, --install-hook and --uninstall-hook")
         raise typer.Exit(code=2)
+    if install or uninstall:
+        _owner_only("change Claude Code's hooks")
+        try:
+            changed = install_hook(settings.state_dir, uninstall=uninstall)
+        except (OSError, ValueError) as error:  # ValueError: a settings.json that is not JSON
+            typer.echo(f"could not change Claude Code's settings: {error}", err=True)
+            raise typer.Exit(1) from None
+        typer.echo(f"{'removed' if uninstall else 'installed'} the approval hook in {changed}")
+        if install:
+            typer.echo("turn it off at any time with: keryx approvals --disable")
+        return
     if disable:
         secure_dir(state_dir)
         switch.touch()

@@ -38,14 +38,15 @@ enough for anything here. If a fix lands sooner, you may disclose sooner.
 
 ## Supported versions
 
-Only the `main` branch is supported. There are no maintenance branches and no backports:
-fixes land on `main`, and you update by pulling. Tagged releases mark points in that
-history. They are not supported separately.
+The latest release and the `main` branch are supported. There are no maintenance branches
+and no backports: fixes land on `main` and go out in the next release. Update with
+`keryx upgrade`, or by pulling if you work from a clone.
 
 | Version | Supported |
 |---|---|
+| The latest release | ✅ |
 | `main` | ✅ |
-| tagged releases | ❌ — update to `main` |
+| Older releases | ❌ — update with `keryx upgrade` |
 
 ## Scope
 
@@ -208,9 +209,7 @@ hashing would suggest a protection that does not exist. The file sits beside
 **Where the PIN is kept does not depend on a setting.** It is in the configuration
 directory, which only the `KERYX_HOME` environment variable can move. It is not in
 `DATA_DIR`, which a setting can move. When the PIN was kept at `DATA_DIR/pin`, pointing
-`DATA_DIR` at an empty directory found no PIN, and no PIN means enrollment is open. A PIN
-still in an old `~/.jarvis` directory also keeps enrollment closed, until `keryx migrate`
-moves it.
+`DATA_DIR` at an empty directory found no PIN, and no PIN means enrollment is open.
 
 **What a coding agent can and cannot do to the PIN.** A coding agent runs as you with full
 permissions, so it can delete `KERYX_HOME/pin`, as it can edit any of your files. It cannot
@@ -248,8 +247,8 @@ On such a call, beyond what any call may hear, you can:
   already limits what a key can run, its denylist still takes precedence, and
   `keryx approvals --disable` overrides everything.
 
-You cannot start new work, search your past calls, send to Slack, restart Keryx, or call a
-number chosen during the call. Those need the PIN. This level still matters with
+You cannot start new work, search your past calls, send to Slack, restart or upgrade Keryx,
+or call a number chosen during the call. Those need the PIN. This level still matters with
 `BRIEFING_BEFORE_PIN=false`: it is what lets a call-back read you the result it called about.
 
 **Voicemail is the remaining risk, and it is handled.** An answering machine can pick up an
@@ -366,13 +365,10 @@ approval socket), and the cache. `keryx doctor` warns when:
 - any of these can be read by anyone else (`--fix` tightens the permissions and changes
   nothing else);
 - one of them is inside a git working tree;
-- a secret has been written into `config.toml` by hand;
-- an imported copy of an old `.env` is still on disk.
+- a secret has been written into `config.toml` by hand.
 
-Keryx reads nothing from the working directory. It used to read a `.env` in the checkout,
-and a checkout is the one place where a secret is one `git add` away from leaving the
-machine. `keryx serve` refuses to start while a `.env` is there, or while files remain in an
-old `~/.jarvis`, until `keryx migrate` has moved them.
+Keryx reads nothing from the working directory, such as a `.env`: a checkout is the one
+place where a secret is one `git add` away from leaving the machine.
 
 A secret is never put on a command line, where `ps` and your shell history would keep it.
 `keryx config set KEY --stdin` reads it from standard input, and `--from-env VAR` reads it
@@ -410,8 +406,9 @@ This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as
 shell, and can edit `config.toml` directly, as it can edit any of your files. What the rule
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
-service-writable keys. `config import-env`, `auth login`, `memory seed`, `setup`, `migrate`,
-`plugins install`, `plugins remove`, and `config lock|unlock` refuse the service outright.
+service-writable keys. `auth login`, `memory seed`, `setup`, `service`, `upgrade`,
+`forget`, `approvals --enable`, `approvals --install-hook`, `plugins install`,
+`plugins remove`, and `config lock|unlock` refuse the service outright.
 
 ### Your own tools and plugins
 

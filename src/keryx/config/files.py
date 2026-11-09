@@ -29,17 +29,10 @@ from typing import Any
 
 #: The environment variable that moves the configuration out of `~/.config/keryx`.
 HOME_ENV = "KERYX_HOME"
-#: Its name before the service was Keryx. Never followed: set without `HOME_ENV` it names
-#: a directory the owner meant, and quietly using the default instead would start a
-#: service with none of their settings — so `serve` refuses until it is renamed.
-LEGACY_HOME_ENV = "JARVIS_HOME"
 #: The environment variable that moves the Claude CLI's configuration out of `~/.claude`.
 CLAUDE_CONFIG_ENV = "CLAUDE_CONFIG_DIR"
 #: What each directory is called inside its XDG base directory.
 APP_NAME = "keryx"
-#: What each was called before the service was Keryx: `keryx migrate` moves them, and
-#: `serve` refuses to start while one still holds anything.
-LEGACY_APP_NAME = "jarvis"
 CONFIG_NAME = "config.toml"
 SECRETS_NAME = "secrets.toml"
 
@@ -50,41 +43,6 @@ XDG_HOMES: dict[str, tuple[str, str]] = {
     "state": ("XDG_STATE_HOME", "~/.local/state"),
     "cache": ("XDG_CACHE_HOME", "~/.cache"),
 }
-
-#: Where everything lived before the XDG layout: configuration, data, logs and socket in
-#: one directory. Read by `keryx migrate` alone, and looked at by `Settings` only to refuse
-#: to start (or to enrol a PIN) while it still holds anything.
-LEGACY_HOME = Path("~/.jarvis")
-#: Every name Keryx ever wrote into `LEGACY_HOME`. Anything else found there is somebody
-#: else's, and is left where it is.
-LEGACY_NAMES = frozenset(
-    {
-        "config.toml",
-        "secrets.toml",
-        "pin",
-        "google_client_secret.json",
-        "tasks.db",
-        "tasks.db-wal",
-        "tasks.db-shm",
-        "tasks",
-        "calls",
-        "memory.md",
-        "projects",
-        "workspace",
-        "pin-failures.json",
-        "report_secret",
-        "gmail_token.json",
-        "gmail_signin.json",
-        "google",
-        "codex",
-        "logs",
-        "restart.json",
-        "running-version",
-        "startup-log-marks.json",
-        "approvals",
-        "approvals.sock",
-    }
-)
 
 #: Modes for everything in all four directories. Owner-only, every one of them,
 #: because of what is actually in there: `calls/*.log` is every word of every call,
@@ -149,47 +107,6 @@ def default_state_dir() -> Path:
 def default_cache_dir() -> Path:
     """`CACHE_DIR` when nothing sets it: `$XDG_CACHE_HOME/keryx`."""
     return xdg_home("cache") / APP_NAME
-
-
-def renamed_dirs() -> dict[str, Path]:
-    """Where each XDG directory was when the service was Jarvis, by kind."""
-    return {kind: xdg_home(kind) / LEGACY_APP_NAME for kind in XDG_HOMES}
-
-
-def holds_files(path: Path) -> bool:
-    """Anything in `path` but directories: what `ensure_dirs` makes is empty directories.
-
-    Stops at the first file, so a data directory full of repositories costs one look.
-    """
-    if not path.is_dir() or path.is_symlink():
-        return path.exists() or path.is_symlink()
-    return any(entry.is_symlink() or not entry.is_dir() for entry in path.rglob("*"))
-
-
-def stray_legacy_home_env() -> str | None:
-    """`LEGACY_HOME_ENV`'s value, when it is set and `HOME_ENV` is not; else None."""
-    if os.environ.get(HOME_ENV, "").strip():
-        return None
-    return os.environ.get(LEGACY_HOME_ENV, "").strip() or None
-
-
-def legacy_home() -> Path:
-    """`LEGACY_HOME`, expanded against this process's home directory."""
-    return LEGACY_HOME.expanduser()
-
-
-def legacy_entries(path: Path | None = None) -> list[str]:
-    """The names in `path` (default `~/.jarvis`) that Keryx put there, sorted.
-
-    Empty when the directory is not there at all. Only `LEGACY_NAMES` count: an old restart
-    script or a hand-made copy of `memory.md` is the owner's, not a sign of an install.
-    """
-    directory = legacy_home() if path is None else path
-    try:
-        present = {entry.name for entry in directory.iterdir()}
-    except OSError:
-        return []
-    return sorted(present & LEGACY_NAMES)
 
 
 def config_file(home: Path | None = None) -> Path:

@@ -1,21 +1,36 @@
 #!/usr/bin/env bash
-# Dev loop for the phone channel: the Cloudflare tunnel plus `keryx serve`.
+# Dev loop for the phone channel, from a clone: the Cloudflare tunnel plus `keryx serve`.
 #
 # Point the Twilio number's voice webhook at https://$PUBLIC_HOST/twilio/voice and call in.
-# Extra flags go straight through to `keryx serve`, e.g. `scripts/dev.sh --demo`.
+# Extra flags go straight through to `keryx serve`, e.g. `scripts/dev.sh --demo`. For the
+# service that runs at boot, use `keryx service install` instead.
+#
+# Settings are read through `keryx config get`, never by grepping a file. KERYX_CLI says how
+# to run keryx for that (default `uv run --quiet keryx`); the tests point it elsewhere.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-# shellcheck source=scripts/lib.sh
-source scripts/lib.sh
+read -r -a KERYX <<< "${KERYX_CLI:-uv run --quiet keryx}"
 
-require_public_host "the hostname routed to the Cloudflare tunnel"
-TUNNEL="$(config_value CLOUDFLARE_TUNNEL)"
+PUBLIC_HOST="$("${KERYX[@]}" config get PUBLIC_HOST)"
+if [[ -z "$PUBLIC_HOST" ]]; then
+  echo "PUBLIC_HOST is not set (the hostname routed to the Cloudflare tunnel):" >&2
+  echo "  keryx config set PUBLIC_HOST keryx.example.com" >&2
+  exit 1
+fi
+PORT="$("${KERYX[@]}" config get PORT)"
+PORT="${PORT:-8080}"
+TUNNEL="$("${KERYX[@]}" config get CLOUDFLARE_TUNNEL)"
 TUNNEL="${TUNNEL:-keryx}"
-require_command CLOUDFLARED cloudflared "https://developers.cloudflare.com/cloudflare-one/"
-make_dirs
-# Beside the service's own logs in STATE_DIR, never in the checkout.
-TUNNEL_LOG="$LOGS/cloudflared.log"
+if ! command -v cloudflared >/dev/null; then
+  echo "cloudflared is not on PATH (https://developers.cloudflare.com/cloudflare-one/)" >&2
+  exit 1
+fi
+# Beside the service's own logs in STATE_DIR, never in the checkout. keryx quotes the value
+# for exactly this eval.
+eval "STATE=$("${KERYX[@]}" config path --shell | sed -n 's/^STATE_DIR=//p')"
+TUNNEL_LOG="$STATE/logs/cloudflared.log"
+(umask 077 && mkdir -p "$STATE/logs")
 
 cloudflared tunnel --no-autoupdate --protocol http2 run \
   --url "http://localhost:$PORT" "$TUNNEL" > "$TUNNEL_LOG" 2>&1 &

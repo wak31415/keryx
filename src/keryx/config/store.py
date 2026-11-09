@@ -16,12 +16,9 @@ to rewrite them, and to say where a value came from.
 
 import os
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
-from datetime import date
 from pathlib import Path
 from typing import Any
 
-from dotenv import dotenv_values
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
@@ -32,13 +29,10 @@ from keryx.config.files import (
     keryx_home,
     read_toml,
     secrets_file,
-    secure_file,
     write_private,
 )
-from keryx.config.pin import PIN_PATTERN, PIN_RULE, pin_file, read_enrolled_pin, write_enrolled_pin
+from keryx.config.pin import pin_file
 from keryx.config.settings import (
-    GOOGLE_CLIENT_FILE,
-    LEGACY_CLIENT_FILE,
     META_TABLES,
     NOT_STORED,
     PLACEHOLDER_KEY,
@@ -49,7 +43,6 @@ from keryx.config.settings import (
     field_for,
     field_group,
     is_secret,
-    parse_google_client,
 )
 
 CONFIG_HEADER = (
@@ -69,13 +62,6 @@ FROM_SECRETS = "secrets.toml"
 FROM_CONFIG = "config.toml"
 FROM_PIN_FILE = "KERYX_HOME/pin"
 FROM_DEFAULT = "default"
-
-#: Settings whose value is a path: a legacy `.env` meant them relative to the directory
-#: the service ran in, which is the `.env`'s own, so an import resolves them there.
-PATH_KEYS = frozenset(
-    {"DATA_DIR", "STATE_DIR", "CACHE_DIR", "PROJECTS_ROOT", "SKILLS_DIR"}
-)
-
 
 class ConfigError(ValueError):
     """A write that was refused or could not be validated, in a sentence to print."""
@@ -133,20 +119,6 @@ def default_value(key: str) -> Any:
         return None
     value = info.get_default(call_default_factory=True)
     return validate({key: value})[key] if value is not None else None
-
-
-@dataclass
-class ImportReport:
-    """What `import_env` did, for `keryx config import-env` to print."""
-
-    imported: list[str] = field(default_factory=list)
-    defaults: list[str] = field(default_factory=list)
-    #: In the `.env` and already in the store, whose value was the one in use: left alone.
-    kept: list[str] = field(default_factory=list)
-    unknown: list[str] = field(default_factory=list)
-    pin: str | None = None
-    client_file: Path | None = None
-    renamed_to: Path | None = None
 
 
 class ConfigStore:
@@ -325,29 +297,6 @@ class ConfigStore:
         table["walked"] = names
         write_private(self.config_path, dump_toml(config, CONFIG_HEADER))
 
-    def drop_retired(self, keys: Iterable[str]) -> list[str]:
-        """Remove settings that are no longer settings — `keys`, whichever file holds them.
-
-        No validation, because there is nothing left to validate them against: this is how a
-        setting a plugin replaced (`keryx.plugins.RETIRED_KEYS`) leaves the store once its
-        value has moved into the plugin's own file. A key that is still a setting is refused.
-        Returns the ones that were there.
-        """
-        wanted = {key.strip().upper() for key in keys}
-        if live := sorted(key for key in wanted if field_for(key) is not None):
-            raise ConfigError(f"{', '.join(live)} are still settings: `keryx config unset`")
-        dropped = []
-        files = ((self.config_path, CONFIG_HEADER), (self.secrets_path, SECRETS_HEADER))
-        for path, header in files:
-            data = read_toml(path)
-            gone = [key for key in data if key in wanted]
-            if gone:
-                write_private(path, dump_toml(
-                    {key: value for key, value in data.items() if key not in wanted}, header
-                ))
-                dropped += gone
-        return sorted(dropped)
-
     def _check_whole(self, cleaned: Mapping[str, Any]) -> None:
         """Refuse a write after which the store as a whole would not load.
 
@@ -377,122 +326,3 @@ class ConfigStore:
             write_private(self.secrets_path, dump_toml(secrets, SECRETS_HEADER))
         if config != before[0]:
             write_private(self.config_path, dump_toml(config, CONFIG_HEADER))
-
-    # --- a legacy .env ------------------------------------------------------------------
-
-    def import_env(
-        self, path: Path, *, today: date | None = None, actor: str = permissions.OWNER
-    ) -> ImportReport:
-        """Move a legacy `.env` into the store, then rename it out of the way.
-
-        Settings still at their defaults are not copied, so a `.env` made from the old
-        example file does not pin sixty defaults for ever. `KERYX_PIN` goes to
-        `KERYX_HOME/pin`, the PIN's own store — unless a *different* PIN is already there,
-        in which case nothing at all is written: until now the `.env` one was in use, and
-        silently switching to the other would lock the owner out of their own phone. The
-        Google client file (`GOOGLE_CLIENT_SECRETS_FILE`, or `.secrets/client_secret.json`
-        beside the `.env`) is copied to `KERYX_HOME/google_client_secret.json`.
-        """
-        if actor != permissions.OWNER:
-            # It writes protected settings and the PIN by its nature: the owner's alone.
-            raise ConfigError("only the owner may import settings, at their own terminal")
-        path = path.resolve()
-        parsed = _read_env(path)
-        report = ImportReport(unknown=parsed.unknown)
-        stored = self.stored()
-        for key, value in parsed.cleaned.items():
-            if key in stored:
-                report.kept.append(key)
-            elif value == default_value(key):
-                report.defaults.append(key)
-            else:
-                report.imported.append(key)
-        keep = {key: parsed.cleaned[key] for key in report.imported}
-        pin, client_text = parsed.pin, parsed.client_text
-        # Everything that can refuse has been asked; from here on it is only writing.
-        if pin is not None:
-            report.pin = self._import_pin(self.home, pin)
-        if client_text is not None:
-            report.client_file = write_private(self.home / GOOGLE_CLIENT_FILE, client_text)
-        self._write(keep)
-        report.renamed_to = _rename_aside(path, today or date.today())
-        return report
-
-    @staticmethod
-    def check_import(path: Path) -> str | None:
-        """Everything `import_env` could refuse about `path`, asked without writing a thing.
-
-        Returns the `.env`'s PIN, if it has one, for a caller that has PINs of its own to
-        compare it with (`keryx migrate`, before it moves anything).
-        """
-        return _read_env(path.resolve()).pin
-
-    @staticmethod
-    def _import_pin(home: Path, pin: str) -> str:
-        existing = read_enrolled_pin(home)
-        if pin_file(home).exists() and existing != pin:
-            raise ConfigError(
-                f"the .env's KERYX_PIN is not the PIN in {pin_file(home)}. The .env one "
-                "has been the PIN in use; to keep it, delete that file and import again. "
-                "Nothing was imported."
-            )
-        if existing == pin:
-            return "already there"
-        if not write_enrolled_pin(home, pin):
-            raise ConfigError(f"could not write the PIN to {pin_file(home)}")
-        return "moved to KERYX_HOME/pin"
-
-
-@dataclass
-class _EnvFile:
-    """A legacy `.env` read and validated: what `import_env` would write."""
-
-    cleaned: dict[str, Any]
-    unknown: list[str]
-    pin: str | None
-    client_text: str | None
-
-
-def _read_env(path: Path) -> _EnvFile:
-    """`path` parsed and checked, raising `ConfigError` for anything an import would refuse."""
-    unknown: list[str] = []
-    raw: dict[str, str] = {}
-    for key, value in dotenv_values(path).items():
-        key = key.strip().upper()
-        if value is None or not value.strip():
-            continue
-        name = field_for(key)
-        if name is None:
-            unknown.append(key)
-            continue
-        raw[env_var_name(name)] = value.strip()
-    pin = raw.pop("KERYX_PIN", None)
-    if pin is not None and not PIN_PATTERN.fullmatch(pin):
-        raise ConfigError(f"KERYX_PIN {PIN_RULE}")
-    client_raw = raw.pop("GOOGLE_CLIENT_SECRETS_FILE", None)
-    for key in PATH_KEYS & raw.keys():
-        candidate = Path(raw[key]).expanduser()
-        raw[key] = str(candidate if candidate.is_absolute() else path.parent / candidate)
-    cleaned = validate(raw)
-    client = Path(client_raw).expanduser() if client_raw else LEGACY_CLIENT_FILE
-    client = client if client.is_absolute() else path.parent / client
-    client_text = client.read_text(encoding="utf-8") if client.is_file() else None
-    if client_text is not None:
-        try:
-            parse_google_client(client_text)
-        except ValueError as error:
-            raise ConfigError(f"{client} is not a Google OAuth client file: {error}") from None
-    return _EnvFile(cleaned, unknown, pin, client_text)
-
-
-def _rename_aside(path: Path, today: date) -> Path:
-    """`path` renamed to `<name>.imported-<date>`, never over an earlier one."""
-    target = path.with_name(f"{path.name}.imported-{today.isoformat()}")
-    count = 1
-    while target.exists():
-        count += 1
-        target = path.with_name(f"{path.name}.imported-{today.isoformat()}-{count}")
-    path.rename(target)
-    # It still holds every secret the store now holds; no looser than the store.
-    secure_file(target)
-    return target

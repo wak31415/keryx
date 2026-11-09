@@ -274,27 +274,6 @@ def test_the_checklist_locks_and_unlocks_what_changed(make_ctx):
 # --- import --------------------------------------------------------------------------------
 
 
-def test_files_from_before_the_xdg_layout_point_at_migrate(make_ctx, tmp_path):
-    """Not moved from here: a migration stops the service, and wants a plan read first."""
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-old\nOWNER_NAME=Ada\n")
-    ctx = make_ctx([])
-
-    sections.run_import(ctx)
-
-    assert ctx.ui.asked == []
-    assert ConfigStore().stored() == {}
-    assert (tmp_path / ".env").exists()
-    assert any(".env" in line for line in ctx.ui.lines("warn"))
-    assert any("keryx migrate" in line for line in ctx.ui.lines("note"))
-
-
-def test_nothing_from_before_asks_nothing(make_ctx):
-    ctx = make_ctx([])
-    sections.run_import(ctx)
-    assert ctx.ui.asked == []
-    assert ctx.ui.lines("success") == ["everything is where Keryx looks for it"]
-
-
 # --- the service -----------------------------------------------------------------------------
 
 
@@ -306,19 +285,13 @@ def test_the_service_waits_for_the_phone(make_ctx):
     assert any("phone set up first" in line for line in ctx.ui.lines("note"))
 
 
-def test_the_service_installer_runs_on_a_yes(make_ctx, world, tmp_path, monkeypatch):
-    script_dir = tmp_path / "repo" / "scripts"
-    script_dir.mkdir(parents=True)
-    for name in ("install-systemd.sh", "install-launchd.sh"):
-        (script_dir / name).write_text("#!/bin/sh\n")
-    monkeypatch.setattr(sections, "repo_root", lambda: tmp_path / "repo")
+def test_the_service_installer_runs_on_a_yes(make_ctx, world):
     ConfigStore().set({"PUBLIC_HOST": "keryx.example.com"})
     ctx = make_ctx([("Install it now", True)])
 
     sections.run_service(ctx)
 
-    [(kind, argv)] = [call for call in world.calls if call[0] == "script"]
-    assert argv[0].startswith(str(script_dir))
+    assert ("service",) in world.calls
     assert ctx.ui.lines("success") == ["the service is installed and running"]
 
 
@@ -402,23 +375,9 @@ def test_an_installed_service_is_said_and_nothing_asked(make_ctx, monkeypatch):
     assert ctx.ui.lines("success") == ["installed: unit"]
 
 
-def test_the_service_outside_a_clone_says_where_the_installer_is(make_ctx, tmp_path, monkeypatch):
-    monkeypatch.setattr(sections, "repo_root", lambda: tmp_path / "no-clone")
-    ctx = make_ctx([])
-
-    sections.run_service(ctx)
-
-    assert any("from a clone" in line for line in ctx.ui.lines("note"))
-
-
-def test_a_failing_installer_or_a_no_is_said(make_ctx, world, tmp_path, monkeypatch):
-    scripts = tmp_path / "repo" / "scripts"
-    scripts.mkdir(parents=True)
-    for name in ("install-systemd.sh", "install-launchd.sh"):
-        (scripts / name).write_text("")
-    monkeypatch.setattr(sections, "repo_root", lambda: tmp_path / "repo")
+def test_a_failing_installer_or_a_no_is_said(make_ctx, world):
     ConfigStore().set({"PUBLIC_HOST": "j.example.com"})
-    world.script_code = 1
+    world.service_error = "cloudflared is not on PATH"
 
     declined = make_ctx([("Install it now", False)])
     sections.run_service(declined)
@@ -426,7 +385,7 @@ def test_a_failing_installer_or_a_no_is_said(make_ctx, world, tmp_path, monkeypa
     sections.run_service(failed)
 
     assert declined.ui.lines("error") == []
-    assert any("exited with 1" in line for line in failed.ui.lines("error"))
+    assert failed.ui.lines("error") == ["cloudflared is not on PATH"]
 
 
 def test_clearing_a_setting_in_the_manual_walk_unsets_it(make_ctx):

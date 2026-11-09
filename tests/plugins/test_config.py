@@ -9,10 +9,8 @@ from pathlib import Path
 import pytest
 
 from keryx import plugins
-from keryx.config.store import ConfigStore
-from keryx.integrations.gmail import token_path
 from keryx.tools.custom import ToolUnavailable
-from plugins.helpers import loaded, loading, names, turn_on
+from plugins.helpers import loading, names, turn_on
 
 
 def mode(path) -> int:
@@ -184,73 +182,6 @@ def test_every_template_runs_from_where_it_ships(settings, name):
     else:
         assert getattr(module, name).name == name
     assert plugins.tool_source(name) == source.read_text()
-
-
-# --- from before plugins -----------------------------------------------------------------
-
-
-def store_with(settings, text: str) -> ConfigStore:
-    store = ConfigStore()
-    store.config_path.parent.mkdir(parents=True, exist_ok=True)
-    store.config_path.write_text(text)
-    return store
-
-
-OLD = """OPENAI_VOICE = "cedar"
-SLACK_MCP_SERVER = "chat"
-EMAIL_EFFORT = "medium"
-CLUSTER_SSH_GUARD = "/opt/guard.sh"
-
-[CLUSTERS]
-alpha = "gpu"
-"""
-
-
-def test_the_retired_settings_are_found_and_mapped(settings):
-    store = store_with(settings, OLD)
-
-    assert list(plugins.retired_in(store)) == [
-        "CLUSTERS", "CLUSTER_SSH_GUARD", "EMAIL_EFFORT", "SLACK_MCP_SERVER",
-    ]
-    assert plugins.from_retired("cluster_stats", plugins.retired_in(store)) == {
-        "clusters": {"alpha": "gpu"}, "guard": "/opt/guard.sh",
-    }
-
-
-def test_what_was_offered_before_is_what_moves(settings):
-    store = store_with(settings, OLD)
-    admin = settings.model_copy(update={"openai_admin_key": "sk-admin-x"})
-
-    assert [name for name in plugins.PLUGINS if plugins.was_offered(settings, store, name)] == [
-        "send_to_slack", "check_email", "cluster_stats",
-    ]
-    assert plugins.was_offered(admin, store, "check_billing")
-    token_path(settings).write_text("{}")
-    assert plugins.was_offered(settings, store_with(settings, ""), "check_email")
-
-
-def test_moving_writes_each_file_and_drops_only_what_moved(settings, tmp_path):
-    store = store_with(settings, OLD.replace("/opt/guard.sh", str(tmp_path / "guard.sh")))
-    (tmp_path / "guard.sh").write_text("#!/bin/sh\n")
-
-    moved = {one.name: one for one in plugins.move_from_settings(settings, store)}
-
-    assert set(moved) == {"send_to_slack", "check_email", "cluster_stats"}
-    assert moved["cluster_stats"].problem is None
-    assert plugins.read_config(settings, "check_email")["effort"] == "medium"
-    assert plugins.read_config(settings, "send_to_slack")["mcp_server"] == "chat"
-    assert plugins.retired_in(store) == {}
-    assert tomllib.loads(store.config_path.read_text()) == {"OPENAI_VOICE": "cedar"}
-    assert "cluster_stats" in {tool.name for _, tool in loaded(settings).tools}
-
-
-def test_a_plugin_that_cannot_be_turned_on_still_gets_its_file(settings):
-    store = store_with(settings, 'CLUSTER_QUERY_TIMEOUT_S = 9.0\n')
-
-    [moved] = plugins.move_from_settings(settings, store, ["cluster_stats"])
-
-    assert "names no host" in moved.problem
-    assert plugins.read_config(settings, "cluster_stats")["timeout_s"] == 9.0
 
 
 # --- the command line --------------------------------------------------------------------

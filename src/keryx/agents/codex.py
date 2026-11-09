@@ -69,6 +69,7 @@ from keryx.agents.session import (
 )
 from keryx.config import Settings, secure_dir, secure_file
 from keryx.config.files import claude_user_config
+from keryx.install import add_agent_command
 from keryx.integrations.slack import mcp_server_config
 from keryx.tasks.models import Task
 
@@ -206,7 +207,8 @@ def ensure_login_home(
 
         binary = codex_cli()
         if binary is None:
-            raise RuntimeError(f"the bundled codex CLI is missing ({CLI_PACKAGE}); run uv sync")
+            raise RuntimeError(f"the bundled codex CLI is missing ({CLI_PACKAGE}): "
+                               f"{add_agent_command('codex')}")
         blank = dict.fromkeys(CREDENTIAL_VARIABLES, "")
         result = run(
             [binary, "login", "--with-api-key"],

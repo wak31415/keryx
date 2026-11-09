@@ -11,13 +11,13 @@ cloudflared tunnel create keryx
 cloudflared tunnel route dns keryx keryx.example.com   # your own hostname
 ```
 
-`scripts/install-systemd.sh` then runs the tunnel beside Keryx, and `scripts/dev.sh`
-runs both in the foreground. Install `cloudflared` from
+`keryx service install` then runs the tunnel beside Keryx (in a clone, `scripts/dev.sh`
+runs both in the foreground). Install `cloudflared` from
 <https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/>.
 
 **macOS — ngrok** with a reserved domain: `brew install ngrok`, sign in
 (`ngrok config add-authtoken …`), and reserve a domain at
-<https://dashboard.ngrok.com/domains>. `scripts/install-launchd.sh` runs it for you.
+<https://dashboard.ngrok.com/domains>. `keryx service install` runs it for you.
 
 Either way, the hostname you give below is `PUBLIC_HOST`: just the name, with no
 `https://` and no path.

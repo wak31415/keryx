@@ -4,14 +4,13 @@ what order it looks."""
 import os
 import stat
 import tomllib
-from datetime import date
 from pathlib import Path
 
 import pytest
 
-from keryx.config import Settings, keryx_home, pin_file, read_enrolled_pin, write_enrolled_pin
+from keryx.config import Settings, keryx_home, write_enrolled_pin
 from keryx.config.files import dump_toml, read_toml, write_private
-from keryx.config.settings import ConfigFileError, env_var_name, field_for
+from keryx.config.settings import ConfigFileError
 from keryx.config.store import (
     FROM_DEFAULT,
     FROM_ENV,
@@ -182,7 +181,7 @@ def test_the_environment_beats_both_files_and_secrets_beat_config(store, monkeyp
 
 
 def test_a_env_in_the_working_directory_is_never_read(store):
-    """A checkout is the one place a secret must never live; `keryx migrate` moves it."""
+    """A checkout is the one place a secret must never live."""
     Path(".env").write_text("OPENAI_VOICE=from-dotenv\nPORT=7000\n")
 
     settings = Settings(openai_api_key="x")
@@ -273,120 +272,6 @@ def test_walked_sections_are_remembered(store):
 # --- importing a legacy .env ------------------------------------------------------------
 
 
-def write_env(tmp_path, text):
-    path = tmp_path / "repo" / ".env"
-    path.parent.mkdir(exist_ok=True)
-    path.write_text(text)
-    return path
-
-
-def test_import_env_moves_values_and_renames_the_file(store, tmp_path):
-    env = write_env(
-        tmp_path,
-        "OPENAI_API_KEY=sk-live\nOPENAI_VOICE=marin\nPORT=8080\nWHATEVER=1\n"
-        f"DATA_DIR={tmp_path / 'data'}\nSUBAGENT_MODEL=claude-opus-5-5\n",
-    )
-
-    report = store.import_env(env, today=date(2026, 9, 27))
-
-    assert sorted(report.imported) == ["DATA_DIR", "OPENAI_API_KEY", "OPENAI_VOICE"]
-    assert sorted(report.defaults) == ["PORT", "SUBAGENT_MODEL"]
-    assert report.unknown == ["WHATEVER"]
-    assert read_toml(store.secrets_path) == {"OPENAI_API_KEY": "sk-live"}
-    assert not env.exists()
-    assert report.renamed_to == env.with_name(".env.imported-2026-09-27")
-    assert report.renamed_to.exists()
-
-
-def test_import_env_never_overwrites_an_earlier_import(store, tmp_path):
-    for _ in range(2):
-        env = write_env(tmp_path, "OPENAI_VOICE=marin\n")
-        store.import_env(env, today=date(2026, 9, 27))
-
-    assert (tmp_path / "repo" / ".env.imported-2026-09-27-2").exists()
-
-
-def test_import_env_resolves_relative_paths_against_the_env_file(store, tmp_path):
-    env = write_env(tmp_path, "DATA_DIR=state\n")
-
-    store.import_env(env)
-
-    assert store.stored()["DATA_DIR"] == str(tmp_path / "repo" / "state")
-
-
-def test_import_env_moves_the_pin_to_its_own_file(store, tmp_path):
-    env = write_env(tmp_path, f"KERYX_PIN=482915\nDATA_DIR={tmp_path / 'data'}\n")
-
-    report = store.import_env(env)
-
-    assert report.pin == "moved to KERYX_HOME/pin"
-    assert pin_file(store.home).read_text().strip() == "482915"
-    assert "KERYX_PIN" not in store.stored()
-
-
-def test_a_env_from_before_the_rename_imports_under_the_new_names(store, tmp_path):
-    env = write_env(tmp_path, "JARVIS_PIN=482915\nJARVIS_CHECKOUT=/srv/keryx\n")
-
-    report = store.import_env(env)
-
-    assert report.pin == "moved to KERYX_HOME/pin"
-    assert pin_file(store.home).read_text().strip() == "482915"
-    assert store.stored() == {"KERYX_CHECKOUT": "/srv/keryx"}
-
-
-def test_an_old_name_in_the_environment_is_read_and_the_new_one_wins(store, monkeypatch):
-    monkeypatch.setenv("JARVIS_PIN", "482915")
-
-    assert Settings(openai_api_key="x").pin == "482915"
-    assert store.source_of("KERYX_PIN") == FROM_ENV
-    assert field_for("JARVIS_PIN") == "pin" and env_var_name("pin") == "KERYX_PIN"
-
-    monkeypatch.setenv("KERYX_PIN", "13572468")
-    assert Settings(openai_api_key="x").pin == "13572468"
-
-
-def test_import_env_refuses_everything_over_a_different_enrolled_pin(store, tmp_path):
-    write_enrolled_pin(store.home, "111357")
-    env = write_env(tmp_path, "KERYX_PIN=482915\nOPENAI_VOICE=marin\n")
-
-    with pytest.raises(ConfigError, match="Nothing was imported"):
-        store.import_env(env)
-
-    assert env.exists() and store.stored() == {}
-    assert pin_file(store.home).read_text().strip() == "111357"
-
-
-def test_import_env_refuses_an_invalid_file_whole(store, tmp_path):
-    env = write_env(tmp_path, "OPENAI_VOICE=marin\nPORT=eighty\n")
-
-    with pytest.raises(ConfigError, match="PORT"):
-        store.import_env(env)
-
-    assert env.exists() and store.stored() == {}
-
-
-def test_import_env_copies_the_legacy_google_client_file(store, tmp_path):
-    env = write_env(tmp_path, f"DATA_DIR={tmp_path / 'data'}\n")
-    client = env.parent / ".secrets" / "client_secret.json"
-    client.parent.mkdir()
-    client.write_text('{"installed": {"client_id": "id", "client_secret": "shh"}}')
-
-    report = store.import_env(env)
-
-    assert report.client_file == store.home / "google_client_secret.json"
-    assert mode(report.client_file) == 0o600
-    settings = Settings(_env_file=None, openai_api_key="x")
-    assert settings.google_oauth_client() == ("id", "shh")
-
-
-def test_import_env_refuses_a_client_file_that_is_not_one(store, tmp_path):
-    env = write_env(tmp_path, "GOOGLE_CLIENT_SECRETS_FILE=client.json\n")
-    (env.parent / "client.json").write_text("{}")
-
-    with pytest.raises(ConfigError, match="not a Google OAuth client"):
-        store.import_env(env)
-
-
 # --- what the review found -------------------------------------------------------------
 
 
@@ -426,53 +311,3 @@ def test_the_service_names_an_agent_in_any_case(store, settings):
     assert store.stored()["AGENT_BACKEND"] == "codex"
 
 
-def test_import_env_is_the_owners_alone(store, tmp_path):
-    env = write_env(tmp_path, "ALLOWED_CALLERS=+15550000000\nKERYX_PIN=482915\n")
-
-    with pytest.raises(ConfigError, match="only the owner"):
-        store.import_env(env, actor="service")
-
-    assert env.exists() and store.stored() == {}
-
-
-def test_import_env_puts_the_pin_beside_the_store_wherever_data_lives(
-    store, tmp_path, monkeypatch
-):
-    """Where the PIN is must not depend on a setting: `DATA_DIR` moves nothing of it."""
-    monkeypatch.setenv("DATA_DIR", str(tmp_path / "from-env"))
-    env = write_env(tmp_path, f"KERYX_PIN=482915\nDATA_DIR={tmp_path / 'from-dotenv'}\n")
-
-    store.import_env(env)
-
-    assert read_enrolled_pin(store.home) == "482915"
-    assert not (tmp_path / "from-env").exists()
-    assert not (tmp_path / "from-dotenv").exists()
-
-
-def test_import_env_from_a_relative_path_stores_absolute_paths(store, tmp_path, monkeypatch):
-    write_env(tmp_path, "DATA_DIR=./data\n")
-    monkeypatch.chdir(tmp_path / "repo")
-
-    store.import_env(Path(".env"))
-
-    assert store.stored()["DATA_DIR"] == str(tmp_path / "repo" / "data")
-
-
-def test_import_env_keeps_what_the_store_already_had(store, tmp_path):
-    store.set({"OPENAI_API_KEY": "sk-new"})
-    env = write_env(tmp_path, "OPENAI_API_KEY=sk-stale\nOPENAI_VOICE=marin\n")
-
-    report = store.import_env(env)
-
-    assert report.kept == ["OPENAI_API_KEY"]
-    assert read_toml(store.secrets_path) == {"OPENAI_API_KEY": "sk-new"}
-    assert store.stored()["OPENAI_VOICE"] == "marin"
-
-
-def test_the_renamed_env_is_owner_only(store, tmp_path):
-    env = write_env(tmp_path, "OPENAI_API_KEY=sk\n")
-    env.chmod(0o664)
-
-    report = store.import_env(env)
-
-    assert mode(report.renamed_to) == 0o600

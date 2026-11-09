@@ -19,8 +19,11 @@ Twilio number and a PIN. You are the session that gets it there, from the comman
 Start by reading the machine's own instructions, which carry this machine's paths:
 
 ```bash
-uv run keryx setup --agent-instructions
+keryx setup --agent-instructions
 ```
+
+In a clone of the repository rather than an install, run every `keryx` command here as
+`uv run keryx`.
 
 Everything below is those instructions plus the rules for talking to the owner.
 
@@ -37,7 +40,7 @@ Everything below is those instructions plus the rules for talking to the owner.
   in your environment, do not ask them to paste it to you — `keryx setup` asks for it
   hidden, and that is theirs to run.
 - **Never read Keryx's own directories** — `~/.config/keryx/`, `~/.local/share/keryx/`,
-  `~/.local/state/keryx/`, or an old `~/.jarvis/`: `secrets.toml` and `pin` are every key
+  or `~/.local/state/keryx/`: `secrets.toml` and `pin` are every key
   and the PIN, and the call transcripts carry the spoken PIN. The one place you write there
   is `~/.local/share/keryx/projects/<name>.md` (`keryx config path` says where, if
   `DATA_DIR` moved it).
@@ -51,16 +54,14 @@ Everything below is those instructions plus the rules for talking to the owner.
 ## 1. See what is there
 
 ```bash
-uv run keryx config list --json
-uv run keryx doctor --json
-uv run keryx auth status --json
+keryx config list --json
+keryx doctor --json
+keryx auth status --json
 ```
 
 `config list` is every setting with whether it is set and where from — a secret's value is
 never in it. `doctor` groups each check by `section` with a `state` of ok, missing or failed.
-`auth status` is every sign-in. If `doctor`'s `storage` check fails, an old `~/.jarvis` or
-a `.env` in the checkout is still about: ask them to run `keryx migrate` (it stops the
-service while it moves things), and carry on once it has.
+`auth status` is every sign-in.
 
 Then tell them, in three or four sentences: what Keryx does with what you are about to
 collect, that it goes to the realtime provider on every call, and that nothing is written
@@ -68,9 +69,9 @@ until they have seen it.
 
 ## 2. Set what you know
 
-Plain settings go straight in: `uv run keryx config set KEY VALUE [KEY VALUE …]`. Only the
+Plain settings go straight in: `keryx config set KEY VALUE [KEY VALUE …]`. Only the
 ones you were told or can see — a `PUBLIC_HOST` they named, `ALLOWED_CALLERS` they gave you
-in E.164. A coding agent with no sign-in: `uv run keryx auth login claude` (or `codex`)
+in E.164. A coding agent with no sign-in: `keryx auth login claude` (or `codex`)
 runs its own login, which opens a browser or prints a code — theirs to finish, not yours.
 
 ## 3. The plugins they want
@@ -80,10 +81,10 @@ Four voice tools are plugins, off until they are turned on: `send_to_slack` and
 want; do not turn one on unasked.
 
 ```bash
-uv run keryx plugins --json            # each one: on or off, its files, why one is refused
-uv run keryx plugins install check_billing --set monthly_budget=40
-uv run keryx plugins hosts --json      # the ssh hosts cluster_stats could ask
-uv run keryx plugins install cluster_stats --cluster HOST=PARTITION
+keryx plugins --json            # each one: on or off, its files, why one is refused
+keryx plugins install check_billing --set monthly_budget=40
+keryx plugins hosts --json      # the ssh hosts cluster_stats could ask
+keryx plugins install cluster_stats --cluster HOST=PARTITION
 ```
 
 A plugin's secret is never a `--set`: Slack's bot token and the billing admin keys are
@@ -91,8 +92,7 @@ A plugin's secret is never a `--set`: Slack's bot token and the billing admin ke
 it), and email needs `keryx auth login gmail` (the sign-ins step of the instructions). Offer
 `cluster_stats` only a host whose `control_master` is true — Keryx never opens a
 connection of its own — and ask them which partition its GPUs are in rather than guessing.
-If `doctor` names retired settings, `uv run keryx plugins install --from-settings` moves
-them. Every other setting of a plugin is in the TOML file `keryx plugins` names.
+Every other setting of a plugin is in the TOML file `keryx plugins` names.
 
 Keryx can also file bug reports and feature requests about itself — something they tell
 it on a call — as issues on its GitHub repository. That one is not yours to turn on, even
@@ -148,19 +148,19 @@ printf '%s\n' \
   'Prefers the short answer first.' \
   'Works on the orchard sensor rig and a weather dashboard.' \
   'Ring for anything that fails; everything else can wait for the next call.' \
-  | uv run keryx memory seed --file - --json
+  | keryx memory seed --file - --json
 ```
 
 Exit 1 means there was already a memory there, and that is theirs to decide about.
 
 ## 8. Hand over
 
-`uv run keryx doctor --json` once more, then tell them in a few lines:
+`keryx doctor --json` once more, then tell them in a few lines:
 
-- **Run `uv run keryx setup`.** It walks only what is left, and what is left is theirs:
+- **Run `keryx setup`.** It walks only what is left, and what is left is theirs:
   the secrets you did not have, browser sign-ins, **the PIN** (nothing of theirs is read out
   on the phone and nothing can be dispatched until one exists; the first call can set one
   instead, and whoever calls first sets it), and approving where the Twilio number points.
-- `uv run keryx memory` shows what it remembers; it is plain markdown they can edit.
+- `keryx memory` shows what it remembers; it is plain markdown they can edit.
 - After every authorized call, Keryx folds that call into the memory itself. This was the
   first draft, not the last word.

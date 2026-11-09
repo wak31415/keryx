@@ -30,8 +30,8 @@ from pathlib import Path
 log = logging.getLogger("keryx.logscan")
 
 #: The log files a service install writes, in the order a failure escalates through them.
-#: `keryx.err.log`/`keryx.out.log` come from `ops/systemd/keryx.service` and
-#: `ops/launchd/dev.keryx.agent.plist`; `keryx.log` is our own rotating handler.
+#: `keryx.err.log`/`keryx.out.log` come from the units `keryx service install` writes;
+#: `keryx.log` is our own rotating handler.
 LOG_NAMES = ("keryx.err.log", "keryx.out.log", "keryx.log")
 
 #: How many error lines are kept. This is read out loud and texted, so it is a handful.
