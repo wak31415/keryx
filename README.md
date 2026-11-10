@@ -1,144 +1,121 @@
 <p align="center">
-  <img src="docs/assets/keryx-mark.svg" width="88" alt="">
+  <img src="docs/assets/keryx-mark.svg" width="72" alt="">
 </p>
 
 <h1 align="center">Keryx</h1>
 
-<p align="center"><em>A personal voice agent that keeps working after you hang up.</em></p>
+<p align="center"><strong>Call your computer. Hang up. It keeps working.</strong></p>
 
 <p align="center">
   <a href="https://github.com/wak31415/keryx/actions/workflows/ci.yml"><img src="https://github.com/wak31415/keryx/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6366f1.svg" alt="Apache-2.0"></a>
-  <img src="https://img.shields.io/badge/python-3.12-6366f1.svg" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/coverage-%E2%89%A596%25-22d3ee.svg" alt="Coverage at least 96%">
+  <a href="https://pypi.org/project/keryx-voice/"><img src="https://img.shields.io/pypi/v/keryx-voice?color=6366f1" alt="PyPI"></a>
 </p>
-
-Start hours of work from a short phone call: you can ask your assistant on the line to research
-a question, change code, or run an experiment. The work then continues on your
-machine, even after you hang up. You can check in or add instructions in a later call, and Keryx can call you back
-or text you the report when it's done. You can call from a phone, or from a watch that can
-place calls.
-
-> [!NOTE]
-> Keryx is pre-1.0. It's self-hosted: it runs on your own machine with your own API keys.
-> While it only answers calls from your own phone number, and asks for your PIN before it
-> does anything on your behalf in case someone spoofs it, please review
-> [SECURITY.md](SECURITY.md) before deploying it.
 
 <p align="center">
-  <img src="docs/assets/keryx-incoming-call.jpg" width="480" alt="A Garmin watch showing an incoming call from Lyra.">
-  <br>
-  <em>Keryx triggers a callback after a task completed. I've named my voice companion Lyra, but this is configurable.</em>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/keryx-hero-dark.webp">
+    <img src="docs/assets/keryx-hero-light.webp" width="880" alt="You speak, the word is carried to the agent, you hang up while it keeps working, and the call comes back to you.">
+  </picture>
 </p>
 
-## Example requests
+Call Keryx from your phone or watch and give it a task. Claude Code or Codex does the work on your
+own machine, and Keryx calls you back when it's done or needs a decision.
 
-> *"In the imaging project, run a learning-rate sweep on the microscopy images. Call me if
-> you need a decision, and again when training finishes with a quick summary of the results."*
+> *"In the imaging project, run a learning-rate sweep. Call me when it's done, with your proposed next steps."*
+>
+> *"CI is red on main. Find out why and open a fix."*
+>
+> *"Add a tool so I can control my home automation setup from Keryx."*
 
-> *"Find the papers my group emailed this week, turn them into a reading-group presentation
-> with polished animations and some discussion questions, and send it to me on Slack."*
+## Quick install
 
-> *"Add a voice command that checks whether my home server is up. Build it in the Keryx
-> project and run the tests."*
+```bash
+curl -fsSL https://raw.githubusercontent.com/wak31415/keryx/main/install.sh | sh
+```
 
-> *"One more thing: include GPU memory use in that sweep comparison."*
+This installs the [`keryx-voice`](https://pypi.org/project/keryx-voice/) package from PyPI
+into an environment of its own, then opens the setup wizard, which asks only for what's
+missing and starts the background service. Call your Twilio number to get started.
+To update Keryx, run `keryx upgrade` or ask for an upgrade on a call. If a coding agent
+is setting it up, point it to `keryx setup --agent-instructions`, or, in a clone, give
+Claude Code the `skills/keryx-setup` skill.
 
-## Features
+To use the package in a project of your own, install it there with `pip install keryx-voice`.
 
-Keryx turns the [Realtime API](https://developers.openai.com/api/docs/guides/realtime) into
-a voice agent that you can use across many calls. This is how it compares with the Realtime
-API alone and with ChatGPT Voice, as of September 2026:
+**You'll need:**
 
-| Feature | Realtime API | ChatGPT Voice | Keryx |
+- A Linux or macOS machine that stays on
+- An OpenAI API key for voice
+- A Claude or ChatGPT plan, or an API key, for the agent
+- A Twilio phone number
+- A tunnel so Twilio can reach your machine: Cloudflare Tunnel on Linux, ngrok on macOS
+
+## What it does
+
+- **Keeps working after you hang up.** Ask for status or add instructions on a later call.
+- **Calls you back** with the result or when the agent needs an answer to proceed.
+- **Answers Claude Code prompts on your screen** with a keypress on your phone.
+- **Checks your email and calendar** by voice and sends you links and reports on Slack.
+- **Grows by voice.** Ask for a new tool, or report a bug and Keryx files the issue.
+
+<p align="center">
+  <img src="docs/assets/keryx-incoming-call.jpg" width="360" alt="A Garmin watch showing an incoming call from Lyra.">
+  <br>
+  <sub>A call-back from Lyra on a watch.</sub>
+</p>
+
+<details>
+<summary>How it compares with the Realtime API and ChatGPT Voice</summary>
+
+| | Realtime API | ChatGPT Voice | Keryx |
 | --- | :---: | :---: | :---: |
-| Live voice conversation and tools | ✅ | ✅ | ✅ |
-| Phone calls, including from calling watches | 🟡 SIP setup | 🟡 1-800-CHATGPT, US/CA | ✅ |
-| Email, calendar, and Slack by voice | 🟡 via MCP | ✅ | ✅ |
-| **Tasks that continue after you hang up** | — | ✅ in Work | ✅ |
-| Status and follow-ups in a later call | — | 🟡 in the app | ✅ |
-| SMS links to written reports | — | — | ✅ |
-| Call-backs when you ask for one | — | — | ✅ |
-| Calls you when a task needs your input | — | — | ✅ |
-| Add a feature to Keryx during a call | — | — | ✅ |
-| Report a bug in Keryx by voice, filed as a GitHub issue | — | — | ✅ |
-| Answer Claude Code prompts on your screen by phone | — | — | ✅ |
+| Phone calls, including from watches | 🟡 SIP | 🟡 US/CA | ✅ |
+| Tasks that continue after you hang up | — | ✅ | ✅ |
+| Follow-ups in a later call | — | 🟡 | ✅ |
+| Call-backs and questions mid-task | — | — | ✅ |
+| Answer Claude Code prompts by phone | — | — | ✅ |
+| Add a feature to itself during a call | — | — | ✅ |
 
-## System overview
+</details>
 
-*Keryx* (κῆρυξ) is Ancient Greek for a herald: a messenger who carries word back and forth.
-That's the job here. Keryx answers the phone, hands your request to a coding agent on your
-machine, and calls you back with the result. The messenger you talk to on the line is
-called Lyra by default, and you can rename it with `keryx config set ASSISTANT_NAME …`.
+> [!NOTE]
+> We take security seriously. Keryx accepts calls only from your own phone numbers, and
+> any action on your behalf requires your PIN. Please read the
+> [security brief](SECURITY.md) before using it with anything confidential.
 
-The conversation runs on the OpenAI Realtime API. Lyra answers small questions itself.
-Anything larger becomes a task for a coding agent and is handed to Keryx, which keeps running after you hang up.
+## Your own tools
 
-In this example, one task spans three calls. Keryx calls back once so that Lyra can ask you
-a question, and again with the training results.
+Ask for a tool on a call, like *"add a tool that tells me how my website did this week"*,
+and a coding agent writes it. Or write it yourself: one Python file with a decorated
+function.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/keryx-call-flow-dark.svg">
-  <img src="docs/assets/keryx-call-flow-light.svg" alt="A call starts a tracked task that continues after you hang up and returns by SMS, callback, or a later call.">
-</picture>
+```python
+import httpx
+from keryx.tools.custom import custom_tool
 
-### Coding agents: Claude Code or Codex
+STATS = "https://analytics.example.com/api/visitors?days=7"  # your provider
+AUTH = {"Authorization": "Bearer your-api-key"}
 
-Tasks run on [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
-[Codex](https://developers.openai.com/codex), signed in with a subscription or an API key.
-Keryx is most extensively tested with Claude Code on a subscription. Codex is supported,
-but it may not have every feature. `keryx setup` asks which agent to use by default. If you
-enable both, you can say "have Codex do it" on a call.
-[docs/agents.md](docs/agents.md) compares the two.
 
-## Quickstart
+@custom_tool(description="Site visitors this week, vs last week, by country.")
+def site_traffic(ctx, args):
+    week = httpx.get(STATS, headers=AUTH).json()
+    return {"visitors": week["total"], "change": week["change_percent"],
+            "top_countries": week["countries"][:3]}
+```
 
-### Requirements
+Tools live in `~/.local/share/keryx/tools/`, outside the repository and readable only by
+you. Keryx reads that folder on every call, so new tools are available on your next call
+without a restart. A tool responds only after you enter your PIN unless it declares
+`needs_pin=False`. Run `keryx tools` to list installed tools and any that would be rejected.
+No clone needed. See [docs/tools.md](docs/tools.md#your-own-tools) for details.
 
-- Linux or macOS, on a machine that stays on, such as a desktop or home server where your
-  projects live. Keryx can't answer calls, keep working, or call you back while it sleeps.
-- An OpenAI API key with Realtime access.
-- A Claude or ChatGPT plan, or an API key, for the coding agent. Claude Code and Codex both
-  come with Keryx.
-- A Twilio phone number.
-- A tunnel that gives Twilio a public address: Cloudflare Tunnel on Linux, ngrok on macOS.
+## Developer Setup
 
-### Install and set up
-
-1. Install Keryx:
-
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/wak31415/keryx/main/install.sh | sh
-   ```
-
-   It installs the `keryx` command and starts `keryx setup`, a wizard that asks only for
-   what's still missing and ends by installing the background service. Run `keryx setup`
-   again at any time.
-
-2. Call your Twilio number.
-
-`keryx upgrade` updates Keryx and restarts the service onto the new version. You can also
-ask for an upgrade on a call.
-
-If a coding agent is setting Keryx up for you, point it at
-`keryx setup --agent-instructions`, or, in a clone, give Claude Code the `skills/keryx-setup`
-skill. The [Setup guide](https://github.com/wak31415/keryx/wiki/Setup) on the wiki covers
-each step in detail.
-
-### Developer install
-
-Clone Keryx instead of installing it, and the service runs your checkout. That adds what an
-installed copy can't do:
-
-- **Changes to Keryx's own code by phone.** Ask on a call, for example "make the call-back
-  name the project", and the task edits the checkout, restarts Keryx onto the change, and
-  calls you back to say whether it came up.
-- **Better bug reports.** With issue reports turned on in `keryx setup`, the task reads
-  Keryx's code and logs before it files the issue.
-- The test suite, and branches of your own.
-
-It needs [uv](https://docs.astral.sh/uv/), and every command runs as `uv run keryx` from the
-checkout:
+Installed from a clone, the service runs your checkout. A call can change Keryx's
+own code, restart it with the changes, and call you back to report whether it started.
+The agent reads the code before filing bug reports. This requires [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/wak31415/keryx.git && cd keryx
@@ -146,42 +123,18 @@ uv sync
 uv run keryx setup
 ```
 
-To update, pull and then run `uv run keryx restart`. [CONTRIBUTING.md](CONTRIBUTING.md) has
-the rest.
+To update, pull and run `uv run keryx restart`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Documentation
+## Docs
 
-- [Setup guide](https://github.com/wak31415/keryx/wiki/Setup): the phone, Google, the PIN,
-  where files live, and costs
-- [Configuration reference](docs/configuration.md): every setting
-- [Coding agents](docs/agents.md): signing in, installing only one, and what each can do
-- [Voice tools](docs/tools.md): what the voice model can do, and how to add a tool
-- [Approval bridge](https://github.com/wak31415/keryx/wiki/The-Approval-Bridge): answer
-  Claude Code prompts on your screen by phone
-- [Security policy and threat model](SECURITY.md): read it before you put the phone line
-  online
-- [Wiki](https://github.com/wak31415/keryx/wiki): troubleshooting, the command-line reference,
-  and writing your own tools
-- [Changelog](CHANGELOG.md)
+[Setup guide](https://github.com/wak31415/keryx/wiki/Setup),
+[configuration](docs/configuration.md),
+[coding agents](docs/agents.md),
+[voice tools](docs/tools.md),
+[roadmap](docs/roadmap.md),
+[changelog](CHANGELOG.md).
 
-## Getting help
+Stuck? Run `keryx doctor`, then see
+[Troubleshooting](https://github.com/wak31415/keryx/wiki/Troubleshooting).
 
-1. Run `keryx doctor`. It checks the whole setup and says what's missing.
-2. Read [Troubleshooting](https://github.com/wak31415/keryx/wiki/Troubleshooting) on the
-   wiki.
-3. If that doesn't solve it, [open an issue](https://github.com/wak31415/keryx/issues).
-
-Report a security problem privately, as [SECURITY.md](SECURITY.md#reporting-a-vulnerability)
-describes, never in a public issue.
-
-## Roadmap
-
-v0.3.0 plans to add local models for the voice and the agents. v0.4.0 plans to let you
-talk to the assistant at a Mac, without a phone. A move to OpenAI's GPT-Live is being
-considered but isn't scheduled. [docs/roadmap.md](docs/roadmap.md) has the checklist for
-each.
-
-## Contributing and license
-
-Bug reports, corrections to the docs, and code are all welcome. See
-[CONTRIBUTING.md](CONTRIBUTING.md). Keryx is licensed under [Apache 2.0](LICENSE).
+<sub>*Keryx* (κῆρυξ) is Greek for herald. Apache 2.0. [Contributing](CONTRIBUTING.md).</sub>
