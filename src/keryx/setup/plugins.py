@@ -154,12 +154,16 @@ def run_slack(ctx: SetupContext) -> None:
     changed = token != before or channel != on_file
     if not _finish(ctx, slack.PLUGIN, {"channel_id": channel}):
         return
+    # It is on now. From here it either sends a test or says why it did not.
     if not (token and channel):
-        return  # the named server carries the token, the channel or both
+        whose = "channel is" if token else "token and the channel are"
+        ui.note(f"No test message was sent: the {whose} the {server} MCP server's.")
+        return
     if server and changed:
         ui.note(f"{slack.PLUGIN} now posts with this token to {channel}, not with the "
                 f"{server} MCP server's token and channel; subagents still use that server.")
     if not (changed or ctx.review):
+        ui.note("Nothing changed, so no test message was sent.")
         return
     if not ui.confirm("Send a test message to Slack now?", default=changed):
         return

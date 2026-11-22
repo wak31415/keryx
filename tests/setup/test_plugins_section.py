@@ -236,6 +236,8 @@ def test_slack_already_set_up_is_asked_nothing_new_and_slack_is_not_called(make_
     assert slack_calls(world) == [] and not ctx.ui.lines("link")
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
     assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+    # It is on, and it says why nothing was sent to show it.
+    assert "Nothing changed, so no test message was sent." in ctx.ui.lines("note")
 
 
 def test_reviewing_slack_that_is_set_up_offers_a_test_and_sends_none_by_default(make_ctx, world):
@@ -328,6 +330,8 @@ def test_an_mcp_server_that_carries_the_route_needs_no_token(chat_server, world)
     assert any("blank" in line and "chat MCP server" in line for line in ctx.ui.lines("note"))
     assert ConfigStore()._secrets() == {} and slack_calls(world) == []
     assert on(ctx, "send_to_slack")
+    assert ("No test message was sent: the token and the channel are the chat MCP server's."
+            in ctx.ui.lines("note"))
 
 
 def test_a_token_beside_an_mcp_server_must_bring_its_own_destination(chat_server, world):
@@ -371,6 +375,8 @@ def test_a_kept_token_beside_an_mcp_server_may_still_use_the_servers_channel(mak
 
     assert ctx.ui.done() and slack_calls(world) == []
     assert toml(ctx, "send_to_slack")["channel_id"] == ""
+    assert ("No test message was sent: the channel is the chat MCP server's."
+            in ctx.ui.lines("note"))
 
 
 def test_a_slack_file_that_cannot_be_written_sends_no_test(make_ctx, world, monkeypatch):
