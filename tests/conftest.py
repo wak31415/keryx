@@ -79,6 +79,19 @@ def _isolated_env(monkeypatch, tmp_path):
     monkeypatch.chdir(working)
 
 
+@pytest.fixture(autouse=True)
+def _no_published_google_client(monkeypatch, tmp_path):
+    """No test signs in with the Google client Keryx ships, whether a build has one or not.
+
+    The packaged file is absent from a clone and present in a release, and a test that
+    means "this machine has no client" has to mean it in both. A test about the published
+    client points this at a file of its own.
+    """
+    monkeypatch.setattr(
+        "keryx.integrations.google.PUBLISHED_CLIENT_FILE", tmp_path / "no-published-client.json"
+    )
+
+
 @pytest.fixture
 def settings(tmp_path):
     """A Settings instance with no env/.env leakage, safe for tests.

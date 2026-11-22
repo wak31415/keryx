@@ -964,11 +964,12 @@ class Settings(BaseSettings):
         return path if path.is_file() else None
 
     def google_oauth_client(self) -> tuple[str, str] | None:
-        """The OAuth client as `(id, secret)`: the configured pair if set, else the JSON file.
+        """The owner's own OAuth client as `(id, secret)`: the configured pair, else the file.
 
         The console hands out that file with the pair nested under `installed` (desktop
-        clients) or `web`; either shape is accepted. A missing or malformed file simply
-        means "no Google", which the doctor reports and Gmail/Calendar work refuses.
+        clients) or `web`; either shape is accepted. None means the owner has made no
+        client, and a sign-in falls back to the one Keryx publishes, when it has one
+        (`keryx.integrations.google.resolve_client`).
         """
         if self.google_oauth_client_id and self.google_oauth_client_secret:
             return self.google_oauth_client_id, self.google_oauth_client_secret
@@ -1122,18 +1123,20 @@ class Settings(BaseSettings):
 def parse_google_client(text: str) -> tuple[str, str]:
     """`(client_id, client_secret)` from a Google OAuth client JSON; ValueError if it is not one.
 
-    The console nests the pair under `installed` (a desktop client) or `web`.
+    The console nests the pair under `installed` (a desktop client) or `web`. A file with no
+    secret is still a client (Google's documentation calls a desktop client's secret
+    optional), and its secret comes back as `""`, to be left out of every request.
     """
     try:
         data = json.loads(text)
     except json.JSONDecodeError as error:
         raise ValueError("that is not JSON") from error
     block = (data.get("installed") or data.get("web") or data) if isinstance(data, dict) else {}
-    pair = (block.get("client_id"), block.get("client_secret")) if isinstance(block, dict) else ()
-    if not (len(pair) == 2 and all(isinstance(part, str) and part for part in pair)):
-        raise ValueError("it has no client_id and client_secret")
-    client_id, client_secret = pair
-    return client_id, client_secret
+    client_id = block.get("client_id") if isinstance(block, dict) else None
+    if not (isinstance(client_id, str) and client_id):
+        raise ValueError("it has no client_id")
+    client_secret = block.get("client_secret")
+    return client_id, client_secret if isinstance(client_secret, str) else ""
 
 
 def env_var_name(field_name: str) -> str:
