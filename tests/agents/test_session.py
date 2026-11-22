@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agents.fakes import BLOCK, ScriptedAdapter
+from agents.fakes import BLOCK, ScriptedAdapter, sign_in_to_google
 from keryx.agents.auth import AuthMode, AuthSource, AuthStatus
 from keryx.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
 from keryx.agents.session import (
@@ -297,7 +297,7 @@ def test_the_context_is_resolved_once_from_the_task_and_settings(settings, tmp_p
             "command": "uvx",
             "env": {
                 "GOOGLE_OAUTH_CLIENT_SECRET": "GOCSPX-google-client-secret",
-                "GOOGLE_MCP_CREDENTIALS_DIR": "/home/ada/.local/share/keryx/google",
+                "WORKSPACE_MCP_CREDENTIALS_DIR": "/home/ada/.local/share/keryx/google",
                 "GOOGLE_OAUTH_REDIRECT_URI": "http://localhost:8000/oauth2callback",
             },
         },
@@ -314,6 +314,23 @@ def test_the_context_is_resolved_once_from_the_task_and_settings(settings, tmp_p
     assert context.auth.mode is AuthMode.API_KEY
     assert context.mcp_env["SLACK_BOT_TOKEN"] == SLACK
     assert context.secrets == (KEY, SLACK, "GOCSPX-google-client-secret")
+
+
+def test_the_google_server_comes_from_the_sign_in_and_its_file_is_redacted(settings, tmp_path):
+    """Whatever the backend passed, Google's server and its credentials are added once here."""
+    settings.codex_api_key = KEY
+    token = sign_in_to_google(settings)
+    slack = {"slack": {"command": "slack-mcp", "env": {"SLACK_BOT_TOKEN": SLACK}}}
+
+    context = AgentContext.build(
+        make_task(cwd=str(tmp_path)), settings, auth=SOURCE, model="", mcp_servers=slack
+    )
+
+    assert set(context.mcp_servers) == {"slack", "google"}
+    assert context.mcp_secrets == (token.refresh_token, token.client_secret)
+    assert context.secrets == (
+        KEY, token.refresh_token, token.client_secret, SLACK, "mail@example.com"
+    )  # fmt: skip
 
 
 class ScriptedRunner(AdapterRunner):

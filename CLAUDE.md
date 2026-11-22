@@ -156,8 +156,9 @@ remember:
 ## One task kind
 
 There is one `TaskKind` (`agent`) and no per-kind tool restriction: every subagent gets
-the full built-in tool set, the Google MCP server, the installed skills and subagents of
-its own, and decides for itself what a request needs. The voice model's only routing
+the full built-in tool set, the Google MCP server once the owner has signed in (see "Google
+is one sign-in"), the installed skills and subagents of its own, and decides for itself what
+a request needs. The voice model's only routing
 decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
 Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
@@ -433,7 +434,7 @@ Three rulings:
 `keryx auth login google` (and the wizard's Google section) connects Gmail, Calendar, Drive,
 Docs, Sheets and Slides at once, for everything: `check_email` and the coding agents alike.
 `keryx/integrations/google.py` is the account (scopes, client, token, the agents' server)
-and `keryx/setup/google.py` is the flow. Four rulings:
+and `keryx/setup/google.py` is the flow. Five rulings:
 
 - **One table says what is asked for.** `SERVICES` maps each service to the scopes it
   requests and what they enable, and nothing else restates a scope. Every scope has to be
@@ -447,7 +448,16 @@ and `keryx/setup/google.py` is the flow. Four rulings:
   the only Google credential Keryx writes. The agents' `workspace-mcp` server reads a
   *copy* of it (`export_for_mcp`, into `DATA_DIR/google/<address>.json`), rewritten only
   when it is missing or is a different sign-in, so the access token the server refreshes
-  into that file is not thrown away.
+  into that file is not thrown away. The server is started with that directory and the
+  address and **no OAuth client**: it can use the sign-in and can never start a consent
+  flow of its own, so a tool the token cannot serve is a plain error. Its credentials are in
+  a file rather than its environment, so they reach the redaction through
+  `AgentContext.mcp_secrets`. Nothing is attached at all until somebody has signed in.
+- **The pin, the scope table and the disabled tools move together.** `WORKSPACE_MCP_VERSION`
+  is exact, because `MCP_SCOPED_TOOLS` — the tools that check for a scope the table does not
+  request — was read from that release's decorators. A tool is switched off unless the
+  token holds its scope, so an agent never meets one whose only answer is "authorize again".
+  Bump the pin only with that list re-read from the new source.
 - **Two clients, and whose it is gets said.** `resolve_client`: the owner's own
   (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`, or the client file) wins; else the one Keryx
   publishes, which is a packaged data file (`keryx/data/google_client.json`, the console's
@@ -466,8 +476,8 @@ and `keryx/setup/google.py` is the flow. Four rulings:
 An install from before this keeps working until its owner signs in again, and nothing of
 its is rewritten: `check_email` still reads an older `gmail_token.json` when there is no
 Google token (the next sign-in removes it), and a credential `workspace-mcp` wrote itself
-into `DATA_DIR/google` stays where it is. It is never adopted as Keryx's token: its scopes
-are whatever that flow asked for.
+into `DATA_DIR/google` is still served, with the tools its own scopes cover. It is never
+adopted as Keryx's token: its scopes are whatever that flow asked for.
 
 ## Restarts are three halves
 

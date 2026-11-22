@@ -74,7 +74,9 @@ anything behind, or reach a coding agent. In particular:
   agent without the PIN.
 - A coding agent's credential appearing on its command line, in a log, or in a spoken
   error. Credentials are passed only in the environment, and a refused key is redacted
-  when it is quoted back.
+  when it is quoted back. The Google sign-in is the one credential an agent's tools read
+  from a file instead (see [Signing in to Google](#signing-in-to-google)), and it is
+  redacted the same way.
 - A Google sign-in that can be completed, or whose code can be used, by anyone but the
   person at the browser: a redirect that is accepted without this sign-in's `state`, a
   listener reachable from another machine, or a code that can be exchanged without the
@@ -401,6 +403,10 @@ email answers on a call. What it leaves, and what protects it:
   it created. A coding agent you dispatch can use all of it, and prompt injection into a
   task you authorized is still inherent. You can leave any service unticked on Google's
   screen, and revoke the whole sign-in at <https://myaccount.google.com/permissions>.
+- **The agents' tools cannot sign in.** The server is started with the token's location
+  and no OAuth client, so it can refresh and use what you granted and can never open a
+  consent screen of its own behind a task nobody is watching. Tools that would need a
+  wider scope are switched off rather than left to fail.
 - **Keryx's own Google client, when a release ships one, is not a secret.** It is a
   "Desktop app" client, and its client secret is a file inside the package that anyone
   can read. Google says so of this kind of client in its own words: "In this context, the

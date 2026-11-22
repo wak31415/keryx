@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from keryx.agents.auth import AuthSource, child_env
-from keryx.agents.base import SteerUnavailable, TokenUsage, google_mcp_server_config
+from keryx.agents.base import SteerUnavailable, TokenUsage
 from keryx.agents.session import (
     AdapterRunner,
     AdapterSession,
@@ -60,10 +60,10 @@ CLAUDE_MODELS = {
     "haiku": "claude-haiku-4-5-20251001",
 }
 
-# Gmail and Calendar reach the subagents through the Claude CLI's own claude.ai
-# connectors, which are already authorized; `workspace-mcp` is kept but off by default
-# (`GOOGLE_WORKSPACE_MCP`), because attaching an unauthorized second Google path only gave
-# subagents a tool that fails.
+# A subagent's Google tools are the `workspace-mcp` server, attached by `AgentContext.build`
+# once the owner has signed in (`keryx auth login google` turns `GOOGLE_WORKSPACE_MCP` on).
+# Until then nothing is attached: an unauthorized Google server only gave subagents a tool
+# that fails, and the Claude CLI's own claude.ai connectors may carry Gmail and Calendar.
 #
 # No `tools` key is ever set: a subagent keeps every built-in tool, including the skills
 # and the subagents of its own that a real request tends to need. (`tools` is the only
@@ -147,15 +147,11 @@ def resolve_model(name: str | None, settings: Settings) -> str:
 
 def claude_context(task: Task, settings: Settings) -> AgentContext:
     """Everything a Claude subagent for `task` is started with."""
-    servers = {}
-    if settings.google_workspace_mcp:
-        servers["google"] = google_mcp_server_config(settings)
     return AgentContext.build(
         task,
         settings,
         auth=CLAUDE_AUTH,
         model=resolve_model(task.model, settings),
-        mcp_servers=servers,
     )
 
 

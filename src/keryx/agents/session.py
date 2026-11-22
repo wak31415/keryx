@@ -47,6 +47,8 @@ MAX_TOOL_INPUT_CHARS = 200
 #: An MCP server's environment value shorter than this is a flag (`1`, `true`), not a
 #: credential, and redacting it would blank every digit in an error message.
 MIN_SECRET_CHARS = 8
+#: The name the Google MCP server is attached under: its tools are `mcp__google__*`.
+GOOGLE_MCP_SERVER = "google"
 #: What a turn that produced no `Done` at all is reported as.
 NO_DONE_ERROR = "the agent stopped without finishing"
 INTERRUPTED_ERROR = "interrupted"
@@ -137,6 +139,9 @@ class AgentContext:
     model: str | None
     auth: AuthStatus
     mcp_servers: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    #: Credentials an MCP server reads from a file of its own rather than its environment
+    #: (the Google token): never in `mcp_servers`, and redacted like the rest.
+    mcp_secrets: tuple[str, ...] = ()
 
     @classmethod
     def build(
@@ -148,9 +153,16 @@ class AgentContext:
         model: str | None,
         mcp_servers: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> "AgentContext":
+        """`mcp_servers` is every server but Google's, which is added here when the owner
+        has signed in and turned it on, so each backend gets it the same way."""
+        from keryx.integrations.google import mcp_server
         from keryx.plugins.slack import slack_route
 
         slack = slack_route(settings)
+        servers = dict(mcp_servers or {})
+        google = mcp_server(settings)
+        if google is not None:
+            servers[GOOGLE_MCP_SERVER] = google.config
         return cls(
             cwd=workspace_dir(task, settings),
             instructions=render_subagent_suffix(
@@ -163,7 +175,8 @@ class AgentContext:
             ),
             model=model or None,
             auth=resolve_auth(auth, settings, probe=False),
-            mcp_servers=dict(mcp_servers or {}),
+            mcp_servers=servers,
+            mcp_secrets=google.secrets if google is not None else (),
         )
 
     @property
@@ -179,9 +192,10 @@ class AgentContext:
         """The credential, and every MCP value that could be one.
 
         Paths and URLs are configuration, and short values are flags; everything else an
-        MCP server is handed — a client secret, a bot token — is treated as a secret.
+        MCP server is handed — a bot token, an address — is treated as a secret, and so is
+        what one reads from a credential file Keryx wrote for it (`mcp_secrets`).
         """
-        values = [self.auth.secret or ""]
+        values = [self.auth.secret or "", *self.mcp_secrets]
         values += [
             value
             for value in self.mcp_env.values()

@@ -16,6 +16,8 @@ the version starts with 0.
   answer itself. With `--headless`, or over ssh, it prints a link for any device and asks
   for the address the browser lands on. What you leave unticked on Google's screen is
   simply not connected, and the command says which services are.
+- Agents get Drive, Docs, Sheets and Slides as well as Gmail and Calendar, and both Claude
+  and Codex get them the same way.
 - When a release ships Keryx's own Google app, signing in needs no Google Cloud project.
   Until then you make a client of your own once, and the guide in `keryx setup` now starts
   with Google's shorter Personal mode.
@@ -27,6 +29,8 @@ the version starts with 0.
   still lists them beside the new `google`.
 - An install that already signed in keeps working and needs nothing done. Signing in again
   with `keryx auth login google` replaces the two older sign-ins with one.
+- The agents' Google tools are attached only once you have signed in, and they can no
+  longer open a sign-in of their own in the middle of a task.
 - Turning `check_email` off no longer offers to delete the Google sign-in, because the
   agents use it too.
 - `keryx doctor` has one **Google** check in place of "Google for agents": who is signed

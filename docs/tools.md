@@ -118,8 +118,9 @@ Small talk, task status and small factual questions the voice answers itself —
 goes through the Responses API, because a Realtime session has no hosted search tool of its
 own. Everything else becomes a task, and a task is just "a coding agent, on this machine" —
 Claude Code or Codex ([`agents.md`](agents.md)): one kind, every tool, the repositories,
-Gmail and Calendar, the installed skills, and subagents of its own. Nothing classifies the
-work in advance.
+the Google services you connected (Gmail, Calendar, Drive, Docs, Sheets and Slides, from
+one `keryx auth login google`), the installed skills, and subagents of its own. Nothing
+classifies the work in advance.
 
 That is why the plugins are short. **The default answer to "can Keryx do X" is "ask
 Claude to do X"** — a task already has your machine, your repositories, your mailbox and
