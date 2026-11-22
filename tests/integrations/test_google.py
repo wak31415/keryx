@@ -3,6 +3,7 @@ agents' MCP server. No network: nothing here calls Google."""
 
 import json
 import stat
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,8 @@ from keryx.integrations.google import (
 
 ALL = tuple(SERVICES)
 AUTH = "https://www.googleapis.com/auth/"
+#: Read at import, before the suite's fixture points every test away from it.
+PACKAGED_CLIENT = google.PUBLISHED_CLIENT_FILE
 
 
 def token(services=ALL, **changes) -> GoogleToken:
@@ -125,6 +128,13 @@ def published_file(tmp_path, body) -> object:
 
 
 INSTALLED = {"installed": {"client_id": "keryx.apps", "client_secret": "GOCSPX-published"}}
+
+
+def test_the_published_client_is_a_data_file_inside_the_package():
+    """The wheel is built from `src/keryx`, so a file here ships with no build change."""
+    import keryx
+
+    assert PACKAGED_CLIENT == Path(keryx.__file__).resolve().parent / "data" / "google_client.json"
 
 
 def test_with_no_client_anywhere_there_is_none(settings):

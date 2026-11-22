@@ -107,6 +107,9 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Everything under `src/keryx` ships, data files included: the Google sign-in guides, and
+# `keryx/data/google_client.json` (Keryx's published OAuth client) from the release that
+# first has one. Until then the file is simply absent, and the build needs nothing changed.
 [tool.hatch.build.targets.wheel]
 packages = ["src/keryx"]
 
