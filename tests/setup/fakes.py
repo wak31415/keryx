@@ -165,7 +165,11 @@ class FakeWorld:
     login_code: int = 0
     service_error: str | None = None
     headless: bool = False
+    #: What a Google sign-in grants (`google_services`), as whom, and the error it ends in
+    #: instead when `google_error` is set. The fake writes the token a real one would.
     gmail: str = "sam@example.com"
+    google_services: tuple = ("gmail", "calendar", "drive", "docs", "sheets", "slides")
+    google_error: str | None = None
     #: `~/.ssh/config` as `plugins.ssh_hosts.discover` would read it, whose masters are up
     #: now, and what Slurm would say its partitions are.
     ssh_hosts: list = field(default_factory=list)
@@ -185,12 +189,39 @@ class FakeWorld:
             self.calls.append(("task", agent, prompt))
             return self.task_result
 
-        async def gmail_address(settings):
-            return self.gmail
+        def google_signed_in(settings, asked):
+            from keryx.integrations import google
+            from keryx.setup.google import GoogleSetupError, SignInResult
 
-        def workspace(settings, echo):
-            self.calls.append(("workspace",))
-            return True
+            if self.google_error:
+                raise GoogleSetupError(self.google_error)
+            granted = tuple(name for name in self.google_services if name in asked)
+            token = google.GoogleToken(
+                refresh_token="rt",
+                client_id="cid",
+                client_secret="csecret",
+                scopes=google.requested_scopes(granted),
+                email=self.gmail,
+            )
+            path = google.write_token(settings, token)
+            return SignInResult(
+                email=self.gmail,
+                connected=token.connected,
+                missing=tuple(name for name in asked if name not in token.connected),
+                path=path,
+                whose="your own Google client",
+            )
+
+        def google_browser(settings, chosen, announce):
+            self.calls.append(("google_browser", chosen.services))
+            announce("https://accounts.google.com/o/oauth2/v2/auth?fake", True)
+            return google_signed_in(settings, chosen.services)
+
+        def google_finish(settings, redirected_to):
+            from keryx.integrations.google import SERVICES
+
+            self.calls.append(("google_finish", redirected_to))
+            return google_signed_in(settings, tuple(SERVICES))
 
         def record(kind, code):
             def run(argv):
@@ -223,8 +254,8 @@ class FakeWorld:
             run_login=record("login", self.login_code),
             install_service=install_service,
             headless=lambda: self.headless,
-            gmail_address=gmail_address,
-            workspace_signin=workspace,
+            google_browser_signin=google_browser,
+            google_finish=google_finish,
             http_post=post,
             ssh_hosts=lambda: self.calls.append(("ssh_hosts",)) or list(self.ssh_hosts),
             ssh_master_alive=lambda alias: self.calls.append(("master", alias))

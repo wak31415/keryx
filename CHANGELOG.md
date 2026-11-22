@@ -7,6 +7,36 @@ the version starts with 0.
 
 ## [Unreleased]
 
+### Added
+
+- **One Google sign-in for everything: `keryx auth login google`.** It connects Gmail,
+  Calendar, Drive, Docs, Sheets and Slides at once, for the coding agents and for email
+  answers on a call, and `--services gmail,calendar` chooses fewer. With a browser on the
+  same machine it is one command and no pasting: Keryx opens Google's screen and takes the
+  answer itself. With `--headless`, or over ssh, it prints a link for any device and asks
+  for the address the browser lands on. What you leave unticked on Google's screen is
+  simply not connected, and the command says which services are.
+- When a release ships Keryx's own Google app, signing in needs no Google Cloud project.
+  Until then you make a client of your own once, and the guide in `keryx setup` now starts
+  with Google's shorter Personal mode.
+
+### Changed
+
+- `keryx auth login gmail` and `keryx auth login google-workspace` run the one Google
+  sign-in. Both names are accepted for one more release, and `keryx auth status --json`
+  still lists them beside the new `google`.
+- An install that already signed in keeps working and needs nothing done. Signing in again
+  with `keryx auth login google` replaces the two older sign-ins with one.
+- Turning `check_email` off no longer offers to delete the Google sign-in, because the
+  agents use it too.
+- `keryx doctor` has one **Google** check in place of "Google for agents": who is signed
+  in, with whose client, and which services are connected.
+
+### Fixed
+
+- `keryx auth status` reported Gmail as missing however it was signed in.
+- `--headless` was ignored by both Google sign-ins.
+
 ## [0.2.0] - 2026-11-09
 
 Keryx installs with one line and no clone, and every command starts with `keryx`. An

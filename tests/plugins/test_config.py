@@ -148,7 +148,7 @@ def test_status_goes_through_the_loader_a_call_uses(settings):
     found = {status.name: status for status in plugins.status(settings)}
 
     assert found["check_billing"].on and found["check_billing"].refused is None
-    assert not found["check_email"].on and "keryx auth login gmail" in found["check_email"].refused
+    assert not found["check_email"].on and "keryx auth login google" in found["check_email"].refused
     assert not found["send_to_slack"].installed and found["send_to_slack"].refused is None
     assert found["send_to_slack"].values["channel_id"] == "D1"
     assert found["cluster_stats"].as_dict()["on"] is False
@@ -199,7 +199,7 @@ def test_command_line_values_are_its_own_keys_cleaned():
         ("send_to_slack", "SLACK_BOT_TOKEN=xoxb-1", "keryx config set SLACK_BOT_TOKEN --stdin"),
         ("check_billing", "openai_admin_key=sk", "keryx config set OPENAI_ADMIN_KEY --stdin"),
         ("send_to_slack", "bot_token=xoxb-1", "its secrets: SLACK_BOT_TOKEN"),
-        ("check_email", "token=x", "keryx auth login gmail"),
+        ("check_email", "token=x", "keryx auth login google"),
         ("cluster_stats", "clusters=alpha", "has no setting"),
         ("check_billing", "budget", "is not KEY=VALUE"),
     ],

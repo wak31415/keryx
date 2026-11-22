@@ -29,9 +29,11 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config lock|unlock KEY` (what the running service may change)
-- Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
-  [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
-  the browser landed on), `uv run keryx auth status [--json] [--smoke]`
+- Sign-ins: `uv run keryx auth login claude|codex|google [--headless] [--services a,b]
+  [--client-file PATH] [--callback-url URL]` (google is one sign-in for everything; with
+  `--headless` it prints a link and takes back the address the browser landed on, and with
+  no terminal that is two commands; `gmail` and `google-workspace` still mean it, for one
+  release), `uv run keryx auth status [--json] [--smoke]`
 - Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`); `scripts/dev.sh` adds
   the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
@@ -127,7 +129,8 @@ remember:
 - **integrations** — `integrations/` is one module per outside service (`billing`,
   `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
-  built. Their builders take explicit values, never a plugin's file.
+  built. Their builders take explicit values, never a plugin's file. `google` is the one
+  with no voice tool: the Google account itself (see "Google is one sign-in").
 - **config** — `config/` is the settings and where they live: `settings` (every field with
   a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
@@ -402,7 +405,8 @@ relative one ignored as the specification says (`config/files.py::xdg_home`):
 - `~/.config/keryx` — `KERYX_HOME`: `config.toml`, `secrets.toml`, `pin`, the Google
   client file. Only the environment moves it.
 - `~/.local/share/keryx` — `DATA_DIR`: `tasks.db`, `tasks/`, `calls/`, `memory.md`,
-  `projects/`, `workspace/`, `tools/` (the owner's own voice tools and the plugins), the sign-in tokens,
+  `projects/`, `workspace/`, `tools/` (the owner's own voice tools and the plugins), the
+  sign-in tokens (`google_token.json`, and `google/`, its copy for the agents' MCP server),
   `codex/`, and `pin-failures.json`.
 - `~/.local/state/keryx` — `STATE_DIR`: `logs/`, `restart.json`, the version stamps,
   `approvals/` and `approvals.sock` together, so the hook needs one directory.
@@ -423,6 +427,47 @@ Three rulings:
   `KERYX_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is
   handed them with `--setenv`: a user manager's environment is not the service's. A
   relative `DATA_DIR`, `STATE_DIR` or `CACHE_DIR` is refused for the same reason.
+
+## Google is one sign-in
+
+`keryx auth login google` (and the wizard's Google section) connects Gmail, Calendar, Drive,
+Docs, Sheets and Slides at once, for everything: `check_email` and the coding agents alike.
+`keryx/integrations/google.py` is the account (scopes, client, token, the agents' server)
+and `keryx/setup/google.py` is the flow. Four rulings:
+
+- **One table says what is asked for.** `SERVICES` maps each service to the scopes it
+  requests and what they enable, and nothing else restates a scope. Every scope has to be
+  justified to Google, so the set is the narrowest the agents' tools work with: no full
+  `drive`, no full `calendar`, no `gmail.settings.basic`, and `gmail.modify` alone for Gmail
+  (asking for `gmail.readonly` beside it is redundant, and reviewers say so). Google lets
+  the owner untick any scope, so the token keeps exactly what was granted, and a service is
+  connected only when every scope it needs was. Reading Gmail is the one test with two
+  answers (`reads_gmail`): this sign-in's `gmail.modify`, or an older one's `gmail.readonly`.
+- **One token, and Keryx owns it.** `DATA_DIR/google_token.json` (0600, `write_private`) is
+  the only Google credential Keryx writes. The agents' `workspace-mcp` server reads a
+  *copy* of it (`export_for_mcp`, into `DATA_DIR/google/<address>.json`), rewritten only
+  when it is missing or is a different sign-in, so the access token the server refreshes
+  into that file is not thrown away.
+- **Two clients, and whose it is gets said.** `resolve_client`: the owner's own
+  (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`, or the client file) wins; else the one Keryx
+  publishes, which is a packaged data file (`keryx/data/google_client.json`, the console's
+  JSON plus an optional `keryx_services` list of what Google has approved it for) and may
+  not be there. A published client is limited to its list; the owner's own offers
+  everything. Its secret ships in the wheel and is not a secret (SECURITY.md): PKCE,
+  `state` and a loopback-only redirect are what protect the exchange. A client with no
+  secret sends none, never an empty one.
+- **Two ways to finish, chosen before the link is made.** With a browser on this machine, a
+  listener on `127.0.0.1` on a port the OS picks takes the redirect: one path, one request
+  that carries this sign-in's `state`, nothing logged (the request line holds the code),
+  and it is shut. With the browser elsewhere the redirect is a dead loopback address and
+  the owner pastes it back. In the wizard each is a `Probes` field that returns a plain
+  result, so a rewind replays it and no sign-in runs twice.
+
+An install from before this keeps working until its owner signs in again, and nothing of
+its is rewritten: `check_email` still reads an older `gmail_token.json` when there is no
+Google token (the next sign-in removes it), and a credential `workspace-mcp` wrote itself
+into `DATA_DIR/google` stays where it is. It is never adopted as Keryx's token: its scopes
+are whatever that flow asked for.
 
 ## Restarts are three halves
 

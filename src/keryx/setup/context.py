@@ -63,16 +63,16 @@ def _task(settings: Settings, agent: str, prompt: str) -> Awaitable[RunResult]:
     return run_task(settings, agent, prompt)
 
 
-def _gmail_address(settings: Settings) -> Awaitable[str]:
-    from keryx.setup.google import gmail_address
+def _google_browser_signin(settings: Settings, chosen: Any, announce: Any) -> Any:
+    from keryx.setup.google import browser_signin
 
-    return gmail_address(settings)
+    return browser_signin(settings, chosen, announce=announce)
 
 
-def _workspace(settings: Settings, echo: Callable[[str], None]) -> bool:
-    from keryx.setup.google import run_google_setup
+def _google_finish(settings: Settings, redirected_to: str) -> Any:
+    from keryx.setup.google import finish_signin
 
-    return run_google_setup(settings, echo=echo)
+    return finish_signin(settings, redirected_to)
 
 
 def _install_service(settings: Settings, echo: Callable[[str], None]) -> None:
@@ -117,8 +117,11 @@ class Probes:
     #: `keryx service install`; raises `ServiceError` with what to fix.
     install_service: Callable[[Settings, Callable[[str], None]], None] = _install_service
     headless: Callable[[], bool] = _headless
-    gmail_address: Callable[[Settings], Awaitable[str]] = _gmail_address
-    workspace_signin: Callable[[Settings, Callable[[str], None]], bool] = _workspace
+    #: The Google sign-in with a browser on this machine (`setup.google.browser_signin`:
+    #: listener, browser, exchange), and the exchange that ends a pasted-back one. Each
+    #: returns a `SignInResult` or raises `GoogleSetupError`.
+    google_browser_signin: Callable[[Settings, Any, Any], Any] = _google_browser_signin
+    google_finish: Callable[[Settings, str], Any] = _google_finish
     http_post: Callable[..., Any] = httpx.post
     #: `~/.ssh/config`, read locally (`plugins.ssh_hosts`): never a connection.
     ssh_hosts: Callable[[], list] = _ssh_hosts

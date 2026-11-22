@@ -45,20 +45,23 @@ def test_the_default_probes_reach_the_real_implementations(monkeypatch, settings
     async def fake(*args, **kwargs):
         return RunResult(ok=True, spoken_summary="ready")
 
-    async def address(settings):
-        return "a@b.c"
-
     monkeypatch.setattr("keryx.setup.agents.run_smoke", fake)
     monkeypatch.setattr("keryx.setup.agents.run_task", fake)
     monkeypatch.setattr("keryx.setup.agents.is_headless", lambda: True)
-    monkeypatch.setattr("keryx.setup.google.gmail_address", address)
-    monkeypatch.setattr("keryx.setup.google.run_google_setup", lambda settings, echo: True)
+    monkeypatch.setattr(
+        "keryx.setup.google.browser_signin",
+        lambda settings, chosen, announce: ("browser", chosen, announce),
+    )
+    monkeypatch.setattr(
+        "keryx.setup.google.finish_signin", lambda settings, address: ("finished", address)
+    )
     probes = Probes()
 
     assert asyncio.run(probes.smoke(settings, "claude")).ok
     assert asyncio.run(probes.run_task(settings, "claude", "hi")).ok
-    assert asyncio.run(probes.gmail_address(settings)) == "a@b.c"
-    assert probes.workspace_signin(settings, print) is True
+    assert probes.google_browser_signin(settings, "offer", print) == ("browser", "offer", print)
+    assert probes.google_finish(settings, "http://localhost:1/?x") == (
+        "finished", "http://localhost:1/?x")
     assert probes.headless() is True
 
 

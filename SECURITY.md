@@ -75,6 +75,10 @@ anything behind, or reach a coding agent. In particular:
 - A coding agent's credential appearing on its command line, in a log, or in a spoken
   error. Credentials are passed only in the environment, and a refused key is redacted
   when it is quoted back.
+- A Google sign-in that can be completed, or whose code can be used, by anyone but the
+  person at the browser: a redirect that is accepted without this sign-in's `state`, a
+  listener reachable from another machine, or a code that can be exchanged without the
+  verifier.
 - Text that reaches a Claude Code session on your machine (an issue, a pull request, a web
   page) and gets the approval bridge to ring you about one command while running another,
   or to run a command its policy should never have offered.
@@ -351,8 +355,9 @@ documented on the branch and does not apply to anything built from `main`.
 Every key, token, and password is in `~/.config/keryx/secrets.toml` (`KERYX_HOME` moves
 it). Keryx creates the file with mode 0600 inside a 0700 directory and replaces it
 atomically, so it never exists with looser permissions. The plain settings are in
-`config.toml` beside it, along with the PIN (`pin`) and the Google client file. **Keep this
-directory out of any dotfiles repository.** It holds secrets despite its name.
+`config.toml` beside it, along with the PIN (`pin`) and the Google client file, if you made
+a client of your own. **Keep this directory out of any dotfiles repository.** It holds
+secrets despite its name.
 
 Keryx uses a file rather than a keyring on purpose. A service that systemd starts at boot,
 with nobody logged in, cannot unlock a keyring. Claude Code and Codex keep their credentials
@@ -375,6 +380,53 @@ A secret is never put on a command line, where `ps` and your shell history would
 from an environment variable. The command refuses a secret given as a plain argument.
 Nothing prints a secret back: not `keryx config get`, not `config list`, and not an error
 message.
+
+### Signing in to Google
+
+`keryx auth login google` connects your Google account once, for the coding agents and for
+email answers on a call. What it leaves, and what protects it:
+
+- **The token is a file.** `DATA_DIR/google_token.json` holds the refresh token, the
+  client it was issued to, the scopes Google granted, and your address. It is 0600 in a
+  0700 directory and replaced atomically, like every other secret here. A copy of it is in
+  `DATA_DIR/google/`, in the form the agents' Google tools (the `workspace-mcp` server)
+  read. The approval bridge's denylist names both, so no keypad approval can run a command
+  or an edit that mentions them. It knows the copy by its default path
+  (`…/keryx/google/`): if you move `DATA_DIR`, only the token is still named.
+- **Whoever has the machine has your Google account**, to the extent of what you granted.
+  That is the same position as every other key in this file, and the PIN does not change
+  it. What you grant is the narrowest set the tools work with, and it is still a lot:
+  reading and changing your mail and calendar events, reading everything in Drive, and
+  editing your Docs, Sheets and Slides. In Drive itself, Keryx can change only the files
+  it created. A coding agent you dispatch can use all of it, and prompt injection into a
+  task you authorized is still inherent. You can leave any service unticked on Google's
+  screen, and revoke the whole sign-in at <https://myaccount.google.com/permissions>.
+- **Keryx's own Google client, when a release ships one, is not a secret.** It is a
+  "Desktop app" client, and its client secret is a file inside the package that anyone
+  can read. Google says so of this kind of client in its own words: "In this context, the
+  client secret is obviously not treated as a secret"
+  (<https://developers.google.com/identity/protocols/oauth2>). Knowing it lets someone
+  present their own app as Keryx on a consent screen. It does not let them into your
+  account: they would still need you to approve that screen, and they cannot use a code
+  issued to you. A client of your own (`--client-file`) replaces it entirely.
+- **What protects the exchange is PKCE, `state`, and where the answer is sent.** The
+  sign-in keeps a one-time verifier on this machine and sends Google only its hash, so
+  the code Google returns is useless to anyone who intercepts it. `state` ties that code
+  to the sign-in that asked for it. The answer goes to a loopback address, which only this
+  machine can reach.
+- **The listener is local and short-lived.** With a browser on the same machine, Keryx
+  listens on `127.0.0.1` only, on a port the operating system picks, for the length of one
+  sign-in. It serves one path, accepts only the request that carries this sign-in's
+  `state`, answers anything else with an error and keeps waiting, logs nothing (the
+  request holds the one-time code), and closes as soon as it has its answer or after five
+  minutes. **The accepted risk:** another program running as any user on the same machine
+  can connect to that port while it is open. Without the `state` it is refused, and
+  without the verifier a stolen code cannot be exchanged, so the most it can do is make
+  the sign-in fail. With `--headless` there is no listener at all: the browser lands on an
+  address nothing listens on, and you paste that address back.
+- **An address pasted back is a code in your scrollback.** It is single-use, it expires in
+  minutes, and it cannot be exchanged without the verifier, which waits in
+  `DATA_DIR/google_signin.json` (0600) until the sign-in finishes.
 
 ### What Keryx may change about itself
 

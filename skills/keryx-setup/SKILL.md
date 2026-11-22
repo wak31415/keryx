@@ -89,7 +89,8 @@ keryx plugins install cluster_stats --cluster HOST=PARTITION
 
 A plugin's secret is never a `--set`: Slack's bot token and the billing admin keys are
 `keryx config set KEY --stdin` (theirs to type, through `keryx setup` if you do not have
-it), and email needs `keryx auth login gmail` (the sign-ins step of the instructions). Offer
+it), and email needs the Google sign-in, `keryx auth login google` (the sign-ins step of the
+instructions; the same sign-in gives the agents Calendar, Drive, Docs, Sheets and Slides). Offer
 `cluster_stats` only a host whose `control_master` is true — Keryx never opens a
 connection of its own — and ask them which partition its GPUs are in rather than guessing.
 Every other setting of a plugin is in the TOML file `keryx plugins` names.

@@ -22,7 +22,7 @@ from typing import Any
 
 from keryx import plugins
 from keryx.agents import registry
-from keryx.integrations.gmail import token_path
+from keryx.integrations import gmail
 from keryx.setup import google
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
@@ -77,10 +77,13 @@ def _turn_off(ctx: SetupContext, name: str) -> None:
         return
     plugins.remove(ctx.settings, name)
     ui.success(f"{name} is off from the next call; its settings are kept for next time")
-    if name == "check_email" and token_path(ctx.settings).exists():
-        if ui.confirm("Also delete the Gmail sign-in?", default=False):
-            token_path(ctx.settings).unlink(missing_ok=True)
-            ui.success("the Gmail sign-in is deleted")
+    # The Google sign-in is everything's, so turning email off never touches it. Only the
+    # Gmail-only token an older sign-in left belongs to this plugin alone.
+    older = gmail.legacy_token_path(ctx.settings)
+    if name == "check_email" and older.exists():
+        if ui.confirm("Also delete the older Gmail-only sign-in?", default=False):
+            older.unlink(missing_ok=True)
+            ui.success("the older Gmail-only sign-in is deleted")
 
 
 def _finish(ctx: SetupContext, name: str, values: dict[str, Any]) -> bool:
@@ -143,16 +146,16 @@ def run_slack(ctx: SetupContext) -> None:
 
 
 def run_email(ctx: SetupContext) -> None:
+    """Email answers read Gmail with the one Google sign-in: asked nothing when it is there."""
     ui = ctx.ui
-    if not google._ensure_client(ctx, calendar=False):
-        return
-    if token_path(ctx.settings).is_file() and not ctx.review:
-        ui.success("Gmail: signed in")
+    if gmail.signed_in(ctx.settings):
+        ui.success("Gmail: connected")
     else:
-        google._sign_in_email(ctx)
-    if not token_path(ctx.settings).is_file():
-        ui.note("Not signed in, so it is left off: `keryx setup` again, or "
-                "`keryx auth login gmail` and then `keryx plugins install check_email`.")
+        ui.note("Email answers read Gmail with your Google sign-in.")
+        google.connect(ctx)
+    if not gmail.signed_in(ctx.settings):
+        ui.note("Gmail is not connected, so it is left off: `keryx setup` again, or "
+                "`keryx auth login google` and then `keryx plugins install check_email`.")
         return
     _finish(ctx, "check_email", {})
 

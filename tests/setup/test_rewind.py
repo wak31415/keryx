@@ -124,21 +124,20 @@ def test_a_probe_that_runs_again_spends_its_old_result():
 def test_a_probe_that_raised_runs_again():
     calls: list[str] = []
 
-    async def gmail(settings):
-        calls.append("gmail")
+    async def smoke(settings, agent):
+        calls.append(agent)
         if len(calls) == 1:
             raise RuntimeError("offline")
-        return "ada@example.com"
+        return "ready"
 
     first = Recorder(ScriptedPrompter())
     with pytest.raises(RuntimeError):
-        asyncio.run(first.probes(Probes(gmail_address=gmail)).gmail_address(None))
+        asyncio.run(first.probes(Probes(smoke=smoke)).smoke(None, "claude"))
     assert first.log == []
 
     second = Recorder(ScriptedPrompter(), first.log)
-    assert asyncio.run(second.probes(Probes(gmail_address=gmail)).gmail_address(None)) == (
-        "ada@example.com")
-    assert second.log == [Entry(PROBE, "gmail_address", value="ada@example.com", awaited=True)]
+    assert asyncio.run(second.probes(Probes(smoke=smoke)).smoke(None, "claude")) == "ready"
+    assert second.log == [Entry(PROBE, "smoke", value="ready", awaited=True)]
 
 
 def test_everything_said_goes_through_when_not_replaying():

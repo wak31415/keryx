@@ -5,7 +5,8 @@ import dataclasses
 import pytest
 
 from keryx import plugins
-from keryx.integrations.gmail import MESSAGES, EmailError, EmailReader, token_path
+from keryx.integrations.gmail import MESSAGES, EmailError, EmailReader
+from keryx.integrations.gmail import legacy_token_path as token_path
 from keryx.plugins.email import check_email_tool
 from keryx.tools.builtin_common import PIN_REQUIRED_MESSAGE
 from keryx.trust import TrustLevel
@@ -95,7 +96,7 @@ def test_the_schema_asks_for_the_question_and_offers_two_days(settings):
 def test_not_signed_in_the_file_is_refused_with_the_command(settings):
     turn_on(settings, NAME)
 
-    assert refusal(settings, NAME) == "not signed in to Gmail: `keryx auth login gmail`"
+    assert refusal(settings, NAME) == "not signed in to Google: `keryx auth login google`"
 
 
 def test_signed_in_without_the_claude_cli_it_says_how_to_get_it(settings, monkeypatch):

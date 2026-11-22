@@ -127,7 +127,7 @@ META_TABLES = frozenset({"service_writable", "setup"})
 
 #: Where `keryx setup` puts the Google OAuth client file it is handed, in `KERYX_HOME`
 #: beside `secrets.toml`: it is configuration, and a secret one. Not `DATA_DIR/google`,
-#: which is workspace-mcp's own credentials directory.
+#: which holds the copy of the sign-in that the agents' workspace-mcp server reads.
 GOOGLE_CLIENT_FILE = "google_client_secret.json"
 #: The settings that say where Keryx keeps things. Each must be absolute: a relative one
 #: would be resolved against whatever directory a process happened to start in, and the
@@ -522,7 +522,8 @@ class Settings(BaseSettings):
 
     google_oauth_client_id: str | None = setting(
         None,
-        "The Google OAuth client id. Blank: read from `GOOGLE_CLIENT_SECRETS_FILE`.",
+        "The id of a Google OAuth client of your own. Blank: read from "
+        "`GOOGLE_CLIENT_SECRETS_FILE`, else the client Keryx publishes, when it has one.",
         group="google",
     )
     google_oauth_client_secret: str | None = setting(
@@ -530,21 +531,24 @@ class Settings(BaseSettings):
     )
     google_client_secrets_file: Path | None = setting(
         None,
-        "The OAuth client JSON the Google Cloud console downloads (desktop or web shape). "
-        f"Blank: `KERYX_HOME/{GOOGLE_CLIENT_FILE}`, where `keryx setup` puts it.",
+        "The OAuth client JSON the Google Cloud console downloads, for a client of your "
+        f"own (desktop or web shape). Blank: `KERYX_HOME/{GOOGLE_CLIENT_FILE}`, where "
+        "`keryx setup` and `keryx auth login google --client-file` put it.",
         group="google",
     )
     user_google_email: str | None = setting(
         None,
-        "The Google account agents act as; `keryx setup` fills it in from the sign-in.",
+        "The Google account agents act as; `keryx auth login google` fills it in from the "
+        "sign-in.",
         group="google",
     )
-    #: Off since 2026-08-24: the Claude CLI already carries authorized claude.ai
-    #: Gmail/Calendar/Drive connectors, so this only added a second path to trip over.
+    #: Off until the owner signs in: an unauthorized Google server only gave subagents a
+    #: tool that fails. `keryx auth login google` turns it on.
     google_workspace_mcp: bool = setting(
         False,
-        "Give every subagent the workspace-mcp server (send mail, manage the calendar). "
-        "Needed for Codex, which has no claude.ai connectors; Claude already has them.",
+        "Give every subagent Google tools (the workspace-mcp server) for the services your "
+        "Google sign-in connected. `keryx auth login google` turns it on; set it to false "
+        "to keep the sign-in for email answers only.",
         group="google",
     )
 

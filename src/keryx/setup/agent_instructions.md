@@ -13,18 +13,20 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    ask the person to run `keryx setup`, which asks for it hidden; do not ask them to paste
    it to you.
 3. **Sign-ins.** `keryx auth status --json` lists each one. For a coding agent,
-   `keryx auth login claude|codex` runs its own login on the terminal. For Gmail,
-   `keryx auth login gmail --client-file PATH` prints a link: relay it; the person
-   approves it on any device and gives you the address their browser lands on
+   `keryx auth login claude|codex` runs its own login on the terminal. Google is one
+   sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides:
+   `keryx auth login google --headless` prints a link: relay it; the person approves it
+   on any device and gives you the address their browser lands on
    (`http://localhost:1/?…`); finish with
-   `keryx auth login gmail --callback-url 'THAT ADDRESS'`. The person has to make the
-   Google Cloud client first (the steps: `{google_guide}`).
+   `keryx auth login google --callback-url 'THAT ADDRESS'`. Only when the first command
+   says there is no Google OAuth client does the person have to make one (the steps:
+   `{google_guide}`), which you then pass once with `--client-file PATH`.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the four optional voice
    tools — Slack, email, billing, cluster stats — each on or off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a
    ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin` or
-   `keryx auth login gmail`.
+   `keryx auth login google`.
    Filing bug reports and feature requests about Keryx as GitHub issues is not yours to
    turn on: it is theirs, in `keryx setup` (Issue reports), and you never set
    `ISSUE_REPORTING` or `ISSUE_REPO`.
