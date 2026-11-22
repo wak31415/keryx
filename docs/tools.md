@@ -117,10 +117,19 @@ and nothing in it listens to Slack. From the command line it is two steps:
 `keryx auth login slack --stdin --email you@example.com` takes the token on standard input
 (never as an argument) and does the rest.
 
-If Slack cannot find your address, you are asked for a channel or member id instead; your
-member id is in Slack under your profile, More, Copy member ID. An app you made by hand
-before keeps working exactly as it was. It can only be looked up by address if it has the
-`users:read.email` permission, so otherwise that question is the one you get.
+The question that takes your address takes a channel or member id as well, and that is
+what to give it if Slack cannot find you: your member id is in Slack under your profile,
+More, Copy member ID. An app you made by hand before keeps working exactly as it was. It
+can only look you up by address if it has the `users:read.email` permission.
+
+A new token brings its destination with it. The id of a direct message belongs to the app
+that opened it, so when you paste a token that is not the one Keryx has, an old `D…` id is
+not kept beside it: you are looked up again (the command line needs `--email` for that, or
+your Google address on file, and saves nothing without one). A member id or a channel's id
+is kept. The same goes for an MCP server named in `send_to_slack.toml`: a token of the
+plugin's own never posts to the server's channel, and once it has its own destination the
+voice tool uses that pair while subagents go on using the server. If Keryx was running with
+an older token, `keryx restart` moves it to the new one.
 
 Slack is opt-in in both directions. With `send_to_slack` on, every finished task's whole
 report is posted to your DM when it lands, so a call can stay short. Nothing else goes to it

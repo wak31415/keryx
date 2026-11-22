@@ -12,6 +12,7 @@ import pytest
 from keryx import plugins
 from keryx.config.store import ConfigError, ConfigStore
 from keryx.integrations.slack import Member, SlackResult, Workspace, new_app_url
+from keryx.plugins.slack import slack_route
 from keryx.setup import slack
 from keryx.setup.slack import TEST_MESSAGE, SlackApi, SlackSetupError
 
@@ -58,13 +59,36 @@ def test_with_no_token_it_prints_the_link_the_steps_and_the_next_command(setting
     assert "**" not in text and "`" not in text
 
 
-def test_the_next_command_says_whose_address_it_would_use(settings):
+def said_without_email(settings) -> str:
     lines: list[str] = []
+    slack.start(settings, lines.append)
+    return lines[-1]
 
-    slack.start(settings.model_copy(update={"user_google_email": "sam@example.com"}),
-                lines.append)
 
-    assert "Without --email it looks for sam@example.com." in lines
+def test_the_next_command_says_what_happens_without_an_address(settings):
+    """Each sentence is what `connect` then does: the tests below hold it to them."""
+    google = settings.model_copy(update={"user_google_email": "sam@example.com"})
+
+    assert said_without_email(settings) == (
+        "Without --email there is no address to look for, and it stops."
+    )
+    assert said_without_email(google) == "Without --email it looks for sam@example.com."
+
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "U0MEMBER"})
+    assert said_without_email(google) == "Without --email it keeps sending to U0MEMBER."
+
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "D123"})
+    assert said_without_email(google) == (
+        "The channel on file (D123) is a direct message with the app its token came from, "
+        "so a different token does not keep it: without --email it looks for sam@example.com."
+    )
+
+
+def test_settings_that_do_not_parse_do_not_stop_the_link(settings):
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "send_to_slack").write_text("channel_id = [")
+
+    assert said_without_email(settings).startswith("Without --email there is no address")
 
 
 def test_a_token_and_an_address_are_everything(settings):
@@ -86,12 +110,13 @@ def test_a_token_and_an_address_are_everything(settings):
     ]
 
 
-def test_no_test_message_when_it_is_not_wanted(settings):
+def test_no_test_message_when_it_is_not_wanted_and_it_says_none_was_sent(settings):
     fake = FakeSlack()
 
-    connect(settings, fake, test=False)
+    lines = connect(settings, fake, test=False)
 
     assert not any(call[0] == "post" for call in fake.calls)
+    assert lines[-1] == "no test message was sent (--no-test), so nothing has shown it arrives"
 
 
 def test_without_an_address_the_google_one_is_looked_up(settings):
@@ -139,63 +164,200 @@ def test_a_token_slack_refuses_saves_nothing_and_says_only_the_code(settings):
     assert not plugins.config_path(settings, "send_to_slack").exists()
 
 
-def test_an_address_slack_cannot_find_keeps_the_token_and_says_what_to_do(settings):
+def test_a_token_that_could_not_be_checked_is_not_called_refused(settings):
+    fake = FakeSlack(workspace=Workspace(error="http_503"))
+
+    with pytest.raises(SlackSetupError) as stopped:
+        connect(settings, fake)
+
+    assert str(stopped.value) == (
+        "the token could not be checked (Slack answered HTTP 503); nothing was saved"
+    )
+    assert ConfigStore()._secrets() == {}
+
+
+def test_an_address_slack_cannot_find_saves_nothing_and_says_what_to_do(settings):
     fake = FakeSlack(member=Member(error="users_not_found"))
 
     with pytest.raises(SlackSetupError) as refused:
         connect(settings, fake)
 
     message = str(refused.value)
-    assert "the token is saved" in message and "(users_not_found)" in message
+    assert "(users_not_found)" in message and "Nothing was saved" in message
+    assert "keryx config set SLACK_BOT_TOKEN --stdin" in message
     assert "keryx plugins install send_to_slack --set channel_id=ID" in message
     assert TOKEN not in message
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
-    assert not plugins.is_on(settings, "send_to_slack")
+    assert ConfigStore()._secrets() == {}
+    assert not plugins.config_path(settings, "send_to_slack").exists()
 
 
 def test_a_test_message_that_fails_is_an_error_and_undoes_nothing(settings):
     fake = FakeSlack(sent=SlackResult(error="channel_not_found"))
 
-    with pytest.raises(SlackSetupError, match=r"everything is saved.*\(channel_not_found\)"):
+    with pytest.raises(SlackSetupError) as failed:
         connect(settings, fake)
 
+    assert str(failed.value) == (
+        "everything is saved, but the test message to U0OWNER did not go through: "
+        "Slack does not know that channel or member (channel_not_found)"
+    )
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
     assert plugins.is_on(settings, "send_to_slack") and channel(settings) == "U0OWNER"
 
 
-def test_a_new_token_for_an_install_that_has_a_channel_keeps_the_channel(settings):
-    """Rotating the token: no address is needed, and none is looked up."""
+# --- a token that is not the one on file brings its destination with it ------------------
+#
+# A direct message's id belongs to the app that opened it. A new token is presumed to be
+# another app's, so that id is never kept beside it; a member's id or a channel's is.
+
+
+def with_token(settings, token="xoxb-the-old-one", **more):
+    return settings.model_copy(update={"slack_bot_token": token, **more})
+
+
+def test_a_new_token_never_keeps_a_direct_messages_id_and_looks_the_owner_up(settings):
     plugins.write_config(settings, "send_to_slack", {"channel_id": "D123"})
     fake = FakeSlack()
-    settings = settings.model_copy(update={"user_google_email": "sam@example.com"})
 
-    connect(settings, fake, email=None)
+    lines = connect(with_token(settings, user_google_email="sam@example.com"), fake, email=None)
+
+    assert channel(settings) == "U0OWNER"
+    assert fake.calls == [
+        ("auth", TOKEN), ("member", TOKEN, "sam@example.com"), ("post", "U0OWNER", TEST_MESSAGE)
+    ]
+    assert "found Sam Doe (U0OWNER): messages go to them" in lines
+
+
+def test_a_new_token_with_only_a_direct_messages_id_and_no_address_changes_nothing(settings):
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "D123"})
+    ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-the-old-one"})
+    fake = FakeSlack()
+
+    with pytest.raises(SlackSetupError) as stopped:
+        connect(with_token(settings), fake, email=None)
+
+    assert str(stopped.value) == (
+        "the channel on file (D123) is a direct message with the app the old token came "
+        "from, and this token cannot post to it: add --email ADDRESS, the one you use in "
+        "Slack. Nothing was saved"
+    )
+    assert fake.calls == []
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-the-old-one"}
+    assert channel(settings) == "D123"
+
+
+def test_an_address_slack_cannot_find_leaves_the_old_token_and_channel_working(settings):
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "D123"})
+    ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-the-old-one"})
+    fake = FakeSlack(member=Member(error="missing_scope"))
+
+    with pytest.raises(SlackSetupError, match="Nothing was saved"):
+        connect(with_token(settings), fake)
+
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-the-old-one"}
+    assert channel(settings) == "D123"
+
+
+@pytest.mark.parametrize("on_file", ["U0MEMBER", "W0MEMBER", "C0CHANNEL"])
+def test_a_new_token_keeps_a_member_or_a_channel_and_tests_it(settings, on_file):
+    plugins.write_config(settings, "send_to_slack", {"channel_id": on_file})
+    fake = FakeSlack()
+
+    lines = connect(with_token(settings, user_google_email="sam@example.com"), fake, email=None)
+
+    assert channel(settings) == on_file
+    assert fake.calls == [("auth", TOKEN), ("post", on_file, TEST_MESSAGE)]
+    assert f"it keeps sending to {on_file}" in lines
+    assert lines[-1] == "sent a test message: it is in Slack, under Apps"
+
+
+def test_the_same_token_again_keeps_even_a_direct_messages_id(settings):
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "D123"})
+    fake = FakeSlack()
+
+    lines = connect(with_token(settings, TOKEN), fake, email=None)
 
     assert channel(settings) == "D123"
-    assert [call[0] for call in fake.calls] == ["auth", "post"]
+    assert fake.calls == [("auth", TOKEN), ("post", "D123", TEST_MESSAGE)]
+    assert not any("keryx restart" in line for line in lines)
+
+
+def test_a_kept_destination_that_fails_its_test_says_how_to_change_it(settings):
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "C0CHANNEL"})
+    fake = FakeSlack(sent=SlackResult(error="not_in_channel"))
+
+    with pytest.raises(SlackSetupError) as failed:
+        connect(with_token(settings), fake, email=None)
+
+    assert str(failed.value) == (
+        "everything is saved, but the test message to C0CHANNEL did not go through: Slack "
+        "said not_in_channel. To send to yourself instead, run it again with --email ADDRESS"
+    )
 
 
 def test_an_address_given_replaces_the_channel_there_was(settings):
-    plugins.write_config(settings, "send_to_slack", {"channel_id": "D123"})
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "U0MEMBER"})
 
-    connect(settings, FakeSlack())
+    connect(with_token(settings, TOKEN), FakeSlack())
 
     assert channel(settings) == "U0OWNER"
 
 
-def test_an_mcp_server_that_carries_the_channel_needs_no_address(settings, tmp_path, monkeypatch):
+def test_a_token_that_replaces_another_says_a_running_keryx_needs_a_restart(settings):
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "U0MEMBER"})
+
+    replaced = connect(with_token(settings), FakeSlack(), email=None)
+    first = connect(settings, FakeSlack())
+
+    note = "A Keryx that started with the old token keeps it until `keryx restart`."
+    assert note in replaced and note not in first
+
+
+# --- beside an MCP server that carries Slack ---------------------------------------------
+
+
+@pytest.fixture
+def chat_server(settings, tmp_path, monkeypatch):
+    """`send_to_slack` on, with its token and channel both from the `chat` MCP server."""
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
-    (tmp_path / ".claude.json").write_text(
-        json.dumps({"mcpServers": {"chat": {"env": {"SLACK_CHANNEL_ID": "D0CHAT"}}}})
-    )
+    env = {"SLACK_BOT_TOKEN": "xoxb-the-servers", "SLACK_CHANNEL_ID": "D0SERVER"}
+    (tmp_path / ".claude.json").write_text(json.dumps({"mcpServers": {"chat": {"env": env}}}))
     plugins.write_config(settings, "send_to_slack", {"mcp_server": "chat"})
+    plugins.install(settings, "send_to_slack")
+    return settings
+
+
+def test_a_token_is_never_paired_with_the_mcp_servers_channel(chat_server):
+    """With no address it stops: the server's channel is a direct message with *its* app."""
     fake = FakeSlack()
-    settings = settings.model_copy(update={"user_google_email": "sam@example.com"})
+
+    with pytest.raises(SlackSetupError) as stopped:
+        connect(chat_server, fake, email=None)
+
+    assert str(stopped.value) == (
+        "a token of its own needs somewhere of its own to send, and the channel so far is "
+        "the chat MCP server's: add --email ADDRESS, the one you use in Slack. Nothing was "
+        "saved"
+    )
+    assert fake.calls == [] and ConfigStore()._secrets() == {}
+    route = slack_route(chat_server)
+    assert (route.token, route.channel) == ("xoxb-the-servers", "D0SERVER")
+
+
+def test_beside_an_mcp_server_a_token_brings_its_own_destination_and_says_so(chat_server):
+    fake = FakeSlack()
+    settings = chat_server.model_copy(update={"user_google_email": "sam@example.com"})
 
     lines = connect(settings, fake, email=None)
 
-    assert [call[0] for call in fake.calls] == ["auth"]  # no channel here to test with
-    assert lines[-1] == "send_to_slack is on, from the next call"
+    assert ("member", TOKEN, "sam@example.com") in fake.calls
+    assert ("post", "U0OWNER", TEST_MESSAGE) in fake.calls
+    assert (
+        "note: send_to_slack now posts with this token to U0OWNER, not with the chat MCP "
+        "server's token and channel; subagents still use that server"
+    ) in lines
+    route = slack_route(settings.model_copy(update={"slack_bot_token": TOKEN}))
+    assert (route.token, route.channel, route.mcp_server) == (TOKEN, "U0OWNER", "chat")
 
 
 def test_a_token_the_environment_also_sets_is_said(settings, monkeypatch):

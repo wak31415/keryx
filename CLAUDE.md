@@ -139,8 +139,15 @@ remember:
   `auth_test`, `lookup_by_email` and `post_text` are what setup does with the pasted
   token (`setup/slack.py`, and the wizard's Slack step through three `Probes` fields). A
   member id is a valid `channel_id` (`chat.postMessage` delivers it to that member's
-  messages from the app), so setup finds the owner by their address and never asks for a
-  channel id. A Slack refusal is repeated as its error code and nothing else it said.
+  messages from the app), so setup finds the owner by their address, and an id typed by
+  hand is the fallback when Slack cannot. A Slack refusal is repeated as its error code
+  and nothing else it said. **A token brings its destination with it**
+  (`setup.slack.keeps`): a direct message's id belongs to the app that opened it, so a
+  token that is not the one on file is never paired with one, in the plugin's file or in a
+  named MCP server's config; the owner is looked up again, and a member's or a channel's id
+  is kept. Neither path says Slack is connected without a test message that went or a line
+  saying none was sent, and the command line saves nothing until it has a token Slack
+  takes and a destination for it.
 - **config** — `config/` is the settings and where they live: `settings` (every field with
   a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
