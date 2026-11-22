@@ -5,10 +5,12 @@ import dataclasses
 
 import pytest
 
+from keryx import plugins
 from keryx.agents import registry
 from keryx.agents.base import RunResult
 from keryx.agents.registry import BACKENDS
 from keryx.config.store import ConfigStore
+from keryx.integrations.slack import new_app_url
 from keryx.setup import auth, google
 from keryx.setup.auth import AuthError, LoginOptions
 
@@ -110,6 +112,39 @@ def test_a_google_sign_in_that_fails_is_an_auth_error(settings, monkeypatch):
 
     with pytest.raises(AuthError, match="the server refused"):
         login("google-workspace", settings)
+
+
+def test_slack_is_missing_until_it_is_on_and_failed_with_a_token_nothing_uses(settings):
+    assert auth.status(settings, ConfigStore())["slack"]["state"] == "missing"
+
+    half = auth.status(settings.model_copy(update={"slack_bot_token": "xoxb-1"}), ConfigStore())
+
+    assert half["slack"]["state"] == "failed"
+    assert "send_to_slack is off" in half["slack"]["detail"]
+
+
+def test_slack_that_is_on_is_ok_and_says_where_it_posts(settings):
+    settings = settings.model_copy(update={"slack_bot_token": "xoxb-1"})
+    plugins.write_config(settings, "send_to_slack", {"channel_id": "U0OWNER"})
+    plugins.install(settings, "send_to_slack")
+
+    entry = auth.status(settings, ConfigStore())["slack"]
+
+    assert entry == {"state": "ok", "detail": "on — posts to U0OWNER"}
+
+
+def test_a_slack_login_with_no_token_prints_the_link_that_makes_the_app(settings):
+    assert new_app_url() in login("slack", settings)
+    assert ConfigStore().stored() == {}
+
+
+def test_a_slack_login_that_cannot_go_on_is_an_auth_error(settings):
+    with pytest.raises(AuthError, match="no token on standard input"):
+        login("slack", settings, token=" \n")
+
+
+def test_a_token_is_never_in_what_the_options_print():
+    assert "xoxb-secret" not in repr(LoginOptions(token="xoxb-secret"))
 
 
 def test_nothing_else_can_be_signed_in_to(settings):

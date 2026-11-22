@@ -87,10 +87,25 @@ keryx plugins hosts --json      # the ssh hosts cluster_stats could ask
 keryx plugins install cluster_stats --cluster HOST=PARTITION
 ```
 
-A plugin's secret is never a `--set`: Slack's bot token and the billing admin keys are
+A plugin's secret is never a `--set`: the billing admin keys are
 `keryx config set KEY --stdin` (theirs to type, through `keryx setup` if you do not have
-it), and email needs `keryx auth login gmail` (the sign-ins step of the instructions). Offer
-`cluster_stats` only a host whose `control_master` is true — Keryx never opens a
+it), and email needs `keryx auth login gmail` (the sign-ins step of the instructions).
+
+Slack is a sign-in too, and it turns `send_to_slack` on by itself:
+
+```bash
+keryx auth login slack          # prints a link and three steps: relay them
+keryx auth login slack --stdin --email ADDRESS    # theirs to run: it asks for the token hidden
+```
+
+The link opens Slack's own page for a new app with Keryx's already filled in; they create
+it, install it and copy its bot token. Do not ask them to paste the token to you: they run
+the second command themselves, with the address they use in Slack. It checks the token
+with Slack, finds them by that address (so there is no channel id to look up), and sends
+one test message — ask them whether it arrived. If Slack could not find the address, the
+command says what to run instead; an app they made by hand before keeps working.
+
+Offer `cluster_stats` only a host whose `control_master` is true — Keryx never opens a
 connection of its own — and ask them which partition its GPUs are in rather than guessing.
 Every other setting of a plugin is in the TOML file `keryx plugins` names.
 

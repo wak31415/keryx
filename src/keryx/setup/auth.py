@@ -7,11 +7,15 @@ the wizard reads, so the three can never disagree about whether something is sig
 Gmail is the one in two steps: without `--callback-url` it prints a consent link, and with
 it, it finishes. That is so a coding agent can relay the link to the person and the address
 they land on back, and so it works on a machine with no browser at all.
+
+Slack is two steps the same way (`setup/slack.py`): alone it prints the link that creates
+the owner's Slack app, and with the bot token on standard input it checks it, finds where
+to send and turns `send_to_slack` on.
 """
 
 import asyncio
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +25,7 @@ from keryx.config import Settings
 from keryx.config.permissions import OWNER
 from keryx.config.store import ConfigStore
 from keryx.doctor import Check, run_doctor_checks
-from keryx.setup import agents, google
+from keryx.setup import agents, google, slack
 
 Echo = Callable[[str], None]
 
@@ -33,8 +37,10 @@ SIGN_INS = {
     "gmail": ("email",),
     "google-workspace": ("Google for agents",),
     "twilio": ("Twilio credentials",),
+    #: The plugin's own check: on, off, or a token with the plugin off.
+    "slack": ("send_to_slack",),
 }
-LOGINS = ("claude", "codex", "gmail", "google-workspace")
+LOGINS = ("claude", "codex", "gmail", "google-workspace", "slack")
 
 
 class AuthError(RuntimeError):
@@ -78,6 +84,11 @@ class LoginOptions:
     headless: bool = False
     client_file: Path | None = None
     callback_url: str | None = None
+    #: slack: the bot token read from standard input (None: print the link instead), the
+    #: address to find the owner by, and whether to send one test message.
+    token: str | None = field(default=None, repr=False)
+    email: str | None = None
+    test: bool = True
 
 
 def login(
@@ -93,6 +104,9 @@ def login(
     """Do the one sign-in `name` names; raises `AuthError` with what went wrong."""
     if name in BACKENDS:
         _agent_login(name, settings, options=options, echo=echo, run_login=run_login)
+        return
+    if name == "slack":
+        _slack(settings, store, options=options, echo=echo)
         return
     if options.client_file is not None:
         try:
@@ -138,6 +152,18 @@ def _agent_login(
             "store the token it printed with: "
             "keryx config set CLAUDE_CODE_OAUTH_TOKEN --stdin"
         )
+
+
+def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, echo: Echo) -> None:
+    if options.token is None:
+        slack.start(settings, echo)
+        return
+    try:
+        slack.connect(
+            settings, store, token=options.token, email=options.email, test=options.test, echo=echo
+        )
+    except slack.SlackSetupError as exc:
+        raise AuthError(str(exc)) from None
 
 
 def _gmail(

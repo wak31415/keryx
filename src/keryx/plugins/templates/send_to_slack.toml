@@ -2,11 +2,13 @@
 # too. Changes here count from the next call; no restart.
 #
 # The bot token is a secret, so it is not in this file: it is SLACK_BOT_TOKEN in
-# secrets.toml, set with `keryx config set SLACK_BOT_TOKEN --stdin` (or taken from the
-# MCP server below). `keryx plugins remove send_to_slack` turns this off.
+# secrets.toml, set by `keryx auth login slack` or `keryx config set SLACK_BOT_TOKEN --stdin`
+# (or taken from the MCP server below). `keryx plugins remove send_to_slack` turns this off.
 
-# The DM channel it posts to (Slack shows its id in the conversation's details). Blank:
-# the SLACK_CHANNEL_ID in the MCP server's config below.
+# Where it posts. Your member id (U…) reaches you in your messages from the app, and
+# `keryx auth login slack` finds it from your address; a channel's id (in the
+# conversation's details) works too. Blank: the SLACK_CHANNEL_ID in the MCP server's
+# config below.
 channel_id = {channel_id}
 
 # The user-scope MCP server in ~/.claude.json (in $CLAUDE_CONFIG_DIR, when that is set)

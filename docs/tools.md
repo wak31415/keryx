@@ -47,7 +47,7 @@ first time through.
 
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|
-| `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too | yes | `SLACK_BOT_TOKEN`, or the MCP server's |
+| `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too | yes | `SLACK_BOT_TOKEN` (`keryx auth login slack`), or the MCP server's |
 | `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | the read-only Gmail sign-in (`keryx auth login gmail`) and the `claude` extra |
 | `check_billing` | what the month has cost and where it is heading, from the provider's billing API | no | `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` |
 | `cluster_stats` | what is free on your Slurm clusters and whether your jobs are still running | no | none: it rides the ssh login you already have open |
@@ -104,6 +104,23 @@ the login has expired, it says so instead of dialing out: where login is two-fac
 connection nobody can answer hangs, and a storm of them can get an address banned. To fix
 an expired login, open the master again at your desk, for example with `ssh -fN mycluster`.
 If you already run a guard script of your own, name it as `guard` in `cluster_stats.toml`.
+
+**Connecting Slack is a link and one paste.** `keryx setup` → Plugins shows a link that
+opens Slack's own page for a new app, with Keryx's already filled in: pick your workspace,
+create it, install it, and copy its bot token. Paste the token once, at a hidden prompt.
+Keryx checks it with Slack, tells you which workspace it connected to, and finds you by the
+email address you use there, so there is no channel id to look up. Then it offers to send
+a test message, which arrives under Apps in Slack. The app is yours alone: it can post
+messages and read your workspace's member list with addresses, which is how it finds you,
+and nothing in it listens to Slack. From the command line it is two steps:
+`keryx auth login slack` prints the link, and
+`keryx auth login slack --stdin --email you@example.com` takes the token on standard input
+(never as an argument) and does the rest.
+
+If Slack cannot find your address, you are asked for a channel or member id instead; your
+member id is in Slack under your profile, More, Copy member ID. An app you made by hand
+before keeps working exactly as it was. It can only be looked up by address if it has the
+`users:read.email` permission, so otherwise that question is the one you get.
 
 Slack is opt-in in both directions. With `send_to_slack` on, every finished task's whole
 report is posted to your DM when it lands, so a call can stay short. Nothing else goes to it

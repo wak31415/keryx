@@ -13,6 +13,8 @@ from typer.testing import CliRunner
 from keryx.cli import app
 from keryx.config.files import read_toml
 from keryx.config.store import ConfigStore
+from keryx.integrations.slack import Member, SlackResult, Workspace
+from keryx.setup.slack import SlackApi
 
 runner = CliRunner()
 
@@ -275,7 +277,10 @@ def test_auth_status_json_lists_every_sign_in(home):
     result = run("auth", "status", "--json")
 
     report = json.loads(result.output)
-    assert set(report) == {"openai", "claude", "codex", "gmail", "google-workspace", "twilio"}
+    assert set(report) == {
+        "openai", "claude", "codex", "gmail", "google-workspace", "twilio", "slack"
+    }
+    assert report["slack"]["state"] == "missing"
     assert report["openai"]["state"] == "missing"
     assert report["gmail"]["state"] == "missing"
     assert report["codex"]["enabled"] is False
@@ -336,6 +341,80 @@ def test_auth_login_runs_the_agents_own_login(home, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert ran == [["/venv/bin/codex", "login"]]
+
+
+def fake_slack(monkeypatch, *, workspace=None):
+    """Slack as `keryx auth login slack` reaches it, answering without a network."""
+    asked = []
+    api = SlackApi(
+        auth_test=lambda token: asked.append("auth") or workspace or Workspace(team="Acme"),
+        lookup_by_email=lambda token, email: asked.append(email) or Member(user_id="U0OWNER"),
+        post_text=lambda token, channel, text: asked.append(channel) or SlackResult(),
+    )
+    monkeypatch.setattr("keryx.setup.slack.SlackApi", lambda: api)
+    return asked
+
+
+def test_auth_login_slack_alone_prints_the_link_and_the_next_command(home):
+    result = run("auth", "login", "slack")
+
+    assert result.exit_code == 0, result.output
+    assert "https://api.slack.com/apps?new_app=1&manifest_json=" in result.output
+    assert "keryx auth login slack --stdin --email ADDRESS" in result.output
+    assert home.stored() == {}
+
+
+def test_auth_login_slack_takes_the_token_on_stdin_and_turns_the_plugin_on(
+    home, tmp_path, monkeypatch
+):
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--stdin", "--email", "sam@example.com",
+                 input="xoxb-very-secret\n")
+
+    assert result.exit_code == 0, result.output
+    assert "connected to the Acme workspace" in result.output
+    assert "send_to_slack is on, from the next call" in result.output
+    assert "xoxb-very-secret" not in result.output
+    assert asked == ["auth", "sam@example.com", "U0OWNER"]
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-very-secret"}
+    assert stat.S_IMODE(home.secrets_path.stat().st_mode) == 0o600
+    assert 'channel_id = "U0OWNER"' in (
+        tmp_path / "keryx" / "tools" / "send_to_slack.toml"
+    ).read_text()
+    assert json.loads(run("auth", "status", "--json").output)["slack"]["state"] == "ok"
+
+
+def test_auth_login_slack_no_test_sends_nothing(home, monkeypatch):
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--stdin", "--email", "sam@example.com", "--no-test",
+                 input="xoxb-very-secret\n")
+
+    assert result.exit_code == 0, result.output
+    assert asked == ["auth", "sam@example.com"]
+
+
+def test_auth_login_slack_with_a_refused_token_says_slacks_code_and_saves_nothing(
+    home, monkeypatch
+):
+    fake_slack(monkeypatch, workspace=Workspace(error="invalid_auth"))
+
+    result = run("auth", "login", "slack", "--stdin", "--email", "sam@example.com",
+                 input="xoxb-very-secret\n")
+
+    assert result.exit_code == 1
+    assert "slack sign-in failed: Slack does not recognise that token (invalid_auth)" in (
+        result.output
+    )
+    assert "xoxb-very-secret" not in result.output
+    assert home.stored() == {}
+
+
+def test_only_slack_takes_a_token_on_stdin(home):
+    result = run("auth", "login", "gmail", "--stdin", input="xoxb-very-secret\n")
+
+    assert result.exit_code == 2 and "--stdin is for slack" in result.output
 
 
 # --- setup ----------------------------------------------------------------------------------------
@@ -459,6 +538,7 @@ def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch
     "args",
     [
         ("auth", "login", "google-workspace"),
+        ("auth", "login", "slack", "--stdin"),
         ("memory", "seed", "--file", "-", "--force"),
         ("setup",),
     ],

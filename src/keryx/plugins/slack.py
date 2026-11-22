@@ -4,6 +4,8 @@ The tool posts to the owner's DM, as their own bot, once they have asked for som
 writing — so it needs the PIN. Its settings are `send_to_slack.toml` (`channel_id`,
 `mcp_server`); the bot token is `SLACK_BOT_TOKEN` in `secrets.toml`, or the named MCP
 server's own `env` in `~/.claude.json` (`integrations.slack.slack_credentials`).
+`channel_id` is a channel's id or a member's: setup stores the owner's member id, found
+from their address, and Slack delivers that to their messages from the app.
 
 Four things besides the tool want Slack, and each asks `slack_route(settings)` rather than
 reading a setting: the PIN-lockout alert (`notify.pin_alert`, at alert time, so turning
@@ -108,8 +110,9 @@ def send_to_slack_tool(config_path: Path, *, sender: SlackSender | None = None):
         sender = _route(settings, values).sender()
     if sender is None:
         raise ToolUnavailable(
-            "no bot token and channel: `keryx config set SLACK_BOT_TOKEN --stdin`, and "
-            f"channel_id in {config_path.name} (or an mcp_server whose config has both)"
+            "no bot token and channel: `keryx auth login slack` sets both (by hand: "
+            "`keryx config set SLACK_BOT_TOKEN --stdin`, and "
+            f"channel_id in {config_path.name}, or an mcp_server whose config has both)"
         )
 
     async def send_to_slack(ctx, arguments: dict) -> dict:

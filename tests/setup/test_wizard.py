@@ -247,6 +247,8 @@ def test_the_agent_instructions_name_this_machines_paths(make_ctx):
     assert str(ctx.settings.data_dir / "projects") in text
     assert "--from-env" in text and "never set it yourself" in text
     assert "keryx auth login gmail --callback-url" in text
+    assert "keryx auth login slack --stdin --email ADDRESS" in text
+    assert "That token is not yours to see" in " ".join(text.split())
     assert "{" not in text
 
 

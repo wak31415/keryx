@@ -96,7 +96,7 @@ config_app = typer.Typer(
     help="Read and change Keryx's settings (KERYX_HOME/config.toml and secrets.toml)."
 )
 app.add_typer(config_app, name="config")
-auth_app = typer.Typer(help="Sign in to what Keryx needs: the coding agents and Google.")
+auth_app = typer.Typer(help="Sign in to what Keryx needs: the coding agents, Google and Slack.")
 app.add_typer(auth_app, name="auth")
 memory_app = typer.Typer(help="What Keryx remembers between calls.")
 app.add_typer(memory_app, name="memory")
@@ -1527,7 +1527,7 @@ def config_unlock(key: Annotated[str, typer.Argument(help="The setting.")]) -> N
 
 @auth_app.command("login")
 def auth_login(
-    name: Annotated[str, typer.Argument(help="claude, codex, gmail or google-workspace.")],
+    name: Annotated[str, typer.Argument(help="claude, codex, gmail, google-workspace or slack.")],
     headless: Annotated[
         bool | None,
         typer.Option(
@@ -1543,14 +1543,31 @@ def auth_login(
         str | None,
         typer.Option("--callback-url", help="gmail: the address you landed on, in quotes."),
     ] = None,
+    stdin: Annotated[
+        bool,
+        typer.Option("--stdin", help="slack: read the bot token from standard input."),
+    ] = False,
+    email: Annotated[
+        str | None,
+        typer.Option("--email", help="slack: the address you use there, to send to you."),
+    ] = None,
+    test: Annotated[
+        bool, typer.Option("--test/--no-test", help="slack: send one test message.")
+    ] = True,
 ) -> None:
-    """Sign in to one thing: a coding agent, Gmail (read-only), or Google for agents.
+    """Sign in to one thing: a coding agent, Gmail (read-only), Google for agents, or Slack.
 
     gmail is two steps: once for a link to open on any device, then again with
     --callback-url and the address the browser landed on.
+
+    slack is two steps too: once for the link that creates your Slack app, then
+    again with --stdin and its bot token, which is never taken as an argument.
     """
     if name not in auth_flow.LOGINS:
         typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
+        raise typer.Exit(2)
+    if stdin and name != "slack":
+        typer.echo("--stdin is for slack: `keryx auth login slack --stdin`", err=True)
         raise typer.Exit(2)
     _owner_only("sign in")
     settings = _configure_readonly()
@@ -1558,6 +1575,9 @@ def auth_login(
         headless=is_headless() if headless is None else headless,
         client_file=client_file,
         callback_url=callback_url,
+        token=_read_secret_input("SLACK_BOT_TOKEN") if stdin else None,
+        email=email,
+        test=test,
     )
     try:
         auth_flow.login(

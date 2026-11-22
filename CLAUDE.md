@@ -46,6 +46,10 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
   remove NAME [--yes]`; install and remove refuse the running service
+- Connect Slack: `uv run keryx auth login slack` prints the link that creates the owner's
+  Slack app; `uv run keryx auth login slack --stdin [--email ADDRESS] [--no-test]` takes its
+  bot token on standard input (never argv), checks it, finds where to send, turns
+  `send_to_slack` on and sends one test message
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]

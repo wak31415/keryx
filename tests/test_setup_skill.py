@@ -78,6 +78,12 @@ def test_the_skill_quotes_this_repositorys_caps(flat):
     assert f"{MAX_BRIEFS_CHARS:,}" in flat
 
 
+def test_the_skill_connects_slack_without_ever_holding_its_token(flat):
+    assert "keryx auth login slack --stdin --email ADDRESS" in flat
+    assert "Do not ask them to paste the token to you" in flat
+    assert "ask them whether it arrived" in flat
+
+
 def test_the_skill_leaves_the_pin_to_them_and_hands_over_to_setup(flat):
     assert "Never choose a PIN for them" in flat
     assert "Run `keryx setup`" in flat

@@ -19,12 +19,22 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    (`http://localhost:1/?…`); finish with
    `keryx auth login gmail --callback-url 'THAT ADDRESS'`. The person has to make the
    Google Cloud client first (the steps: `{google_guide}`).
+   For Slack, `keryx auth login slack` prints a link and three steps: relay them; the
+   person creates and installs the Slack app it describes and copies its bot token. That
+   token is not yours to see: they run `keryx auth login slack --stdin --email ADDRESS`
+   themselves, with the address they use in Slack, and it asks for the token hidden
+   (only with the token already in a variable of your environment do you run it:
+   `printenv VAR | keryx auth login slack --stdin --email ADDRESS`). It checks the
+   token, finds them by that address, turns `send_to_slack` on and sends them one test
+   message; ask whether it arrived. If it could not find them, it says what to run
+   instead.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the four optional voice
    tools — Slack, email, billing, cluster stats — each on or off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a
-   ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin` or
-   `keryx auth login gmail`.
+   ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin`,
+   `keryx auth login gmail`, or for Slack `keryx auth login slack`, which turns the
+   plugin on as well.
    Filing bug reports and feature requests about Keryx as GitHub issues is not yours to
    turn on: it is theirs, in `keryx setup` (Issue reports), and you never set
    `ISSUE_REPORTING` or `ISSUE_REPO`.

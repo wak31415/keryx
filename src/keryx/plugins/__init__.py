@@ -91,7 +91,8 @@ class Plugin:
 def _slack_problem(values: dict[str, Any]) -> str | None:
     if values["channel_id"] or values["mcp_server"]:
         return None
-    return "channel_id is empty (or name an mcp_server whose config has one)"
+    return ("channel_id is empty (`keryx auth login slack` finds it, or name an mcp_server "
+            "whose config has one)")
 
 
 def _cluster_problem(values: dict[str, Any]) -> str | None:
@@ -107,7 +108,7 @@ PLUGINS: dict[str, Plugin] = {
         important=("channel_id",),
         secrets=("SLACK_BOT_TOKEN",),
         keys=(
-            Key("channel_id", "word", "", "The DM channel id (in the conversation's details)"),
+            Key("channel_id", "word", "", "Where it posts: your member id, or a channel's id"),
             Key("mcp_server", "word", "",
                 "The user-scope MCP server in ~/.claude.json that gives subagents Slack"),
         ),
