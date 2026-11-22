@@ -100,6 +100,21 @@ def test_secret_shaped_paths_are_never_eligible(settings, path):
     assert classify(request("Write", {"file_path": path, "content": "x"}), settings) is None
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["google_token.json", "google_signin.json", "keryx/google/ada@example.com.json"],
+)
+def test_the_google_sign_in_is_never_eligible_wherever_it_is(settings, tmp_path, name):
+    """The one token, the half-finished sign-in beside it, and the copy the agents' MCP
+    server reads: an edit that would otherwise be offered is not, for any of them."""
+    project = tmp_path / "roots" / "myproject"
+    ordinary = request("Write", {"file_path": str(project / "notes.json"), "content": "x"})
+    assert classify(ordinary, settings) is not None
+
+    event = request("Write", {"file_path": str(project / name), "content": "x"})
+    assert classify(event, settings) is None
+
+
 def test_a_credential_in_the_content_is_never_eligible(settings, tmp_path):
     target = tmp_path / "roots" / "myproject" / "config.py"
     event = request("Write", {"file_path": str(target), "content": "KEY = 'ghp_abcdef'"})
