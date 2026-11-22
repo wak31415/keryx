@@ -17,12 +17,15 @@ line by an app Keryx publishes without a server holding its client secret. `app_
 is that app, written down once, and `new_app_url` the link that opens Slack's "create an
 app" page with it filled in. Three calls follow the token they paste: `auth_test` (is it
 one, and whose), `lookup_by_email` (the member to send to, so nobody hunts for a channel
-id) and `post_text` (one message, to see it arrive). Each answers with a `SlackResult`:
-Slack's own error code and a sentence to print, never an exception, and never anything
-else Slack said, so nothing printed can carry the token.
+id) and `post_text` (one message, to see it arrive). Each answers with a `SlackResult`,
+never an exception. A failure is an error code and a sentence to print, and of what
+Slack said about it only the code is kept, so no refusal can carry the token back. A
+success carries what was asked for: the workspace's name and address, or the member's id
+and name, each cut to one line.
 """
 
 import asyncio
+import http.client
 import json
 import logging
 import re
@@ -52,6 +55,8 @@ BOT_SCOPES = ("chat:write", "users:read", "users:read.email")
 #: In place of Slack's error code when Slack was never reached, or did not answer as Slack.
 UNREACHABLE = "unreachable"
 UNKNOWN_ERROR = "unknown_error"
+#: And when something on the way answered with an HTTP error: `http_429`, `http_503`.
+_HTTP = "http_"
 #: The shape of an error code. Anything else in `error` is not repeated.
 _ERROR_CODE = re.compile(r"[a-z0-9_]{1,64}")
 _MEMBER_ID = re.compile(r"[A-Z0-9]{2,32}")
@@ -207,12 +212,24 @@ class SlackResult:
         return not self.error
 
     @property
+    def refused(self) -> bool:
+        """Slack itself said no. False when it worked, and when Slack was never properly
+        asked: not reached, an HTTP error on the way, an answer that is not Slack's."""
+        return bool(self.error) and not (
+            self.error in (UNREACHABLE, UNKNOWN_ERROR) or self.error.startswith(_HTTP)
+        )
+
+    @property
     def problem(self) -> str:
         """Why not, in words to print, with Slack's code; empty when it worked."""
         if not self.error:
             return ""
         if self.error == UNREACHABLE:
             return "could not reach Slack"
+        if self.error == UNKNOWN_ERROR:
+            return "Slack's answer could not be read"
+        if self.error.startswith(_HTTP):
+            return f"Slack answered HTTP {self.error.removeprefix(_HTTP)}"
         known = _EXPLAINED.get(self.error)
         return f"{known} ({self.error})" if known else f"Slack said {self.error}"
 
@@ -238,8 +255,10 @@ def _ask(call, url: str, payload: dict, token: str) -> tuple[dict, str]:
     try:
         result = call(url, payload, token)
     except urllib.error.HTTPError as exc:
-        return {}, f"http_{exc.code}"
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return {}, f"{_HTTP}{exc.code}"
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+        # `OSError` is a timeout or a reset; `HTTPException` a reply cut short or garbled,
+        # which urllib lets through as it is.
         return {}, UNREACHABLE
     if not isinstance(result, dict):
         return {}, UNKNOWN_ERROR
@@ -249,12 +268,27 @@ def _ask(call, url: str, payload: dict, token: str) -> tuple[dict, str]:
     return {}, code if _ERROR_CODE.fullmatch(code) else UNKNOWN_ERROR
 
 
+def _line(value: object) -> str:
+    """A name Slack gave, as one line: it is printed on the owner's terminal."""
+    return " ".join(str(value or "").split())
+
+
+def is_dm(channel: str) -> bool:
+    """Whether `channel` is a direct message's id (`D…`).
+
+    A direct message is a conversation between one app and one member, so its id is no use
+    to another app's token. A member's id (`U…`, `W…`) and a channel's (`C…`, `G…`) are the
+    workspace's, and outlive a change of token.
+    """
+    return channel.startswith("D")
+
+
 def auth_test(token: str, *, post=_post) -> Workspace:
     """Whether Slack takes `token`, and the workspace it belongs to. Needs no scope."""
     result, error = _ask(post, AUTH_TEST_URL, {}, token)
     if error:
         return Workspace(error=error)
-    return Workspace(team=str(result.get("team") or ""), url=str(result.get("url") or ""))
+    return Workspace(team=_line(result.get("team")), url=_line(result.get("url")))
 
 
 def lookup_by_email(token: str, email: str, *, get=_get) -> Member:
@@ -266,7 +300,7 @@ def lookup_by_email(token: str, email: str, *, get=_get) -> Member:
     user_id = str(user.get("id") or "") if isinstance(user, dict) else ""
     if not _MEMBER_ID.fullmatch(user_id):
         return Member(error=UNKNOWN_ERROR)
-    return Member(user_id=user_id, name=str(user.get("real_name") or user.get("name") or ""))
+    return Member(user_id=user_id, name=_line(user.get("real_name") or user.get("name")))
 
 
 def post_text(token: str, channel: str, text: str, *, post=_post) -> SlackResult:

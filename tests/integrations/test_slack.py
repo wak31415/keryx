@@ -1,5 +1,6 @@
 """Tests for sending Slack messages. No network: the transport is injected."""
 
+import http.client
 import io
 import json
 import urllib.error
@@ -8,9 +9,11 @@ import urllib.parse
 import pytest
 
 from keryx.integrations.slack import (
+    SlackResult,
     SlackWebApi,
     app_manifest,
     auth_test,
+    is_dm,
     lookup_by_email,
     markdown_pieces,
     new_app_url,
@@ -248,6 +251,13 @@ def test_auth_test_names_the_workspace_the_token_belongs_to():
     assert calls == [("https://slack.com/api/auth.test", {}, "xoxb-test")]
 
 
+def test_a_name_slack_gives_is_kept_to_one_line():
+    reply = {"ok": True, "team": "Acme\n  Corp", "user": {"id": "U0OWNER", "real_name": "Sam\tDoe"}}
+
+    assert auth_test("xoxb-test", post=lambda *a: reply).team == "Acme Corp"
+    assert lookup_by_email("xoxb-test", "sam@x.io", get=lambda *a: reply).name == "Sam Doe"
+
+
 def test_a_refused_token_is_slacks_own_code_and_a_sentence_without_the_token():
     workspace = auth_test("xoxb-secret", post=lambda *a: {"ok": False, "error": "invalid_auth"})
 
@@ -263,7 +273,7 @@ def test_an_error_that_is_not_a_code_is_never_repeated():
     workspace = auth_test("xoxb-secret", post=lambda *a: reply)
 
     assert workspace.error == "unknown_error"
-    assert workspace.problem == "Slack said unknown_error"
+    assert workspace.problem == "Slack's answer could not be read"
 
 
 @pytest.mark.parametrize(
@@ -272,10 +282,13 @@ def test_an_error_that_is_not_a_code_is_never_repeated():
         (urllib.error.URLError("no route to xoxb-secret"), "unreachable", "could not reach Slack"),
         (TimeoutError(), "unreachable", "could not reach Slack"),
         (ValueError("not JSON"), "unreachable", "could not reach Slack"),
+        (http.client.IncompleteRead(b"half of xoxb-secret"), "unreachable",
+         "could not reach Slack"),
+        (http.client.BadStatusLine("xoxb-secret"), "unreachable", "could not reach Slack"),
         (
             urllib.error.HTTPError("https://slack.com", 429, "Too Many", None, None),
             "http_429",
-            "Slack said http_429",
+            "Slack answered HTTP 429",
         ),
     ],
 )
@@ -287,6 +300,24 @@ def test_a_call_that_never_arrives_is_a_failure_not_a_crash(failure, code, sente
 
     assert workspace.error == code
     assert workspace.problem == sentence
+    assert not workspace.refused  # Slack was never properly asked, so it refused nothing
+
+
+@pytest.mark.parametrize(
+    ("error", "refused"),
+    [("", False), ("invalid_auth", True), ("users_not_found", True), ("unreachable", False),
+     ("http_503", False), ("unknown_error", False)],
+)
+def test_only_a_code_of_slacks_own_is_a_refusal(error, refused):
+    assert SlackResult(error=error).refused is refused
+
+
+@pytest.mark.parametrize(
+    ("channel", "dm"), [("D0123", True), ("U0OWNER", False), ("W0OWNER", False),
+                        ("C0123", False), ("", False)],
+)
+def test_only_a_direct_message_id_belongs_to_one_app(channel, dm):
+    assert is_dm(channel) is dm
 
 
 def test_an_answer_that_is_not_an_object_is_a_failure():
