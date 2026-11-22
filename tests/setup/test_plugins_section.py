@@ -232,6 +232,20 @@ def test_an_mcp_server_that_carries_the_route_needs_no_token(make_ctx, world):
     assert on(ctx, "send_to_slack")
 
 
+def test_a_token_beside_an_mcp_server_is_checked_and_the_servers_channel_left_alone(
+    make_ctx, world
+):
+    ctx = make_ctx([])
+    plugins.write_config(ctx.settings, "send_to_slack", {"mcp_server": "chat"})
+    ctx.ui.answers = [SLACK, ("blank uses chat's", "xoxb-1"), ("Channel or member id", "")]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()  # no address asked for: the server's config names the channel
+    assert slack_calls(world) == [("slack_auth",)]
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1"}
+
+
 def test_a_slack_file_that_cannot_be_written_sends_no_test(make_ctx, world, monkeypatch):
     def refuse(settings, name, values):
         raise plugins.PluginConfigError("send_to_slack: channel_id must be a bare word")

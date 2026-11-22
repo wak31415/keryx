@@ -117,11 +117,13 @@ def connect(
         values = plugins.read_config(settings, PLUGIN)
     except plugins.PluginConfigError as error:
         raise SlackSetupError(str(error)) from None
-    channel = values["channel_id"]
+    channel, server = values["channel_id"], values["mcp_server"]
     # An address that was asked for replaces the destination; otherwise one is only
-    # looked for when there is none.
-    address = (email or "").strip() or ("" if channel else settings.user_google_email or "")
-    if not (address or channel or values["mcp_server"]):
+    # looked for when there is none, here or in a named MCP server's config.
+    address = (email or "").strip()
+    if not (address or channel or server):
+        address = settings.user_google_email or ""
+    if not (address or channel or server):
         raise SlackSetupError(
             "nowhere to send yet, so nothing was saved: add --email ADDRESS, the one you "
             "use in Slack"

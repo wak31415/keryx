@@ -131,7 +131,7 @@ def run_slack(ctx: SetupContext) -> None:
         ui.markdown(slack.guide())
     token = _slack_token(ctx, before, server)
     channel = values["channel_id"]
-    if token and not channel:
+    if token and not channel and not server:  # a named server carries a channel of its own
         channel = _slack_member(ctx, token)
         if not channel:
             ui.note(slack.MEMBER_ID_HINT)

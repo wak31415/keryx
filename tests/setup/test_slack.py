@@ -190,6 +190,7 @@ def test_an_mcp_server_that_carries_the_channel_needs_no_address(settings, tmp_p
     )
     plugins.write_config(settings, "send_to_slack", {"mcp_server": "chat"})
     fake = FakeSlack()
+    settings = settings.model_copy(update={"user_google_email": "sam@example.com"})
 
     lines = connect(settings, fake, email=None)
 
