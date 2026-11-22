@@ -363,6 +363,7 @@ def test_no_access_token_and_no_id_token_asks_nobody(client):
     ("change", "says"),
     [
         ({"state": "someone-else"}, "different sign-in"),
+        ({"state": "st%C3%A9"}, "different sign-in"),
         ({"state": None}, "different sign-in"),
         ({"code": None}, "no code"),
         ({"error": "access_denied"}, "Google said: access_denied"),
@@ -490,6 +491,7 @@ def test_a_refusal_is_taken_too_and_the_page_says_so():
     ("target", "status"),
     [
         ("/?state=other&code=x", 400),
+        ("/?state=st%C3%A9&code=x", 400),  # not even ASCII: refused, not an error
         ("/?code=x", 400),
         ("/favicon.ico", 404),
         ("/oauth2callback?state=st&code=x", 404),
@@ -551,16 +553,23 @@ def test_a_port_that_cannot_be_bound_says_to_paste_instead(monkeypatch):
         assert address == ("127.0.0.1", 0)  # this machine only, a port the OS picks
         raise OSError(98, "Address already in use")
 
-    monkeypatch.setattr(google, "HTTPServer", refuse)
+    monkeypatch.setattr(google, "_Server", refuse)
 
     with pytest.raises(GoogleSetupError, match="could not listen on 127.0.0.1.*--headless"):
         google.listen()
 
 
 def test_the_listener_is_bound_to_loopback_only(monkeypatch):
-    monkeypatch.setattr(google, "HTTPServer", lambda address, handler: Server())
+    monkeypatch.setattr(google, "_Server", lambda address, handler: Server())
 
     assert isinstance(google.listen(), Listener)
+
+
+def test_a_request_that_breaks_puts_nothing_on_the_terminal(capsys):
+    google._Server.handle_error(Server(), None, ("127.0.0.1", 5))
+
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
 
 
 @pytest.mark.parametrize(

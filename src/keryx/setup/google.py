@@ -241,6 +241,22 @@ def finish_signin(
 # --- the listener, for a browser on this machine ------------------------------------------
 
 
+def _same_state(given: str, expected: str | None) -> bool:
+    """Whether a redirect carries this sign-in's `state`, compared in constant time."""
+    return bool(expected) and secrets.compare_digest(given.encode(), str(expected).encode())
+
+
+class _Server(HTTPServer):
+    """The listener's socket: the `state` it is waiting for, and the answer once it has it."""
+
+    state: str | None = None
+    answer: dict[str, str] | None = None
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Nothing: a request that broke is waited past like any other stray, and the
+        default would put a traceback on the terminal in the middle of a sign-in."""
+
+
 class _Callback(BaseHTTPRequestHandler):
     """The one request Google's redirect makes: `GET /?code=…&state=…`."""
 
@@ -249,10 +265,9 @@ class _Callback(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         url = urlparse(self.path)
         answer = {key: values[0] for key, values in parse_qs(url.query).items()}
-        expected = getattr(self.server, "state", None)
         if url.path not in ("", "/"):
             self._say(404, "Not found.\n")
-        elif not expected or not secrets.compare_digest(answer.get("state", ""), expected):
+        elif not _same_state(answer.get("state", ""), getattr(self.server, "state", None)):
             self._say(400, "This is not the sign-in Keryx is waiting for.\n")
         else:
             self.server.answer = answer  # type: ignore[attr-defined]
@@ -309,7 +324,7 @@ class Listener:
 def listen() -> Listener:
     """Bind the listener: this machine only, on a port the OS picks."""
     try:
-        return Listener(HTTPServer((LOOPBACK, 0), _Callback))
+        return Listener(_Server((LOOPBACK, 0), _Callback))
     except OSError as exc:
         raise GoogleSetupError(
             f"could not listen on {LOOPBACK} ({exc.strerror or exc}); run {SIGN_IN} "
@@ -418,7 +433,7 @@ def _complete(
     post, get = post or httpx.post, get or httpx.get
     if answer.get("error"):
         raise GoogleSetupError(f"Google said: {answer['error']}")
-    if not secrets.compare_digest(answer.get("state", ""), pending.state):
+    if not _same_state(answer.get("state", ""), pending.state):
         raise GoogleSetupError(
             f"that address belongs to a different sign-in; start again with {SIGN_IN}"
         )
