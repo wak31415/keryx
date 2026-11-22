@@ -8,6 +8,10 @@ file holds now — so walking this section again is also how a plugin's settings
 Every step ends by naming the file the rest of its settings are in. A plugin that is on and
 left unticked is turned off, after a confirm.
 
+Slack's step makes the app from a link (`setup/slack.py`), checks the pasted token with
+Slack, and finds where to send by the owner's address rather than asking for a channel id;
+its three calls are `Probes` fields too.
+
 `cluster_stats` is the one with a step of its own: it reads `~/.ssh/config`, shows the hosts
 with a ControlMaster (a host without one is never offered: Keryx rides a login the owner
 already has open), asks each chosen host's partition — from the list Slurm gives, over a
@@ -23,7 +27,8 @@ from typing import Any
 from keryx import plugins
 from keryx.agents import registry
 from keryx.integrations.gmail import token_path
-from keryx.setup import google
+from keryx.integrations.slack import UNREACHABLE
+from keryx.setup import google, slack
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
 
@@ -111,35 +116,91 @@ def _word(value: str) -> str | None:
 
 
 def run_slack(ctx: SetupContext) -> None:
+    """The token, checked with Slack; where to send, found by address; one test message.
+
+    With a token and a destination already there it asks the two things it always has
+    and nothing else: only a new token is checked, only a missing destination is looked
+    up, and the test message is offered only when one of them changed.
+    """
     ui = ctx.ui
     values = current_values(ctx, "send_to_slack")
-    token = ctx.current("SLACK_BOT_TOKEN")
+    before = ctx.current("SLACK_BOT_TOKEN")
     server = values["mcp_server"]
-    if not token:
-        ui.markdown(
-            "1. Create an app at <https://api.slack.com/apps> (from scratch, in your workspace).\n"
-            "2. Under **OAuth & Permissions**, add the bot scope `chat:write`, then **Install**.\n"
-            "3. Copy the **Bot User OAuth Token** (`xoxb-…`).\n"
-            "4. Open a DM with the app in Slack; its channel id is in the conversation's details."
-        )
-
-    def token_problem(value: str) -> str | None:
-        if not value.strip():
-            return None if server else "Required."
-        return None if value.strip().startswith("xox") else "It starts xox."
-
-    label = "Bot token (xoxb-…)" + (f" — blank uses {server}'s" if server and not token else "")
-    answer = ui.secret(label, validate=token_problem, current=token)
-    if answer and answer != token:
-        ctx.save({"SLACK_BOT_TOKEN": answer})
+    if not before:
+        ui.markdown(slack.guide())
+    token = _slack_token(ctx, before, server)
+    channel = values["channel_id"]
+    if token and not channel:
+        channel = _slack_member(ctx, token)
+        if not channel:
+            ui.note(slack.MEMBER_ID_HINT)
 
     def channel_problem(value: str) -> str | None:
         if not value.strip():
             return None if server else "Required."
         return _word(value.strip())
 
-    channel = ui.text("DM channel id", default=values["channel_id"], validate=channel_problem)
-    _finish(ctx, "send_to_slack", {"channel_id": channel})
+    if not channel or values["channel_id"]:
+        channel = ui.text("Channel or member id", default=channel,
+                          validate=channel_problem).strip()
+    changed = token != before or channel != values["channel_id"]
+    if not _finish(ctx, "send_to_slack", {"channel_id": channel}):
+        return
+    if token and channel and changed and ui.confirm("Send a test message to Slack now?"):
+        with ui.spinner("Sending…"):
+            sent = ctx.probes.slack_post(token, channel, slack.TEST_MESSAGE)
+        if sent.ok:
+            ui.success("sent: it is in Slack, under Apps")
+        else:
+            ui.warn(f"The test message did not go through: {sent.problem}. "
+                    "What you entered is saved.")
+
+
+def _slack_token(ctx: SetupContext, before: str, server: str) -> str:
+    """The bot token to use: the one kept, a new one Slack took, or none (the server's)."""
+    ui = ctx.ui
+
+    def problem(value: str) -> str | None:
+        if not value.strip():
+            return None if server else "Required."
+        return slack.token_problem(value)
+
+    label = "Bot token (xoxb-…)" + (f" — blank uses {server}'s" if server and not before else "")
+    while True:
+        answer = ui.secret(label, validate=problem, current=before).strip()
+        if not answer or answer == before:
+            return answer
+        with ui.spinner("Checking the token with Slack…"):
+            workspace = ctx.probes.slack_auth_test(answer)
+        if workspace.ok:
+            ui.success(f"connected to the {workspace.team or 'Slack'} workspace")
+        else:
+            ui.error(f"Slack did not take that token: {workspace.problem}")
+            offline = workspace.error == UNREACHABLE
+            if not (offline and ui.confirm("Save it without checking?", default=False)):
+                continue
+        ctx.save({"SLACK_BOT_TOKEN": answer})
+        return answer
+
+
+def _slack_member(ctx: SetupContext, token: str) -> str:
+    """The member id behind the address they use in Slack; "" to be typed by hand."""
+    ui = ctx.ui
+
+    def problem(value: str) -> str | None:
+        return None if not value.strip() or "@" in value else "An email address, or blank."
+
+    email = ui.text("The address you use in Slack (blank to type an id instead)",
+                    default=ctx.current("USER_GOOGLE_EMAIL"), validate=problem).strip()
+    if not email:
+        return ""
+    with ui.spinner("Finding you in Slack…"):
+        member = ctx.probes.slack_member(token, email)
+    if member.ok:
+        ui.success(f"found {member.name or email}: messages go to you, from the Keryx app")
+        return member.user_id
+    ui.warn(f"Slack could not find you by that address: {member.problem}")
+    return ""
 
 
 def run_email(ctx: SetupContext) -> None:

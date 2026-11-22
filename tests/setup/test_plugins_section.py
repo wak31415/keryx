@@ -12,9 +12,11 @@ from keryx import plugins
 from keryx.agents import registry
 from keryx.config.store import ConfigStore
 from keryx.integrations.gmail import token_path
+from keryx.integrations.slack import Member, SlackResult, Workspace, new_app_url
 from keryx.plugins.ssh_hosts import SshHost
 from keryx.setup import plugins as section
 from keryx.setup import wizard
+from keryx.setup.slack import MEMBER_ID_HINT, TEST_MESSAGE
 from keryx.setup.ui import Back
 
 from .fakes import DEFAULT
@@ -71,30 +73,187 @@ def test_email_needs_the_claude_extra(make_ctx, monkeypatch):
 # --- slack -------------------------------------------------------------------------------
 
 
-def test_slack_saves_its_token_as_a_secret_and_its_channel_in_its_file(make_ctx):
-    ctx = make_ctx([("Which plugins", ["send_to_slack"]), ("Bot token", "xoxb-1"),
-                    ("DM channel id", "D123")])
+SLACK = ("Which plugins", ["send_to_slack"])
+
+
+def slack_calls(world) -> list[tuple]:
+    return [call for call in world.calls if call[0].startswith("slack")]
+
+
+def test_slack_is_a_link_a_pasted_token_and_an_address(make_ctx, world):
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-1"), ("address you use in Slack", "sam@x.io"),
+                    ("Send a test message", DEFAULT)])
 
     section.run_section(ctx)
 
+    assert ctx.ui.done()  # no channel id was asked for
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1"}
-    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
     assert on(ctx, "send_to_slack")
+    (guide,) = ctx.ui.lines("markdown")
+    assert new_app_url() in guide and "Install to Workspace" in guide
+    assert "connected to the Acme workspace" in ctx.ui.lines("success")
+    assert "found Sam Doe: messages go to you, from the Keryx app" in ctx.ui.lines("success")
     assert "send_to_slack is on, from the next call" in ctx.ui.lines("success")
+    assert "sent: it is in Slack, under Apps" in ctx.ui.lines("success")
     assert any("The rest of its settings are in" in line for line in ctx.ui.lines("note"))
-    assert ctx.ui.lines("markdown")  # how to make the app, since there was no token
+    assert slack_calls(world) == [
+        ("slack_auth",), ("slack_member", "sam@x.io"), ("slack_post", "U0OWNER", TEST_MESSAGE)
+    ]
 
 
-def test_an_mcp_server_that_carries_the_route_needs_no_token(make_ctx):
+def test_the_address_offered_is_the_google_one(make_ctx, world):
+    ConfigStore().set({"USER_GOOGLE_EMAIL": "sam@example.com"})
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-1"), ("address you use in Slack", DEFAULT),
+                    ("Send a test message", False)])
+
+    section.run_section(ctx)
+
+    assert ("slack_member", "sam@example.com") in world.calls
+    assert not any(call[0] == "slack_post" for call in world.calls)
+
+
+def test_a_token_slack_refuses_is_asked_for_again_and_never_shown(make_ctx, world):
+    world.slack_workspaces = [Workspace(error="invalid_auth"), Workspace(team="Acme")]
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-wrong"), ("Bot token", "xoxb-right"),
+                    ("address you use in Slack", "sam@x.io"), ("Send a test message", False)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.lines("error") == [
+        "Slack did not take that token: Slack does not recognise that token (invalid_auth)"
+    ]
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-right"}
+    assert not any("xoxb-wrong" in text or "xoxb-right" in text for _, text in ctx.ui.said)
+
+
+def test_a_token_that_could_not_be_checked_may_be_saved_anyway(make_ctx, world):
+    world.slack_workspaces = [Workspace(error="unreachable")]
+    world.slack_member = Member(error="unreachable")
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-1"), ("Save it without checking", False),
+                    ("Bot token", "xoxb-2"), ("Save it without checking", True),
+                    ("address you use in Slack", "sam@x.io"), ("Channel or member id", "D123"),
+                    ("Send a test message", False)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-2"}
+    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+
+
+@pytest.mark.parametrize("code", ["users_not_found", "missing_scope"])
+def test_an_address_slack_cannot_find_falls_back_to_an_id_typed_by_hand(make_ctx, world, code):
+    """`missing_scope` is an app made the old way, with `chat:write` and nothing else."""
+    world.slack_member = Member(error=code)
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-1"), ("address you use in Slack", "sam@x.io"),
+                    ("Channel or member id", "D123"), ("Send a test message", DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert any(code in line for line in ctx.ui.lines("warn"))
+    assert MEMBER_ID_HINT in ctx.ui.lines("note")
+    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+    assert ("slack_post", "D123", TEST_MESSAGE) in world.calls
+
+
+def test_no_address_goes_straight_to_the_id(make_ctx, world):
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-1"), ("address you use in Slack", ""),
+                    ("Channel or member id", "D123"), ("Send a test message", False)])
+
+    section.run_section(ctx)
+
+    assert slack_calls(world) == [("slack_auth",)]
+    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+
+
+def test_a_test_message_slack_refuses_is_said_and_undoes_nothing(make_ctx, world):
+    world.slack_sent = SlackResult(error="channel_not_found")
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-1"), ("address you use in Slack", "sam@x.io"),
+                    ("Send a test message", True)])
+
+    section.run_section(ctx)
+
+    (warning,) = ctx.ui.lines("warn")
+    assert "(channel_not_found)" in warning and "saved" in warning
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1"}
+    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
+    assert on(ctx, "send_to_slack")
+
+
+def test_slack_already_set_up_is_asked_nothing_new_and_slack_is_not_called(make_ctx, world):
+    ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-old"})
+    ctx = make_ctx([])
+    plugins.write_config(ctx.settings, "send_to_slack", {"channel_id": "D123"})
+    plugins.install(ctx.settings, "send_to_slack")
+    ctx.ui.answers = [SLACK, ("Bot token", DEFAULT), ("Channel or member id", DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert slack_calls(world) == [] and not ctx.ui.lines("markdown")
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
+    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+
+
+def test_a_token_with_nowhere_to_send_yet_is_kept_and_the_member_found(make_ctx, world):
+    """A token saved with `keryx config set` and nothing else: only the address is asked."""
+    ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-old"})
+    ctx = make_ctx([SLACK, ("Bot token", DEFAULT), ("address you use in Slack", "sam@x.io"),
+                    ("Send a test message", False)])
+
+    section.run_section(ctx)
+
+    assert slack_calls(world) == [("slack_member", "sam@x.io")]
+    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
+
+
+def test_a_new_channel_for_a_kept_token_offers_the_test(make_ctx, world):
+    ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-old"})
+    ctx = make_ctx([])
+    plugins.write_config(ctx.settings, "send_to_slack", {"channel_id": "D123"})
+    ctx.ui.answers = [SLACK, ("Bot token", DEFAULT), ("Channel or member id", " C456 "),
+                      ("Send a test message", DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert slack_calls(world) == [("slack_post", "C456", TEST_MESSAGE)]
+
+
+def test_an_mcp_server_that_carries_the_route_needs_no_token(make_ctx, world):
     ctx = make_ctx([])
     plugins.write_config(ctx.settings, "send_to_slack", {"mcp_server": "chat"})
-    ctx.ui.answers = [("Which plugins", ["send_to_slack"]), ("blank uses chat's", ""),
-                      ("DM channel id", "")]
+    ctx.ui.answers = [SLACK, ("blank uses chat's", ""), ("Channel or member id", "")]
 
     section.run_section(ctx)
 
-    assert ConfigStore()._secrets() == {}
+    assert ctx.ui.done()
+    assert ConfigStore()._secrets() == {} and slack_calls(world) == []
     assert on(ctx, "send_to_slack")
+
+
+def test_a_slack_file_that_cannot_be_written_sends_no_test(make_ctx, world, monkeypatch):
+    def refuse(settings, name, values):
+        raise plugins.PluginConfigError("send_to_slack: channel_id must be a bare word")
+
+    monkeypatch.setattr(plugins, "write_config", refuse)
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-1"), ("address you use in Slack", "sam@x.io")])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and ctx.ui.lines("error")
+    assert not any(call[0] == "slack_post" for call in world.calls)
+
+
+def test_going_back_in_the_slack_step_does_not_ask_slack_about_the_token_twice(make_ctx, world):
+    ctx = make_ctx([SLACK, ("Bot token", "xoxb-1"), ("address you use in Slack", Back()),
+                    ("Bot token", DEFAULT), ("address you use in Slack", "sam@x.io"),
+                    ("Send a test message", False)])
+
+    wizard.run_walk(ctx, [wizard.Section("plugins", "Plugins", section.run_section)], {})
+
+    assert slack_calls(world) == [("slack_auth",), ("slack_member", "sam@x.io")]
+    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
 
 
 # --- email -------------------------------------------------------------------------------

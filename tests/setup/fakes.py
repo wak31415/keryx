@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from keryx.agents.base import RunResult
+from keryx.integrations.slack import Member, SlackResult, Workspace
 from keryx.issues import GhStatus
 from keryx.notify.twilio_out import TwilioError, TwilioNumber
 from keryx.setup.context import Probes
@@ -174,9 +175,29 @@ class FakeWorld:
     #: What `gh auth status` says, in order: the last one repeats.
     gh: list = field(default_factory=lambda: [GhStatus(installed=True, signed_in=True,
                                                      account="octocat")])
+    #: What Slack says of each token it is shown, in order (the last one repeats), who it
+    #: finds by an address, and whether it takes a message. A token is never in `calls`.
+    slack_workspaces: list = field(default_factory=lambda: [Workspace(team="Acme")])
+    slack_member: Member = field(
+        default_factory=lambda: Member(user_id="U0OWNER", name="Sam Doe")
+    )
+    slack_sent: SlackResult = field(default_factory=SlackResult)
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
+        def slack_auth_test(token):
+            self.calls.append(("slack_auth",))
+            many = len(self.slack_workspaces) > 1
+            return self.slack_workspaces.pop(0) if many else self.slack_workspaces[0]
+
+        def slack_member(token, email):
+            self.calls.append(("slack_member", email))
+            return self.slack_member
+
+        def slack_post(token, channel, text):
+            self.calls.append(("slack_post", channel, text))
+            return self.slack_sent
+
         async def smoke(settings, agent):
             self.calls.append(("smoke", agent))
             return self.smoke_result
@@ -232,4 +253,7 @@ class FakeWorld:
             cluster_partitions=lambda alias: self.calls.append(("partitions", alias))
             or list(self.partitions.get(alias, [])),
             gh_status=gh_status,
+            slack_auth_test=slack_auth_test,
+            slack_member=slack_member,
+            slack_post=slack_post,
         )

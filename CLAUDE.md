@@ -128,6 +128,15 @@ remember:
   `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
   built. Their builders take explicit values, never a plugin's file.
+  `slack` is also where connecting Slack lives. Each owner has a Slack app of their own,
+  because an app Keryx published could not hand a command line a bot token without a
+  server holding its client secret: `app_manifest` is that app and the only place its
+  scopes are written, `new_app_url` is Slack's link that opens it ready to create, and
+  `auth_test`, `lookup_by_email` and `post_text` are what setup does with the pasted
+  token (`setup/slack.py`, and the wizard's Slack step through three `Probes` fields). A
+  member id is a valid `channel_id` (`chat.postMessage` delivers it to that member's
+  messages from the app), so setup finds the owner by their address and never asks for a
+  channel id. A Slack refusal is repeated as its error code and nothing else it said.
 - **config** — `config/` is the settings and where they live: `settings` (every field with
   a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),

@@ -4,8 +4,8 @@
 `Prompter`, saves through the store as the owner, and reads a fresh `Settings` after every
 save, so a later section sees what an earlier one wrote. Everything that reaches the
 network, a login or a subagent is a field of `Probes`, which the tests replace wholesale:
-nothing in the wizard can call OpenAI, Twilio, Google, ssh or a coding agent unless a probe
-does.
+nothing in the wizard can call OpenAI, Twilio, Google, Slack, ssh or a coding agent unless a
+probe does.
 """
 
 import subprocess
@@ -19,6 +19,7 @@ from keryx.agents.base import RunResult
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
+from keryx.integrations import slack
 from keryx.issues import GhStatus, gh_status
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.setup.ui import Prompter
@@ -126,6 +127,11 @@ class Probes:
     cluster_partitions: Callable[[str], list[str]] = _partitions
     #: `gh auth status`, for the issue reports section (`keryx.issues.gh_status`).
     gh_status: Callable[[], GhStatus] = gh_status
+    #: The Slack step's three calls (`integrations.slack`): is this a token and whose, the
+    #: member an address belongs to, and one message to a member or channel.
+    slack_auth_test: Callable[[str], slack.Workspace] = slack.auth_test
+    slack_member: Callable[[str, str], slack.Member] = slack.lookup_by_email
+    slack_post: Callable[[str, str, str], slack.SlackResult] = slack.post_text
 
 
 @dataclass
