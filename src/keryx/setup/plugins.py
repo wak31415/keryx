@@ -9,8 +9,10 @@ Every step ends by naming the file the rest of its settings are in. A plugin tha
 left unticked is turned off, after a confirm.
 
 Slack's step makes the app from a link (`setup/slack.py`), checks the pasted token with
-Slack, and finds where to send by the owner's address rather than asking for a channel id;
-its three calls are `Probes` fields too.
+Slack, and asks where to send in one question that takes the owner's address (looked up)
+as readily as a channel or member id; its three calls are `Probes` fields too. It asks the
+same questions whatever it has already saved, because it saves as it goes and going back
+replays it.
 
 `cluster_stats` is the one with a step of its own: it reads `~/.ssh/config`, shows the hosts
 with a ControlMaster (a host without one is never offered: Keryx rides a login the owner
@@ -27,7 +29,7 @@ from typing import Any
 from keryx import plugins
 from keryx.agents import registry
 from keryx.integrations.gmail import token_path
-from keryx.integrations.slack import UNREACHABLE, new_app_url
+from keryx.integrations.slack import new_app_url
 from keryx.setup import google, slack
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
@@ -115,46 +117,59 @@ def _word(value: str) -> str | None:
     return "A bare word: letters, digits, . _ -"
 
 
+#: The Slack step's one question about a destination. Its wording never changes, whatever
+#: is saved, so a replay of the step finds the question it recorded.
+SLACK_WHERE = "Where to send: the address you use in Slack, or a channel or member id"
+
+
 def run_slack(ctx: SetupContext) -> None:
     """The token, checked with Slack; where to send, found by address; one test message.
 
-    With a token and a destination already there it asks the two things it always has
-    and nothing else: only a new token is checked, only a missing destination is looked
-    up, and the test message is offered only when one of them changed.
+    Three questions, always these and in this order, whatever is already saved. The step
+    saves as it goes, and going back runs it again from a record of its answers
+    (`rewind`), which has to find the questions it recorded: so what is saved changes only
+    what each question *offers* — a token to keep, the destination on file, the test as a
+    yes or a no — and never which are asked. The one exception is the house rule: the test
+    is not offered on a plain walk that changed nothing, so an owner already set up
+    answers the two questions they always did, and a review asks it, as a review asks
+    about everything that is set.
+
+    A token that is not the one on file brings its destination with it (`slack.keeps`). A
+    direct message's id belongs to the app that opened it, so it is not offered beside
+    another token; and beside a named MCP server, a new token may not be left to post to
+    the server's channel.
     """
     ui = ctx.ui
-    values = current_values(ctx, "send_to_slack")
-    before = ctx.current("SLACK_BOT_TOKEN")
-    server = values["mcp_server"]
+    values = current_values(ctx, slack.PLUGIN)
+    before = ctx.current(slack.TOKEN_KEY)
+    server, on_file = values["mcp_server"], values["channel_id"]
     if not before:
         ui.link(new_app_url())
         ui.markdown(slack.guide())
+        if server:
+            ui.note(f"Leave the token blank to go on using the {server} MCP server's token "
+                    "and channel.")
     token = _slack_token(ctx, before, server)
-    channel = values["channel_id"]
-    if token and not channel and not server:  # a named server carries a channel of its own
-        channel = _slack_member(ctx, token)
-        if not channel:
-            ui.note(slack.MEMBER_ID_HINT)
-
-    def channel_problem(value: str) -> str | None:
-        if not value.strip():
-            return None if server else "Required."
-        return _word(value.strip())
-
-    if not channel or values["channel_id"]:
-        channel = ui.text("Channel or member id", default=channel,
-                          validate=channel_problem).strip()
-    changed = token != before or channel != values["channel_id"]
-    if not _finish(ctx, "send_to_slack", {"channel_id": channel}):
+    channel = _slack_where(ctx, token, new=token != before, on_file=on_file, server=server)
+    changed = token != before or channel != on_file
+    if not _finish(ctx, slack.PLUGIN, {"channel_id": channel}):
         return
-    if token and channel and changed and ui.confirm("Send a test message to Slack now?"):
-        with ui.spinner("Sending…"):
-            sent = ctx.probes.slack_post(token, channel, slack.TEST_MESSAGE)
-        if sent.ok:
-            ui.success("sent: it is in Slack, under Apps")
-        else:
-            ui.warn(f"The test message did not go through: {sent.problem}. "
-                    "What you entered is saved.")
+    if not (token and channel):
+        return  # the named server carries the token, the channel or both
+    if server and changed:
+        ui.note(f"{slack.PLUGIN} now posts with this token to {channel}, not with the "
+                f"{server} MCP server's token and channel; subagents still use that server.")
+    if not (changed or ctx.review):
+        return
+    if not ui.confirm("Send a test message to Slack now?", default=changed):
+        return
+    with ui.spinner("Sending…"):
+        sent = ctx.probes.slack_post(token, channel, slack.TEST_MESSAGE)
+    if sent.ok:
+        ui.success("sent: it is in Slack, under Apps")
+    else:
+        ui.warn(f"The test message did not go through: {sent.problem}. "
+                "What you entered is saved.")
 
 
 def _slack_token(ctx: SetupContext, before: str, server: str) -> str:
@@ -166,42 +181,67 @@ def _slack_token(ctx: SetupContext, before: str, server: str) -> str:
             return None if server else "Required."
         return slack.token_problem(value)
 
-    label = "Bot token (xoxb-…)" + (f" — blank uses {server}'s" if server and not before else "")
     while True:
-        answer = ui.secret(label, validate=problem, current=before).strip()
+        answer = ui.secret("Bot token (xoxb-…)", validate=problem, current=before).strip()
         if not answer or answer == before:
             return answer
         with ui.spinner("Checking the token with Slack…"):
             workspace = ctx.probes.slack_auth_test(answer)
         if workspace.ok:
             ui.success(f"connected to the {workspace.team or 'Slack'} workspace")
-        else:
+        elif workspace.refused:
             ui.error(f"Slack did not take that token: {workspace.problem}")
-            offline = workspace.error == UNREACHABLE
-            if not (offline and ui.confirm("Save it without checking?", default=False)):
+            continue
+        else:
+            # Slack never said no: an outage, a rate limit or a proxy must not trap them.
+            ui.error(f"That token could not be checked: {workspace.problem}")
+            if not ui.confirm("Save it without checking?", default=False):
                 continue
-        ctx.save({"SLACK_BOT_TOKEN": answer})
+        ctx.save({slack.TOKEN_KEY: answer})
+        if before:
+            ui.note(slack.RESTART_NOTE)
         return answer
 
 
-def _slack_member(ctx: SetupContext, token: str) -> str:
-    """The member id behind the address they use in Slack; "" to be typed by hand."""
+def _slack_where(ctx: SetupContext, token: str, *, new: bool, on_file: str, server: str) -> str:
+    """Where to send, as an id: one typed or kept, or the member behind an address.
+
+    One question, asked again while an address is not found. `token` is "" when the named
+    server's is used, and `new` says it is not the token that was on file.
+    """
     ui = ctx.ui
+    kept = on_file if slack.keeps(on_file, new_token=new) else ""
+    if on_file and not kept:
+        ui.note(f"The channel on file ({on_file}) is a direct message with the app the old "
+                "token came from, so it is not offered: this token cannot post to it.")
+    # Blank leaves the channel to the named server: right only while the token is the
+    # server's too, or the one that has been posting there all along.
+    blank = bool(server) and not (token and new)
 
     def problem(value: str) -> str | None:
-        return None if not value.strip() or "@" in value else "An email address, or blank."
+        value = value.strip()
+        if not value:
+            if blank:
+                return None
+            return (f"A token of its own needs somewhere of its own to send, not the {server} "
+                    "MCP server's channel." if server else "Required.")
+        if "@" not in value:
+            return _word(value)
+        return None if token else "An id: there is no token of its own to look an address up with."
 
-    email = ui.text("The address you use in Slack (blank to type an id instead)",
-                    default=ctx.current("USER_GOOGLE_EMAIL"), validate=problem).strip()
-    if not email:
-        return ""
-    with ui.spinner("Finding you in Slack…"):
-        member = ctx.probes.slack_member(token, email)
-    if member.ok:
-        ui.success(f"found {member.name or email}: messages go to you, from the Keryx app")
-        return member.user_id
-    ui.warn(f"Slack could not find you by that address: {member.problem}")
-    return ""
+    default = kept or (ctx.current("USER_GOOGLE_EMAIL") if token else "")
+    while True:
+        answer = ui.text(SLACK_WHERE, default=default, validate=problem).strip()
+        if "@" not in answer:
+            return answer
+        with ui.spinner("Finding you in Slack…"):
+            member = ctx.probes.slack_member(token, answer)
+        if member.ok:
+            ui.success(f"found {member.name or answer}: messages go to you, from the Keryx app")
+            return member.user_id
+        ui.warn(f"Slack could not find you by that address: {member.problem}")
+        ui.note(slack.MEMBER_ID_HINT)
+        default = kept
 
 
 def run_email(ctx: SetupContext) -> None:
