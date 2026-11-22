@@ -411,10 +411,73 @@ def test_auth_login_slack_with_a_refused_token_says_slacks_code_and_saves_nothin
     assert home.stored() == {}
 
 
-def test_only_slack_takes_a_token_on_stdin(home):
-    result = run("auth", "login", "gmail", "--stdin", input="xoxb-very-secret\n")
+@pytest.mark.parametrize(
+    "flags", [("--stdin",), ("--email", "sam@example.com"), ("--no-test",)]
+)
+def test_slacks_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags):
+    """Not ignored: `gmail --email …` silently doing nothing reads as having been taken."""
+    ran = []
+    monkeypatch.setattr("keryx.cli.run_command", lambda argv: ran.append(argv) or 0)
 
-    assert result.exit_code == 2 and "--stdin is for slack" in result.output
+    for name in ("gmail", "codex"):
+        result = run("auth", "login", name, *flags, input="xoxb-very-secret\n")
+
+        assert result.exit_code == 2
+        assert "--stdin, --email and --no-test are for slack" in result.output
+    assert ran == [] and home.stored() == {}
+
+
+def test_auth_login_slack_at_a_terminal_asks_for_the_token_hidden(home, monkeypatch, capsys):
+    """`--stdin` with nothing piped: the prompt hides what is typed, and nothing echoes it."""
+    from keryx import cli
+
+    fake_slack(monkeypatch)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    prompts = []
+    monkeypatch.setattr(
+        cli.typer, "prompt",
+        lambda key, hide_input: prompts.append((key, hide_input)) or " xoxb-typed-secret ",
+    )
+
+    cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=True,
+                   email="sam@example.com", test=True)
+
+    assert prompts == [("SLACK_BOT_TOKEN", True)]
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret"}
+    said = capsys.readouterr()
+    assert "connected to the Acme workspace" in said.out
+    assert "xoxb-typed-secret" not in said.out + said.err
+
+
+def test_slack_turned_off_with_its_token_kept_is_said_and_does_not_fail_auth_status(
+    home, monkeypatch
+):
+    """Soft, as in `doctor`: `auth status` exited 0 here before it listed Slack at all."""
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--email", "sam@example.com",
+        input="xoxb-very-secret\n")
+    assert run("plugins", "remove", "send_to_slack", "--yes").exit_code == 0
+
+    result = run("auth", "status")
+    report = json.loads(run("auth", "status", "--json").output)
+
+    assert result.exit_code == 0, result.output
+    line = next(line for line in result.output.splitlines() if line.startswith("slack"))
+    assert "failed" in line and "send_to_slack is off" in line
+    assert report["slack"]["state"] == "failed" and report["slack"]["optional"] is True
+    assert "optional" not in report["openai"]
+
+
+def test_auth_status_still_fails_for_a_sign_in_keryx_needs(home, monkeypatch):
+    monkeypatch.setattr(
+        "keryx.setup.auth.status",
+        lambda settings, store, smoke: {
+            "slack": {"state": "failed", "detail": "off", "optional": True},
+            "claude": {"state": "failed", "detail": "no key"},
+        },
+    )
+
+    assert run("auth", "status").exit_code == 1
 
 
 # --- setup ----------------------------------------------------------------------------------------

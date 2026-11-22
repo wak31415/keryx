@@ -41,6 +41,10 @@ SIGN_INS = {
     "slack": ("send_to_slack",),
 }
 LOGINS = ("claude", "codex", "gmail", "google-workspace", "slack")
+#: Sign-ins Keryx runs without, whose check is a plugin's and soft in `doctor`. One that
+#: has failed is reported as failed, and marked, so `keryx auth status` can say so without
+#: exiting 1: a plugin turned off with its token kept is a choice, not a broken install.
+OPTIONAL = ("slack",)
 
 
 class AuthError(RuntimeError):
@@ -56,6 +60,8 @@ def status(
     for name, prefixes in SIGN_INS.items():
         found = [check for check in checks if check.name.startswith(prefixes)]
         report[name] = _entry(name, found)
+        if name in OPTIONAL:
+            report[name]["optional"] = True
     run = smoke_test or agents.run_smoke
     for name in BACKENDS:
         entry = report[name]

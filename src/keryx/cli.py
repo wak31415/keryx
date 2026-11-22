@@ -1566,8 +1566,8 @@ def auth_login(
     if name not in auth_flow.LOGINS:
         typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
         raise typer.Exit(2)
-    if stdin and name != "slack":
-        typer.echo("--stdin is for slack: `keryx auth login slack --stdin`", err=True)
+    if name != "slack" and (stdin or email is not None or not test):
+        typer.echo("--stdin, --email and --no-test are for slack", err=True)
         raise typer.Exit(2)
     _owner_only("sign in")
     settings = _configure_readonly()
@@ -1595,7 +1595,10 @@ def auth_status_command(
         bool, typer.Option("--smoke", help="Also run one real task on each enabled agent.")
     ] = False,
 ) -> None:
-    """Every sign-in Keryx needs, and whether it is done. Exit 1 if one has failed."""
+    """Every sign-in Keryx needs, and whether it is done. Exit 1 if one has failed.
+
+    Slack is listed too and never fails it: Keryx runs without a plugin.
+    """
     settings = _configure_readonly()
     report = auth_flow.status(settings, ConfigStore(), smoke=smoke)
     if as_json:
@@ -1607,7 +1610,8 @@ def auth_status_command(
             # state (and says `enabled`), so a script reading it sees no new value.
             state = "off" if entry.get("enabled") is False else entry["state"]
             typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
-    if any(entry["state"] == "failed" for entry in report.values()):
+    # A plugin's sign-in (`optional`) is reported and never fails the command.
+    if any(e["state"] == "failed" and not e.get("optional") for e in report.values()):
         raise typer.Exit(1)
 
 

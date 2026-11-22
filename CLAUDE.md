@@ -49,7 +49,8 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
 - Connect Slack: `uv run keryx auth login slack` prints the link that creates the owner's
   Slack app; `uv run keryx auth login slack --stdin [--email ADDRESS] [--no-test]` takes its
   bot token on standard input (never argv), checks it, finds where to send, turns
-  `send_to_slack` on and sends one test message
+  `send_to_slack` on and sends one test message; `auth status` lists `slack` and never
+  exits 1 over it, since Keryx runs without a plugin
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]

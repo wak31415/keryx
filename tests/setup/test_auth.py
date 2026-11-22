@@ -130,7 +130,7 @@ def test_slack_that_is_on_is_ok_and_says_where_it_posts(settings):
 
     entry = auth.status(settings, ConfigStore())["slack"]
 
-    assert entry == {"state": "ok", "detail": "on — posts to U0OWNER"}
+    assert entry == {"state": "ok", "detail": "on — posts to U0OWNER", "optional": True}
 
 
 def test_a_slack_login_with_no_token_prints_the_link_that_makes_the_app(settings):
