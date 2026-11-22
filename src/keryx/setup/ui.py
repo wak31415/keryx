@@ -74,6 +74,7 @@ class Prompter(Protocol):
     def error(self, text: str) -> None: ...
     def markdown(self, text: str) -> None: ...
     def panel(self, title: str, body: str) -> None: ...
+    def link(self, url: str) -> None: ...
     def table(self, headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None: ...
     def outro(self, text: str) -> None: ...
 
@@ -187,6 +188,19 @@ class RichPrompter:
 
         panel = Panel(_escape(body), title=_escape(title), title_align="left", border_style="dim")
         self._show(lambda: self.console.print(panel))
+
+    def link(self, url: str) -> None:
+        """An address too long for a line, to click or copy in one piece.
+
+        Printed bare and left for the terminal to wrap: inside a panel or as Markdown it
+        would be broken across lines with a border or an indent in the middle, and Markdown
+        shows it decoded, which is no longer the address. It is a hyperlink as well, where
+        the terminal has them.
+        """
+        from rich.text import Text
+
+        text = Text(url, style=f"link {url}")
+        self._show(lambda: self.console.print(text, soft_wrap=True))
 
     def table(self, headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
         from rich.table import Table

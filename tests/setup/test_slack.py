@@ -114,7 +114,7 @@ def test_with_nowhere_to_send_nothing_is_saved_and_slack_is_not_asked(settings):
 
 @pytest.mark.parametrize(
     ("token", "message"),
-    [("", "no token on standard input"), ("hunter2-secret", "A Slack token starts xox")],
+    [("", "no token on standard input"), ("hunter2-secret", "a bot token starts xoxb-")],
 )
 def test_what_is_not_a_token_is_refused_before_slack_and_never_repeated(settings, token, message):
     fake = FakeSlack()

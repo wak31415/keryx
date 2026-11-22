@@ -27,7 +27,7 @@ from typing import Any
 from keryx import plugins
 from keryx.agents import registry
 from keryx.integrations.gmail import token_path
-from keryx.integrations.slack import UNREACHABLE
+from keryx.integrations.slack import UNREACHABLE, new_app_url
 from keryx.setup import google, slack
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
@@ -127,6 +127,7 @@ def run_slack(ctx: SetupContext) -> None:
     before = ctx.current("SLACK_BOT_TOKEN")
     server = values["mcp_server"]
     if not before:
+        ui.link(new_app_url())
         ui.markdown(slack.guide())
     token = _slack_token(ctx, before, server)
     channel = values["channel_id"]

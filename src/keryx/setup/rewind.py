@@ -128,6 +128,9 @@ class Recorder:
     def panel(self, title: str, body: str) -> None:
         self._say("panel", title, body)
 
+    def link(self, url: str) -> None:
+        self._say("link", url)
+
     def table(self, headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
         self._say("table", headers, rows)
 

@@ -39,6 +39,14 @@ def test_every_kind_of_line_is_drawn_in_the_gutter(prompter):
         assert fragment in text, fragment
 
 
+def test_a_link_is_drawn_whole_on_one_line_however_long(prompter):
+    url = "https://example.com/apps?manifest=%7B%22name%22%3A%22a%20b%22%7D" + "x" * 300
+
+    prompter.link(url)
+
+    assert url in drawn(prompter).splitlines()  # not wrapped, not decoded
+
+
 def test_a_spinner_wraps_the_block(prompter):
     with prompter.spinner("working"):
         pass

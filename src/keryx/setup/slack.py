@@ -67,9 +67,8 @@ def token_problem(value: str) -> str | None:
 
 
 def guide() -> str:
-    """The link and the steps, as Markdown for the wizard."""
-    steps = "\n".join(f"{number}. {step}" for number, step in enumerate(STEPS, 1))
-    return f"<{slack.new_app_url()}>\n\n{steps}"
+    """The steps, as Markdown for the wizard, which shows the link above them."""
+    return "\n".join(f"{number}. {step}" for number, step in enumerate(STEPS, 1))
 
 
 def plain(text: str) -> str:
@@ -112,8 +111,8 @@ def connect(
     token = token.strip()
     if not token:
         raise SlackSetupError("no token on standard input")
-    if problem := token_problem(token):
-        raise SlackSetupError(f"that is not a Slack token. {problem}")
+    if token_problem(token):
+        raise SlackSetupError("that is not a Slack token: a bot token starts xoxb-")
     try:
         values = plugins.read_config(settings, PLUGIN)
     except plugins.PluginConfigError as error:

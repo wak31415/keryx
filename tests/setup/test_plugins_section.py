@@ -90,8 +90,8 @@ def test_slack_is_a_link_a_pasted_token_and_an_address(make_ctx, world):
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1"}
     assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
     assert on(ctx, "send_to_slack")
-    (guide,) = ctx.ui.lines("markdown")
-    assert new_app_url() in guide and "Install to Workspace" in guide
+    assert ctx.ui.lines("link") == [new_app_url()]
+    assert "Install to Workspace" in ctx.ui.lines("markdown")[0]
     assert "connected to the Acme workspace" in ctx.ui.lines("success")
     assert "found Sam Doe: messages go to you, from the Keryx app" in ctx.ui.lines("success")
     assert "send_to_slack is on, from the next call" in ctx.ui.lines("success")
@@ -191,7 +191,7 @@ def test_slack_already_set_up_is_asked_nothing_new_and_slack_is_not_called(make_
     section.run_section(ctx)
 
     assert ctx.ui.done()
-    assert slack_calls(world) == [] and not ctx.ui.lines("markdown")
+    assert slack_calls(world) == [] and not ctx.ui.lines("link")
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
     assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
 

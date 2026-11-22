@@ -59,6 +59,9 @@ class ScriptedPrompter:
     def panel(self, title: str, body: str) -> None:
         self._say("panel", f"{title}\n{body}")
 
+    def link(self, url: str) -> None:
+        self._say("link", url)
+
     def table(self, headers, rows) -> None:
         for row in rows:
             self._say("table", " | ".join(row))
