@@ -354,6 +354,15 @@ atomically, so it never exists with looser permissions. The plain settings are i
 `config.toml` beside it, along with the PIN (`pin`) and the Google client file. **Keep this
 directory out of any dotfiles repository.** It holds secrets despite its name.
 
+What each of those secrets can do is up to whoever issued it, and one is worth knowing
+about. The Slack app that `keryx setup` has you create gives its bot token two powers:
+posting messages as the app (`chat:write`), and reading your workspace's member list with
+email addresses (`users:read`, `users:read.email`). Keryx uses the second for one lookup,
+to find you by your address so that you do not have to copy a channel id out of Slack. The
+token keeps that reach for as long as it is valid, though, and so does anyone who can read
+`secrets.toml`. An app you made by hand with `chat:write` alone still works; setup then
+asks you for a channel or member id instead.
+
 Keryx uses a file rather than a keyring on purpose. A service that systemd starts at boot,
 with nobody logged in, cannot unlock a keyring. Claude Code and Codex keep their credentials
 in a file of their own for the same reason.
