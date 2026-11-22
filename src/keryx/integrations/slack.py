@@ -10,13 +10,26 @@ one, using the very same bot token and DM channel rather than a second Slack app
 and, when a server is named, falls back to that server's entry in the Claude CLI config,
 which keeps one Slack app and one place to rotate it. No server name is built in: unset,
 there is no fallback.
+
+The second half is connecting in the first place (`keryx setup`, `keryx auth login slack`).
+Each owner has a Slack app of their own, because a bot token cannot be handed to a command
+line by an app Keryx publishes without a server holding its client secret. `app_manifest`
+is that app, written down once, and `new_app_url` the link that opens Slack's "create an
+app" page with it filled in. Three calls follow the token they paste: `auth_test` (is it
+one, and whose), `lookup_by_email` (the member to send to, so nobody hunts for a channel
+id) and `post_text` (one message, to see it arrive). Each answers with a `SlackResult`:
+Slack's own error code and a sentence to print, never an exception, and never anything
+else Slack said, so nothing printed can carry the token.
 """
 
 import asyncio
 import json
 import logging
+import re
 import urllib.error
+import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -25,7 +38,31 @@ from keryx.config.files import claude_user_config
 log = logging.getLogger("keryx.slack")
 
 POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
+AUTH_TEST_URL = "https://slack.com/api/auth.test"
+LOOKUP_BY_EMAIL_URL = "https://slack.com/api/users.lookupByEmail"
+#: Slack's own page for making an app; `new_app=1&manifest_json=…` opens it filled in.
+NEW_APP_URL = "https://api.slack.com/apps"
 REQUEST_TIMEOUT_S = 15.0
+
+#: What the app may do. `chat:write` posts, and with a member id as the channel it posts
+#: to that member's conversation with the app, so no `im:write`. `users:read.email` is
+#: `users.lookupByEmail`, and Slack grants it only together with `users:read`.
+BOT_SCOPES = ("chat:write", "users:read", "users:read.email")
+
+#: In place of Slack's error code when Slack was never reached, or did not answer as Slack.
+UNREACHABLE = "unreachable"
+UNKNOWN_ERROR = "unknown_error"
+#: The shape of an error code. Anything else in `error` is not repeated.
+_ERROR_CODE = re.compile(r"[a-z0-9_]{1,64}")
+_MEMBER_ID = re.compile(r"[A-Z0-9]{2,32}")
+
+#: The refusals setup meets often enough to say in words; the code always follows.
+_EXPLAINED = {
+    "invalid_auth": "Slack does not recognise that token",
+    "missing_scope": "the app lacks a permission this needs",
+    "users_not_found": "nobody in that workspace has that address",
+    "channel_not_found": "Slack does not know that channel or member",
+}
 #: The most Markdown one message carries: Slack's limit on all `markdown` blocks in a payload.
 MARKDOWN_LIMIT = 12_000
 
@@ -113,6 +150,129 @@ def _post(url: str, payload: dict, token: str) -> dict:
     )
     with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_S) as response:
         return json.load(response)
+
+
+def _get(url: str, params: dict, token: str) -> dict:
+    """One blocking GET to the Slack Web API. The token is a header, never in the address."""
+    request = urllib.request.Request(
+        f"{url}?{urllib.parse.urlencode(params)}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_S) as response:
+        return json.load(response)
+
+
+# --- connecting --------------------------------------------------------------------------
+
+
+def app_manifest() -> dict:
+    """The Slack app each owner creates: a bot that posts, and can find them by address.
+
+    The only place it is written down. Nothing here listens to Slack — no events, no
+    redirect URL, no socket mode — and the Messages tab is on, read-only, because that tab
+    is where a message to a member arrives and there is nothing to answer one typed there.
+    """
+    return {
+        "display_information": {
+            "name": "Keryx",
+            "description": "Messages from your Keryx phone assistant",
+        },
+        "features": {
+            "app_home": {
+                "home_tab_enabled": False,
+                "messages_tab_enabled": True,
+                "messages_tab_read_only_enabled": True,
+            },
+            "bot_user": {"display_name": "Keryx"},
+        },
+        "oauth_config": {"scopes": {"bot": list(BOT_SCOPES)}},
+    }
+
+
+def new_app_url() -> str:
+    """The link that opens Slack's "create an app" page with `app_manifest` filled in."""
+    manifest = json.dumps(app_manifest(), separators=(",", ":"))
+    return f"{NEW_APP_URL}?new_app=1&manifest_json={urllib.parse.quote(manifest, safe='')}"
+
+
+@dataclass(frozen=True)
+class SlackResult:
+    """What one of setup's calls came to: `error` is empty when Slack said yes."""
+
+    #: Slack's own code (`invalid_auth`), `http_<status>`, `unreachable` or `unknown_error`.
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+    @property
+    def problem(self) -> str:
+        """Why not, in words to print, with Slack's code; empty when it worked."""
+        if not self.error:
+            return ""
+        if self.error == UNREACHABLE:
+            return "could not reach Slack"
+        known = _EXPLAINED.get(self.error)
+        return f"{known} ({self.error})" if known else f"Slack said {self.error}"
+
+
+@dataclass(frozen=True)
+class Workspace(SlackResult):
+    """`auth.test`: the workspace a token belongs to."""
+
+    team: str = ""
+    url: str = ""
+
+
+@dataclass(frozen=True)
+class Member(SlackResult):
+    """`users.lookupByEmail`: the member an address belongs to."""
+
+    user_id: str = ""
+    name: str = ""
+
+
+def _ask(call, url: str, payload: dict, token: str) -> tuple[dict, str]:
+    """Slack's answer and an error code, one of them empty. Nothing raised is repeated."""
+    try:
+        result = call(url, payload, token)
+    except urllib.error.HTTPError as exc:
+        return {}, f"http_{exc.code}"
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return {}, UNREACHABLE
+    if not isinstance(result, dict):
+        return {}, UNKNOWN_ERROR
+    if result.get("ok"):
+        return result, ""
+    code = str(result.get("error") or "")
+    return {}, code if _ERROR_CODE.fullmatch(code) else UNKNOWN_ERROR
+
+
+def auth_test(token: str, *, post=_post) -> Workspace:
+    """Whether Slack takes `token`, and the workspace it belongs to. Needs no scope."""
+    result, error = _ask(post, AUTH_TEST_URL, {}, token)
+    if error:
+        return Workspace(error=error)
+    return Workspace(team=str(result.get("team") or ""), url=str(result.get("url") or ""))
+
+
+def lookup_by_email(token: str, email: str, *, get=_get) -> Member:
+    """The member of the token's workspace whose address is `email`."""
+    result, error = _ask(get, LOOKUP_BY_EMAIL_URL, {"email": email.strip()}, token)
+    if error:
+        return Member(error=error)
+    user = result.get("user")
+    user_id = str(user.get("id") or "") if isinstance(user, dict) else ""
+    if not _MEMBER_ID.fullmatch(user_id):
+        return Member(error=UNKNOWN_ERROR)
+    return Member(user_id=user_id, name=str(user.get("real_name") or user.get("name") or ""))
+
+
+def post_text(token: str, channel: str, text: str, *, post=_post) -> SlackResult:
+    """One plain message to `channel`, which may be a member id: their messages from the app."""
+    _, error = _ask(post, POST_MESSAGE_URL, {"channel": channel, "text": text}, token)
+    return SlackResult(error=error)
 
 
 class SlackWebApi:

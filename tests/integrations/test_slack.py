@@ -1,8 +1,22 @@
 """Tests for sending Slack messages. No network: the transport is injected."""
 
+import io
 import json
+import urllib.error
+import urllib.parse
 
-from keryx.integrations.slack import SlackWebApi, markdown_pieces, slack_credentials
+import pytest
+
+from keryx.integrations.slack import (
+    SlackWebApi,
+    app_manifest,
+    auth_test,
+    lookup_by_email,
+    markdown_pieces,
+    new_app_url,
+    post_text,
+    slack_credentials,
+)
 
 #: A made-up server name: which MCP server carries Slack is the owner's setting, never ours.
 SERVER = "team-slack"
@@ -191,3 +205,187 @@ async def test_a_transport_failure_is_a_failure_not_a_crash():
         raise OSError("no route to host")
 
     assert await SlackWebApi("xoxb-test", "D0TEST", post=explode).send("hello") is False
+
+
+# --- connecting: the app's manifest, and the three calls setup makes ----------------------
+
+
+def test_the_manifest_is_a_bot_that_can_message_and_look_a_member_up_and_nothing_more():
+    manifest = app_manifest()
+
+    assert manifest["display_information"]["name"] == "Keryx"
+    assert manifest["features"]["bot_user"]["display_name"] == "Keryx"
+    assert manifest["features"]["app_home"]["messages_tab_enabled"] is True
+    assert manifest["oauth_config"] == {
+        "scopes": {"bot": ["chat:write", "users:read", "users:read.email"]}
+    }
+    # No events, no redirect URLs, no socket mode: nothing of Keryx's listens to Slack.
+    assert set(manifest) == {"display_information", "features", "oauth_config"}
+    assert set(manifest["features"]) == {"app_home", "bot_user"}
+
+
+def test_the_new_app_link_carries_the_whole_manifest_url_encoded():
+    link = new_app_url()
+
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(link).query, strict_parsing=True)
+    assert link.startswith("https://api.slack.com/apps?new_app=1&manifest_json=%7B")
+    assert query["new_app"] == ["1"]
+    assert json.loads(query["manifest_json"][0]) == app_manifest()
+    assert " " not in link and '"' not in link
+
+
+def test_auth_test_names_the_workspace_the_token_belongs_to():
+    calls = []
+
+    def post(url, payload, token):
+        calls.append((url, payload, token))
+        return {"ok": True, "team": "Acme", "url": "https://acme.slack.com/", "user": "keryx"}
+
+    workspace = auth_test("xoxb-test", post=post)
+
+    assert workspace.ok and workspace.team == "Acme"
+    assert workspace.url == "https://acme.slack.com/"
+    assert calls == [("https://slack.com/api/auth.test", {}, "xoxb-test")]
+
+
+def test_a_refused_token_is_slacks_own_code_and_a_sentence_without_the_token():
+    workspace = auth_test("xoxb-secret", post=lambda *a: {"ok": False, "error": "invalid_auth"})
+
+    assert not workspace.ok and workspace.error == "invalid_auth"
+    assert workspace.problem == "Slack does not recognise that token (invalid_auth)"
+    assert "xoxb-secret" not in repr(workspace)
+
+
+def test_an_error_that_is_not_a_code_is_never_repeated():
+    """Whatever answered, only a bare code is ever printed: nothing else can carry a token."""
+    reply = {"ok": False, "error": "bad token xoxb-secret was given"}
+
+    workspace = auth_test("xoxb-secret", post=lambda *a: reply)
+
+    assert workspace.error == "unknown_error"
+    assert workspace.problem == "Slack said unknown_error"
+
+
+@pytest.mark.parametrize(
+    ("failure", "code", "sentence"),
+    [
+        (urllib.error.URLError("no route to xoxb-secret"), "unreachable", "could not reach Slack"),
+        (TimeoutError(), "unreachable", "could not reach Slack"),
+        (ValueError("not JSON"), "unreachable", "could not reach Slack"),
+        (
+            urllib.error.HTTPError("https://slack.com", 429, "Too Many", None, None),
+            "http_429",
+            "Slack said http_429",
+        ),
+    ],
+)
+def test_a_call_that_never_arrives_is_a_failure_not_a_crash(failure, code, sentence):
+    def post(url, payload, token):
+        raise failure
+
+    workspace = auth_test("xoxb-secret", post=post)
+
+    assert workspace.error == code
+    assert workspace.problem == sentence
+
+
+def test_an_answer_that_is_not_an_object_is_a_failure():
+    assert auth_test("xoxb-test", post=lambda *a: ["ok"]).error == "unknown_error"
+
+
+def test_a_member_is_looked_up_by_the_address_they_use_in_slack():
+    calls = []
+
+    def get(url, params, token):
+        calls.append((url, params, token))
+        return {"ok": True, "user": {"id": "U0OWNER", "name": "sam", "real_name": "Sam Doe"}}
+
+    member = lookup_by_email("xoxb-test", " sam@example.com ", get=get)
+
+    assert member.ok and member.user_id == "U0OWNER" and member.name == "Sam Doe"
+    assert calls == [
+        ("https://slack.com/api/users.lookupByEmail", {"email": "sam@example.com"}, "xoxb-test")
+    ]
+
+
+def test_a_member_with_no_real_name_goes_by_their_handle():
+    reply = {"ok": True, "user": {"id": "U0OWNER", "name": "sam"}}
+
+    assert lookup_by_email("xoxb-test", "sam@example.com", get=lambda *a: reply).name == "sam"
+
+
+@pytest.mark.parametrize(
+    ("code", "sentence"),
+    [
+        ("users_not_found", "nobody in that workspace has that address (users_not_found)"),
+        ("missing_scope", "the app lacks a permission this needs (missing_scope)"),
+    ],
+)
+def test_a_member_slack_will_not_give_says_why(code, sentence):
+    member = lookup_by_email(
+        "xoxb-test", "sam@example.com", get=lambda *a: {"ok": False, "error": code}
+    )
+
+    assert not member.ok and member.user_id == ""
+    assert member.problem == sentence
+
+
+@pytest.mark.parametrize("user", [None, {}, {"id": "not an id"}, "U0OWNER"])
+def test_a_member_without_a_usable_id_is_a_failure(user):
+    member = lookup_by_email(
+        "xoxb-test", "sam@example.com", get=lambda *a: {"ok": True, "user": user}
+    )
+
+    assert member.error == "unknown_error" and member.user_id == ""
+
+
+def test_a_test_message_is_plain_text_to_the_member_or_channel():
+    calls = []
+
+    def post(url, payload, token):
+        calls.append((url, payload, token))
+        return {"ok": True}
+
+    result = post_text("xoxb-test", "U0OWNER", "hello", post=post)
+
+    assert result.ok and result.problem == ""
+    assert calls == [
+        ("https://slack.com/api/chat.postMessage", {"channel": "U0OWNER", "text": "hello"},
+         "xoxb-test")
+    ]
+
+
+def test_a_test_message_slack_refuses_says_its_code():
+    result = post_text(
+        "xoxb-test", "U0OWNER", "hello", post=lambda *a: {"ok": False, "error": "channel_not_found"}
+    )
+
+    assert result.problem == "Slack does not know that channel or member (channel_not_found)"
+
+
+def test_the_lookup_is_one_get_with_the_token_in_a_header_and_never_in_the_address(monkeypatch):
+    seen = []
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def urlopen(request, timeout):
+        seen.append(request)
+        return Response(b'{"ok": false, "error": "users_not_found"}')
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+    member = lookup_by_email("xoxb-secret", "sam+slack@example.com")
+
+    (request,) = seen
+    assert member.error == "users_not_found"
+    assert request.get_method() == "GET"
+    assert request.full_url == (
+        "https://slack.com/api/users.lookupByEmail?email=sam%2Bslack%40example.com"
+    )
+    assert request.get_header("Authorization") == "Bearer xoxb-secret"
+    assert "xoxb-secret" not in request.full_url
