@@ -309,9 +309,14 @@ def start(
     """`keryx auth login slack` with no token: what the level means, then the link (or
     the manifest, for an app there already is), the steps, and the next command."""
     try:
-        saved = on_file(settings, workspace)
+        values = _config(settings)
+        saved = on_file(settings, workspace, values)
+        first_missing = plugins.plugin(PLUGIN).problem(dict(values)) is not None
     except SlackSetupError:
-        saved = OnFile(workspace, {}, {})
+        saved, first_missing = OnFile(workspace, {}, {}), True
+    if workspace != DEFAULT and first_missing:
+        echo(f"{workspace} would be added beside your first workspace, and there is none "
+             "yet: run this without --workspace first.\n")
     current = saved.access
     chosen = access is not None or saved.connected
     access = access or current

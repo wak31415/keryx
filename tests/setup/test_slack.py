@@ -862,3 +862,13 @@ def test_one_line_that_starts_xox_is_still_taken_as_the_bot_token(settings):
     connect(settings, FakeSlack(), token="xoxe.xoxb-1-very-secret", test=False)
 
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxe.xoxb-1-very-secret"}
+
+
+def test_the_link_for_a_further_workspace_says_when_the_first_is_not_there_yet(settings):
+    text = said(settings, workspace="lab")
+
+    assert text.startswith(
+        "lab would be added beside your first workspace, and there is none yet: run this "
+        "without --workspace first."
+    )
+    assert "would be added beside" not in said(connected_at(settings), workspace="lab")
