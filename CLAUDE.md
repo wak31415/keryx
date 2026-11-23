@@ -822,10 +822,13 @@ Eleven rulings:
   Slack said of the token.
 - **One owner, fixed at connect.** The owner's ruling (2026-11-23): the owner is whoever
   set the connection up, and there is no option to change it. `owner_id` is established
-  once: at `read` and above from the user token's own member, at `converse` from the
-  address given at connect or a destination already on file that is a member's id, said
-  aloud (`OWNER_LINE`, on every connect at `converse` and above). After that nothing
-  changes it in place. `channel_id` (the destination: `--email`, the wizard's "where to
+  once, and only by something Slack said of that person: at `read` and above the user
+  token's own member, at `converse` the member an address is looked up to be (the one
+  given at connect, else the Google address on file, which `connect` and the wizard try
+  before stopping to ask for `--email`). **Never from where reports go**: a destination
+  that is a member's id may be a colleague's, and once made that colleague the owner
+  (`setup.slack._owner`). It is said aloud (`OWNER_LINE`, on every connect at `converse`
+  and above). After that nothing changes it in place. `channel_id` (the destination: `--email`, the wizard's "where to
   send") is a separate setting and only ever chooses where reports go
   (`setup.slack.standing_owner`); a user token that belongs to anybody else is refused; a
   bot token from another workspace is refused while one is connected; the wizard has no

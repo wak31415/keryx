@@ -338,8 +338,10 @@ direct messages typed to your Keryx app.
   and no keypress on this channel. Over the cap, Keryx says so in one sentence and does
   nothing. Follow-ups on the phone are not counted, as before.
 - **There is one owner, fixed when you connect.** Whose messages start work is settled
-  once: from your user token at `read`, or from the address you give at `converse`. It
-  is named on a line of its own each time you connect. Nothing changes it afterwards:
+  once: from your user token at `read`, or at `converse` from an address looked up in
+  Slack (the one you give, else the one you signed in to Google with). Never from where
+  reports are sent, which may be somebody else. It is named on a line of its own each
+  time you connect. Nothing changes it afterwards:
   not changing where reports are sent, not a user token (somebody else's is refused), and
   there is no option for it. To connect as somebody else, `keryx auth logout slack` and
   log in again.

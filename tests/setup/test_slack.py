@@ -753,8 +753,8 @@ def test_converse_refuses_a_destination_that_does_not_say_who_the_owner_is(setti
 
     assert str(refused.value) == (
         "at the converse level Keryx acts only on messages from your own member id, and "
-        "C0CHANNEL is not one: add --email ADDRESS, the one you use in Slack. Nothing was "
-        "saved"
+        "where reports go (C0CHANNEL) does not say which member you are: add --email "
+        "ADDRESS, the one you use in Slack. Nothing was saved"
     )
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
     assert saved(settings)["access"] == "announce"
@@ -811,18 +811,92 @@ def test_the_first_owner_is_said_by_name_when_it_is_derived(settings):
     assert OWNER_LINE.format(who="Sam Doe (U0OWNER)") in lines
 
 
-def test_raising_an_install_whose_destination_is_a_member_says_whom_it_adopts(settings):
+def older_install(settings, channel):
+    """An install from before levels: a bot token and where reports go, nothing else."""
     settings = settings.model_copy(update={"slack_bot_token": TOKEN})
     ConfigStore().set({"SLACK_BOT_TOKEN": TOKEN})
     plugins.config_path(settings, "slack_report").parent.mkdir(parents=True, exist_ok=True)
-    plugins.config_path(settings, "slack_report").write_text('channel_id = "U0OWNER"\n')
+    plugins.config_path(settings, "slack_report").write_text(f'channel_id = "{channel}"\n')
     plugins.install(settings, "slack_report")
+    return settings
 
-    lines = connect(settings, FakeSlack(), token=APP, email=None, access=Access.CONVERSE,
+
+@pytest.mark.parametrize("channel", ["U0COLLEAGUE", "U0OWNER", "D0OLDDM", "C0REPORTS"])
+def test_where_reports_go_never_makes_anybody_the_owner(settings, channel):
+    """An owner is established only by a lookup or a user token. At announce reports may
+    go to a colleague's member id: raising the level made that colleague the one whose
+    messages start work, with no PIN."""
+    settings = older_install(settings, channel)
+
+    with pytest.raises(SlackSetupError) as refused:
+        connect(settings, FakeSlack(), token=APP, email=None, access=Access.CONVERSE)
+
+    assert f"where reports go ({channel}) does not say which member you are" in str(
+        refused.value)
+    assert "add --email ADDRESS" in str(refused.value)
+    assert saved(settings).get("owner_id", "") == ""
+    assert saved(settings).get("access", "announce") == "announce"
+    assert "SLACK_APP_TOKEN" not in ConfigStore()._secrets()
+
+
+def test_raising_the_level_tries_the_google_address_before_asking_for_an_email(settings):
+    """The common case: an older install whose destination is a direct message's id. No
+    address was looked for, and the connect stopped. The address they signed in to
+    Google with is tried first; who it finds is the owner, and the destination, which was
+    usable, stays where it was."""
+    settings = older_install(settings, "D0OLDDM").model_copy(
+        update={"user_google_email": "sam@example.com"})
+    fake = FakeSlack()
+
+    lines = connect(settings, fake, token=APP, email=None, access=Access.CONVERSE,
                     test=False)
 
-    assert saved(settings)["owner_id"] == "U0OWNER" and saved(settings)["team_id"] == "T0ACME"
-    assert OWNER_LINE.format(who="U0OWNER") in lines
+    assert ("member", TOKEN, "sam@example.com") in fake.calls
+    assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == (
+        "U0OWNER", "D0OLDDM")
+    assert ("found Sam Doe (U0OWNER) by your Google address, sam@example.com: that member "
+            "is taken to be you") in lines
+    assert "it keeps sending to D0OLDDM" in lines
+    assert OWNER_LINE.format(who="Sam Doe (U0OWNER)") in lines
+
+
+def test_a_google_address_slack_does_not_know_leaves_the_add_email_error_standing(settings):
+    settings = older_install(settings, "D0OLDDM").model_copy(
+        update={"user_google_email": "sam@example.com"})
+    fake = FakeSlack(member=Member(error="users_not_found"))
+
+    with pytest.raises(SlackSetupError, match="add --email ADDRESS"):
+        connect(settings, fake, token=APP, email=None, access=Access.CONVERSE)
+
+    assert saved(settings).get("owner_id", "") == ""
+
+
+def test_the_google_address_is_not_asked_when_something_else_already_says_who(settings):
+    """An owner on file, a user token, or an address that was given."""
+    google = {"user_google_email": "google@example.com"}
+    standing = connected_at(settings, "converse", SLACK_APP_TOKEN=APP).model_copy(update=google)
+    fake = FakeSlack()
+    connect(standing, fake, token="", email=None, test=False)
+    assert not [call for call in fake.calls if call[0] == "member"]
+
+    given = FakeSlack()
+    connect(standing, given, token="", email="sam@example.com", test=False)
+    assert [call[2] for call in given.calls if call[0] == "member"] == ["sam@example.com"]
+
+    by_token = FakeSlack()
+    connect(standing, by_token, token=USER, email=None, access=Access.READ, test=False)
+    assert not [call for call in by_token.calls if call[0] == "member"]
+
+
+def test_below_converse_the_google_address_is_not_looked_up_for_an_owner(settings):
+    settings = older_install(settings, "D0OLDDM").model_copy(
+        update={"user_google_email": "sam@example.com"})
+    fake = FakeSlack()
+
+    connect(settings, fake, token="", email=None, test=False)
+
+    assert not [call for call in fake.calls if call[0] == "member"]
+    assert saved(settings)["owner_id"] == ""
 
 
 def test_at_announce_nobody_is_made_the_owner_and_nothing_is_said_of_one(settings):

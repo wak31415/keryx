@@ -212,9 +212,10 @@ def run_slack(ctx: SetupContext) -> None:
 
     **One owner, fixed at connect.** The owner on file stands (`slack.standing_owner`),
     and no question here can change it: where to send only ever chooses a destination. It
-    is established once, when there is none: at `read` from the user token, and at
-    `converse` from the first answer to where to send, which then has to say who they are
-    (their address, or their member id) rather than name a channel. At `converse` and
+    is established once, when there is none, and only by something Slack said of them:
+    at `read` from the user token, and at `converse` from an address looked up (the one
+    typed as where to send, or the Google address on file when an id was typed), never
+    from an id, which only says where reports go. At `converse` and
     above a line names the member every time.
     """
     ui = ctx.ui
@@ -281,8 +282,9 @@ def run_slack(ctx: SetupContext) -> None:
         owner=owner, says_who=above and not owner,
     )
     if above and not owner:
-        # Nobody is on file: the first owner is who the destination says they are.
-        owner = found or channel
+        # Nobody is on file: the first owner is the member an address was looked up to
+        # be, and never an id that only says where reports go.
+        owner = found
     if above:
         ui.note(slack.OWNER_LINE.format(who=owner))
     keys = {kind: ctx.current(key) for kind, key in slack.TOKEN_KEYS.items()}
@@ -483,8 +485,11 @@ def _slack_where(
     server's is used, and `new` says it is not the token that was on file. With the id
     comes the member an address was found to be ("" when none was looked up), who is the
     owner. `owner` is who a user token already said they are: the default, at `read`.
-    `says_who` is the first connect above `announce` with nobody on file: the answer is
-    then also who the owner is, so it has to be their address or their own member id.
+    `says_who` is the first connect above `announce` with nobody on file and no user
+    token to say who they are: the owner is then whoever an address is looked up to be,
+    never an id that was typed or kept, which only says where reports go. An answer that
+    is an id is kept as the destination, and the Google address on file is looked up for
+    who they are; when that finds nobody, the question is asked again for an address.
     """
     ui = ctx.ui
     kept = on_file if slack.keeps(on_file, new_token=new) else ""
@@ -503,15 +508,26 @@ def _slack_where(
             return (f"A token of its own needs somewhere of its own to send, not the {server} "
                     "MCP server's channel." if server else "Required.")
         if "@" not in value:
-            if says_who and not slack.is_member(value):
-                return ("The first time at this level this is also who you are: your "
-                        "address, or your own member id. A channel can be chosen afterwards.")
             return _word(value)
         return None if token else "An id: there is no token of its own to look an address up with."
 
     default = kept or owner or (ctx.current("USER_GOOGLE_EMAIL") if token else "")
     while True:
         answer = ui.text(SLACK_WHERE, default=default, validate=problem).strip()
+        if "@" not in answer and says_who:
+            google = ctx.current("USER_GOOGLE_EMAIL") or ""
+            if google:
+                with ui.spinner("Finding you in Slack…"):
+                    member = ctx.probes.slack_member(token, google)
+                if member.ok:
+                    ui.success(f"found {member.name or google} ({member.user_id}) by your "
+                               f"Google address, {google}: that member is taken to be you")
+                    return answer, member.user_id
+            ui.warn("The first time at this level Keryx has to know which member you are, "
+                    "and an id for where reports go does not say: type the address you "
+                    "use in Slack. A channel can be chosen afterwards.")
+            default = ""
+            continue
         if "@" not in answer:
             return answer, ""
         with ui.spinner("Finding you in Slack…"):

@@ -510,17 +510,39 @@ def test_a_user_token_from_another_workspace_is_asked_for_again_and_never_saved(
     assert toml(ctx, "slack_report")["owner_id"] == "U0SAM"
 
 
-def test_the_first_time_above_announce_where_to_send_also_says_who_they_are(make_ctx, world):
-    """No question can change the owner, so the one that establishes it must name them:
-    a channel says nothing about who is asking."""
+def test_the_first_time_above_announce_an_id_does_not_say_who_they_are_and_is_asked_again(
+    make_ctx, world
+):
+    """An owner is established only by a lookup or a user token: a channel, or a member
+    id, says where reports go and nothing about who is asking."""
     ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
-                    (WHERE, "C0CHANNEL")])
+                    (WHERE, "C0CHANNEL"), (WHERE, "U0COLLEAGUE"), (WHERE, "sam@example.com"),
+                    (TEST, False)])
 
-    with pytest.raises(AssertionError, match="this is also who you are"):
-        section.run_section(ctx)
+    section.run_section(ctx)
 
-    assert ConfigStore()._secrets() == {}
-    assert not any("Your own member id" in message for _, message in ctx.ui.asked)
+    saved = toml(ctx, "slack_report")
+    assert ctx.ui.done() and (saved["owner_id"], saved["channel_id"]) == ("U0OWNER", "U0OWNER")
+    warned = [line for line in ctx.ui.lines("warn") if "which member you are" in line]
+    assert len(warned) == 2 and "type the address you use in Slack" in warned[0]
+
+
+def test_an_id_typed_first_is_where_reports_go_and_the_google_address_says_who_they_are(
+    make_ctx, world
+):
+    """A colleague's member id as the destination no longer makes the colleague the owner."""
+    ConfigStore().set({"USER_GOOGLE_EMAIL": "sam@example.com"})
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, "U0COLLEAGUE"), (TEST, False)])
+
+    section.run_section(ctx)
+
+    saved = toml(ctx, "slack_report")
+    assert ctx.ui.done()
+    assert (saved["owner_id"], saved["channel_id"]) == ("U0OWNER", "U0COLLEAGUE")
+    assert any("by your Google address, sam@example.com: that member is taken to be you" in line
+               for line in ctx.ui.lines("success"))
+    assert ("slack_member", "sam@example.com") in slack_calls(world)
 
 
 def test_with_an_owner_on_file_a_channel_is_a_destination_like_any_other(make_ctx, world):
@@ -536,20 +558,25 @@ def test_with_an_owner_on_file_a_channel_is_a_destination_like_any_other(make_ct
                for line in ctx.ui.lines("note"))
 
 
-def test_a_member_id_typed_as_the_destination_is_the_owner_and_nothing_more_is_asked(
+def test_a_google_address_slack_does_not_know_is_no_owner_and_an_address_is_asked_for(
     make_ctx, world
 ):
+    ConfigStore().set({"USER_GOOGLE_EMAIL": "nobody@example.com"})
+    world.slack_member = Member(error="users_not_found")
     ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
-                    (WHERE, "U0SAM"), (TEST, False)])
+                    (WHERE, "U0SAM")])
 
-    section.run_section(ctx)
+    with pytest.raises(AssertionError):
+        section.run_section(ctx)  # asked again, and the script has no more answers
 
-    assert ctx.ui.done() and toml(ctx, "slack_report")["owner_id"] == "U0SAM"
+    assert ConfigStore()._secrets() == {}
+    assert any("which member you are" in line for line in ctx.ui.lines("warn"))
 
 
 def test_raising_the_level_shows_the_manifest_for_the_app_there_is_and_no_new_app_link(
     make_ctx, world
 ):
+    ConfigStore().set({"USER_GOOGLE_EMAIL": "sam@example.com"})
     ctx = already_set_up(make_ctx, channel="U0OWNER")
     ctx.ui.answers = [SLACK, (LEVEL, "converse"), (TOKEN, DEFAULT), (APP_TOKEN, "xapp-1"),
                       (WHERE, DEFAULT), (TEST, False)]
@@ -564,8 +591,10 @@ def test_raising_the_level_shows_the_manifest_for_the_app_there_is_and_no_new_ap
     assert "Bot User OAuth Token" not in steps and "App-Level Tokens" in steps
     title, _, body = ctx.ui.lines("panel")[0].partition("\n")
     assert title == "The manifest" and json.loads(body) == app_manifest(Access.CONVERSE)
-    # The install is from before levels, so Slack is asked once which workspace it is.
-    assert slack_calls(world) == [("slack_auth",), ("slack_open",)]
+    # The install is from before levels, so Slack is asked once which workspace it is,
+    # and who they are is looked up by the Google address: the kept id does not say.
+    assert slack_calls(world) == [("slack_auth",), ("slack_open",),
+                                  ("slack_member", "sam@example.com")]
     saved = toml(ctx, "slack_report")
     assert (saved["access"], saved["owner_id"]) == ("converse", "U0OWNER")
     assert saved["team"] == "Acme"

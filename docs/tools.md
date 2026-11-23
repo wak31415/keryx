@@ -200,7 +200,9 @@ then, which is the trade [SECURITY.md](../SECURITY.md) spells out. Lowering the 
 `read` takes all of it away at once.
 
 **Whose messages are acted on is set once, and that is all.** The first time you connect
-at `converse` or above, Keryx says which member it takes to be you. Nothing changes that
+at `converse` or above, Keryx finds you in Slack by your address (the one you give, or
+the one you signed in to Google with) or by your user token, and says which member it
+takes to be you. Where reports are sent never decides that. Nothing changes it
 afterwards: not sending reports somewhere else (`--email`), and there is no option for it.
 To connect as somebody else, `keryx auth logout slack` and log in again.
 

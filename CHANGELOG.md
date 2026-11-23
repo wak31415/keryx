@@ -62,6 +62,9 @@ the version starts with 0.
   first and saves nothing until every token has been checked. Whose messages are acted
   on is settled when you connect and nothing changes it afterwards: where reports are
   sent never does, and connecting as somebody else is a logout and a new login.
+- **Raising the Slack level finds you by your Google address** when nothing else says
+  which member you are, before asking for `--email`. Where reports are sent never decides
+  whose messages are acted on, even when it is a member's id.
 - **`keryx auth logout slack [--workspace NAME]`** forgets a Slack workspace's tokens and
   settings.
 - **More than one Slack workspace.** `keryx auth login slack --workspace NAME` connects

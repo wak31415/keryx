@@ -34,11 +34,12 @@ owner; a workspace above `announce` without it hears nothing.
 
 **One owner, fixed at connect** (the owner's ruling of 2026-11-23). The owner is whoever
 set the connection up, and `owner_id` (the one member whose messages may start work with
-no PIN) is established once: at `read` and above from the user token's own member, and
-at `converse` from the address given at connect, or a destination already on file that
-is a member's id, said aloud. After that nothing changes it in place: not `--email` or
-the wizard's "where to send", which only ever choose where reports go; not a user token,
-which is refused when it is somebody else's; not a bot token from another workspace,
+no PIN) is established once, and only by something Slack said of that person: at `read`
+and above the user token's own member, and at `converse` the member an address is looked
+up to be (the one given at connect, else the Google address on file). Never from where
+reports go, which may be a colleague's member id. After that nothing changes it in
+place: not `--email` or the wizard's "where to send", which only ever choose where
+reports go; not a user token, which is refused when it is somebody else's; not a bot token from another workspace,
 which is refused too. There is no option for it. `keryx auth logout slack` and a new
 login is the one way to connect as somebody else. `OWNER_LINE` names the member on every
 connect at `converse` or above.
@@ -745,9 +746,19 @@ def connect(
                 f"then {BY_HAND}"
             )
     channel = found.user_id if found is not None else (kept or token_owner)
+    standing = standing_owner(saved, team, same_app=token == before)
+    # An owner has to be established, and nothing given says who: not an owner on file,
+    # not a user token, not an address. Before stopping for one, the address they signed
+    # in to Google with is tried: on an install whose destination was kept (an older
+    # one's direct-message id, say), nothing else was looked up.
+    by_google, google = None, (settings.user_google_email or "").strip()
+    if (access.reaches(Access.CONVERSE) and not standing and not token_owner
+            and found is None and google):
+        looked = api.lookup_by_email(token, google)
+        by_google = looked if looked.ok else None
     acted_on, who = _owner(
-        access=access, standing=standing_owner(saved, team, same_app=token == before),
-        token_owner=token_owner, found=found, channel=channel,
+        access=access, standing=standing, token_owner=token_owner,
+        found=found or by_google, channel=channel,
         named="" if workspace == DEFAULT else f" --workspace {workspace}",
     )
 
@@ -767,6 +778,9 @@ def connect(
         echo(f"it keeps sending to {channel}")
     else:
         echo(f"you are {channel} there: messages go to you")
+    if by_google is not None:
+        echo(f"found {by_google.name or google} ({by_google.user_id}) by your Google "
+             f"address, {google}: that member is taken to be you")
     if access.reaches(Access.CONVERSE):
         echo(OWNER_LINE.format(who=who))
     try:
@@ -826,9 +840,12 @@ def _owner(
 ) -> tuple[str, str]:
     """The member whose messages are acted on, and how to name them in a line.
 
-    The owner on file stands. Only when there is none is one established: whom the user
-    token belongs to, else the member the address found, else a destination that is a
-    member's id. Below `converse` nobody's messages are acted on, so nothing is
+    The owner on file stands. Only when there is none is one established, and only by
+    something Slack said of this person: whom the user token belongs to, else the member
+    an address was looked up to be (the one given, or the Google address `connect` tries
+    before giving up). **Never from where reports go**: a destination that happens to be
+    a member's id says who receives reports, which may be a colleague, and made that
+    colleague the owner. Below `converse` nobody's messages are acted on, so nothing is
     established: an owner on file is kept for the day the level is raised. Nothing here
     replaces an owner: that is `keryx auth logout slack` and a new login.
     """
@@ -837,8 +854,7 @@ def _owner(
     elif not access.reaches(Access.CONVERSE):
         return "", ""
     else:
-        acted_on = token_owner or (found.user_id if found is not None else "") or (
-            channel if is_member(channel) else "")
+        acted_on = token_owner or (found.user_id if found is not None else "")
     if token_owner and acted_on != token_owner:
         raise SlackSetupError(
             f"the user token belongs to {token_owner}, and the member whose messages Keryx "
@@ -848,8 +864,8 @@ def _owner(
     if access.reaches(Access.CONVERSE) and not acted_on:
         raise SlackSetupError(
             f"at the {access} level Keryx acts only on messages from your own member id, "
-            f"and {channel} is not one: add --email ADDRESS, the one you use in Slack. "
-            "Nothing was saved"
+            f"and where reports go ({channel}) does not say which member you are: add "
+            "--email ADDRESS, the one you use in Slack. Nothing was saved"
         )
     name = found.name if found is not None and found.user_id == acted_on else ""
     return acted_on, f"{name} ({acted_on})" if name else acted_on
