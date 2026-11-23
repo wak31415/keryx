@@ -116,6 +116,35 @@ def test_the_description_does_not_invite_a_written_copy_of_the_answer(settings):
     assert '"Slack me that"' in text
 
 
+async def test_with_one_workspace_there_is_nothing_to_choose(settings):
+    one = tool(settings, FakeSlack())
+
+    assert set(one.parameters["properties"]) == {"message"}
+    assert "more than one Slack workspace" not in one.description
+
+
+async def test_with_several_workspaces_one_may_be_named_and_the_usual_one_is_the_default(
+    settings,
+):
+    first, work = FakeSlack(), FakeSlack()
+    path = plugins.write_config(settings, NAME, {"channel_id": "D123"})
+    with loading(settings):
+        several = send_to_slack_tool(path, senders={"default": first, "work": work})
+    registry = offered(several, settings)
+
+    assert several.parameters["properties"]["workspace"]["enum"] == ["default", "work"]
+    assert several.parameters["required"] == ["message"]
+    assert "more than one Slack workspace" in several.description
+    assert await call(registry, NAME, {"message": "to the usual"}) == {"status": "sent"}
+    assert await call(registry, NAME, {"message": "to work", "workspace": " Work "}) == {
+        "status": "sent"
+    }
+    assert (first.sent, work.sent) == (["to the usual"], ["to work"])
+    refused = await call(registry, NAME, {"message": "x", "workspace": "lab"})
+    assert refused == {"error": "there is no Slack workspace called lab: one of default, work"}
+    assert (first.sent, work.sent) == (["to the usual"], ["to work"])
+
+
 # --- installed and loaded ----------------------------------------------------------------
 
 
@@ -397,3 +426,17 @@ def test_with_the_plugin_off_a_report_goes_nowhere(two_workspaces):
     plugins.remove(two_workspaces, NAME)
 
     assert report_route(two_workspaces, slack_task()) is None
+
+
+def test_installed_with_two_workspaces_the_tool_offers_both(two_workspaces):
+    [(_, loaded_tool)] = loaded(two_workspaces).tools
+
+    assert loaded_tool.parameters["properties"]["workspace"]["enum"] == ["default", "work"]
+
+
+def test_a_further_workspace_that_cannot_post_is_not_offered(two_workspaces):
+    settings = two_workspaces.model_copy(update={"slack_workspace_tokens": {}})
+
+    [(_, loaded_tool)] = loaded(settings).tools
+
+    assert "workspace" not in loaded_tool.parameters["properties"]

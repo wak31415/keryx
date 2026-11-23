@@ -19,8 +19,10 @@ from fakes import FakeVoiceSession
 from keryx.config import Settings
 from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from keryx.inline_waits import InlineWaits
+from keryx.integrations.slack import Posted
 from keryx.notify.notifier import SLACK_PREAMBLE, SMS_BODY_LIMIT, Notifier
 from keryx.notify.reports import report_token
+from keryx.plugins.slack import ReportRoute
 from keryx.session import SessionRegistry
 from keryx.stream_tokens import StreamTokenStore, confers_possession
 from keryx.tasks.models import Task, TaskKind, TaskStatus
@@ -132,20 +134,35 @@ class Harness:
 
 
 class FakeSlack:
-    """A `SlackSender` that records what it posted; `on` is the plugin, `error` a failure."""
+    """A `SlackPoster` that records what it posted; `on` is the plugin, `error` a failure,
+    and `landed` where Slack says the message went (None: it refused it)."""
 
     def __init__(self) -> None:
         self.on = True
         self.error: Exception | None = None
         self.sent: list[str] = []
         self.fallbacks: list[str | None] = []
+        #: The thread each post was a reply in (None: a message of its own), and whether
+        #: it was also shown in the conversation.
+        self.threads: list[tuple[str | None, bool]] = []
+        self.landed: Posted | None = Posted("D0OWNER", "1700000000.000100")
 
-    async def send(self, text: str, *, fallback: str | None = None) -> bool:
+    async def post(self, text, *, fallback=None, thread_ts=None, broadcast=False):
         if self.error is not None:
             raise self.error
         self.sent.append(text)
         self.fallbacks.append(fallback)
-        return True
+        self.threads.append((thread_ts, broadcast))
+        return self.landed
+
+    def route(self, task) -> ReportRoute | None:
+        """What `plugins.slack.report_route` answers: the task's thread once it has one."""
+        if not self.on:
+            return None
+        if task.slack_thread_ts:
+            return ReportRoute(task.slack_workspace, self, thread_ts=task.slack_thread_ts,
+                               broadcast=task.origin_channel != "slack")
+        return ReportRoute("default", self)
 
 
 class FakeRestarter:
@@ -187,7 +204,7 @@ async def harnesses(tmp_path) -> Callable[..., Harness]:
             tokens,
             inline_waits,
             restarter,
-            slack=lambda: slack if slack.on else None,
+            reports=slack.route,
         )
         notifier.start()
         harness = Harness(
@@ -761,6 +778,89 @@ async def test_a_slack_failure_costs_nothing_else(harness):
     parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
     context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
     assert SLACK_PREAMBLE not in context
+
+
+async def test_where_the_first_report_landed_becomes_the_tasks_thread(harness):
+    """Slack's answer, not what was asked for: a member's id lands in a direct message."""
+    task = await harness.task()
+
+    await harness.finished(task, "found it")
+
+    stored = await harness.store.get(task.id)
+    assert (stored.slack_workspace, stored.slack_channel, stored.slack_thread_ts) == (
+        "default", "D0OWNER", "1700000000.000100"
+    )
+    assert harness.slack.threads == [(None, False)]
+
+
+async def test_a_later_report_is_a_reply_in_that_thread_shown_in_the_conversation(harness):
+    task = await harness.task()
+    await harness.finished(task, "found it")
+    harness.slack.landed = Posted("D0OWNER", "1700000000.000900")
+
+    await harness.finished(await harness.store.get(task.id), "found more")
+
+    assert harness.slack.threads == [(None, False), ("1700000000.000100", True)]
+    # The thread is the first report's, for good: a reply under it always finds the task.
+    assert (await harness.store.get(task.id)).slack_thread_ts == "1700000000.000100"
+
+
+async def test_a_task_asked_for_on_slack_answers_in_its_thread_and_the_phone_stays_quiet(
+    harness,
+):
+    task = await harness.task(
+        origin_channel="slack", slack_workspace="work", slack_channel="D0WORK",
+        slack_thread_ts="1700000000.000500", slack_last_ts="1700000000.000500",
+    )
+
+    await harness.finished(task, "found it")
+
+    assert harness.slack.threads == [("1700000000.000500", False)]
+    assert harness.twilio.sms == [] and harness.twilio.calls == []
+    stored = await harness.store.get(task.id)
+    assert (stored.slack_workspace, stored.slack_channel) == ("work", "D0WORK")
+    assert not stored.sms_sent and stored.reported_at is None
+
+
+async def test_a_failure_asked_for_on_slack_is_said_in_its_thread_too(harness):
+    task = await harness.task(
+        origin_channel="slack", slack_workspace="default", slack_channel="D0OWNER",
+        slack_thread_ts="1700000000.000500",
+    )
+
+    await harness.failed(task, "it broke")
+
+    assert harness.slack.sent == [f"**Task {task.id} failed: it broke**"]
+    assert harness.slack.threads == [("1700000000.000500", False)]
+    assert harness.twilio.sms == []
+
+
+async def test_a_report_slack_refuses_has_no_thread_and_is_not_said_to_be_there(harness):
+    harness.slack.landed = None
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "found it")
+
+    assert (await harness.store.get(task.id)).slack_thread_ts is None
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
+    assert SLACK_PREAMBLE not in context
+
+
+async def test_a_thread_that_cannot_be_recorded_costs_nothing_else(harness, monkeypatch):
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    update = harness.store.update
+
+    async def refuse_the_thread(task_id, **fields):
+        if "slack_thread_ts" in fields:
+            raise RuntimeError("the database is locked")
+        return await update(task_id, **fields)
+
+    monkeypatch.setattr(harness.store, "update", refuse_the_thread)
+
+    await harness.finished(task, "found it")
+
+    assert len(harness.twilio.calls) == 1 and harness.slack.sent
 
 
 # --- (4) a task that changed Keryx's own code ------------------------------

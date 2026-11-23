@@ -269,10 +269,44 @@ PARAMETERS = {
     },
     "required": ["message"],
 }
+#: Added to the description when there is more than one workspace to choose from.
+SEVERAL = (
+    " They have more than one Slack workspace: send to their usual one, and name another "
+    "in `workspace` only when they said which."
+)
 
 
-def send_to_slack_tool(config_path: Path, *, sender: SlackSender | None = None):
-    """The tool `send_to_slack.py` defines, configured by the TOML at `config_path`."""
+def parameters(names: list[str]) -> dict:
+    """What the tool takes: a message, and which workspace only when there are several."""
+    if len(names) < 2:
+        return PARAMETERS
+    return {
+        **PARAMETERS,
+        "properties": {
+            **PARAMETERS["properties"],
+            "workspace": {
+                "type": "string",
+                "enum": names,
+                "description": (
+                    f"Which Slack workspace to send to. Leave it out for {names[0]}, their "
+                    "usual one; name another only when they said which."
+                ),
+            },
+        },
+    }
+
+
+def send_to_slack_tool(
+    config_path: Path,
+    *,
+    sender: SlackSender | None = None,
+    senders: Mapping[str, SlackSender] | None = None,
+):
+    """The tool `send_to_slack.py` defines, configured by the TOML at `config_path`.
+
+    `sender` stands in for the first workspace's, and `senders` for every workspace's by
+    name, in the tests.
+    """
     from keryx.tools.custom import CustomTool, ToolUnavailable
 
     settings = plugins.loading_settings()
@@ -280,27 +314,35 @@ def send_to_slack_tool(config_path: Path, *, sender: SlackSender | None = None):
         values = plugins.read_config_file(TOOL, config_path)
     except plugins.PluginConfigError as error:
         raise ToolUnavailable(str(error)) from None
-    if sender is None:
-        sender = _route(settings, values).sender()
-    if sender is None:
+    if senders is None and sender is not None:
+        senders = {DEFAULT: sender}
+    if senders is None:
+        senders = {each.name: each.poster() for each in workspaces(settings, values)
+                   if each.sends}
+    if DEFAULT not in senders:
         raise ToolUnavailable(
             "no bot token and channel: `keryx auth login slack` sets both (by hand: "
             "`keryx config set SLACK_BOT_TOKEN --stdin`, and "
             f"channel_id in {config_path.name}, or an mcp_server whose config has both)"
         )
+    names = list(senders)
 
     async def send_to_slack(ctx, arguments: dict) -> dict:
         message = str(arguments.get("message") or "").strip()
         if not message:
             return {"error": "message is required: say what to send"}
-        if not await sender.send(message):
+        name = str(arguments.get("workspace") or DEFAULT).strip().lower()
+        if name not in senders:
+            return {"error": f"there is no Slack workspace called {name}: one of "
+                             f"{', '.join(names)}"}
+        if not await senders[name].send(message):
             return {"error": FAILED_MESSAGE}
         return {"status": "sent"}
 
     return CustomTool(
         name=TOOL,
-        description=description(settings.owner_label),
-        parameters=PARAMETERS,
+        description=description(settings.owner_label) + (SEVERAL if len(names) > 1 else ""),
+        parameters=parameters(names),
         handler=send_to_slack,
         needs_pin=True,
     )

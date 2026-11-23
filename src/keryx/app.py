@@ -42,7 +42,7 @@ from keryx.notify.notifier import Notifier
 from keryx.notify.pin_alert import PinLockoutAlerter
 from keryx.notify.twilio_out import TwilioOut
 from keryx.pin_guard import PinGuard
-from keryx.plugins.slack import slack_sender
+from keryx.plugins.slack import report_route, slack_sender
 from keryx.realtime.base import ProviderFactory
 from keryx.realtime.openai import OpenAIRealtimeClient
 from keryx.restart.coordinator import RestartCoordinator
@@ -154,7 +154,8 @@ def build_app_state(settings: Settings) -> AppState:
         stream_tokens,
         inline_waits,
         restart,
-        slack=lambda: slack_sender(settings),
+        # Asked when a report is posted, so Slack turned on since startup is honoured.
+        reports=lambda task: report_route(settings, task),
     )
     state.notifier.start()
     state.pin_guard = PinGuard.for_settings(settings)
