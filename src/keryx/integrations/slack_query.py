@@ -237,6 +237,11 @@ def _term(said: str) -> tuple[list[str], str]:
     return (trimmed or spoken), kind
 
 
+def spoken(said: str) -> list[str]:
+    """The words of a name as it was said, without the ones that are not part of it."""
+    return _term(said)[0]
+
+
 def _matches(term: list[str], names: tuple[str, ...], *, exact: bool,
              person: bool = False) -> bool:
     """Whether `term` names what goes by `names`: wholly, or (not `exact`) by some of its

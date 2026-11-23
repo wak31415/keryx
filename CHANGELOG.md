@@ -9,12 +9,12 @@ the version starts with 0.
 
 ### Added
 
-- **Write back on Slack, by mentioning Keryx.** Your Slack app now has an access level,
-  chosen before the app is created: `announce` (as before: Keryx posts and reads nothing),
-  `converse`, `read` or `write`. At `converse`, a message you send the Keryx app that mentions it
-  (`@Keryx …`) starts a task, and a reply under a task's report that mentions it continues
-  that task. Without the mention nothing happens, and nobody else's mention does anything.
-  Keryx marks a message it has acted on with 👀. None of this needs the phone PIN, and
+- **Write back on Slack.** Your Slack app now has an access level, chosen before the app
+  is created: `announce` (as before: Keryx posts and reads nothing), `converse`, `read`
+  or `write`. At `converse`, every message you send the Keryx app itself is a request,
+  with no `@Keryx` needed: a new message starts a task, and a reply under a task's report
+  continues that task. Nobody else's message does anything. Anywhere else Keryx acts
+  only on a message of yours that mentions it. Keryx marks a message it has acted on with 👀. None of this needs the phone PIN, and
   `SECURITY.md` describes the trade; a reply that re-runs a task counts against the daily
   task cap. It listens over Socket Mode, so nothing new is exposed to the internet.
 - **Ask from any conversation, at `read`.** Add the app to a channel and mention it there.

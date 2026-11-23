@@ -134,6 +134,8 @@ class Channel:
 
     reader: SlackReader
     writer: SlackWriteApi
+    #: The Keryx app's own member id in this workspace: never a recipient.
+    app: str = ""
 
     async def aclose(self) -> None:
         await self.reader.aclose()
@@ -152,7 +154,8 @@ def writing(settings) -> list[SlackWorkspace]:
 def channel_for(workspace: SlackWorkspace) -> Channel:
     """A reader and a writer over `workspace`'s user token, which goes no further."""
     token = workspace.token(USER)
-    return Channel(SlackReader(HttpSlackApi(token), workspace.owner_id), HttpSlackWriter(token))
+    return Channel(SlackReader(HttpSlackApi(token), workspace.owner_id), HttpSlackWriter(token),
+                   app=workspace.bot_user_id)
 
 
 class NoWorkspace(LookupError):
@@ -187,7 +190,7 @@ async def resolve(channels: Channels, name: str, to: str, message: str) -> Recip
         raise Unclear(problem, status="refused")
     channel = channels[name]()
     try:
-        return await slack_write.recipient(channel.reader, to)
+        return await slack_write.recipient(channel.reader, to, app=channel.app)
     finally:
         await channel.aclose()
 
@@ -196,7 +199,7 @@ async def deliver(channels: Channels, name: str, to: Recipient, message: str) ->
     """Send `message` to `to`, as the owner. Raises `SlackWriteError`."""
     channel = channels[name]()
     try:
-        await slack_write.send(channel.writer, to, message)
+        await slack_write.send(channel.writer, to, message, app=channel.app)
     finally:
         await channel.aclose()
 

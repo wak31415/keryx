@@ -372,6 +372,59 @@ async def test_with_several_workspaces_one_may_be_named(settings, api, writer):
     assert first["status"] == "confirm"
 
 
+# --- never to Keryx itself ------------------------------------------------------------------------
+
+APP = "U0KERYX"
+
+
+def with_app(settings, api, writer):
+    api.names[APP] = "Keryx"
+    api.channels.append({"id": "D0APP", "is_im": True, "user": APP})
+    path = plugins.write_config(settings, NAME, {})
+    channels = {"default": lambda: Channel(SlackReader(api, OWNER, clock=lambda: NOW), writer,
+                                           app=APP)}
+    with loading(settings):
+        return offered(slack_message_tool(path, channels=channels, clock=Clock()), settings)
+
+
+@pytest.mark.parametrize("to", ["Keryx", APP, "D0APP", f"D0APP:{ts(1)}"])
+async def test_the_voice_tool_refuses_keryx_itself_as_a_recipient_in_one_sentence(
+    settings, api, writer, to
+):
+    """A direct message to the app needs no mention, so a message sent there as the
+    owner would be Keryx setting itself to work."""
+    result = await call(with_app(settings, api, writer), NAME,
+                        {"to": to, "message": "look into the flaky test"})
+
+    assert result["status"] == "refused" and "confirm" not in result
+    assert "a message to Keryx itself" in result["message"] and writer.calls == []
+
+
+async def test_the_app_is_refused_again_when_the_message_is_sent_whatever_was_confirmed(
+    settings, api, writer, monkeypatch
+):
+    """The write path's own check: a recipient that reached it some other way."""
+    from keryx.integrations import slack_write
+    from keryx.integrations.slack_write import Recipient
+
+    async def resolved(reader, to, *, app=""):
+        return Recipient("person", "Sam Lee", member=APP)
+
+    monkeypatch.setattr(slack_write, "recipient", resolved)
+    tools = with_app(settings, api, writer)
+    first = await call(tools, NAME, {"to": "Sam", "message": "hi"})
+
+    second = await call(tools, NAME, {"confirm": first["confirm"]})
+
+    assert second["status"] == "to_the_app" and writer.calls == []
+
+
+def test_the_real_channel_carries_the_apps_own_member_id(settings):
+    [workspace] = slack_message.writing(at(settings))
+
+    assert slack_message.channel_for(workspace).app == "U0KERYX"
+
+
 # --- whether it loads at all --------------------------------------------------------------------
 
 
@@ -544,6 +597,22 @@ def test_an_unclear_recipient_lists_the_candidates_and_sends_nothing(command, ap
     assert "- [U0SAM] Sam Lee" in name_in(result.output)
     assert "- [U0SAM2] Sam Wu" in name_in(result.output)
     assert "how Slack names people and conversations" in result.output
+
+
+@pytest.mark.parametrize("to", ["U0KERYX", "D0NEWRYX", f"D0NEWRYX:{ts(1)}"])
+def test_the_command_refuses_keryx_itself_on_the_run_that_sends(settings, api, writer,
+                                                               monkeypatch, to):
+    made = at(settings, slack_user_token="xoxp-very-secret")
+    monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
+    monkeypatch.setattr(
+        slack_message, "channel_for",
+        lambda workspace: Channel(SlackReader(api, OWNER, clock=lambda: NOW), writer,
+                                  app=workspace.bot_user_id))
+
+    result = run_slack("message", "--to", to, "--confirm", text="look into the flaky test")
+
+    assert result.exit_code == 1 and "(to_the_app)" in result.output
+    assert not [name for name, _ in writer.calls if name == "chat.postMessage"]
 
 
 def test_a_post_slack_refuses_is_one_line_that_does_not_claim_it_was_sent(command, writer):

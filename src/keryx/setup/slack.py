@@ -26,10 +26,11 @@ is saved, one the level does not use is refused by name, and lowering the level 
 the tokens it no longer uses. **An app is never made twice**: raising the level of a
 workspace that is connected prints the new manifest to paste into the app there is.
 
-**What sets Keryx to work is a mention, from the owner.** The app's own member id
-(`bot_user_id`, what `auth.test` says of the bot token) is stored at connect, because a
-message is acted on only when it mentions it; a workspace above `announce` without it
-hears nothing.
+**What sets Keryx to work is the owner writing to it.** In the app's own direct messages
+that is any message of theirs; anywhere else, one that mentions the app. The app's own
+member id (`bot_user_id`, what `auth.test` says of the bot token) is stored at connect,
+because a mention is a mention of it and because nothing is ever sent to it as the
+owner; a workspace above `announce` without it hears nothing.
 
 **One owner, fixed at connect** (the owner's ruling of 2026-11-23). The owner is whoever
 set the connection up, and `owner_id` (the one member whose messages may start work with
@@ -90,9 +91,10 @@ MEANING = {
     Access.ANNOUNCE: "Keryx posts to you on Slack and reads nothing there.",
     Access.CONVERSE: (
         "Keryx posts to you, and is sent the direct messages you type to the Keryx app "
-        "itself: nothing else in Slack. It acts on one only when it is yours and mentions "
-        "the app (@Keryx): a new message starts work, and a reply under a task's report "
-        "resumes that task, both without the phone PIN."
+        "itself: nothing else in Slack. Every message you type there is a request, with "
+        "no @Keryx needed: a new message starts work, and a reply under a task's report "
+        "resumes that task, both without the phone PIN. Only your own member id is "
+        "checked."
     ),
     Access.READ: (
         "Everything in converse. You can also mention the app (@Keryx) in any conversation "
@@ -113,8 +115,8 @@ MEANING = {
 #: The same in a few words, beside each option of the wizard's question.
 SHORT = {
     Access.ANNOUNCE: "Keryx posts to you and reads nothing",
-    Access.CONVERSE: "also acts on a message you send the Keryx app that mentions it "
-                     "(@Keryx): it can resume or start work without the PIN",
+    Access.CONVERSE: "also acts on every message you send the Keryx app itself: each "
+                     "can resume or start work without the PIN",
     Access.READ: "also answers your mention in a conversation it was added to, there, "
                  "and reads Slack as you when you ask it about messages",
     Access.WRITE: "also sends a message as you, to a person or a channel, when you ask "
@@ -170,8 +172,8 @@ TEST_MESSAGE = (
 )
 #: Added to it where a message typed back is acted on.
 CONVERSE_TEST_MESSAGE = (
-    " Mention the app (@Keryx) to set it to work: in a reply under a report to resume "
-    "that task, or in a new message here to start one."
+    " Anything you type here sets Keryx to work, with no @Keryx needed: a reply under a "
+    "report resumes that task, and a new message starts one."
 )
 
 BY_HAND = f"`keryx plugins install {PLUGIN} --set channel_id=ID` with a channel or member id"
@@ -180,11 +182,15 @@ BY_HAND = f"`keryx plugins install {PLUGIN} --set channel_id=ID` with a channel 
 #: started with, so a running service goes on using the old one.
 RESTART_NOTE = "A Keryx that started with the old token keeps it until `keryx restart`."
 #: Said when a workspace starts being listened to, or its listening changes.
-LISTEN_NOTE = "Keryx starts listening for your messages there at its next start: `keryx restart`."
+LISTEN_NOTE = (
+    "Keryx starts listening for your messages there at its next start: `keryx restart`. "
+    "From then on every message you type to the Keryx app is a request."
+)
 #: Said at `converse` and above, every time: whose messages may start work with no PIN.
 OWNER_LINE = (
-    "Only messages from {who} that mention the app (@Keryx) are acted on there: that "
-    "member id is taken to be you, for as long as this workspace is connected."
+    "Only messages from {who} are acted on there: every one typed to the Keryx app "
+    "itself, and elsewhere only one that mentions it (@Keryx). That member id is taken "
+    "to be you, for as long as this workspace is connected."
 )
 #: Said when the destination is a channel: only the app's direct messages are heard.
 CHANNEL_NOTE = (

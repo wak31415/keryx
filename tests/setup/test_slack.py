@@ -543,7 +543,8 @@ def test_a_workspace_connected_at_that_level_is_told_so_and_never_shown_the_link
         assert text.startswith(f"Acme is connected at the converse level: "
                                f"{MEANING[Access.CONVERSE]}")
         assert "api.slack.com/apps?new_app=1" not in text and "Create your Slack app" not in text
-        assert "Only messages from U0OWNER that mention the app (@Keryx) are acted on there" in text
+        assert "Only messages from U0OWNER are acted on there: every one typed to the" in text
+        assert "and elsewhere only one that mentions it (@Keryx)" in text
         assert "keryx auth login slack --access announce or --access read" in text
         assert "To replace a token: keryx auth login slack --stdin, with the new one" in text
         assert "To disconnect it: keryx auth logout slack" in text
@@ -1190,7 +1191,8 @@ def test_each_level_says_where_keryx_can_be_set_to_work_from_and_what_it_sees():
     assert "reads nothing" in MEANING[Access.ANNOUNCE]
     converse, read = MEANING[Access.CONVERSE], MEANING[Access.READ]
     assert "direct messages you type to the Keryx app itself: nothing else" in converse
-    assert "only when it is yours and mentions the app (@Keryx)" in converse
+    assert "Every message you type there is a request, with no @Keryx needed" in converse
+    assert "Only your own member id is checked" in converse
     assert "without the phone PIN" in converse
     assert "any conversation it has been added to" in read
     # What is really delivered, and that the answer is read by the others there.
@@ -1286,3 +1288,16 @@ def test_lowering_write_to_read_says_what_stops_and_never_that_the_user_token_is
     assert "Keryx no longer sends messages as you, from this moment" in said
     assert "it still reads Slack as you when you ask, with the user token it keeps" in said
     assert "no longer holds your user token" not in said and "forgotten" not in said
+
+
+def test_what_is_said_at_connect_states_the_direct_message_rule(settings):
+    """A direct message to the app needs no mention: the test message, the note about
+    listening and the owner line all say so, since they are what the owner reads."""
+    assert "with no @Keryx needed" in CONVERSE_TEST_MESSAGE
+    assert "a reply under a report resumes that task" in CONVERSE_TEST_MESSAGE
+    assert "every message you type to the Keryx app is a request" in LISTEN_NOTE
+    said = OWNER_LINE.format(who="U0OWNER")
+    assert "every one typed to the Keryx app itself" in said
+    assert "elsewhere only one that mentions it (@Keryx)" in said
+    assert "also acts on every message you send the Keryx app itself" in slack.SHORT[
+        Access.CONVERSE]

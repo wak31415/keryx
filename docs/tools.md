@@ -169,11 +169,13 @@ under Apps in Slack. The app is yours alone. From the command line it is two ste
 `keryx auth login slack --stdin --access LEVEL --email you@example.com` takes the tokens on
 standard input, one to a line in any order (never as arguments), and does the rest.
 
-**Keryx acts only when you mention it.** At `converse` and above, a message is acted on
-only when it is yours and mentions the app: `@Keryx look into the flaky test`. A new
-message starts a task; a reply under a task's report that mentions it continues that
-task. Without the mention nothing happens, and nobody else's mention does anything.
-Keryx puts an 👀 on a message it has acted on and says nothing else until the work is
+**In your direct messages with the Keryx app, just type.** At `converse` and above,
+every message you send the app itself is a request, with no `@Keryx` needed: `look into
+the flaky test`. A new message starts a task; a reply under a task's report continues
+that task. That includes a "thanks", so keep that conversation for requests. Anywhere
+else (at `read`, a channel the app is in) Keryx acts only when the message is yours and
+mentions it: `@Keryx summarise this thread`. Nobody else's message does anything, in
+either place. Keryx puts an 👀 on a message it has acted on and says nothing else until the work is
 done. None of this needs the phone PIN, and [SECURITY.md](../SECURITY.md) says what that
 trade is; each reply that sets a task going again counts against the daily task cap.
 Keryx starts listening when it starts, so run `keryx restart` after choosing the level.

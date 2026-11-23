@@ -387,6 +387,7 @@ class SlackReader:
         self._kept = NAME_REQUESTS if budget >= MAX_REQUESTS else 0
         self._clock = clock
         self._names: dict[str, str] = {}
+        self._all_names: dict[str, tuple[str, ...]] = {}
         #: A name lookup was refused for asking too much: no more are made this call.
         self._names_off = False
         self._places: list[Place] | None = None
@@ -517,6 +518,25 @@ class SlackReader:
             for person in self._people:
                 self._names.setdefault(person.id, _nameable(person.label, person.id))
         return self._people
+
+    async def names_of(self, member: str) -> tuple[str, ...]:
+        """Everything `member` goes by, an app's bot user included (which the member list
+        leaves out): asked of Slack once a call, and () when it will not say."""
+        if not _MEMBER.fullmatch(member or ""):
+            return ()
+        if member not in self._all_names:
+            try:
+                answer = await self._get("users.info", naming=True, user=member)
+            except SlackReadError:
+                return ()
+            user = answer.get("user") if isinstance(answer.get("user"), dict) else {}
+            profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
+            names = (user.get("real_name"), profile.get("real_name"),
+                     profile.get("display_name"), user.get("name"))
+            self._all_names[member] = tuple(dict.fromkeys(
+                clip(name, NAME_CHARS) for name in names
+                if isinstance(name, str) and name.strip()))
+        return self._all_names[member]
 
     async def name(self, member: str) -> str:
         """What to call `member`: `you` for the owner and nobody else, their name asked

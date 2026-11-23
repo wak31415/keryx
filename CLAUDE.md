@@ -738,13 +738,28 @@ Until 2026-11-23 Slack only carried things out. The owner's app now comes at one
 
 Eleven rulings:
 
-- **Keryx acts only when the owner mentions it.** The owner's ruling (2026-11-23). A
-  message is a request only when it is from the workspace's `owner_id` *and* its text
-  mentions the app's own bot user (`<@…>`: `bot_user_id`, the `user_id` `auth.test` gives
-  for the bot token, stored at connect). Everywhere: in the direct messages with the app,
-  in a reply under a task's report, and at `read` in a shared conversation. No mention, no
-  action, no reaction, no sentence; anybody else's mention is dropped the same. The
-  mention is taken out of the request before it is dispatched.
+- **Keryx acts when the owner writes to it: in the app's own direct messages every
+  message is a request, and anywhere else only one that mentions it.** The owner's
+  rulings (2026-11-23: a mention; 2026-11-24: "dm to the app don't need @keryx
+  mentions"). A request is always from the workspace's `owner_id`. In the app's own
+  direct-message conversation that is all it takes, a reply in a thread there included,
+  so a reply under a report resumes its task with no mention. That it *is* that
+  conversation is read from the event's own fields, each held to its shape (a `message`
+  with `channel_type` `im` and a `D…` id), never from its text. Everywhere else (at
+  `read`, a conversation the app was added to) the text has to mention the app's own bot
+  user (`<@…>`: `bot_user_id`, the `user_id` `auth.test` gives for the bot token, stored
+  at connect): no mention, no action, no reaction, no sentence. Anybody else's message is
+  dropped the same in both. A mention that is there is taken out of the request before
+  it is dispatched, and a direct message with nothing of the owner's left in it is
+  answered with one sentence, as a bare mention is. **So nothing is ever sent to the app
+  as the owner**: while every request needed a mention, a message Keryx wrote in their
+  name could not trigger Keryx; in the app's direct messages it now could. `slack_write
+  .send` refuses the app as a recipient (its member id, the conversation with it, a
+  thread there; a test is named after the loop), and `recipient` refuses its name before
+  that. **And the rule rests on the manifest**: `message.im` is subscribed as a *bot*
+  event, which is the app's own direct messages only. A user-level one would deliver
+  every direct message the owner has with anybody, and nothing here could tell them
+  apart.
 - **It may do that without the PIN.** The one place Keryx acts with none, so it is written
   down: the PIN exists because caller id costs nothing to spoof, and a message from the
   owner's own member id cannot be had that cheaply. It takes their Slack account, a token

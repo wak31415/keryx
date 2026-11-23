@@ -346,3 +346,97 @@ async def test_a_refusal_from_slack_is_the_failure_it_is(writer):
     assert failed.value.code == "missing_scope"
     assert "reinstalled at the write level" in failed.value.sentence
     assert OWNER not in failed.value.sentence
+
+
+# --- never to Keryx itself: the loop a direct message with no mention would make ------------
+
+APP = "U0KERYX"
+
+
+@pytest.fixture
+def with_app(api):
+    """A workspace whose listings know the Keryx app: its name, and the owner's direct
+    conversation with it."""
+    api.names[APP] = "Keryx"
+    api.channels.append({"id": "D0APP", "is_im": True, "user": APP})
+    return api
+
+
+@pytest.mark.parametrize("to", ["Keryx", "@keryx", "the keryx", APP, "D0APP", f"D0APP:{ts(1)}"])
+async def test_the_app_itself_is_never_a_recipient_however_it_is_named(with_app, to):
+    """By its name, its member id, the conversation with it, or a thread there."""
+    with pytest.raises(Unclear) as refused:
+        await recipient(reader(with_app), to, app=APP)
+
+    assert refused.value.status == "refused"
+    assert "a message to Keryx itself" in str(refused.value)
+
+
+async def test_somebody_whose_name_is_not_the_apps_is_still_found(with_app):
+    found = await recipient(reader(with_app), "Sam Lee", app=APP)
+
+    assert found == Recipient("person", "Sam Lee", member=SAM)
+
+
+async def test_a_message_sent_as_the_owner_can_never_set_keryx_to_work_on_itself(writer):
+    """In the app's own direct messages every message of the owner's is a request, with
+    no mention asked for: one Keryx sent there in their name would be a request from
+    nobody, answered with work, whose report could ask for more. Refused in the path
+    every send goes through, whatever resolved the recipient."""
+    for to in (Recipient("person", "Keryx", member=APP),
+               Recipient("person", "Keryx", channel="D0APP", member=APP),
+               Recipient("thread", "Keryx", channel="D0APP", member=APP, thread_ts=ts(1)),
+               Recipient("person", APP, member=APP)):
+        with pytest.raises(SlackWriteError) as refused:
+            await send(writer, to, "look into the flaky test", app=APP)
+        assert refused.value.code == "to_the_app"
+
+    assert writer.calls == [], "not even the conversation was opened"
+    assert "never sent" in SlackWriteError("to_the_app").sentence
+
+
+async def test_a_direct_conversation_named_only_by_its_id_is_checked_against_the_apps(writer):
+    """The confirming run of the command is handed an id and looks no name up: which
+    conversation the owner's with the app is, is asked of Slack before anything is
+    posted to a direct message whose other member is not known."""
+    own = "D0NEWRYX"  # what the fake opens for the app's member id
+
+    with pytest.raises(SlackWriteError) as refused:
+        await send(writer, Recipient("channel", own, channel=own), "hi", app=APP)
+    with pytest.raises(SlackWriteError) as threaded:
+        await send(writer, Recipient("thread", own, channel=own, thread_ts=ts(1)), "hi",
+                   app=APP)
+    await send(writer, Recipient("channel", "D0COL", channel="D0COL"), "hi", app=APP)
+
+    assert refused.value.code == threaded.value.code == "to_the_app"
+    posts = [payload["channel"] for name, payload in writer.calls if name == "chat.postMessage"]
+    assert posts == ["D0COL"]
+
+
+async def test_when_it_cannot_be_told_whether_it_is_the_apps_conversation_nothing_is_sent(
+    writer,
+):
+    writer.errors["conversations.open"] = SlackWriteError("missing_scope")
+
+    with pytest.raises(SlackWriteError) as refused:
+        await send(writer, Recipient("channel", "D0COL", channel="D0COL"), "hi", app=APP)
+
+    assert refused.value.code == "cannot_tell" and "was not sent" in refused.value.sentence
+    assert [name for name, _ in writer.calls] == ["conversations.open"]
+
+
+async def test_a_channel_and_a_known_member_cost_no_extra_request(writer):
+    await send(writer, Recipient("channel", "#general", channel="C0GEN"), "hi", app=APP)
+    await send(writer, Recipient("person", "Col League", channel="D0COL", member=COL), "hi",
+               app=APP)
+
+    assert [name for name, _ in writer.calls] == ["chat.postMessage", "chat.postMessage"]
+
+
+def test_a_person_is_named_to_the_second_run_by_their_member_id():
+    """So that who it is stays plain to the run that sends, and to its check."""
+    assert Recipient("person", "Col League", channel="D0COL", member=COL).target == COL
+    assert Recipient("person", "Sam Lee", member=SAM).target == SAM
+    assert Recipient("channel", "#general", channel="C0GEN").target == "C0GEN"
+    assert Recipient("thread", "Col League", channel="D0COL", member=COL,
+                     thread_ts=ts(1)).target == f"D0COL:{ts(1)}"

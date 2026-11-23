@@ -30,8 +30,8 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    may see there, where it can be set to work from, and at the highest that it can send
    messages as them) and then prints a link and its steps. The level is the person's to
    choose: read them what it printed and ask. Never choose `converse`, `read` or `write`
-   for them, since at those a Slack message of theirs that mentions the app can start
-   work without the phone PIN, and at `write` Keryx can post in their name; with no
+   for them, since at those any message of theirs to the Keryx app (and one that
+   mentions it elsewhere) can start work without the phone PIN, and at `write` Keryx can post in their name; with no
    answer it is `announce`, which the commands here set up (a higher one adds `--access
    LEVEL` to both, and its extra tokens to standard input, one to a line). Relay the link
    and the steps; the

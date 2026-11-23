@@ -5,12 +5,27 @@ something in. One `SocketModeListener` runs per workspace at the `converse` leve
 (`integrations.slack_socket`), started by `keryx serve` and by nothing else, and every
 event it hears comes to `SlackInbox.handle`.
 
-**Keryx acts only when the owner mentions it** (the owner's ruling of 2026-11-23). A
-message is a `Request` when it is from the one member id the workspace's settings name as
-the owner *and* its text mentions the app's own bot user (`<@…>`, the id `auth.test` gave
-at connect). That holds everywhere: in the owner's direct messages with the app, in a
-reply under a task's report, and at `read` in any conversation the app has been added to.
-No mention, no action: no reaction, no sentence. Anyone else's mention is dropped the same.
+**A message is a `Request` when it is the owner's and it is meant for Keryx.** The owner
+is the one member id the workspace's settings name. Meant for Keryx is one of two things
+(the owner's rulings of 2026-11-23 and 2026-11-24):
+
+- **In the app's own direct messages, every message of theirs is.** A message there can
+  only be for the app, so no mention is asked for: a new message starts work, and a reply
+  in a thread there (under a report, say) resumes its task. That it *is* the app's direct
+  message is read from the event's own fields, held to their shapes: a `message` whose
+  `channel_type` is `im` and whose conversation id is a direct message's. Never from its
+  text. A mention that is there is still taken out of the request.
+- **Anywhere else, only one that mentions the app** (`<@…>`, the id `auth.test` gave at
+  connect) in the owner's own words: at `read`, in any conversation the app has been
+  added to, through `app_mention`. No mention, no action: no reaction, no sentence.
+
+Anyone else's message is dropped the same in both places.
+
+**Because a direct message needs no mention, Keryx must never write one as the owner.**
+A message Keryx sent in the owner's name could not trigger Keryx while every request
+needed a mention it could not write. In the app's own direct messages that is no longer
+so, which is why `integrations.slack_write.send` refuses the app itself as a recipient:
+its member id, the conversation with it, a thread there.
 
 **Where a request may be typed, by level.** At `converse`, only the direct-message
 conversation with the app (`message.im`). At `read`, also a conversation the app was added
@@ -37,12 +52,16 @@ too, which the level's description says before it is chosen.
 
 **What is a request is decided in one function, `owner_request`, and it fails closed.**
 Everything it needs is on file or it refuses: the workspace's id, the owner's member id,
-the app's own. The checks are the team, the owner, the mention, the event's type and
-subtype, and once only. A mention only counts where the owner wrote it: not on a quoted
-line (`>` at its start) and not inside a code block, and quoted lines are left out of the
-request. Whose authorization delivered the event is *not* a check: under the mention rule
-it defends nothing (only the owner's own mention is a request, wherever it arrives), and
-Slack's own examples disagree about its shape. Because the real payload has only ever been
+the app's own. The checks are the team, the owner, the event's type and subtype, that it
+is the app's direct message or mentions the app, and once only. A mention only counts
+where the owner wrote it: not on a quoted line (`>` at its start) and not inside a code
+block, and quoted lines are left out of the request in either place. Whose authorization
+delivered the event is *not* a check: Slack's own examples disagree about its shape.
+**So the direct-message rule rests on what the app is subscribed to**: Keryx's manifest
+subscribes it to `message.im` as a *bot* event only, which is the app's own direct
+messages and no others. A user-level `message.im` would deliver every direct message the
+owner has with anybody, each indistinguishable here from one typed to the app: never add
+one (SECURITY.md says so to the owner). Because the real payload has only ever been
 read in Slack's documentation, every event that is not acted on writes one log line with a
 reason and nothing else — never the text, the member or the conversation — so a live test
 shows at once which check refused. The settings are read again for every message, so
@@ -81,14 +100,14 @@ log = logging.getLogger("keryx.slack.inbox")
 #: How many messages this process remembers having seen, to drop one delivered twice.
 MAX_SEEN = 512
 
-NOTHING_TO_RESUME = "Keryx has no task in this thread to resume; mention it again to start one."
+NOTHING_TO_RESUME = "Keryx has no task in this thread to resume; ask again to start one."
 CANCELLED = "Task {task_id} was cancelled, so there is nothing here to resume."
 STARTING = "Task {task_id} is only just starting, so send that again in a moment."
 NOT_PASSED_ON = "Keryx could not confirm that reached task {task_id}."
 CAP_REACHED = "Keryx has reached today's task limit ({cap}), so this was not started."
 NOT_STARTED = "Keryx could not start that."
 TEXT_ONLY = "Keryx reads text only: send that again as a message without the file."
-NOTHING_ASKED = "Keryx was mentioned with nothing to do: say what you want after the mention."
+NOTHING_ASKED = "Keryx was given nothing to do there: say what you want in words of your own."
 
 #: The events a request may arrive as, and the subtypes of a message that may be one: an
 #: ordinary message has none, a reply "also sent to the channel" is `thread_broadcast`, and
@@ -177,9 +196,18 @@ def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
         return Dropped("malformed")
     if thread_ts is not None and not slack.is_ts(thread_ts):
         return Dropped("malformed")
+    # The app's own direct messages: the `message` event the bot is sent for a
+    # conversation of type `im`, whose id is a direct message's. Decided on the event's
+    # own fields, never on anything in its text.
+    direct = not mentioned and slack.is_dm(channel)
+    if not (mentioned or direct):
+        return Dropped("not_a_direct_message")
     text = event.get("text")
-    asked = own_words(text if isinstance(text, str) else "", workspace.bot_user_id)
-    if asked is None:
+    asked, addressed = own_words(text if isinstance(text, str) else "", workspace.bot_user_id)
+    # In the app's direct messages every message of the owner's is a request (the
+    # owner's ruling of 2026-11-24): a message there can only be meant for the app.
+    # Everywhere else, only one that mentions it in the owner's own words.
+    if not (addressed or direct):
         return Dropped("no_mention")
     return Request(
         text=asked,
@@ -190,14 +218,14 @@ def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
     )
 
 
-def own_words(text: str, bot_user_id: str) -> str | None:
-    """What the owner asked in `text`, with the mention taken out; None when they did not
-    mention the app in words of their own.
+def own_words(text: str, bot_user_id: str) -> tuple[str, bool]:
+    """What the owner wrote in `text` themselves, with any mention of the app taken out,
+    and whether they mentioned it in words of their own.
 
-    A mention counts only where they wrote it. A line that starts with `>` (`&gt;` as
-    Slack sends it) quotes somebody else, and what is between a pair of ``` is something
-    pasted: a mention in either is not theirs, and quoted lines are not part of what they
-    asked. Each step is one pass over the text.
+    A line that starts with `>` (`&gt;` as Slack sends it) quotes somebody else,
+    everything from a `>>>` on is quoted to the end of the message, and what is between
+    a pair of ``` is something pasted: a mention in any of them is not theirs, and
+    quoted lines are not part of what they asked. Each step is one pass over the text.
     """
     lines = text.split("\n")
     # `>>>` quotes everything after it, to the end of the message: nothing from that
@@ -211,10 +239,8 @@ def own_words(text: str, bot_user_id: str) -> str | None:
     for index in range(0, len(pieces), 2):
         pieces[index], here = _without_mention(pieces[index], bot_user_id)
         found = found or here
-    if not found:
-        return None
     # The mention is not part of what was asked; the gap it leaves is closed.
-    return _SPACES.sub(" ", slack.plain_text("```".join(pieces)))
+    return _SPACES.sub(" ", slack.plain_text("```".join(pieces))), found
 
 
 #: One of Slack's angle-bracket spans: from a `<` to the next `>`, or to the next `<`

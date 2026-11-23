@@ -295,12 +295,26 @@ That is the trade you make by choosing it, so it is said plainly. Keryx opens a 
 out to Slack (Socket Mode; nothing new is reachable from the internet) and is sent the
 direct messages typed to your Keryx app.
 
-- **Keryx acts only when you mention it.** A message is acted on only if it is from the
-  one member id stored as yours for that workspace and it mentions the app (`@Keryx`).
-  That holds everywhere, a reply under a report included. With no mention nothing
-  happens: no reaction, no reply. A new message that mentions it starts a task with a
-  coding agent that has your full access; a reply under a task's report that mentions it
-  continues that task.
+- **In your direct messages with the Keryx app, the only check is your member id.**
+  Every message there from the one member id stored as yours for that workspace is a
+  request. No `@Keryx` is needed, and nothing else is checked: not the PIN, not a
+  mention, not what the message says. A new message starts a task with a coding agent
+  that has your full access; a reply under a task's report continues that task. So
+  "thanks" typed there is a request too, and each one counts against the daily task cap.
+- **Everywhere else Keryx acts only when you mention it.** At `read`, in a conversation
+  the app has been added to, a message is acted on only if it is from your member id
+  and mentions the app (`@Keryx`). With no mention nothing happens: no reaction, no
+  reply.
+- **Keryx never writes to itself as you.** At `write` Keryx can send messages in your
+  name; it refuses to send one to its own app, by any name, because that message would
+  be a request from nobody. This is the tool's and the command's refusal: a coding agent
+  with a shell and the token file can still post there as you, and the daily task cap is
+  what bounds the loop that could start.
+- **This depends on how the app is set up.** Keryx's app is sent only the direct messages
+  typed to the app itself. If you edit the app in Slack to subscribe to your own direct
+  messages as a user (a user-level `message.im` event), every direct message you write to
+  anyone would reach Keryx looking exactly like one typed to the app, and would start
+  work. Do not add user events to the app.
 - **Everything else is dropped silently.** An edit (a mention you add by editing a
   message does nothing: send a new one), a deletion, a message from a bot, a message
   from anyone else, or a message from another workspace. A mention counts only where

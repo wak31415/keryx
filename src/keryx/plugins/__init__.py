@@ -154,7 +154,7 @@ _SLACK_WORKSPACE = (
     Key("team", "line", "", "The workspace's name, as Slack gave it", by_sign_in=True),
     Key("team_id", "word", "", "The workspace's id, as Slack gave it", by_sign_in=True),
     Key("bot_user_id", "word", "",
-        "The app's own member id there: a message is acted on only when it mentions it",
+        "The app's own member id there: what a mention is of, and never written to as you",
         by_sign_in=True),
 )
 
