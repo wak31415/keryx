@@ -64,6 +64,9 @@ READ_METHODS = frozenset({
 REQUEST_TIMEOUT_S = 8.0
 #: The most requests one tool call or one command may make, whatever it was asked.
 MAX_REQUESTS = 30
+#: How many of those are kept for names, so that whatever the reads cost there is
+#: still somebody to attribute a message to: a read may not spend into them.
+NAME_REQUESTS = 6
 #: How many at once: a few seconds on a call, without a burst Slack would throttle.
 CONCURRENCY = 4
 #: The most pages of any one list of messages or conversations that are followed, and of
@@ -380,6 +383,8 @@ class SlackReader:
         self._api = api
         self.owner = owner
         self._left = budget
+        #: What a read has to leave for names: none of a budget too small to share.
+        self._kept = NAME_REQUESTS if budget >= MAX_REQUESTS else 0
         self._clock = clock
         self._names: dict[str, str] = {}
         #: A name lookup was refused for asking too much: no more are made this call.
@@ -395,9 +400,10 @@ class SlackReader:
     async def aclose(self) -> None:
         await self._api.aclose()
 
-    async def _get(self, method: str, **params: Any) -> dict:
-        """One request against the budget; past it, `over_budget` and nothing is sent."""
-        if self._left <= 0:
+    async def _get(self, method: str, *, naming: bool = False, **params: Any) -> dict:
+        """One request against the budget; past it, `over_budget` and nothing is sent.
+        A read stops short of the requests kept for names; `naming` may spend those."""
+        if self._left <= (0 if naming else self._kept):
             self.more = True
             raise SlackReadError("over_budget")
         self._left -= 1
@@ -446,12 +452,13 @@ class SlackReader:
                     bool(answer.get("has_more")))
 
     async def replies(self, channel: str, ts: str, *, limit: int = PAGE_MESSAGES,
-                      oldest: str | None = None, latest: str | None = None) -> Page:
-        """The thread hanging from `ts` in `channel`, oldest first, for at most
-        `MAX_PAGES` pages of `limit`."""
+                      oldest: str | None = None, latest: str | None = None,
+                      pages: int = MAX_PAGES) -> Page:
+        """The thread hanging from `ts` in `channel`, oldest first, for at most `pages`
+        pages of `limit`."""
         reads: list[Read] = []
         cursor = None
-        for _ in range(MAX_PAGES):
+        for _ in range(pages):
             answer = await self._get("conversations.replies", channel=channel, ts=ts,
                                      limit=limit, oldest=oldest, latest=latest, cursor=cursor)
             items = answer.get("messages") if isinstance(answer.get("messages"), list) else []
@@ -518,7 +525,7 @@ class SlackReader:
             if self._names_off:
                 return member
             try:
-                answer = await self._get("users.info", user=member)
+                answer = await self._get("users.info", naming=True, user=member)
             except SlackReadError as error:
                 # A name is a nicety: its id will do. And once Slack says it is being
                 # asked too much, or the budget is spent, no more names are asked for.

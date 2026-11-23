@@ -13,6 +13,12 @@ planned. Every filter is optional and they combine; there are no modes anywhere 
 | `conversation` | that conversation's latest messages, in order |
 | `text`, or `from` with no place | one search |
 
+What each may cost, at most, of the reader's budget (`MAX_REQUESTS`, of which
+`NAME_REQUESTS` are kept for names): resolving names, 5 (the owner's conversations for
+two pages, the member list for three, each asked once a call); what is waiting, 20 (two
+searches, then up to `MAX_CANDIDATES` of each half confirmed, one request for a direct
+conversation and two for a mention); a thread, 2; a conversation, mentions or a search, 1.
+
 `conversation`, `from` and `days` narrow any of them; `text` narrows a thread or what is
 waiting by the words themselves. A search is narrowed twice: by the modifiers Slack
 documents (`in:`, `from:<@…>`), built only from ids and names Slack gave, and again on
@@ -469,7 +475,8 @@ async def _waiting(reader: SlackReader, filters: Filters, place: Place | None,
 async def _since(reader: SlackReader, read: Read) -> Page:
     """What was written after `read` where the owner would have answered it: its thread,
     and for a message that is not in one, the conversation as well."""
-    thread = await reader.replies(read.channel, read.root, oldest=read.ts)
+    # One page: when there is more than that after it, it is not claimed either way.
+    thread = await reader.replies(read.channel, read.root, oldest=read.ts, pages=1)
     if read.thread_ts:
         return thread
     after = await reader.history(read.channel, oldest=read.ts, limit=SINCE)

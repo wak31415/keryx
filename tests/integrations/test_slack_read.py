@@ -15,6 +15,7 @@ from keryx.integrations.slack_read import (
     MAX_NAMED,
     MAX_PAGES,
     MAX_REQUESTS,
+    NAME_REQUESTS,
     READ_METHODS,
     SYSTEM_SUBTYPES,
     HttpSlackApi,
@@ -275,6 +276,22 @@ async def test_one_call_never_makes_more_than_its_budget_of_requests(api):
 
     assert spent.value.code == "over_budget" and one.more
     assert len(api.calls) == 3 <= MAX_REQUESTS
+
+
+async def test_a_read_never_spends_the_requests_kept_for_names(api):
+    """Whatever the reads cost, there is still somebody to attribute a message to."""
+    one = reader(api)
+
+    for _ in range(MAX_REQUESTS - NAME_REQUESTS):
+        await one.history("D0COL", limit=1)
+    with pytest.raises(SlackReadError) as spent:
+        await one.history("D0COL", limit=1)
+
+    assert spent.value.code == "over_budget"
+    assert await one.name(COL) == "Col League" and len(api.calls) <= MAX_REQUESTS
+    for n in range(NAME_REQUESTS + 3):
+        await one.name(f"U0N{n:03d}")
+    assert len(api.calls) == MAX_REQUESTS, "and names stop at the budget too"
 
 
 async def test_the_owners_conversations_are_asked_once_and_followed_for_a_few_pages(api):

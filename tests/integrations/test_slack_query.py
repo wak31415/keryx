@@ -576,6 +576,22 @@ async def test_only_so_many_are_looked_into_and_the_rest_is_more(api):
     assert len(api.calls) <= MAX_REQUESTS
 
 
+async def test_the_most_waiting_can_cost_fits_the_budget_with_names_to_spare(api):
+    """Two searches, then every candidate of both halves confirmed, with names resolved."""
+    api.searches["to:me"] = [match(COL, f"m{n}", ts(1, n), f"D0X{n:03d}") for n in range(20)]
+    api.searches[MENTION] = [match(EVE, f"{MENTION} {n}", ts(2, n), f"C0Y{n:03d}",
+                                   kind="channel") for n in range(20)]
+    for n in range(20):
+        api.histories[f"D0X{n:03d}"] = [message(COL, f"m{n}", ts(1, n))]
+
+    context, one = await ask(api)
+
+    reads = [name for name, _ in api.calls if name != "users.info"]
+    assert len(reads) == 2 + MAX_CANDIDATES + 2 * MAX_CANDIDATES <= MAX_REQUESTS - 6
+    assert not context.incomplete and context.more
+    assert {said.who for said in context.messages} == {"Col League", "Eve Adams"}
+
+
 async def test_waiting_combines_with_a_place_a_person_and_words(api):
     api.searches["to:me"] = [match(COL, "the budget?", ts(1)),
                              match(EVE, "lunch?", ts(2), "D0EVE")]
