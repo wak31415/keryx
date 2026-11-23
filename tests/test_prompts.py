@@ -618,9 +618,14 @@ def test_a_quick_read_of_their_mail_calendar_or_documents_goes_to_the_tool_that_
     mine = text[answer:dispatch]
 
     assert "when you have a tool for it on this call" in mine
-    for read in ("what is in their mail", "what is on their calendar", "what a document says"):
+    for read in ("what is in their mail", "what is on their calendar", "what a document says",
+                 "what is waiting for them on Slack"):
         assert read in mine
     assert "call it rather than dispatching" in mine
+    # A quick read of Slack is the tool's when there is one; anything deeper is a task.
+    theirs = text[dispatch : text.index("There are no task types")]
+    assert "replying on Slack or reading a long thread there" in theirs
+    assert "check_slack" not in text
 
 
 def test_putting_one_new_event_on_their_calendar_goes_to_the_tool_that_adds_one(unwrapped):

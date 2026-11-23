@@ -158,7 +158,7 @@ class AgentContext:
         """`mcp_servers` is every server but Google's, which is added here when the owner
         has signed in and turned it on, so each backend gets it the same way."""
         from keryx.integrations.google import mcp_server
-        from keryx.plugins.slack import slack_route
+        from keryx.plugins.slack import can_read, slack_route
 
         slack = slack_route(settings)
         servers = dict(mcp_servers or {})
@@ -170,6 +170,7 @@ class AgentContext:
             instructions=render_subagent_suffix(
                 task,
                 slack_mcp_server=slack.mcp_server if slack is not None else None,
+                slack_read=can_read(settings),
                 owner=settings.owner_label,
                 assistant=settings.assistant_name,
                 tools_dir=settings.custom_tools_dir,

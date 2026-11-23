@@ -252,6 +252,15 @@ def connected(settings: Settings) -> list[SlackWorkspace]:
     return [each for each in workspaces(settings) if each.sends]
 
 
+def can_read(settings: Settings) -> bool:
+    """Whether any workspace may be read as the owner now. Never raises: a plugin file
+    that does not parse is a machine that cannot, and `doctor` says why."""
+    try:
+        return any(each.reads and each.owner_id for each in connected(settings))
+    except Exception:
+        return False
+
+
 def workspace(settings: Settings, name: str) -> SlackWorkspace | None:
     """The connected workspace called `name`, as its settings stand now."""
     return next((each for each in connected(settings) if each.name == name), None)

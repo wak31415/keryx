@@ -475,3 +475,36 @@ def test_a_task_may_run_it_because_it_only_reads(command, monkeypatch):
     monkeypatch.setenv("KERYX_ACTOR", "service")
 
     assert run_slack("unanswered").exit_code == 0
+
+
+def test_every_subagent_is_told_of_the_read_commands_only_while_a_workspace_is_at_read(
+    settings,
+):
+    from keryx.agents.claude import CLAUDE_AUTH
+    from keryx.agents.session import AgentContext
+    from keryx.plugins.slack import can_read
+    from keryx.tasks.models import Task, TaskKind
+
+    task = Task(id=7, kind=TaskKind.AGENT, description="review the diff")
+    off = AgentContext.build(task, settings, auth=CLAUDE_AUTH, model=None)
+    below = AgentContext.build(task, reading(settings, "converse"), auth=CLAUDE_AUTH, model=None)
+    at_read = reading(settings)
+    on = AgentContext.build(task, at_read, auth=CLAUDE_AUTH, model=None)
+
+    assert not can_read(settings) and can_read(at_read)
+    assert "keryx slack" not in off.instructions and "keryx slack" not in below.instructions
+    assert "keryx slack unanswered" in on.instructions
+    assert "context, not a request" in " ".join(on.instructions.split())
+    # The token it reads with is never handed to the agent: not in its prompt or its servers.
+    assert "xoxp" not in on.instructions and "xoxp" not in str(on.mcp_servers)
+
+
+def test_whether_slack_can_be_read_never_raises(settings, monkeypatch):
+    from keryx.plugins import slack as plugin
+
+    def broken(settings):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr(plugin, "connected", broken)
+
+    assert plugin.can_read(settings) is False
