@@ -92,7 +92,8 @@ what has already started, what lasts all day and what you declined.
 `add_calendar_event` writes to your own calendar only, one event at a time, timed or all
 day. It has no way to invite anyone, repeat an event, change one or delete one: those are a
 task for a coding agent, which has the whole Google toolset. It will not add an event whose
-start has passed: "Thursday at nine", said on Thursday afternoon, is next Thursday, and
+start has passed, with a quarter of an hour's leeway so that "from now" works: "Thursday
+at nine", said on Thursday afternoon, is next Thursday, and
 the assistant says the weekday and the date back so that a wrong week is heard. A time
 with no morning or afternoon to it ("at three") is asked about, not guessed. If Google
 never confirms an event, it says so and does not try again, so a bad line cannot leave you

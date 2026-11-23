@@ -615,6 +615,9 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
 - **Nothing is written into the past.** A bare weekday is the next one, and when it is
   today and the time named has gone it is next week's. A start that has passed, however it
   was named, is `in_the_past`: refused, with when it would have been, and nothing sent.
+  "Passed" has a quarter of an hour's grace (`START_GRACE`), for the refusal and for the
+  roll to next week alike: the model's "now" is the `Time` line it was given when the call
+  began, so "block from now until four" always arrives minutes old.
   The confirmation always carries the weekday and the date, and the description tells the
   model to say both, because a wrong week is only ever caught by ear. A bare hour is
   refused too (`parse_time`): "3" is 03:00 to the 24-hour clock and three in the

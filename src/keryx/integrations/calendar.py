@@ -33,7 +33,9 @@ things it will not do quietly:
 - **Write into the past.** A bare weekday means the next one, and when today is that day
   and the time has gone it means next week's. A start that has already passed, however it
   was named, is refused with a sentence and nothing is sent: the usual cause is a wrong
-  day, and the event would be `created` where nobody will ever look.
+  day, and the event would be `created` where nobody will ever look. "Passed" has a
+  quarter of an hour's grace (`START_GRACE`), because "now" reaches this tool from a
+  model whose clock is the minute the call began.
 - **Send twice.** A `POST` that went out and was not answered (a read that timed out, a
   5xx) is never repeated: the event may be there, and two of them is worse than a sentence
   saying so (`unconfirmed`). A failure known to have come *before* the request left (no
@@ -109,6 +111,9 @@ CALENDARS_TTL_S = 300.0
 ANSWER_TIMEOUT_S = 15.0
 #: How long an event may be made, in minutes: a week.
 MAX_MINUTES = 7 * 24 * 60
+#: How long ago a start may be and still be "now". The model knows the time from the line
+#: its prompt was given when the call began, so "from now until four" arrives minutes old.
+START_GRACE = timedelta(minutes=15)
 
 Clock = Literal["24h", "12h"]
 Which = Literal["selected", "primary"]
@@ -689,9 +694,10 @@ class CalendarWriter:
         if (
             begins is not None
             and weekday_named(day) is not None
-            and datetime.combine(first, begins) <= now
+            and datetime.combine(first, begins) < now - START_GRACE
         ):
-            # "Thursday at nine", said on Thursday afternoon, is next Thursday.
+            # "Thursday at nine", said on Thursday afternoon, is next Thursday. Said at a
+            # minute past nine it is still this one.
             first += timedelta(days=7)
         body: dict[str, Any] = {"summary": summary}
         said: dict[str, Any] = {"title": summary, "day": say_day(first, today)}
@@ -721,7 +727,7 @@ class CalendarWriter:
             said |= {"start": say_time(start, self._clock), "end": say_time(end, self._clock)}
             if end.date() != start.date():
                 said["end_day"] = say_day(end.date(), today)
-            gone = start < now
+            gone = start < now - START_GRACE
         if gone:
             log.info("add_calendar_event: refused, the start has passed")
             return {

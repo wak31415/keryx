@@ -595,11 +595,13 @@ ways:
   (`integrations/google_api.py`), whatever the sign-in allows. `add_calendar_event` can
   create one event on your own calendar and nothing else: it sends no attendees and asks
   Google to notify nobody, so it cannot be used to send anything to anyone, and it cannot
-  change or delete an event. It refuses a start that has already passed, and it never
-  sends a request twice. It also sends no event id of its own that would make a second
-  send harmless, so the accepted risk is a duplicate when a request that did reach Google
-  is reported as unconfirmed and you ask again without looking; the assistant is told to
-  say the event may be there and not to add it again.
+  change or delete an event. It refuses a start that passed more than a quarter of an
+  hour ago, and it never repeats a request that may have reached your calendar. The one
+  request it does send again is one Google answered 401, after refreshing the sign-in: a
+  401 is a refusal before anything was created. It also sends no event id of its own
+  that would make a second send harmless, so the accepted risk is a duplicate when a
+  request that did reach Google is reported as unconfirmed and you ask again without
+  looking; the assistant is told to say the event may be there and not to add it again.
 - **Nothing the caller says is spliced into a request.** A Drive search is a quoted term
   with its quotes and backslashes escaped, inside a query built from constants. A file id
   is matched against a pattern before it is put in an address, so an id cannot name

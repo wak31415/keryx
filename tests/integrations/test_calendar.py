@@ -849,6 +849,37 @@ async def test_a_start_that_has_passed_is_refused_with_when_it_would_have_been(a
     assert api.posts == []
 
 
+async def test_a_start_in_the_last_quarter_of_an_hour_is_now_not_the_past():
+    """The model's "now" is the Time line it was given when the call began, minutes ago.
+    "Block from now until seven" was always refused, to the second."""
+    api = FakeCalendar()
+
+    just_now = await writer(api).add(title="Focus", day="today", start_time="18:27",
+                                     end_time="19:00")
+    at_the_edge = await writer(api).add(title="Focus", day="today", start_time="18:15")
+    too_late = await writer(api).add(title="Focus", day="today", start_time="18:14")
+
+    assert (just_now["status"], just_now["start"], just_now["end"]) == (
+        "created", "18:27", "19:00",
+    )
+    assert api.posts[0][1]["start"]["dateTime"] == "2026-11-22T18:27:00"  # as given
+    assert at_the_edge["status"] == "created"
+    assert too_late["status"] == "in_the_past" and len(api.posts) == 2
+
+
+async def test_a_weekday_that_is_today_rolls_a_week_only_once_the_grace_has_gone():
+    api = FakeCalendar()
+
+    this_minute = await writer(api).add(title="Call", day="sunday", start_time="18:30")
+    minutes_ago = await writer(api).add(title="Call", day="sunday", start_time="18:20")
+    long_gone = await writer(api).add(title="Call", day="sunday", start_time="18:10")
+
+    assert [r["day"] for r in (this_minute, minutes_ago, long_gone)] == [
+        "Sunday 22 November", "Sunday 22 November", "Sunday 29 November",
+    ]
+    assert all(r["status"] == "created" for r in (this_minute, minutes_ago, long_gone))
+
+
 async def test_today_is_not_the_past_for_what_has_not_started():
     api = FakeCalendar()
 
