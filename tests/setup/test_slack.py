@@ -6,6 +6,7 @@ Slack is three fakes here; nothing reaches it.
 import json
 import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
@@ -381,7 +382,7 @@ def test_a_chosen_level_says_what_it_sees_then_its_own_link_steps_and_command(se
     assert "4. Under Basic Information, App-Level Tokens, click Generate Token and Scopes" in text
     assert "connections:write" in text
     assert "5. Under OAuth & Permissions, the same page as the bot token" in text
-    assert "6." not in text
+    assert "6. Optional:" in text and "7." not in text
     assert "hand the tokens over on standard input, never on the command line, one to a line" in (
         text
     )
@@ -412,7 +413,7 @@ def test_raising_the_level_of_an_app_there_is_never_makes_a_second_one(settings)
     assert "pick the app you already have for Keryx. Do not create a second one." in text
     assert "2. Open App Manifest, replace what is there with the manifest below" in text
     assert "3. Open Install App and click Reinstall to Workspace" in text
-    assert "4. Under Basic Information, App-Level Tokens" in text and "5." not in text
+    assert "4. Under Basic Information, App-Level Tokens" in text and "6." not in text
     manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("Saving it")]
     assert json.loads(manifest) == app_manifest(Access.CONVERSE, assistant="Lyra")
     assert "The bot token stays as it is." in text
@@ -448,7 +449,8 @@ def test_a_connected_workspace_is_always_shown_the_manifest_that_renames_its_app
     assert ("The app is called Jarvis in Slack, after your assistant, once its manifest "
             "says so: one made under another name keeps it until then.") in text
     assert "open https://api.slack.com/apps, pick the app, open App Manifest" in text
-    manifest = json.loads(text[text.index("click Save Changes:") + len("click Save Changes:"):])
+    manifest = json.loads(text[text.index("click Save Changes:") + len("click Save Changes:"):
+                               text.index("\nOptional:")])
     assert manifest == app_manifest(Access.CONVERSE, assistant="Jarvis")
     assert manifest["display_information"]["name"] == "Jarvis"
     assert "every one typed to the Jarvis app itself" in text and "@Jarvis" in text
@@ -1296,7 +1298,7 @@ def test_an_older_install_is_shown_how_to_update_the_app_it_has(settings):
         "Token (xoxp-…). It says which member you are.",
     ):
         assert step in lines
-    assert "5." not in text
+    assert "5. Optional:" in text and "6." not in text
     manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("Saving it")]
     assert json.loads(manifest) == app_manifest(Access.ANNOUNCE, assistant="Lyra")
     assert "hand the user token over on standard input" in text
@@ -1362,3 +1364,62 @@ def test_lowering_converse_to_announce_keeps_the_user_token_that_only_says_who_t
 
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
     assert lines[1] == "SLACK_APP_TOKEN is forgotten."
+
+
+# --- the app's icon ------------------------------------------------------------------------------
+
+
+def test_the_packaged_icon_is_a_square_png_slack_takes():
+    """Slack takes an app icon between 512 and 2000 pixels square (`apps.icon.set`'s
+    `invalid_icon_size`). Read from the file's own header: its signature, then the
+    width and height its first chunk states."""
+    data = slack.ICON.read_bytes()
+
+    assert slack.ICON.is_absolute() and slack.ICON.name == "slack_app_icon.png"
+    assert data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR"
+    width, height = (int.from_bytes(data[at:at + 4], "big") for at in (16, 20))
+    assert (width, height) == (1024, 1024)
+    assert len(data) < 100_000, "small enough to ship in the wheel without a thought"
+
+
+def test_a_new_apps_steps_end_with_the_optional_icon_and_the_file_on_its_own_line(settings):
+    lines = said(settings, access=Access.CONVERSE).splitlines()
+
+    step = next(line for line in lines if "Display Information" in line)
+    assert step.startswith("6. Optional: under Basic Information, Display Information,")
+    assert "Skipping it changes nothing else" in step
+    path = lines[lines.index(step) + 1].strip()
+    assert path == str(slack.ICON) and Path(path).is_file()
+    assert "7." not in "\n".join(lines)
+
+
+@pytest.mark.parametrize("older", [False, True])
+def test_updating_an_app_there_is_offers_the_icon_too(settings, older):
+    """Raising a level, and an install from before user tokens: the same optional step,
+    after the tokens."""
+    text = (said(older_install(settings, "D0OLDDM")) if older
+            else said(connected_at(settings), access=Access.CONVERSE))
+
+    lines = text.splitlines()
+    step = next(line for line in lines if "Display Information" in line)
+    assert step.startswith("5. Optional:") and "Skipping it changes nothing else" in step
+    assert lines[lines.index(step) + 1].strip() == str(slack.ICON)
+
+
+def test_a_connected_workspace_is_told_where_the_icon_is(settings):
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+
+    lines = said(settings).splitlines()
+
+    told = next(line for line in lines if "Display Information" in line)
+    assert told.startswith("Optional:") and lines[lines.index(told) + 1].strip() == str(slack.ICON)
+
+
+def test_the_wizards_guide_has_the_same_optional_icon_step():
+    guide = slack.guide(Access.ANNOUNCE, app="Lyra")
+    raised = slack.guide(Access.CONVERSE, app="Lyra", raising=True, have=("bot",))
+
+    for text, number in ((guide, 5), (raised, 6)):
+        assert f"{number}. Optional: under **Basic Information**, **Display Information**" in text
+        assert f"`{slack.ICON}`" in text
+        assert f"{number + 1}." not in text

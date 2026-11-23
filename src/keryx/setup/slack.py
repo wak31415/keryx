@@ -64,6 +64,7 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from keryx import plugins
@@ -174,6 +175,17 @@ TOKEN_STEPS = {
     USER: "Under **OAuth & Permissions**, the same page as the bot token, copy the **User "
           "OAuth Token** (`xoxp-…`). It says which member you are.",
 }
+
+#: The Keryx mark as a square PNG, shipped beside this module, for the app's icon. A
+#: manifest cannot carry an icon, so uploading it is a step of the owner's, and optional.
+ICON = Path(__file__).resolve().with_name("slack_app_icon.png")
+#: The last step, for a new app and for one being changed: Markdown, with the file on a
+#: line of its own (`shown` makes the terminal's two lines of it).
+ICON_STEP = (
+    "Optional: under **Basic Information**, **Display Information**, click **Add App "
+    "Icon** and upload the Keryx mark from the file below. Skipping it changes nothing "
+    "else.\n\n   `{icon}`"
+)
 
 #: What the app posts to show it arrives. The app is the assistant in Slack, so it does
 #: not call itself Keryx: it names nothing but what the owner would type (`@{app}`).
@@ -306,7 +318,8 @@ def steps(access: Access, *, app: str, raising: bool = False,
     """
     lines = list(RAISE_STEPS if raising else STEPS[:2])
     lines += [TOKEN_STEPS[kind] for kind in token_kinds(access) if kind not in have]
-    return [line.format(app=app) for line in lines]
+    lines.append(ICON_STEP)
+    return [line.format(app=app, icon=ICON) for line in lines]
 
 
 def guide(access: Access = Access.ANNOUNCE, *, app: str, raising: bool = False,
@@ -320,6 +333,12 @@ def guide(access: Access = Access.ANNOUNCE, *, app: str, raising: bool = False,
 
 def plain(text: str) -> str:
     return text.replace("**", "").replace("`", "")
+
+
+def shown(step: str) -> str:
+    """A step as the terminal prints it: no Markdown marks, and what it puts on a line of
+    its own (the icon's file) straight under it."""
+    return plain(step).replace("\n\n", "\n")
 
 
 def keeps(channel: str, *, new_token: bool) -> bool:
@@ -416,7 +435,7 @@ def start(
         echo(slack.new_app_url(access, assistant=settings.assistant_name))
         echo("")
     for number, step in enumerate(steps(access, app=app, raising=raising, have=have), 1):
-        echo(f"{number}. {plain(step)}")
+        echo(f"{number}. {shown(step)}")
     if raising:
         echo("\nThe manifest:\n")
         echo(slack.manifest_json(access, assistant=settings.assistant_name))
@@ -474,6 +493,7 @@ def _already(saved: SlackWorkspace, echo: Callable[[str], None], *, app: str,
          f"{APPS_URL}, pick the app, open App Manifest, replace what is there with this, "
          "and click Save Changes:\n")
     echo(slack.manifest_json(saved.access, assistant=assistant))
+    echo("\n" + shown(ICON_STEP.format(icon=ICON)))
 
 
 def lower(

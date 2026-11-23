@@ -90,6 +90,8 @@ jobs:
           # What a clone keeps beside src/ and an install still needs (force-include).
           grep -q 'keryx/bundled_skills/keryx-custom-tools/SKILL\.md' <<<"$contents"
           grep -q 'keryx/approvals/keryx_approval\.py' <<<"$contents"
+          # The Slack app's icon, which the connect steps name by its path on this machine.
+          grep -q 'keryx/setup/slack_app_icon\.png' <<<"$contents"
 
       # `uv venv --python 3.12`, not the runner's `python`: `requires-python` is
       # `>=3.12,<3.13`, so a runner image that has moved on to 3.13 would fail the install

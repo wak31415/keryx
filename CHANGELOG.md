@@ -23,6 +23,9 @@ the version starts with 0.
   `@Lyra`, not `@Keryx`. What the app posts about itself in Slack no longer says "Keryx".
   An app made earlier keeps its name until its manifest is saved again, which `keryx auth
   login slack` prints with the steps.
+- **An icon for your Slack app.** Keryx ships its mark as a PNG, and the connect steps
+  end with an optional one that says where the file is and where to upload it. The
+  app's manifest also sets a background colour, the mark's violet.
 - **Ask from any conversation, at `read`.** Add the app to a channel and mention it there.
   It reacts to your message and answers in that thread, where the others in the
   conversation read the answer too. Ask in your direct messages with the app for anything

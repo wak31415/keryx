@@ -398,6 +398,14 @@ _NAME_MARKS = "-'’._"
 _RESERVED_USERNAMES = frozenset({"slackbot", "slack", "here", "channel", "everyone", "group"})
 
 
+#: The colour Slack puts behind the app's name and description: the violet of the mark
+#: (`docs/assets/keryx-mark.svg`). Slack takes a hex value with its hash, three or six
+#: digits, and says nothing of contrast; it sets white text on it, and of the mark's three
+#: colours this one stands furthest from white (5.7 to 1; the pink is 4.6, the orange
+#: 2.8). Once a manifest has set one, Slack lets it be changed and never removed.
+BACKGROUND_COLOR = "#7c3aed"
+
+
 def app_name(assistant: str | None) -> str:
     """What the owner's Slack app and its bot are called: the assistant's name, fitted.
 
@@ -439,6 +447,7 @@ def app_manifest(access: Access = Access.ANNOUNCE, *, assistant: str = "") -> di
         "display_information": {
             "name": name,
             "description": "Messages from your Keryx phone assistant",
+            "background_color": BACKGROUND_COLOR,
         },
         "features": {
             "app_home": {

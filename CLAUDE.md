@@ -188,8 +188,10 @@ remember:
   `slack` is also where connecting Slack lives. Each owner has a Slack app of their own,
   because an app Keryx published could not hand a command line a bot token without a
   server holding its client secret: `app_manifest(access, assistant=…)` is that app at
-  each access level, named after the assistant, and the only place its scopes are written, `new_app_url` is Slack's link that
-  opens it ready to create, and `auth_test`, `open_connection` and `post_text` are what
+  each access level, named after the assistant, and the only place its scopes are written
+  (a manifest cannot carry an icon, so the mark ships as `setup/slack_app_icon.png` and
+  uploading it is an optional last step, with the file's path printed), `new_app_url` is
+  Slack's link that opens it ready to create, and `auth_test`, `open_connection` and `post_text` are what
   setup does with the pasted tokens (`setup/slack.py`, and the wizard's Slack step
   through three `Probes` fields). `slack_socket` is the Socket Mode
   connection a workspace is heard over. A

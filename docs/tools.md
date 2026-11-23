@@ -160,7 +160,10 @@ decides the app: what Keryx may see in your Slack, and where you can set it to w
 
 The app is named after your assistant (Lyra by default, which is the name the examples
 here use). If you rename your assistant, Slack goes on showing the old name until the
-app's manifest is saved again: `keryx auth login slack` prints it, with the steps.
+app's manifest is saved again: `keryx auth login slack` prints it, with the steps. The
+steps end with an optional one: uploading the Keryx mark as the app's icon, from a file
+that comes with Keryx and whose path is printed
+([this one](../src/keryx/setup/slack_app_icon.png)). Skipping it changes nothing else.
 
 `keryx setup` → Plugins asks the level, then shows a link that opens Slack's own page for
 a new app, with yours already filled in for that level: pick your workspace, create it,

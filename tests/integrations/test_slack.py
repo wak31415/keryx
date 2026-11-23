@@ -4,6 +4,7 @@ import http.client
 import inspect
 import io
 import json
+import re
 import urllib.error
 import urllib.parse
 from pathlib import Path
@@ -299,6 +300,35 @@ def test_with_no_name_given_the_app_is_keryx():
         urllib.parse.urlsplit(new_app_url(Access.CONVERSE, assistant="Lyra")).query)
     assert json.loads(query["manifest_json"][0]) == app_manifest(
         Access.CONVERSE, assistant="Lyra")
+
+
+# --- the app's colour ------------------------------------------------------------------------
+
+
+def _luminance(colour: str) -> float:
+    """Relative luminance of `#rrggbb`, as WCAG defines it."""
+    def linear(part: int) -> float:
+        value = part / 255
+        return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (int(colour[index:index + 2], 16) for index in (1, 3, 5))
+    return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+
+
+@pytest.mark.parametrize("access", list(Access))
+def test_the_manifest_carries_a_background_colour_from_the_mark(access):
+    """Slack takes a hex colour with its hash, three or six digits. It writes white text
+    over it, so of the mark's three colours it is the one white reads best on."""
+    colour = app_manifest(access, assistant="Lyra")["display_information"]["background_color"]
+    mark = (Path(__file__).parents[2] / "docs" / "assets" / "keryx-mark.svg").read_text()
+
+    assert colour == slack.BACKGROUND_COLOR == "#7c3aed"
+    assert re.fullmatch(r"#[0-9a-f]{6}", colour)
+    assert f"stroke: {colour};" in mark
+    # At least 4.5 to 1 against white, which is what small text needs.
+    assert 1.05 / (_luminance(colour) + 0.05) >= 4.5
+    for other in ("#f97316", "#db2777"):
+        assert 1.05 / (_luminance(other) + 0.05) < 1.05 / (_luminance(colour) + 0.05)
 
 
 def test_the_new_app_link_carries_the_whole_manifest_url_encoded():
