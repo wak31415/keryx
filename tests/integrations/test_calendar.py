@@ -464,6 +464,22 @@ async def test_what_is_next_is_looked_for_past_the_first_page():
     assert [params.get("pageToken") for _, params in api.calls[1:]] == [None, "50"]
 
 
+async def test_what_is_next_says_so_when_it_ran_out_of_pages_before_it_found_three():
+    declined = [timed(f"Declined {n}", "2026-11-22T19:00:00-05:00",
+                      "2026-11-22T19:30:00-05:00", attendees=DECLINED) for n in range(50)]
+    api = FakeCalendar(pages={"primary": [declined] * (calendar.MAX_PAGES + 1)})
+
+    unfinished = await reader(api, which="primary").events(upcoming=True)
+
+    assert unfinished["count"] == 0 and unfinished["more"] == MAYBE_MORE_NOTE
+    assert len(api.calls) == 1 + calendar.MAX_PAGES
+
+    three = [timed(f"Next {n}", f"2026-11-22T2{n}:00:00-05:00", f"2026-11-22T2{n}:30:00-05:00")
+             for n in range(4)]
+    found = await reader(FakeCalendar({"primary": three}), which="primary").events(upcoming=True)
+    assert found["count"] == 3 and "more" not in found
+
+
 async def test_what_is_next_from_a_day_to_come_starts_at_that_day():
     api = FakeCalendar({"primary": [
         timed("Review", "2026-11-26T10:00:00-05:00", "2026-11-26T11:00:00-05:00"),

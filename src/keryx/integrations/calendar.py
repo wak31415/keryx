@@ -550,7 +550,9 @@ class CalendarReader:
         result |= {"count": len(shown), "events": [event.said for event in shown]}
         if not upcoming and len(ordered) > limit:
             result["more"] = MORE_NOTE.format(count=len(shown))
-        elif not upcoming and unfinished:
+        elif unfinished and (not upcoming or len(shown) < limit):
+            # "What's next" is three by design and says nothing of a fourth. But fewer
+            # than three with pages left unread is not known to be all there is.
             result["more"] = MAYBE_MORE_NOTE
         if not shown and query and "more" not in result:
             result["message"] = NOTHING_FOUND
