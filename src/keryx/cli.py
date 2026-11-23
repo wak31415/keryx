@@ -1756,6 +1756,8 @@ def auth_status_command(
             # state (and says `enabled`), so a script reading it sees no new value.
             state = "off" if entry.get("enabled") is False else entry["state"]
             typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
+            for line in auth_flow.slack_lines(entry):
+                typer.echo(f"{'':<{width}}  {'':<8}  {line}")
     # A sign-in Keryx runs without (`optional`) is reported and never fails the command.
     if any(e["state"] == "failed" and not e.get("optional") for e in report.values()):
         raise typer.Exit(1)

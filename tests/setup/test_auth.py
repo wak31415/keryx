@@ -344,7 +344,43 @@ def test_slack_that_is_on_is_ok_and_says_where_it_posts(settings):
 
     entry = auth.status(settings, ConfigStore())["slack"]
 
-    assert entry == {"state": "ok", "detail": "on — posts to U0OWNER", "optional": True}
+    assert entry == {
+        "state": "ok", "detail": "on — posts to U0OWNER", "optional": True,
+        "workspaces": [{"name": "default", "team": "", "access": "announce",
+                        "listens": False, "missing": []}],
+    }
+    assert auth.slack_lines(entry) == ["default: announce level, posts only"]
+
+
+def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
+    settings = settings.model_copy(update={
+        "slack_bot_token": "xoxb-1", "slack_app_token": "xapp-1",
+        "slack_workspace_tokens": {"work": {"bot": "xoxb-w"}},
+    })
+    plugins.write_config(settings, "send_to_slack", {
+        "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
+        "workspaces": {"work": {"access": "read", "channel_id": "U0WORK", "owner_id": "U0WORK"}},
+    })
+    plugins.install(settings, "send_to_slack")
+
+    entry = auth.status(settings, ConfigStore())["slack"]
+
+    # The first thing wrong is what the one line says; every workspace is under it.
+    assert entry["state"] == "failed" and entry["optional"] is True
+    assert entry["detail"] == (
+        "at the read level, but without its app token or its user token — "
+        "`keryx auth login slack --workspace work --access read`"
+    )
+    assert auth.slack_lines(entry) == [
+        "default (Acme): converse level, hears your messages to the app",
+        "work: read level, without its app token or its user token",
+    ]
+    assert "xoxb" not in str(entry) and "xapp" not in str(entry)
+
+
+def test_slack_that_is_off_lists_no_workspace(settings):
+    assert auth.status(settings, ConfigStore())["slack"]["workspaces"] == []
+    assert auth.slack_lines({"state": "ok", "detail": ""}) == []
 
 
 def test_a_slack_login_with_no_token_prints_the_link_that_makes_the_app(settings):

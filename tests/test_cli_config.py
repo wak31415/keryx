@@ -707,6 +707,9 @@ def test_auth_login_slack_takes_a_level_and_its_tokens_one_to_a_line(home, tmp_p
                                "SLACK_APP_TOKEN": "xapp-app-secret"}
     text = (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
     assert 'access = "converse"' in text and 'owner_id = "U0OWNER"' in text
+    status = run("auth", "status").output
+    assert "default (Acme): converse level, hears your messages to the app" in status
+    assert "secret" not in status
 
 
 def test_auth_login_slack_with_a_lower_level_is_done_at_once_and_asks_slack_nothing(

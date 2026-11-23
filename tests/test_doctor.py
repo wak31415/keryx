@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from keryx import doctor as doctor_module
 from keryx import plugins
 from keryx.agents.registry import BACKENDS
 from keryx.config import Settings, pin_file
@@ -651,6 +652,59 @@ def test_every_plugin_on_names_what_it_does(healthy):
     assert checks["cluster_stats"].detail == "on — alpha through the built-in guard"
     assert all(checks[name].section == "plugins" for name in plugins.PLUGINS)
     assert "xoxb-test" not in str(checks)
+
+
+def test_each_slack_workspace_has_a_check_that_names_its_level_and_what_it_lacks(settings):
+    settings = settings.model_copy(update={
+        "slack_bot_token": "xoxb-first-secret",
+        "slack_workspace_tokens": {"work": {"bot": "xoxb-work-secret", "app": "xapp-work-secret"}},
+    })
+    plugins.write_config(settings, "send_to_slack", {
+        "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
+        "workspaces": {"work": {"access": "converse", "channel_id": "U0WORK",
+                                "owner_id": "U0WORK"}},
+    })
+    plugins.install(settings, "send_to_slack")
+
+    checks = {check.name: check for check in doctor_module.plugin_checks(settings)}
+
+    first, work = checks["send_to_slack: default"], checks["send_to_slack: work"]
+    assert (first.state, first.severity, first.section) == ("failed", "soft", "plugins")
+    assert first.detail == (
+        "Acme, at the converse level, but without its app token — "
+        "`keryx auth login slack --access converse`"
+    )
+    assert work.ok and work.detail == (
+        "at the converse level, posts to U0WORK; hears your messages to the app"
+    )
+    assert not any("secret" in check.detail for check in checks.values())
+
+
+def test_an_install_from_before_levels_is_one_workspace_at_announce_and_fine(settings):
+    settings = settings.model_copy(update={"slack_bot_token": "xoxb-first-secret"})
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "send_to_slack").write_text('channel_id = "D123"\n')
+    plugins.install(settings, "send_to_slack")
+
+    checks = {check.name: check for check in doctor_module.plugin_checks(settings)}
+
+    assert checks["send_to_slack"].detail == "on — posts to D123"
+    assert checks["send_to_slack: default"].ok
+    assert checks["send_to_slack: default"].detail == "at the announce level, posts to D123"
+
+
+def test_slack_workspaces_that_cannot_be_read_are_said_not_raised(settings, monkeypatch):
+    from keryx import doctor
+
+    def broken(settings, values):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr("keryx.plugins.slack.workspaces", broken)
+
+    [check] = doctor.slack_workspace_checks(settings, {})
+
+    assert not check.ok and check.detail == "could not be read: no"
+
 
 
 def test_a_plugin_that_is_off_is_optional_and_says_how(healthy):

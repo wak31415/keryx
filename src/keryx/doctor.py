@@ -823,6 +823,36 @@ def _plugin_detail(status: plugins.Status) -> str:
     return f"{', '.join(values.get('clusters') or {})} through {guard}"
 
 
+def slack_workspace_checks(settings: Settings, values: dict) -> list[Check]:
+    """One soft check per Slack workspace: the level it is at, and whether everything
+    that level needs is there. Never a token, only which kind is missing."""
+    from keryx.plugins.slack import DEFAULT, workspaces
+
+    try:
+        found = workspaces(settings, values)
+    except Exception as exc:  # a table somebody edited by hand: said, never raised
+        return [Check("send_to_slack: workspaces", False, f"could not be read: {exc}",
+                      severity="soft", section="plugins")]
+    checks = []
+    for each in found:
+        name = f"send_to_slack: {each.name}"
+        where = f"{each.team + ', ' if each.team else ''}at the {each.access} level"
+        if not each.missing:
+            hears = "; hears your messages to the app" if each.listens else ""
+            checks.append(Check(name, True, f"{where}, posts to {each.channel}{hears}",
+                                severity="soft", section="plugins"))
+            continue
+        flags = ("" if each.name == DEFAULT else f" --workspace {each.name}") + (
+            f" --access {each.access}")
+        checks.append(Check(
+            name, False,
+            f"{where}, but without {' or '.join(each.missing)} — "
+            f"`keryx auth login slack{flags}`",
+            severity="soft", section="plugins",
+        ))
+    return checks
+
+
 def plugin_checks(settings: Settings) -> list[Check]:
     """One soft check per plugin: does it load. Off is optional, not a failure.
 
@@ -841,6 +871,8 @@ def plugin_checks(settings: Settings) -> list[Check]:
         if status.on:
             checks.append(Check(name, True, f"on — {_plugin_detail(status)}", severity="soft",
                                 section="plugins"))
+            if name == "send_to_slack":
+                checks.extend(slack_workspace_checks(settings, status.values or {}))
         elif status.installed:
             checks.append(Check(name, False, f"on but refused: {status.refused}",
                                 severity="soft", section="plugins"))

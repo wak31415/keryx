@@ -75,6 +75,7 @@ def status(
         report[name] = _entry(name, found)
         if name in OPTIONAL:
             report[name]["optional"] = True
+    report["slack"]["workspaces"] = _slack_workspaces(settings)
     token = read_token(settings)
     report["google"]["services"] = list(token.connected) if token is not None else []
     for alias in GOOGLE_ALIASES:
@@ -105,6 +106,32 @@ def status(
             if not entry["smoke"]["ok"]:
                 entry["state"] = "failed"
     return report
+
+
+def _slack_workspaces(settings: Settings) -> list[dict[str, Any]]:
+    """Each connected Slack workspace: its level, and what that level still lacks."""
+    from keryx.plugins.slack import connected
+
+    try:
+        found = connected(settings)
+    except Exception:  # settings that do not parse are `doctor`'s to report
+        return []
+    return [
+        {"name": each.name, "team": each.team, "access": str(each.access),
+         "listens": each.listens, "missing": list(each.missing)}
+        for each in found
+    ]
+
+
+def slack_lines(entry: dict[str, Any]) -> list[str]:
+    """What `auth status` prints under Slack: one line per workspace, its level first."""
+    lines = []
+    for each in entry.get("workspaces", []):
+        name = f"{each['name']} ({each['team']})" if each["team"] else each["name"]
+        state = (f"without {' or '.join(each['missing'])}" if each["missing"]
+                 else ("hears your messages to the app" if each["listens"] else "posts only"))
+        lines.append(f"{name}: {each['access']} level, {state}")
+    return lines
 
 
 def _entry(name: str, found: list[Check]) -> dict[str, Any]:
