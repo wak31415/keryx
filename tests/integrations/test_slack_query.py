@@ -96,6 +96,10 @@ def test_every_combination_comes_to_one_of_five_reads(raw, kind):
          "that thread is not in that conversation"),
         ({"conversation": "x" * 200}, "named in a few words"),
         ({"before": "yesterday"}, "before is a message's timestamp"),
+        ({"conversation": "general", "before": "999999999999.0"},
+         "before is a message's timestamp"),
+        ({"only": "mentions", "from": "me"}, "cannot be narrowed to their own messages"),
+        ({"only": "waiting", "from": "Myself"}, "cannot be narrowed to their own messages"),
         ({"before": "1700000000.000100"}, "what is waiting is always the latest"),
         ({"conversation": "general", "limit": "many"}, "limit is a number"),
     ],
@@ -163,18 +167,81 @@ async def test_a_name_that_could_be_several_things_is_unclear_with_the_candidate
         ("C0COL", "#col"),
         ("D0COL", "Col League, a direct message"),
         ("D0COL2", "Col Other, a direct message"),
+        ("C0COLT", "#col-team"),
     ]
     assert "Ask which they mean" in str(several.value)
 
 
-async def test_a_whole_name_wins_over_a_part_of_one(api):
+async def test_a_channels_whole_name_wins_over_a_part_of_another_channels(api):
     api.channels.append({"id": "C0GEN2", "name": "general-chat"})
-    api.members.append(member("U0COL2", "Col League Junior"))
-    api.channels.append({"id": "D0COL2", "is_im": True, "user": "U0COL2"})
+
+    assert (await find(reader(api), "general")).id == "C0GEN"
+
+
+async def test_a_whole_name_does_not_win_when_a_looser_reading_adds_another_person(api):
+    """"Lee" is exactly one member's display name and part of another's full name: the
+    one meant may be either, so neither is chosen."""
+    api.members += [member("U0IMP", "Somebody Else", display="Lee"), member(SAM + "2", "Pat Lee")]
+
+    with pytest.raises(Unclear) as several:
+        await find(reader(api), "Lee", channels=False, people="all")
+
+    assert several.value.status == "unclear"
+    assert [(each.ref, each.label) for each in several.value.candidates] == [
+        ("U0IMP", "Somebody Else"), (SAM, "Sam Lee"), (SAM + "2", "Pat Lee")]
+
+
+async def test_a_single_match_in_a_list_that_was_cut_short_is_asked_about_not_chosen(api):
+    """The one meant may be on a page that was never read."""
+    one = reader(api)
+    await one.people()
+    one.people_cut = True
+
+    with pytest.raises(Unclear) as cut_short:
+        await find(one, "Sam", channels=False, people="all")
+
+    assert cut_short.value.status == "unclear"
+    assert "more people or conversations than could be read" in str(cut_short.value)
+    assert [(each.ref, each.label) for each in cut_short.value.candidates] == [(SAM, "Sam Lee")]
+    # And the ref it was offered by names exactly that member, with nothing looked up.
+    assert (await find(one, SAM, channels=False, people="all")).id == SAM
+
+
+async def test_a_conversation_list_that_was_cut_short_is_treated_the_same(api):
+    one = reader(api)
+    await one.places()
+    one.places_cut = True
+
+    with pytest.raises(Unclear, match="than could be read"):
+        await find(one, "#general")
+    with pytest.raises(Unclear, match="than could be read"):
+        await find(one, "@Col League")
+    assert (await find(one, "C0GEN")).name == "general", "a ref is exact"
+
+
+async def test_a_members_id_names_exactly_that_member_or_their_direct_conversation(api):
     one = reader(api)
 
-    assert (await find(one, "general")).id == "C0GEN"
-    assert (await find(one, "Col League")).id == "D0COL"
+    assert (await find(one, COL)).id == "D0COL"
+    assert (await find(one, COL, channels=False, people="all")).label == "Col League"
+    assert (await find(one, OWNER, channels=False, people="all")).id == OWNER
+    with pytest.raises(Unclear) as none:
+        await find(one, SAM)
+    assert none.value.status == "no_match"
+
+
+async def test_a_word_in_capitals_is_a_name_and_never_taken_for_an_id(api):
+    """Slack's ids have a digit in them: `DAN` and `DEV` are what somebody said."""
+    api.members.append(member("U0DAN", "Dan Brown"))
+    api.channels += [{"id": "C0DEV", "name": "dev"}, {"id": "D0DAN", "is_im": True,
+                                                      "user": "U0DAN"}]
+    one = reader(api)
+
+    assert (await find(one, "DEV")).id == "C0DEV"
+    assert (await find(one, "DAN")).id == "D0DAN"
+    assert (await find(one, "GENERAL")).id == "C0GEN"
+    assert slack_query.as_ref("C0DEV") and slack_query.as_ref(f"CDEV:{ts(1)}")
+    assert not slack_query.as_ref("CDEV") and not slack_query.member_id("USAM")
 
 
 async def test_two_people_who_share_a_first_name_are_never_chosen_between(api):
@@ -590,6 +657,32 @@ async def test_the_most_waiting_can_cost_fits_the_budget_with_names_to_spare(api
     assert len(reads) == 2 + MAX_CANDIDATES + 2 * MAX_CANDIDATES <= MAX_REQUESTS - 6
     assert not context.incomplete and context.more
     assert {said.who for said in context.messages} == {"Col League", "Eve Adams"}
+
+
+async def test_what_is_waiting_from_the_owner_themselves_is_unclear_and_reads_nothing(api):
+    """By their own name it costs the member list to find out; by `me`, nothing at all."""
+    with pytest.raises(Unclear, match="cannot be narrowed to their own messages"):
+        await ask(api, **{"only": "waiting", "from": "Owner Person"})
+
+    assert [name for name, _ in api.calls] == ["users.list"]
+    with pytest.raises(Unclear):
+        parse({"only": "waiting", "from": "me"})
+
+
+async def test_nothing_found_while_candidates_were_left_unread_says_so(api):
+    """Seven wrote and the owner answered the newest six: the seventh was never looked at."""
+    api.searches["to:me"] = []
+    for n in range(MAX_CANDIDATES + 1):
+        dm, when = f"D0P{n:02d}", ts(0.1 * (n + 1))
+        api.searches["to:me"].append(match(COL, f"q{n}?", when, dm))
+        mine = [message(OWNER, "done", ts(0.1 * (n + 1) - 0.01))] if n < MAX_CANDIDATES else []
+        api.histories[dm] = mine + [message(COL, f"q{n}?", when)]
+
+    context, _ = await ask(api)
+
+    assert context.messages == () and context.more
+    assert "(no messages in what was read)" in context.fenced()
+    assert "not all of it was read" in context.fenced()
 
 
 async def test_waiting_combines_with_a_place_a_person_and_words(api):

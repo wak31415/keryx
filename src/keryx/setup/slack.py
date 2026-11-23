@@ -448,11 +448,17 @@ def lower(
     if dropped:
         names = " and ".join(_stored_as(workspace, kind) for kind in dropped)
         echo(f"{names} {'are' if len(dropped) > 1 else 'is'} forgotten.")
-    # Said of what really stops: at converse Keryx goes on acting on their messages.
-    stops = ("A running Keryx stops acting on your messages there at once."
-             if access is Access.ANNOUNCE else
-             "Keryx no longer holds your user token, so nothing reads Slack as you; it "
-             "still acts on the messages you type to the app.")
+    # Said of what really stops: at converse Keryx goes on acting on their messages, and
+    # at read it goes on reading as them, with the user token it still holds.
+    if access is Access.ANNOUNCE:
+        stops = "A running Keryx stops acting on your messages there at once."
+    elif access.reaches(Access.READ):
+        stops = ("Keryx no longer sends messages as you, from this moment; it still reads "
+                 "Slack as you when you ask, with the user token it keeps, and still acts "
+                 "on the messages you type to the app.")
+    else:
+        stops = ("Keryx no longer holds your user token, so nothing reads Slack as you; it "
+                 "still acts on the messages you type to the app.")
     echo(f"{stops} The app in Slack keeps the permissions it was made with: to take those "
          "away too, paste this manifest into its App Manifest page and reinstall it:\n")
     echo(slack.manifest_json(access))

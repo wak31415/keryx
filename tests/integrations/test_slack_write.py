@@ -169,6 +169,18 @@ def test_a_message_that_would_notify_a_whole_channel_is_refused_in_one_sentence(
     assert "never sent" in NO_BROADCAST and NO_BROADCAST.count(". ") == 1
 
 
+@pytest.mark.parametrize("text", ["_@channel_ hi", "hi.@here", "(@everyone)", "*@channel*",
+                                  "see\n@here", "@channel"])
+def test_a_channel_wide_mention_is_refused_whatever_punctuation_is_before_it(text):
+    assert message_problem(text) == NO_BROADCAST
+
+
+@pytest.mark.parametrize("text", ["mail me@here.com", "ask x@channel.example", "sam2@everyone.io"])
+def test_an_address_is_not_a_channel_wide_mention(text):
+    """Only a letter or a digit right before the `@` makes it part of a word."""
+    assert message_problem(text) is None
+
+
 def test_an_empty_message_and_one_too_long_are_refused_and_an_ordinary_one_is_not():
     assert message_problem("  \n") == NO_MESSAGE
     assert message_problem("x" * (MESSAGE_CHARS + 1)) == TOO_LONG
@@ -223,7 +235,35 @@ async def test_an_ambiguous_name_is_unclear_with_the_candidates_and_nothing_is_c
         await recipient(reader(api), "Sam")
 
     assert several.value.status == "unclear"
-    assert [each.label for each in several.value.candidates] == ["Sam Lee", "Sam Wu"]
+    assert [(each.ref, each.label) for each in several.value.candidates] == [
+        (SAM, "Sam Lee"), ("U0SAM2", "Sam Wu")]
+
+
+async def test_one_match_in_a_member_list_that_was_cut_short_is_asked_about_not_sent_to(api):
+    """Any other Sam is on a page that was never read: this one is offered, not chosen."""
+    one = reader(api)
+    await one.people()
+    one.people_cut = True
+
+    with pytest.raises(Unclear, match="than could be read") as cut_short:
+        await recipient(one, "Sam")
+
+    [offered] = cut_short.value.candidates
+    assert (await recipient(one, offered.ref)) == Recipient("person", "Sam Lee", member=SAM)
+
+
+def test_a_recipient_is_named_exactly_by_its_id_with_nothing_looked_up():
+    """What the confirming run of the command sends to: never a name resolved afresh."""
+    from keryx.integrations.slack_write import exact
+
+    assert exact(SAM) == Recipient("person", SAM, member=SAM)
+    assert exact("C0GEN") == Recipient("channel", "C0GEN", channel="C0GEN")
+    assert exact(f"C0GEN:{ts(1)}") == Recipient("thread", "C0GEN", channel="C0GEN",
+                                                thread_ts=ts(1))
+    for name in ("Sam", "general", "#general", "DAN", "me", ""):
+        assert exact(name) is None
+    assert [each.target for each in (exact(SAM), exact("C0GEN"), exact(f"C0GEN:{ts(1)}"))] == [
+        SAM, "C0GEN", f"C0GEN:{ts(1)}"]
 
 
 @pytest.mark.parametrize(

@@ -392,6 +392,10 @@ class SlackReader:
         self._places: list[Place] | None = None
         self._people: list[Person] | None = None
         self._gate = asyncio.Semaphore(CONCURRENCY)
+        #: The owner's conversations, or the member list, ran past the pages that are
+        #: read: a name found there may not be the only one of its kind.
+        self.places_cut = False
+        self.people_cut = False
         #: Something was left unread because a bound was reached.
         self.more = False
         #: Part of what was asked could not be read at all: the answer is not the whole.
@@ -492,7 +496,7 @@ class SlackReader:
                 "users.conversations", "channels", MAX_PAGES,
                 types="public_channel,private_channel,mpim,im", exclude_archived="true",
             )
-            self.more = self.more or cut
+            self.more, self.places_cut = self.more or cut, cut
             self._places = [place for item in items if (place := _place(item)) is not None]
         return self._places
 
@@ -508,7 +512,7 @@ class SlackReader:
         """The workspace's members, asked once a call, for at most `DIRECTORY_PAGES`."""
         if self._people is None:
             items, cut = await self._listed("users.list", "members", DIRECTORY_PAGES)
-            self.more = self.more or cut
+            self.more, self.people_cut = self.more or cut, cut
             self._people = [person for item in items if (person := _person(item)) is not None]
             for person in self._people:
                 self._names.setdefault(person.id, _nameable(person.label, person.id))
@@ -571,7 +575,13 @@ class SlackReader:
                        before=before if self.more else "")
 
 
+_NOT_A_LETTER = re.compile(r"[\W_]+")
+
+
 def _nameable(name: str, member: str) -> str:
-    """`name` as it may be put beside a message: never the word kept for the owner."""
+    """`name` as it may be put beside a message: never one that starts with the word
+    kept for the owner (`you,` or `You (the owner)` as much as `you`), which is quoted
+    as somebody's name instead."""
     name = clip(name, NAME_CHARS) or member
-    return f"a member named \"{name}\"" if name.casefold() == "you" else name
+    first = _NOT_A_LETTER.sub(" ", name.casefold()).split()[:1]
+    return f"a member named \"{name}\"" if first == ["you"] else name

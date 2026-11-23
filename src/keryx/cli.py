@@ -1853,9 +1853,12 @@ def _slack(run: Callable[[Settings], Any]) -> Any:
         return asyncio.run(run(settings))
     except Unclear as error:
         typer.echo(f"keryx slack: {error}", err=True)
-        for candidate in error.candidates:
-            # Names Slack gave, held to a line each: for an agent to choose a ref from.
-            typer.echo(f"  {candidate.line()}", err=True)
+        if error.candidates:
+            # Names Slack gave, which their owners chose: fenced, for an agent to pick
+            # a ref from and never to take a word of as an instruction.
+            from keryx.integrations.slack_context import fenced_lines
+
+            typer.echo(fenced_lines([each.line() for each in error.candidates]), err=True)
         raise typer.Exit(2) from None
     except slack_read.NoWorkspace as error:
         typer.echo(f"keryx slack: {error}", err=True)
@@ -1992,9 +1995,12 @@ def slack_message_command(
     """Send what is on standard input as you, in your name: one message to a person or a
     channel, or one reply in a thread. Needs a workspace at the write level.
 
-    Run it without --confirm first: it sends nothing and prints the recipient as Slack
-    names them. No edit, no delete, no file, and never @channel, @here or @everyone.
+    Two runs. Without --confirm it sends nothing: it looks the name up, prints who that
+    is as Slack names them, and prints the id to send to. With --confirm, --to is that
+    id and nothing is looked up again. No edit, no delete, no file, and never @channel,
+    @here or @everyone.
     """
+    from keryx.integrations.slack_context import fenced_lines
     from keryx.integrations.slack_write import SlackWriteError
     from keryx.plugins import slack_message
 
@@ -2014,10 +2020,13 @@ def slack_message_command(
                    err=True)
         raise typer.Exit(1) from None
     if confirm:
-        typer.echo(f"sent as you: {found.said}")
-    else:
-        typer.echo(f"not sent. It would go to: {found.said}\nThe same command with "
-                   "--confirm sends it.")
+        typer.echo(f"sent as you, to {found.target}")
+        return
+    named = "" if workspace is None else f" --workspace {workspace}"
+    typer.echo("not sent. Who it would go to, as Slack names them:\n")
+    typer.echo(fenced_lines([found.said]))
+    typer.echo(f"\nTo send it there, the same text on standard input to:\n  keryx slack "
+               f"message --to {found.target} --confirm{named}")
 
 
 @slack_app.command("conversations")

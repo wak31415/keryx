@@ -106,6 +106,17 @@ NO_SUCH = (
 NO_DIRECT = (
     "They have no direct conversation with {said} to read. Say so in one sentence."
 )
+CUT_SHORT = (
+    "Their Slack has more people or conversations than could be read, so {said} may be "
+    "another than the one found. Say who was found and ask whether that is who they "
+    "mean; on a yes, call again with that one's ref."
+)
+NOT_THEIR_OWN = (
+    "What is waiting on them, or mentions them, is what other people wrote, so it cannot "
+    "be narrowed to their own messages. Ask what they meant."
+)
+#: The latest moment a timestamp may name: past it, it is not one anybody was given.
+MAX_TS = 9_999_999_999.0
 
 
 @dataclass(frozen=True)
@@ -165,15 +176,17 @@ def parse(raw: Mapping[str, Any], *, limit: int = MAX_ITEMS) -> Filters:
     if before:
         found = REF.fullmatch(before)
         before = found.group(2) if found and found.group(2) else before
-        if not re.fullmatch(r"\d{1,12}\.\d{1,9}", before):
+        if not re.fullmatch(r"\d{1,12}\.\d{1,9}", before) or float(before) > MAX_TS:
             raise Unclear("before is a message's timestamp, or the ref of one")
     text = clip(said("text"), TEXT_CHARS)
     if thread and only:
         raise Unclear("a thread is read whole: `only` looks across conversations, so name "
                       "one or the other")
-    if threaded and (place := REF.fullmatch(conversation)) and place.group(1) != (
+    if threaded and (place := as_ref(conversation)) and place.group(1) != (
             threaded.group(1)):
         raise Unclear("that thread is not in that conversation: name one or the other")
+    if only and set(words(sender)) and set(words(sender)) <= _ME:
+        raise Unclear(NOT_THEIR_OWN)
     if not (conversation or thread or text or sender or only):
         only = WAITING
     if before and only == WAITING:
@@ -194,6 +207,25 @@ def parse(raw: Mapping[str, Any], *, limit: int = MAX_ITEMS) -> Filters:
 
 def words(name: str) -> list[str]:
     return _NOT_WORDS.sub(" ", name.casefold()).split()
+
+
+def as_ref(said: str) -> re.Match[str] | None:
+    """`said` as a ref, when it is one: a conversation's id, with or without a message.
+
+    An id standing alone has a digit in it, as Slack's do: a word in capitals (`DAN`,
+    `DEV`, `GENERAL`) is a name somebody said, never an id.
+    """
+    found = REF.fullmatch(said.strip())
+    if found and (found.group(2) or any(char.isdigit() for char in found.group(1))):
+        return found
+    return None
+
+
+def member_id(said: str) -> str:
+    """`said` as a member's id, when it is one (the `ref` a person is offered by)."""
+    said = said.strip()
+    is_one = _MEMBER.fullmatch(said) and any(char.isdigit() for char in said)
+    return said if is_one else ""
 
 
 def _term(said: str) -> tuple[list[str], str]:
@@ -222,36 +254,52 @@ def place_label(place: Place) -> str:
     return f"#{place.name}"
 
 
+#: One thing a name could mean: how it is offered, what it is, and whether it is a person.
+Match = tuple[Candidate, Place | Person, bool]
+
+
 async def find(reader: SlackReader, said: str, *, channels: bool = True,
-               people: str = "direct") -> Place | Person:
+               people: str = "direct", owner: bool = False) -> Place | Person:
     """What `said` names: one conversation or one person, or `Unclear`.
 
     `people` says which members may be meant: `direct` only those the owner has a direct
     conversation with (which is then what is returned, as a `Place`), `all` any member
-    (returned as a `Person`), `none` nobody. An exact name wins over a part of one; more
-    than one match at the same strength is never chosen between.
+    (returned as a `Person`), `none` nobody. A ref or a member's id names exactly that.
+    `owner` says the owner may be who is meant, by their own name: true of whose
+    messages to keep, never of who to write to.
+
+    **Nothing is chosen that could be somebody else.** A whole name wins over a part of
+    one only when the looser reading adds no other person: "Lee" that is exactly one
+    member's display name and part of another's full name is asked about. And when the
+    list a single match came from was cut short, that match is offered and asked about,
+    because the one meant may be on a page that was never read.
     """
     shown = clip(said, NAME_CHARS)
-    if (ref := REF.fullmatch(said.strip())) and channels:
+    if channels and (ref := as_ref(said)):
         return await reader.place(ref.group(1))
+    if people != "none" and (member := member_id(said)):
+        return await _by_member_id(reader, member, people, shown)
     term, kind = _term(said)
     if not term:
         raise Unclear(NO_SUCH.format(said=shown or "that"), status="no_match")
     if people == "all" and set(term) <= _ME:
         return Person(reader.owner, ("you",))
-    places = await reader.places() if channels or people == "direct" else []
+    with_places = channels and kind != "person"
+    with_people = people != "none" and kind != "channel"
+    places = await reader.places() if with_places or people == "direct" else []
     named = [place for place in places if place.kind != "im" and place.name] if (
-        channels and kind != "person") else []
+        with_places) else []
     direct = {place.user: place for place in places if place.kind == "im" and place.user}
-    members = await reader.people() if people != "none" and kind != "channel" else []
-    members = [each for each in members if each.id != reader.owner]
+    members = [each for each in (await reader.people() if with_people else [])
+               if owner or each.id != reader.owner]
     without: list[Person] = []
     if people == "direct":
         without = [each for each in members if each.id not in direct]
         members = [each for each in members if each.id in direct]
-    for exact in (True, False):
-        found: list[tuple[Candidate, Place | Person]] = [
-            (Candidate(place_label(place), place.id), place)
+
+    def matching(*, exact: bool) -> list[Match]:
+        found: list[Match] = [
+            (Candidate(place_label(place), place.id), place, False)
             for place in named if _matches(term, (place.name,), exact=exact)
         ]
         for person in members:
@@ -259,19 +307,46 @@ async def find(reader: SlackReader, said: str, *, channels: bool = True,
                 continue
             if people == "direct":
                 place = direct[person.id]
-                found.append((Candidate(f"{person.label}, a direct message", place.id), place))
+                found.append(
+                    (Candidate(f"{person.label}, a direct message", place.id), place, True))
             else:
-                found.append((Candidate(person.label), person))
-        if len(found) == 1:
-            return found[0][1]
-        if found:
-            raise Unclear(SEVERAL.format(said=shown),
-                          tuple(candidate for candidate, _ in found[:MAX_CANDIDATES]))
-    if people == "direct" and any(
+                found.append((Candidate(person.label, person.id), person, True))
+        return found
+
+    whole, loose = matching(exact=True), matching(exact=False)
+    others = [each for each in loose if all(each[1] != one[1] for one in whole)]
+    if len(whole) == 1 and not any(is_person for _, _, is_person in others):
+        chosen = whole[0]
+    elif len(loose) == 1:
+        chosen = loose[0]
+    elif loose:
+        raise Unclear(SEVERAL.format(said=shown),
+                      tuple(candidate for candidate, _, _ in (whole + others)[:MAX_CANDIDATES]))
+    elif people == "direct" and any(
         _matches(term, person.names, exact=False) for person in without
     ):
         raise Unclear(NO_DIRECT.format(said=shown), status="no_match")
-    raise Unclear(NO_SUCH.format(said=shown), status="no_match")
+    else:
+        raise Unclear(NO_SUCH.format(said=shown), status="no_match")
+    if (reader.places_cut and (with_places or people == "direct")) or (
+            reader.people_cut and with_people):
+        raise Unclear(CUT_SHORT.format(said=shown), (chosen[0],))
+    return chosen[1]
+
+
+async def _by_member_id(reader: SlackReader, member: str, people: str,
+                        shown: str) -> Place | Person:
+    """The member with exactly this id: themselves when any member may be meant, their
+    direct conversation with the owner when only those may."""
+    if people == "all":
+        if member == reader.owner:
+            return Person(member, ("you",))
+        return Person(member, (await reader.name(member),))
+    place = next((each for each in await reader.places()
+                  if each.kind == "im" and each.user == member), None)
+    if place is None:
+        raise Unclear(NO_DIRECT.format(said=shown), status="no_match")
+    return place
 
 
 # --- the plan ------------------------------------------------------------------------------
@@ -297,9 +372,11 @@ async def answer(reader: SlackReader, filters: Filters) -> Context:
             raise Unclear("that thread is not in that conversation: name one or the other")
         place = place or await reader.place(ref.group(1))
     if filters.sender:
-        found = await find(reader, filters.sender, channels=False, people="all")
+        found = await find(reader, filters.sender, channels=False, people="all", owner=True)
         assert isinstance(found, Person)
         person = found
+        if filters.only and person.id == reader.owner:
+            raise Unclear(NOT_THEIR_OWN)
 
     kind = filters.kind
     if kind == THREAD:

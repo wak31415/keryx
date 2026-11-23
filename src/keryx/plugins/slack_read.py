@@ -101,11 +101,19 @@ INCOMPLETE_NOTHING = (
     "Part of Slack could not be read, so the check was incomplete and found nothing in "
     "what it could read. Say that in one sentence: never that nothing is there."
 )
+MORE_NOTHING = (
+    "Nothing was found in what was read, and not all of it was read. Say exactly that "
+    "in one sentence: never that nothing is there."
+)
 TIMED_OUT = "Slack took too long to answer. Say so in one sentence; trying again may work."
 FAILED = "Reading Slack failed unexpectedly. Say so in one sentence."
 MODEL_FAILED = (
     "The messages were read but the answer failed. Say what was found instead, in a "
     "sentence or two."
+)
+LOWERED = (
+    "No Slack workspace is at the read level any more, so nothing was read. Say so in "
+    "one sentence."
 )
 NOT_AT_READ = (
     "no Slack workspace is at the read level: `keryx auth login slack --access read` "
@@ -193,12 +201,16 @@ class NoWorkspace(LookupError):
     """There is nothing to read with: no workspace at `read`, or not the one named."""
 
 
+class NotAtRead(NoWorkspace):
+    """No workspace is at `read` at all: never was, or it was lowered since."""
+
+
 def readers_of(settings, readers: Readers | None = None) -> Readers:
     """A reader to make for each workspace at `read`, by name; `NoWorkspace` when none."""
     if readers is None:
         readers = {each.name: (lambda each=each: reader_for(each)) for each in reading(settings)}
     if not readers:
-        raise NoWorkspace(NOT_AT_READ)
+        raise NotAtRead(NOT_AT_READ)
     return readers
 
 
@@ -278,6 +290,10 @@ def shaped(context: Context, filters: Filters) -> dict[str, Any]:
     if not count:
         if context.incomplete:
             return {"status": "partial", "count": 0, "message": INCOMPLETE_NOTHING}
+        if context.more:
+            # Candidates there was no room to look at, or more after a mention than was
+            # read: nothing found is not nothing there, and the command says the same.
+            return {"status": "partial", "count": 0, "message": MORE_NOTHING}
         return {"status": "nothing", "count": 0, "message": NOTHING[filters.kind]}
     result: dict[str, Any] = {
         "status": "partial" if context.incomplete else "ok",
@@ -316,12 +332,17 @@ def slack_read_tool(
     from keryx.tools.custom import CustomTool, ToolUnavailable
 
     settings = plugins.loading_settings()
+    injected = readers
     try:
         values = plugins.read_config_file(TOOL, config_path)
-        readers = readers_of(settings, readers)
+        names = list(readers_of(settings, injected))
     except (plugins.PluginConfigError, NoWorkspace) as error:
         raise ToolUnavailable(str(error)) from None
-    names = list(readers)
+
+    def live() -> Readers:
+        """The workspaces that may be read *now*: the level is read again for every
+        call of the tool, so one lowered during a call stops this call too."""
+        return readers_of(settings, injected)
 
     def summarise() -> Summariser | None:
         if summariser is not None:
@@ -330,8 +351,7 @@ def slack_read_tool(
             return None
         return build_summariser(settings, model=values["model"], effort=values["effort"])
 
-    async def answer(filters: Filters, question: str, name: str) -> dict:
-        reader = readers[name]()
+    async def answer(filters: Filters, question: str, reader: SlackReader) -> dict:
         try:
             context = await slack_query.answer(reader, filters)
         finally:
@@ -358,12 +378,16 @@ def slack_read_tool(
 
     async def slack_read(ctx, arguments: dict) -> dict:
         try:
-            name = chosen(readers, arguments.get("workspace"))
+            current = live()
+            name = chosen(current, arguments.get("workspace"))
             filters = slack_query.parse({key: arguments.get(key) for key in ARGUMENTS})
             question = clip(arguments.get("question"), slack_query.TEXT_CHARS * 2)
-            return await asyncio.wait_for(answer(filters, question, name), ANSWER_TIMEOUT_S)
+            return await asyncio.wait_for(
+                answer(filters, question, current[name]()), ANSWER_TIMEOUT_S)
         except TimeoutError:
             return {"status": "timed_out", "message": TIMED_OUT}
+        except NotAtRead:
+            return {"status": "not_at_read", "message": LOWERED}
         except NoWorkspace as exc:
             return {"status": "unclear", "message": str(exc)}
         except Unclear as exc:

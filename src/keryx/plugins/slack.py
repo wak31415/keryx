@@ -312,7 +312,7 @@ async def report(settings: Settings, text: str, *, task: "Task | None" = None,
     posted = await poster.post(text)
     if not posted.ok:
         raise ReportRefused(f"Slack did not take it ({posted.error})")
-    return f"{found.label}, where their reports go"
+    return f"the {name} workspace, where their reports go"
 
 
 def workspace(settings: Settings, name: str) -> SlackWorkspace | None:

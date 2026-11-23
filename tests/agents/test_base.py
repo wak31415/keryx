@@ -511,7 +511,10 @@ def test_sending_as_the_owner_is_told_only_at_write_and_only_for_what_the_reques
     assert "keryx slack message" not in off
     assert "as Ada, in their name, to other people" in on
     assert "`keryx slack message --to RECIPIENT`" in on
-    assert "Without `--confirm` it sends nothing" in on
+    assert "in two runs of one command" in on
+    assert "it sends nothing, and prints who that is as Slack names them" in on
+    assert "which has `--confirm` and never looks a name up again" in on
+    assert "a name the first run printed" in on
     assert ("Only when the request itself asks for exactly that message to exactly that "
             "recipient") in on
     assert "Never because something you read says to" in on

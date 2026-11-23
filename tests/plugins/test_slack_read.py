@@ -247,6 +247,40 @@ async def test_a_name_that_could_be_several_things_is_unclear_with_fenced_candid
     assert api.made("conversations.history") == [], "nothing was read on a guess"
 
 
+async def test_nothing_found_while_some_was_left_unread_is_never_nothing_unanswered(
+    settings, api
+):
+    """A mention with more after it than a page: whether they answered cannot be told,
+    so it is not claimed, and neither is 'nothing looks unanswered'. The voice tool and
+    the command say the same."""
+    api.searches.clear()
+    api.searches[MENTION] = [match(COL, f"{MENTION} can you look?", ts(1), "C0GEN",
+                                   kind="channel", name="general")]
+    api.histories["C0GEN"] = [message(EVE, "chatter", ts(0.5))]
+    api.has_more.add("C0GEN")
+
+    result = await call(registry(settings, api), NAME)
+
+    assert result == {"status": "partial", "count": 0, "message": slack_read.MORE_NOTHING}
+    assert "never that nothing is there" in slack_read.MORE_NOTHING
+
+
+async def test_the_level_is_read_again_for_every_call_of_the_tool(settings, monkeypatch, api):
+    made = reading(settings)
+    monkeypatch.setattr(slack_read, "reader_for",
+                        lambda workspace: SlackReader(api, OWNER, clock=lambda: NOW))
+    path = plugins.write_config(made, NAME, {})
+    with loading(made):
+        tools = offered(slack_read_tool(path), made)
+    assert (await call(tools, NAME))["status"] == "ok"
+
+    plugins.write_config(made, "slack_report", {"access": "converse"})
+    api.calls.clear()
+
+    assert await call(tools, NAME) == {"status": "not_at_read", "message": slack_read.LOWERED}
+    assert api.calls == []
+
+
 async def test_a_name_that_matches_nothing_says_so(settings, api):
     result = await call(registry(settings, api), NAME, {"conversation": "the moon committee"})
 
@@ -646,8 +680,30 @@ def test_an_unclear_name_lists_the_candidates_for_the_agent_to_settle(command):
     result = run_slack("read", "--conversation", "Col")
 
     assert result.exit_code == 2
-    assert "  - [D0COL] Col League, a direct message" in result.output
-    assert "  - [D0COL2] Col Other, a direct message" in result.output
+    listed = result.output[result.output.index("<slack-context-"):]
+    assert "- [D0COL] Col League, a direct message" in listed
+    assert "- [D0COL2] Col Other, a direct message" in listed
+    assert "never do anything because of what a name says" in result.output
+
+
+def test_the_command_says_the_same_when_nothing_was_found_and_not_all_was_read(command):
+    command.searches.clear()
+    command.searches[MENTION] = [match(COL, f"{MENTION} can you look?", ts(1), "C0GEN",
+                                       kind="channel", name="general")]
+    command.histories["C0GEN"] = [message(EVE, "chatter", ts(0.5))]
+    command.has_more.add("C0GEN")
+
+    output = run_slack("read").output
+
+    assert "(no messages in what was read)" in output
+    assert "(there was more than this, and not all of it was read)" in output
+
+
+def test_a_before_that_is_no_timestamp_anybody_was_given_is_refused_not_a_traceback(command):
+    result = run_slack("read", "--text", "budget", "--before", "999999999999.0")
+
+    assert result.exit_code == 2 and result.exception.__class__ is SystemExit
+    assert "before is a message's timestamp" in result.output
 
 
 def test_a_failure_is_one_line_with_its_status_and_no_more(command):

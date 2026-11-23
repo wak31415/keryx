@@ -456,6 +456,22 @@ async def test_only_the_owner_is_ever_called_you(api):
     assert said.text == '@a member named "You" and @you agreed'
 
 
+@pytest.mark.parametrize("name", ["you,", "You (the owner)", "YOU", "you - the owner", " you"])
+async def test_a_name_that_starts_with_the_word_kept_for_the_owner_is_quoted(api, name):
+    """`you,` said that, or `You (the owner)` approved it, must not read as the owner."""
+    api.names[EVE] = name
+
+    said = await reader(api).name(EVE)
+
+    assert said.startswith('a member named "') and said != "you"
+
+
+async def test_a_name_that_only_holds_the_word_later_is_left_as_it_is(api):
+    api.names[EVE] = "Thank You Cards"
+
+    assert await reader(api).name(EVE) == "Thank You Cards"
+
+
 async def test_a_name_that_holds_a_backslash_or_a_group_reference_is_put_in_as_it_is(api):
     """Names are substituted by a function: nothing in one is read as a replacement."""
     api.names[EVE] = r"Eve \1 \g<0> \\"

@@ -328,6 +328,10 @@ direct messages typed to your Keryx app.
   not changing where reports are sent, not a user token (somebody else's is refused), and
   there is no option for it. To connect as somebody else, `keryx auth logout slack` and
   log in again.
+- **An app's message is not told from yours by `app_id` alone.** A message with a
+  `bot_id` is dropped. One that carries only an `app_id`, your member id, and a mention
+  is taken to be yours: that is how Slack marks a message sent with a token that posts
+  as you, which is already inside the accepted risk above.
 - **Lowering the level works at once.** `keryx auth login slack --access announce` (or
   `keryx setup`) forgets the tokens the lower level does not use, and a running Keryx
   stops acting on messages immediately. `keryx auth logout slack` forgets a workspace
@@ -402,7 +406,9 @@ says something to somebody else in your name, so read it as that.
   `im:write` for this. The part of Keryx that sends can make two Slack requests and no
   others, so it cannot edit, delete, react, upload, join, schedule, or broadcast a reply
   to its channel, and a message containing `@channel`, `@here`, or `@everyone` is refused.
-  The text is posted literally: nothing in it becomes a mention or a link.
+  The text is posted with Slack's own markup characters escaped, so nothing in it can be
+  a mention of a person or a group, or a link with other words on it. Whether Slack
+  turns a bare web address in it into a link is Slack's doing and has not been checked.
 - **On a call it takes two steps, and the second is yours.** The first call of the
   `slack_message` tool sends nothing. It works out who the message goes to and hands
   back the recipient as Slack names them, the exact words, and a one-time value. Only a
@@ -411,7 +417,11 @@ says something to somebody else in your name, so read it as that.
   after you say yes. The two steps are enforced in code; that it waits for your yes
   between them is an instruction to a language model, not a lock. It needs the PIN.
 - **A name is never guessed.** If "Sam" could be two people, or a person and a channel,
-  nothing is sent and you are asked which.
+  nothing is sent and you are asked which. The same holds when the workspace has more
+  members than Keryx reads in one go: the one it found is offered and you are asked,
+  because another may be on a page it did not read. A person's or a channel's name is
+  handed to the model inside the same wrapping as a message, as words to say and never
+  to act on.
 - **The accepted risk: a coding agent can send as you too.** At `write`, a task's coding
   agent can run `keryx slack message`, which sends as you. It is instructed to do so only
   when your request asks for exactly that message to exactly that recipient, and never
@@ -421,11 +431,19 @@ says something to somebody else in your name, so read it as that.
   words but a channel-wide mention. The request-versus-context rule above reduces this
   and does not remove it. Nothing asks you first when an agent sends, because nobody is
   on the line.
-- **`read` or lower removes the capability.** `keryx auth login slack --access read`
-  takes effect at once: the tool stops loading and the command refuses. The token keeps
-  its scopes until you reinstall the app without them or remove it. If you would not
-  give a capable stranger who could be talked into things the ability to post as you in
-  that workspace, stay at `read`.
+- **`read` or lower removes the capability from Keryx, not from the token.** `keryx auth
+  login slack --access read` takes effect at once, a call in progress included: the
+  tool and the command read the level again every time they are used. Lowering to `read`
+  keeps the user token, with its `chat:write` scope, on disk; only reinstalling the app
+  without that scope, or `keryx auth logout slack` and removing the app, takes the
+  permission away at Slack.
+- **The bounds are the tool's and the command's, not an injected agent's.** No edit, no
+  delete, no channel-wide mention, one message, the recipient shown first: those hold
+  for `slack_message` and `keryx slack message`. A coding agent has a shell and can read
+  `secrets.toml`, so one that has been steered can use the token directly, at any level
+  that holds it, for whatever its scopes allow. If you would not give a capable stranger
+  who could be talked into things the ability to post as you in that workspace, stay at
+  `read`, and know that at `read` the same stranger can read as you.
 - **What is sent is kept like everything else.** The words are in the call's transcript
   or the task's report.
 

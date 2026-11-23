@@ -1271,3 +1271,18 @@ def test_lowering_write_to_read_keeps_the_token_and_takes_sending_away(settings)
     [one] = workspaces(settings)
     assert (one.access, one.reads, one.writes) == (Access.READ, True, False)
     assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == USER
+
+
+def test_lowering_write_to_read_says_what_stops_and_never_that_the_user_token_is_gone(
+    settings,
+):
+    settings = connected_at(settings, "write", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+    lines: list[str] = []
+
+    slack.lower(settings, ConfigStore(), workspace="default", access=Access.READ,
+                echo=lines.append)
+
+    said = "\n".join(lines)
+    assert "Keryx no longer sends messages as you, from this moment" in said
+    assert "it still reads Slack as you when you ask, with the user token it keeps" in said
+    assert "no longer holds your user token" not in said and "forgotten" not in said

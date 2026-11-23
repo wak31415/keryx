@@ -57,10 +57,12 @@ WRITE_METHODS = frozenset({"chat.postMessage", "conversations.open"})
 #: The most one message may hold. It is one message: longer is not cut into several.
 MESSAGE_CHARS = 3000
 
-#: A notification of a whole channel, as Slack writes one or as somebody types one (an
-#: address like `me@here.com` is not one: the `@` there follows a letter).
+#: A notification of a whole channel, as Slack writes one or as somebody types one. The
+#: word counts unless a letter or a digit touches it on either side: `_@channel_` and
+#: `hi.@here` are refused, and an address like `me@here.com` is not one.
 _BROADCAST = re.compile(
-    r"<!(?:channel|here|everyone|subteam)|(?<![\w.])@(?:channel|here|everyone)\b",
+    r"<!(?:channel|here|everyone|subteam)"
+    r"|(?<![A-Za-z0-9])@(?:channel|here|everyone)(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
 
@@ -198,6 +200,14 @@ class Recipient:
     thread_ts: str = ""
 
     @property
+    def target(self) -> str:
+        """What names this recipient exactly, to a later run that is not to look a name
+        up again: a thread's ref, a conversation's id, or a member's."""
+        if self.thread_ts:
+            return f"{self.channel}:{self.thread_ts}"
+        return self.channel or self.member
+
+    @property
     def said(self) -> str:
         """The recipient in words, for the owner to hear before anything is sent."""
         name = clip(self.label, NAME_CHARS)
@@ -231,6 +241,18 @@ async def recipient(reader: SlackReader, to: str) -> Recipient:
         return Recipient("thread", label, channel=found.id, thread_ts=ref.group(2))
     kind = "person" if found.kind == "im" else "channel"
     return Recipient(kind, label, channel=found.id, member=found.user)
+
+
+def exact(to: str) -> Recipient | None:
+    """`to` as a recipient named exactly, by the id an earlier run printed; None when it
+    is a name. Nothing is looked up: the id is what is sent to, and all that is said."""
+    to = to.strip()
+    if ref := slack_query.as_ref(to):
+        channel, ts = ref.group(1), ref.group(2) or ""
+        return Recipient("thread" if ts else "channel", channel, channel=channel, thread_ts=ts)
+    if member := slack_query.member_id(to):
+        return Recipient("person", member, member=member)
+    return None
 
 
 async def _label(reader: SlackReader, place: Place) -> str:

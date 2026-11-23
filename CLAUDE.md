@@ -895,7 +895,11 @@ second way to read. Nine rulings:
   the member list (`slack_query.find`). One match is used; several are `unclear` with
   the candidates and a `ref` for each; none says so (`no_match`); filters that
   contradict each other are `unclear` in one sentence. A person's first name alone is
-  their whole name as it is said, so two who share one are never chosen between. Every
+  their whole name as it is said, so two who share one are never chosen between. A
+  whole name wins over a part of one only when the looser reading adds no other person,
+  and a single match from a list that was cut short (`places_cut`, `people_cut`) is
+  offered and asked about, never chosen: the one meant may be on a page never read. A
+  bare word is an id only with a digit in it (`DAN` and `DEV` are names). Every
   message handed back carries a `ref` (its conversation and its thread's root,
   `slack_context.REF`), which is the only thing but a name that names a place to a later
   call, and is held to its pattern before it is used.
@@ -912,8 +916,9 @@ second way to read. Nine rulings:
   small concurrency, a window held to `MAX_DAYS` here as well as in the query, 25 seconds
   for a call and a minute for a command. A `429` is the status `rate_limited`, said at
   once, never a sleep on a live call. What was left unread is `more`; a part that could
-  not be read at all is `incomplete`, and then the answer says the check was incomplete
-  and never that nothing is there. What a message costs to handle never depends on what
+  not be read at all is `incomplete`. Either one with nothing found is `partial`, in a
+  sentence that says not all of it was read, and never "nothing is there": the voice
+  tool and the command say the same. What a message costs to handle never depends on what
   its author put in it: it is cut to a line before anything is looked for in it, names
   are substituted by a function in one pass, and only the first few members it mentions
   are named.
@@ -930,7 +935,10 @@ second way to read. Nine rulings:
   (who, when, where) and held to one line. **The voice model gets it fenced like every
   other reader**: a status, a count and that one string, never a message's text as a
   field of its own, and `--json` carries the same string. The summariser gets the
-  question before the fence; candidates for an unclear name are fenced too. The token is
+  question before the fence. **A name is its owner's words too** and reaches a model no
+  other way than `fenced_lines`, one clipped line under a header that says to say it as
+  a name and never act on it: the candidates for an unclear name, the recipient
+  `slack_message` asks to confirm, and everything `keryx slack` prints of either. The token is
   the defence and the strip the second line, counted (`FENCE_PASSES`) and linear, with a
   test that fails on time. A mitigation, not a wall (SECURITY.md).
 - **Reading only when asked, and `waiting` is a best effort that says so.** Nothing
@@ -948,14 +956,20 @@ second way to read. Nine rulings:
   nothing else (a test is named after it), so "the read client cannot post" stays true by
   construction. One new message or one reply in a thread: no edit, no delete, no file,
   no broadcast, and a text with `@channel`, `@here` or `@everyone` is refused in one
-  sentence; the text is escaped, so nothing in it becomes a mention or a link. **The
+  sentence; the text is escaped, so nothing in it is markup of Slack's (a mention, a
+  link with other words on it). **The
   first call of `slack_message` sends nothing**: it resolves the recipient with the read
   side's resolver and returns `confirm` with the recipient as Slack names them, the exact
   text, and a single-use value that lasts a few minutes. Only a second call carrying
   that value sends, and it sends what was kept, never what the second call says. That
   is enforced in `plugins/slack_message.py`; that the model asks the owner in between is
-  a prompt rule. The command's two steps are `--confirm`. A failure says whether
-  anything could have been sent, so nobody sends twice.
+  a prompt rule. The command is two runs the same way: without `--confirm` it resolves
+  the name, prints who that is and the id to send to, and sends nothing; with it, `--to`
+  has to be that id and nothing is looked up again, so the message goes to who was
+  shown. A failure says whether anything could have been sent, so nobody sends twice.
+  **The level is read again for every use** of `slack_message` and `slack_read`
+  (`live()`), not once when the call loads the tool, so a level lowered at the keyboard
+  stops a call in progress as well.
 - **An agent sends as the owner only for what the request asks.** `keryx slack message`
   is allowed under `KERYX_ACTOR=service` (only a workspace at `write` has anything to
   send with), and `prompts/subagent_slack_message.md` says: only when the owner's
