@@ -348,3 +348,69 @@ async def test_the_real_connection_keeps_the_librarys_own_log_off_the_address(mo
     assert await slack_socket.connect(URL) == "the connection"
     assert seen["url"] == URL and seen["level"] == logging.WARNING
     assert seen["open_timeout"] and seen["ping_interval"] and "logger" not in seen
+
+
+async def test_a_connection_that_never_comes_back_is_still_being_tried_after_thousands():
+    """The wait once doubled without limit: after about a thousand failures in a row (Socket
+    Mode switched off, a revoked token, a long outage) the number overflowed and the
+    listener ended for good, in silence."""
+    slept: list[float] = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+        if len(slept) == 3000:
+            raise asyncio.CancelledError
+        await asyncio.sleep(0)
+
+    listener = SocketModeListener(
+        "work", "xapp-secret", lambda payload: None,
+        open_connection=lambda token: Connection(error="invalid_auth"),
+        sleep=sleep, clock=lambda: 0.0, jitter=lambda: 1.0,
+    )
+    logging.disable(logging.CRITICAL)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await listener.run()
+    finally:
+        logging.disable(logging.NOTSET)
+
+    assert len(slept) == 3000 and slept[-1] == BACKOFF_MAX_S == max(slept)
+
+
+async def test_nothing_but_being_cancelled_ends_it_whatever_breaks_between_connections(caplog):
+    """Not the clock, not the jitter, not the wait itself: each is logged by its kind and
+    the next connection is still made."""
+    world = World([frame(type="hello")], [frame(type="hello")], [frame(type="hello")])
+    calls = {"clock": 0, "sleep": 0}
+
+    def clock():
+        calls["clock"] += 1
+        if calls["clock"] == 2:
+            raise OverflowError("int too large to convert to float")
+        return 0.0
+
+    async def sleep(seconds):
+        calls["sleep"] += 1
+        if calls["sleep"] == 2:
+            raise RuntimeError("wss://secret-address broke the wait")
+        if calls["sleep"] >= 5:
+            raise asyncio.CancelledError
+        await asyncio.sleep(0)
+
+    listener = SocketModeListener(
+        "work", "xapp-secret", world.handle, open_connection=world.open,
+        connect=world.connect, sleep=sleep, clock=clock, jitter=lambda: 1.0,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await listener.run()
+
+    assert len(world.opens) >= 3
+    assert "the Slack listener for work stumbled (OverflowError)" in caplog.text
+    assert "the Slack listener for work stumbled (RuntimeError)" in caplog.text
+    assert "secret-address" not in caplog.text
+
+
+def test_the_wait_is_capped_however_many_failures_there_were():
+    assert [slack_socket.backoff(n) for n in (0, 1, 2, 3)] == [1.0, 1.0, 2.0, 4.0]
+    assert slack_socket.backoff(10) == slack_socket.backoff(10**9) == BACKOFF_MAX_S

@@ -53,6 +53,8 @@ log = logging.getLogger("keryx.slack.socket")
 BACKOFF_FIRST_S = 1.0
 #: The most it ever waits: connections that keep failing are tried every five minutes.
 BACKOFF_MAX_S = 300.0
+#: More doublings than reach it from the first, and few enough to stay a small number.
+BACKOFF_DOUBLINGS = 9
 #: A connection that lasted this long had settled; one that ended sooner counts as failing.
 SETTLED_S = 60.0
 OPEN_TIMEOUT_S = 20.0
@@ -98,6 +100,17 @@ async def connect(url: str) -> Socket:
     )
 
 
+def backoff(failures: int) -> float:
+    """How long to wait after `failures` connections in a row that did not settle.
+
+    The exponent is capped as well as the result: `2 ** failures` is an integer Python
+    will happily grow until it no longer fits a float, which after about a thousand
+    failures raised out of the loop and ended the listener.
+    """
+    doublings = min(max(failures - 1, 0), BACKOFF_DOUBLINGS)
+    return min(BACKOFF_FIRST_S * 2 ** doublings, BACKOFF_MAX_S)
+
+
 class SocketModeListener:
     """Keeps one Socket Mode connection up for one app, and hands its events to `handle`.
 
@@ -128,30 +141,50 @@ class SocketModeListener:
         self._waiting: asyncio.Queue[dict] = asyncio.Queue(MAX_WAITING)
 
     async def run(self) -> None:
-        """Listen until cancelled, reconnecting as often as it takes. Never raises else."""
+        """Listen until cancelled, reconnecting as often as it takes.
+
+        Nothing else ends it. A connection that fails is logged by its kind, and so is
+        anything that breaks between two of them (the clock, the wait): a listener that
+        ended would be silence that reads exactly like nobody having written.
+        """
         worker = asyncio.create_task(self._work(), name=f"slack-events-{self._name}")
         failures = 0
         try:
             while True:
-                started = self._clock()
                 try:
-                    await self._session()
+                    failures = await self._attempt(failures)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    # Its kind and nothing it says: the message may quote the address.
-                    log.warning("the Slack connection for %s ended (%s)", self._name,
-                                type(exc).__name__)
-                # A connection that had settled starts the count again; one that did not
-                # doubles the wait, from a second up to the most it ever is.
-                failures = 0 if self._clock() - started >= SETTLED_S else failures + 1
-                delay = min(BACKOFF_FIRST_S * 2 ** max(failures - 1, 0), BACKOFF_MAX_S)
-                # Between half of it and all of it: never longer, and not in step.
-                await self._sleep(delay * (0.5 + 0.5 * self._jitter()))
+                    failures += 1
+                    log.error("the Slack listener for %s stumbled (%s); trying again",
+                              self._name, type(exc).__name__)
+                    # Never a loop that spins: the wait it would have had, and at the
+                    # least a turn of the event loop if the wait is what broke.
+                    with contextlib.suppress(Exception):
+                        await self._sleep(backoff(failures))
+                    await asyncio.sleep(0)
         finally:
             worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await worker
+
+    async def _attempt(self, failures: int) -> int:
+        """One connection and the wait after it; how many have now failed in a row."""
+        started = self._clock()
+        try:
+            await self._session()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Its kind and nothing it says: the message may quote the address.
+            log.warning("the Slack connection for %s ended (%s)", self._name,
+                        type(exc).__name__)
+        # A connection that had settled starts the count again; one that did not
+        # doubles the wait, from a second up to the most it ever is.
+        failures = 0 if self._clock() - started >= SETTLED_S else failures + 1
+        await self._sleep(backoff(failures) * (0.5 + 0.5 * self._jitter()))
+        return failures
 
     async def _session(self) -> None:
         """One connection, from asking for its address to its end."""
