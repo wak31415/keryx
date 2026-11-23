@@ -1025,11 +1025,14 @@ def _sign_in(ctx: "SetupContext") -> Grant | None:
                 result = ctx.probes.google_browser_signin(ctx.settings, chosen, _announcer(ctx))
             else:
                 url = start_signin(ctx.settings, chosen)
+                # The link goes under the panel, bare (`Prompter.link`): inside it, a link
+                # this long is cut by the border and cannot be copied in one piece.
                 ui.panel(
                     "Sign in to Google — open this on any device",
-                    f"{url}\n\nApprove it. The page you land on will not load: copy its "
-                    "whole address and paste it below.",
+                    "Open the link below and approve it. The page you land on will not "
+                    "load: copy its whole address and paste it below.",
                 )
+                ui.link(url)
                 address = ui.text(
                     "The address you landed on (blank to skip)",
                     validate=_from_this_link(ctx.settings),
@@ -1080,10 +1083,11 @@ def _announcer(ctx: "SetupContext") -> Announce:
     def announce(url: str, opened: bool) -> None:
         ctx.ui.panel(
             "Sign in to Google",
-            ("Your browser is opening this link" if opened else "Open this link in a browser "
-             "on this machine")
-            + f":\n\n{url}\n\nWaiting for you to finish there. Ctrl-C stops waiting.",
+            ("Your browser is opening the link below" if opened else "Open the link below "
+             "in a browser on this machine")
+            + ". Waiting for you to finish there. Ctrl-C stops waiting.",
         )
+        ctx.ui.link(url)
 
     return announce
 

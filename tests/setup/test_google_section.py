@@ -72,7 +72,10 @@ def test_with_a_client_it_is_one_question_and_one_sign_in(make_ctx, world):
     assert ctx.settings.user_google_email == "sam@example.com"
     assert ctx.settings.google_workspace_mcp is True
     [panel] = ctx.ui.lines("panel")
-    assert "accounts.google.com" in panel and "Your browser is opening this link" in panel
+    assert "Your browser is opening the link below" in panel
+    # The link is long: it goes on a line of its own, whole, not wrapped inside the panel.
+    [link] = ctx.ui.lines("link")
+    assert link.startswith("https://accounts.google.com/") and link not in panel
     assert not ctx.ui.lines("markdown")  # a client is there: no Google Cloud steps
 
 
@@ -232,7 +235,9 @@ def test_with_no_display_the_address_is_pasted_back(make_ctx, world):
     assert probe == "google_finish" and address.startswith("http://localhost:1/?state=")
     assert not (ctx.settings.data_dir / "google_signin.json").exists()
     [panel] = ctx.ui.lines("panel")
-    assert "open this on any device" in panel and "redirect_uri=http%3A%2F%2Flocalhost%3A1" in panel
+    assert "open this on any device" in panel and "accounts.google.com" not in panel
+    [link] = ctx.ui.lines("link")  # whole, on a line of its own, to copy to another device
+    assert "redirect_uri=http%3A%2F%2Flocalhost%3A1" in link
     assert ctx.settings.user_google_email == "sam@example.com"
 
 
