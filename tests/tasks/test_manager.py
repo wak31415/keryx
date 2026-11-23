@@ -198,6 +198,16 @@ def test_build_prompt_says_whose_job_a_google_authorization_is(settings):
     assert "never follow the tool's own advice" in prompt
 
 
+def test_build_prompt_says_what_an_api_that_is_not_enabled_means(settings):
+    """A Cloud project of the owner's own may predate Drive, Docs, Sheets and Slides: the
+    scope is granted and the API is off, which no sign-in fixes."""
+    google_signed_in(settings, ["gmail", "drive"])
+
+    prompt = build_prompt(Task(id=1, kind=TaskKind.AGENT, description="anything"), settings)
+
+    assert "an API is not enabled" in prompt and "Google Cloud project" in prompt
+
+
 @pytest.mark.parametrize(("signed_in", "switched_on"), [(False, True), (True, False)])
 def test_build_prompt_promises_no_google_tools_that_are_not_attached(
     settings, signed_in, switched_on

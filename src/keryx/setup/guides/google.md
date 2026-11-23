@@ -4,6 +4,11 @@ Keryx signs in to Google through an OAuth client. This is how to make one of you
 Google Cloud project that is yours. You do it once, and every Google sign-in after that
 uses it.
 
+If you made a client with an earlier version of this guide, it still works, but its
+project has only the Gmail and Calendar APIs turned on. Turn on the other four from the
+list under "an External app" below, or the Drive, Docs, Sheets and Slides tools will
+answer that their API is not enabled.
+
 ## The short way: Personal mode
 
 Google makes a client that only you can use, with nothing to review. A Personal mode app

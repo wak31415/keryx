@@ -31,6 +31,10 @@ the version starts with 0.
   still lists them beside the new `google`.
 - An install that already signed in keeps working and needs nothing done. Signing in again
   with `keryx auth login google` replaces the two older sign-ins with one.
+- If you made your own Google Cloud client with the earlier guide, its project has only the
+  Gmail and Calendar APIs enabled. After signing in again, enable Drive, Docs, Sheets and
+  Slides there too (the links are in the guide `keryx setup` shows, and the sign-in names
+  it), or those tools answer "API not enabled".
 - A sign-in turns the agents' Google tools on the first time only. If you have set
   `GOOGLE_WORKSPACE_MCP` to false, signing in again leaves it off.
 - A coding agent finishing a Google sign-in gives the address on standard input
