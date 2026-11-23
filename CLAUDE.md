@@ -72,8 +72,10 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   filters and planner; fenced context, never a token), `slack conversations [WORDS]` and
   `slack members [WORDS]` (names and ids), `slack report [--task ID] [--workspace NAME]`
   (standard input, to the owner as Keryx, or into the thread a Slack-typed task was asked
-  in), and at `write` `slack message --to RECIPIENT [--confirm] [--workspace NAME]`
-  (standard input, as the owner; without `--confirm` it only prints who it would go to)
+  in; inside a task it is that task's), and at `write` `slack message --to RECIPIENT
+  [--confirm] [--workspace NAME]` (standard input, as the owner, in two runs: without
+  `--confirm` it prints who a name is and the id to send to and sends nothing, and with
+  it `--to` is that id)
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]

@@ -37,14 +37,19 @@ the version starts with 0.
   channel. A coding agent working on your request can send one too, and nothing asks you
   first then: `SECURITY.md` says plainly what that risk is. Lowering the level to `read`
   removes the capability at once.
+- **`keryx plugins install slack_report --set`** takes where reports go (`channel_id`)
+  and the MCP server, and refuses the access level, the owner and what Slack said of the
+  workspace: those are settled by `keryx auth login slack`, which checks the tokens.
 - **`send_to_slack` is now `slack_report`.** Nothing to do: an installed plugin keeps
   loading from the files it has and is offered under the new name. `keryx plugins install
   slack_report` renames those files if you want them renamed.
 - **`keryx slack read|conversations|members|report|message`** are how a coding agent uses
   Slack for a request that is about it. `read` takes the same filters as the voice tool
   (plus `--limit` and `--before` to read further back) and prints what it read as fenced
-  context; `report` posts to you as Keryx; `message` sends as you at `write`, and only
-  with `--confirm`. Your user token is never handed to the agent.
+  context; `report` posts to you as Keryx, and inside a task only to that task's own
+  thread or to where your reports go; `message` sends as you at `write`, in two runs:
+  the first prints who a name is and the id to send to, and only the second, with
+  `--confirm` and that id, sends. Your user token is never handed to the agent.
 - **What is read from Slack is treated as other people's words, never as instructions.**
   Only your own request is acted on. Everything read is wrapped, attributed to who wrote
   it, and kept apart from what you asked, as a guard against a message that tries to give
