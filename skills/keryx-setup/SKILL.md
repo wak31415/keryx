@@ -61,7 +61,8 @@ keryx auth status --json
 
 `config list` is every setting with whether it is set and where from — a secret's value is
 never in it. `doctor` groups each check by `section` with a `state` of ok, missing or failed.
-`auth status` is every sign-in.
+`auth status` is every sign-in; Google and Slack are marked `optional` in it, because Keryx
+runs without them.
 
 Then tell them, in three or four sentences: what Keryx does with what you are about to
 collect, that it goes to the realtime provider on every call, and that nothing is written

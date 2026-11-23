@@ -29,14 +29,20 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config lock|unlock KEY` (what the running service may change)
-- Sign-ins: `uv run keryx auth login claude|codex|google [--headless] [--services a,b]
-  [--account ADDRESS] [--client-file PATH] [--callback-url -]` (google is one sign-in
-  for everything; with `--headless` it prints a link and takes back the address the
-  browser landed on, and with no terminal that is two commands, the second reading the
-  address from standard input so its code is never on a command line; `--account` says which
-  account is meant when it is not the saved one; `gmail` and `google-workspace` still mean
-  it, for one release), `uv run keryx auth logout google` (revokes the grant at Google and
-  removes every file a sign-in left), `uv run keryx auth status [--json] [--smoke]`
+- Sign-ins: `uv run keryx auth login claude|codex|google|slack`, each with its own options
+  and refusing the others'. `claude|codex [--headless]` runs the agent's own login.
+  `google [--headless] [--services a,b] [--account ADDRESS] [--client-file PATH]
+  [--callback-url -]` is one sign-in for everything: with `--headless` it prints a link and
+  takes back the address the browser landed on, and with no terminal that is two commands,
+  the second reading the address from standard input so its code is never on a command
+  line; `--account` says which account is meant when it is not the saved one; `gmail` and
+  `google-workspace` still mean it, for one release. `slack` alone prints the link that
+  creates the owner's Slack app, and `slack --stdin [--email ADDRESS] [--no-test]` takes
+  its bot token on standard input (never argv), checks it, finds where to send, turns
+  `send_to_slack` on and sends one test message. `uv run keryx auth logout google` revokes
+  the grant at Google and removes every file a sign-in left; nothing else has a sign-out.
+  `uv run keryx auth status [--json] [--smoke]` exits 1 for a failed sign-in Keryx needs;
+  Google and Slack are `optional` in it, reported and never failing it
 - Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`); `scripts/dev.sh` adds
   the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
@@ -51,11 +57,6 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
   remove NAME [--yes]`; install and remove refuse the running service
-- Connect Slack: `uv run keryx auth login slack` prints the link that creates the owner's
-  Slack app; `uv run keryx auth login slack --stdin [--email ADDRESS] [--no-test]` takes its
-  bot token on standard input (never argv), checks it, finds where to send, turns
-  `send_to_slack` on and sends one test message; `auth status` lists `slack` and never
-  exits 1 over it, since Keryx runs without a plugin
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]

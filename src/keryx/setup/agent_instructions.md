@@ -12,7 +12,9 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    (a variable already in your environment) or `… --stdin`. If you do not have a secret,
    ask the person to run `keryx setup`, which asks for it hidden; do not ask them to paste
    it to you.
-3. **Sign-ins.** `keryx auth status --json` lists each one. For a coding agent,
+3. **Sign-ins.** `keryx auth status --json` lists each one; Google and Slack are marked
+   `optional` there, since Keryx runs without them, and never make it exit 1. Each
+   `keryx auth login` takes its own options and refuses another's. For a coding agent,
    `keryx auth login claude|codex` runs its own login on the terminal. Google is one
    sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides:
    `keryx auth login google --headless` prints a link: relay it; the person approves it

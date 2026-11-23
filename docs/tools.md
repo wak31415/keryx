@@ -60,7 +60,9 @@ A plugin is two files in `~/.local/share/keryx/tools/`:
   `keryx setup` → Plugins again. A secret is never in it: it stays in `secrets.toml`
   (`keryx config set KEY --stdin`), or in the Google sign-in's own file.
 
-To turn one on: `keryx setup` → Plugins, or `keryx plugins install NAME [--set KEY=VALUE]`.
+To turn one on: `keryx setup` → Plugins, or `keryx plugins install NAME [--set KEY=VALUE]`
+(for Slack the first time, `keryx auth login slack`, which gets it a token and somewhere to
+send and turns it on; see below).
 `keryx plugins` lists them, and why one that is on is refused (not signed in, a setting
 that does not validate); `keryx plugins remove NAME` turns one off and keeps its settings
 for next time. They are custom tools like your own (below), and `keryx tools` lists them
