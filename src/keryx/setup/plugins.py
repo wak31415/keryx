@@ -187,8 +187,15 @@ def run_slack(ctx: SetupContext) -> None:
 
     The level comes first, because it decides the app, and what it lets Keryx see is said
     before any link. After it the questions are always the same ones in the same order,
-    whatever is already saved: the bot token, the app-level token at `converse` and above,
-    and the user token, at every level. Nothing is asked about where to send.
+    whatever is already saved: the app-level token at `converse` and above, the user
+    token, at every level, and the bot token. That is the order Slack's console shows
+    them in and the order the steps have them copied (`integrations.slack.token_kinds`).
+    Nothing is asked about where to send.
+
+    **Asked in the console's order, checked in the order the checks need each other.**
+    The bot token says which workspace this is and the user token is held to it, so the
+    answers are taken first and then shown to Slack as they always were: the bot token,
+    the app-level one, the user's. One Slack does not take is asked for again there.
 
     **Nothing is saved until every answer is in**, as on the command line: a level is all
     of its tokens or none of it, so a token Slack refuses, or a walk abandoned half-way,
@@ -243,8 +250,8 @@ def run_slack(ctx: SetupContext) -> None:
         ui.link(new_app_url(access, assistant=assistant))
         ui.markdown(slack.guide(access, app=app))
         if server and access is Access.ANNOUNCE:
-            ui.note(f"Leave the token blank to go on using the {server} MCP server's token "
-                    "and channel.")
+            ui.note(f"Leave both tokens blank to go on using the {server} MCP server's "
+                    "token and channel.")
     elif access.reaches(was) and (
             access is not was or not ctx.current(slack.TOKEN_KEYS[USER])):
         have = tuple(kind for kind in needed if ctx.current(slack.TOKEN_KEYS[kind]))
@@ -256,6 +263,22 @@ def run_slack(ctx: SetupContext) -> None:
         ui.markdown(slack.guide(access, app=app, raising=True, have=have))
         ui.panel("The manifest", manifest_json(access, assistant=assistant))
         ui.note(slack.RENAME_NOTE.format(app=app))
+    on_file_now = slack.on_file(ctx.settings, slack.DEFAULT, values)
+    # The questions, in the order the console shows the tokens. What the user token is
+    # held to is only known once the bot token is in, so both are answered before either
+    # is checked. Which are asked follows from what is on file and the level alone.
+    typed_app = _ask_slack_app_token(ctx) if APP in needed else None
+    typed_user: str | None = None
+    held_user = ctx.current(slack.TOKEN_KEYS[USER])
+    # With the bot token kept: lowered out of reading, the user token is forgotten and
+    # not asked for; an install from before user tokens may leave it blank.
+    forgotten = (bool(before) and bool(on_file_now.owner_id) and was.reaches(Access.READ)
+                 and not access.reaches(Access.READ))
+    if not forgotten:
+        may_stay = (bool(before) and was.reaches(access) and not held_user
+                    and (bool(on_file_now.owner_id) or not above))
+        typed_user = _ask_slack_user_token(
+            ctx, blank=may_stay or (bool(server) and not above), untouched=may_stay)
     token, team = _slack_token(ctx, before, server, access)
     if team is None:
         # A token that was kept, or one saved unchecked: the workspace is the one on file.
@@ -272,7 +295,6 @@ def run_slack(ctx: SetupContext) -> None:
                  "there, and above announce every message is held to both. Nothing was "
                  "saved: try again when Slack answers.")
         return
-    on_file_now = slack.on_file(ctx.settings, slack.DEFAULT, values)
     if token != before and (problem := slack.another_workspace(on_file_now, team)):
         # The command line's own check and its own sentence: a token from another
         # workspace would bring another owner with it, whatever is answered after this.
@@ -281,8 +303,8 @@ def run_slack(ctx: SetupContext) -> None:
     standing = slack.standing_owner(on_file_now, team, same_app=token == before)
     tokens = {BOT: token}
     owner = standing
-    if APP in needed:
-        tokens[APP] = _slack_app_token(ctx)
+    if typed_app is not None:
+        tokens[APP] = _slack_app_token(ctx, typed_app)
     if (token == before and standing and was.reaches(Access.READ)
             and not access.reaches(Access.READ)):
         # Lowered out of reading: the owner on file stands, and the token that could
@@ -297,9 +319,12 @@ def run_slack(ctx: SetupContext) -> None:
                      and (bool(standing) or not above))
         tokens[USER], owner, team = _slack_user_token(
             ctx, team, standing, access, raised=not was.reaches(access), optional=untouched,
-            bot_token=token)
+            bot_token=token, typed=typed_user)
         if not tokens[USER]:
             del tokens[USER]
+    elif typed_user and typed_user.strip() != held_user:
+        ui.note("The user token is left out: it goes with a bot token of Keryx's own app, "
+                "and none was given.")
     # Where reports go: where they went, while that still goes with this token; else to
     # the owner themselves. Blank beside a named server's own token: the server's.
     kept = on_file if slack.keeps(on_file, new_token=token != before) else ""
@@ -417,7 +442,8 @@ def _slack_token(
         return slack.token_problem(value)
 
     while True:
-        answer = ui.secret("Bot token (xoxb-…)", validate=problem, current=before).strip()
+        answer = ui.secret(slack.prompt_for(BOT, saved=False), validate=problem,
+                           current=before).strip()
         if not answer or answer == before:
             return answer, None
         workspace = _asked_slack(ctx, BOT, answer, ctx.probes.slack_auth_test)
@@ -438,19 +464,28 @@ def _slack_token(
             return answer, None
 
 
-def _slack_app_token(ctx: SetupContext) -> str:
-    """The app-level token Keryx listens with, checked by asking Slack for a connection.
-
-    Never taken unchecked: it is only asked for above `announce`. Nothing is saved here.
-    """
-    ui = ctx.ui
-    before = ctx.current(slack.TOKEN_KEYS[APP])
-
+def _ask_slack_app_token(ctx: SetupContext) -> str:
+    """The app-level token as typed: held to how one starts, and not yet shown to Slack."""
     def problem(value: str) -> str | None:
         return "Required." if not value.strip() else slack.token_problem(value, APP)
 
+    return ctx.ui.secret(slack.prompt_for(APP, saved=False), validate=problem,
+                         current=ctx.current(slack.TOKEN_KEYS[APP])).strip()
+
+
+def _slack_app_token(ctx: SetupContext, typed: str) -> str:
+    """The app-level token Keryx listens with, checked by asking Slack for a connection.
+
+    `typed` is the answer already given, in the console's order, before the bot token;
+    one Slack does not take is asked for again here. Never taken unchecked: it is only
+    asked for above `announce`. Nothing is saved here.
+    """
+    ui = ctx.ui
+    before = ctx.current(slack.TOKEN_KEYS[APP])
+    answer: str | None = typed
     while True:
-        answer = ui.secret("App-level token (xapp-…)", validate=problem, current=before).strip()
+        if answer is None:
+            answer = _ask_slack_app_token(ctx)
         if answer == before:
             return answer
         opened = _asked_slack(ctx, APP, answer, ctx.probes.slack_connection)
@@ -459,16 +494,43 @@ def _slack_app_token(ctx: SetupContext) -> str:
             return answer
         ctx.memo.pop((APP, answer), None)
         if opened.refused:
-            ui.error(f"Slack did not take that token: {opened.problem}. It needs the "
-                     "connections:write scope, and Socket Mode on in the app.")
+            ui.error(f"Slack did not take the app-level token: {opened.problem}. It needs "
+                     "the connections:write scope, and Socket Mode on in the app.")
         else:
-            ui.error(f"That token could not be checked: {opened.problem}. At this level it "
-                     "has to be: try again when Slack answers.")
+            ui.error(f"The app-level token could not be checked: {opened.problem}. At this "
+                     "level it has to be: try again when Slack answers.")
+        answer = None
+
+
+#: Said before an install from before user tokens is asked for one.
+USER_TOKEN_MAY_STAY = (
+    "This workspace was connected before Keryx asked for a user token, and goes on working "
+    "without one. Leave it blank, and keep the bot token, to keep it exactly as it is."
+)
+
+
+def _ask_slack_user_token(ctx: SetupContext, *, blank: bool, untouched: bool = False) -> str:
+    """The user token as typed: held to how one starts, and not yet shown to Slack.
+
+    `blank` is whether it may be left empty: an install from before user tokens that may
+    stay as it is (`untouched`, which is said first), or a bot token that may be left to
+    a named MCP server.
+    """
+    def problem(value: str) -> str | None:
+        if not value.strip():
+            return None if blank else "Required."
+        return slack.token_problem(value, USER)
+
+    if untouched:
+        ctx.ui.note(USER_TOKEN_MAY_STAY)
+    return ctx.ui.secret(slack.prompt_for(USER, saved=False), validate=problem,
+                         current=ctx.current(slack.TOKEN_KEYS[USER])).strip()
 
 
 def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str,
                       access: Access = Access.READ, *, raised: bool = False,
                       optional: bool = False, bot_token: str = "",
+                      typed: str | None = None,
                       ) -> tuple[str, str, Workspace]:
     """The owner's own token, the member it says they are, and the workspace the bot
     token belongs to (asked of Slack here when the file never learned it, because the
@@ -481,22 +543,25 @@ def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str,
     refused: a token is never how the owner changes. Nothing is saved here. `optional`
     is an install from before user tokens, walked with nothing changed: blank leaves it
     as it was, with the owner (or none) it had.
+
+    `typed` is the answer already given, in the console's order, before the bot token
+    was (None: it was not asked for then, and is now). It is checked here, once the bot
+    token has said which workspace this is, and asked for again when it will not do.
     """
     ui = ctx.ui
     before = ctx.current(slack.TOKEN_KEYS[USER])
-
-    def problem(value: str) -> str | None:
-        if not value.strip():
-            return None if optional else "Required."
-        return slack.token_problem(value, USER)
-
-    if optional:
-        ui.note("This workspace was connected before Keryx asked for a user token, and "
-                "goes on working without one. Leave it blank to keep it exactly as it is.")
+    answer = typed
     while True:
-        answer = ui.secret("User token (xoxp-…)", validate=problem, current=before).strip()
+        if answer is None:
+            answer = _ask_slack_user_token(ctx, blank=optional, untouched=optional)
         if not answer and optional:
             return "", standing, team
+        if not answer:
+            # Left blank while it still could be, and the bot token then changed that.
+            ui.error("The user token is needed with this bot token: it is how Slack says "
+                     "which member you are.")
+            answer = None
+            continue
         if answer == before and standing and not raised:
             return answer, standing, team
         if not team.team_id and bot_token:
@@ -518,6 +583,7 @@ def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str,
         if why:
             ctx.memo.pop((USER, answer), None)
             ui.error(f"That user token cannot be used: {why}")
+            answer = None
             continue
         ui.success(f"it is yours: you are {checked.user_id} there")
         return answer, checked.user_id, team

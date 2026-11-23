@@ -681,8 +681,8 @@ def test_auth_login_slack_at_a_terminal_asks_for_the_token_hidden(home, monkeypa
                    test=True)
 
     assert prompts == [
-        ("Bot token (xoxb-…, OAuth & Permissions, Bot User OAuth Token)", True),
-        ("User token (xoxp-…, OAuth & Permissions, User OAuth Token)", True),
+        ("User token (xoxp-…, OAuth & Permissions > OAuth Tokens > User OAuth Token)", True),
+        ("Bot token (xoxb-…, OAuth & Permissions > OAuth Tokens > Bot User OAuth Token)", True),
     ]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret",
                                "SLACK_USER_TOKEN": "xoxp-typed-secret"}
@@ -720,16 +720,16 @@ def test_at_a_terminal_auth_login_slack_is_one_command_that_waits_for_the_tokens
 
     asked = fake_slack(monkeypatch)
     prompts = at_a_terminal(
-        monkeypatch, ["xoxb-typed-secret", "xapp-typed-secret", "xoxp-typed-secret"])
+        monkeypatch, ["xapp-typed-secret", "xoxp-typed-secret", "xoxb-typed-secret"])
 
     cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=False,
                    test=True, access="converse")
 
     hidden = {"hide_input": True, "default": "", "show_default": False}
     assert prompts == [
-        ("Bot token (xoxb-…, OAuth & Permissions, Bot User OAuth Token)", hidden),
-        ("App-level token (xapp-…, Basic Information, App-Level Tokens)", hidden),
-        ("User token (xoxp-…, OAuth & Permissions, User OAuth Token)", hidden),
+        ("App-level token (xapp-…, Basic Information > App-Level Tokens)", hidden),
+        ("User token (xoxp-…, OAuth & Permissions > OAuth Tokens > User OAuth Token)", hidden),
+        ("Bot token (xoxb-…, OAuth & Permissions > OAuth Tokens > Bot User OAuth Token)", hidden),
     ]
     said = capsys.readouterr()
     assert "https://api.slack.com/apps?new_app=1&manifest_json=" in said.out
@@ -751,7 +751,7 @@ def test_leaving_the_terminals_questions_saves_nothing_and_says_how_to_pick_it_u
     from keryx import cli
 
     asked = fake_slack(monkeypatch)
-    at_a_terminal(monkeypatch, ["xoxb-typed-secret", cli.typer.Abort])
+    at_a_terminal(monkeypatch, ["xapp-typed-secret", cli.typer.Abort])
 
     with pytest.raises(cli.typer.Exit) as stopped:
         cli.auth_login("slack", headless=None, client_file=None, callback_url=None,
@@ -820,10 +820,10 @@ def test_at_a_terminal_each_token_the_level_needs_is_asked_for_and_a_saved_one_m
                    test=False, access="converse")
 
     assert prompts == [
-        ("Bot token (xoxb-…, OAuth & Permissions, Bot User OAuth Token), or Enter to keep "
-         "the one saved", True),
-        ("App-level token (xapp-…, Basic Information, App-Level Tokens)", True),
-        ("User token (xoxp-…, OAuth & Permissions, User OAuth Token)", True),
+        ("App-level token (xapp-…, Basic Information > App-Level Tokens)", True),
+        ("User token (xoxp-…, OAuth & Permissions > OAuth Tokens > User OAuth Token)", True),
+        ("Bot token (xoxb-…, OAuth & Permissions > OAuth Tokens > Bot User OAuth Token), or "
+         "Enter to keep the one saved", True),
     ]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-saved",
                                "SLACK_APP_TOKEN": "xapp-typed-secret",

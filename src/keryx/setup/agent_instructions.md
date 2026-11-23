@@ -36,8 +36,12 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    LEVEL` to both, and its extra tokens to standard input, one to a line). Relay the link
    and the steps; the
    person creates and installs the Slack app it describes and copies two tokens from one
-   page, the bot token and their own user token (the user token is how Slack says which
-   member they are; no address is asked for). Those tokens are not yours to see: they
+   place, `OAuth & Permissions > OAuth Tokens`: their own User OAuth Token and, below it,
+   the Bot User OAuth Token (the user token is how Slack says which member they are; no
+   address is asked for). From `converse` up there is a third, made before installing,
+   at `Basic Information > App-Level Tokens > Generate Token and Scopes`. The steps are
+   in the order of Slack's console, and the tokens are asked for in the order they are
+   copied: app-level, user, bot. Those tokens are not yours to see: they
    run `keryx auth login slack --stdin` themselves, at a terminal, and it asks for each
    hidden (run without `--stdin` there, the same command prints the steps again first
    and then waits for the tokens; only

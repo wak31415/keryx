@@ -150,8 +150,15 @@ def token_kinds(access: Access) -> tuple[str, ...]:
     The user token at every level (the owner's ruling of 2026-11-24, "let's always
     require a user token"): a bot token names the bot, not whoever installed it, and
     `auth.test` on the user token is how Slack itself says who the owner is.
+
+    **The order is the order Slack's console shows them in**, as the owner found walking
+    it: the app-level token is on a page of its own, met before the app is installed;
+    then one section of one page lists the User OAuth Token and, below it, the Bot User
+    OAuth Token. The steps are written in this order and every prompt asks in it, so
+    nobody is sent back to a page they have left. Nothing else may read an order out of
+    this: standard input is told apart by prefix.
     """
-    return (BOT, APP, USER) if access.reaches(Access.CONVERSE) else (BOT, USER)
+    return (APP, USER, BOT) if access.reaches(Access.CONVERSE) else (USER, BOT)
 
 
 def used_kinds(access: Access) -> tuple[str, ...]:

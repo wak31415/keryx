@@ -122,20 +122,29 @@ read too, and it reads Slack as them when they ask about messages) and `write` (
 also send messages as them, to other people and channels).
 Read them those sentences and ask. Never choose `converse`, `read` or `write` for them,
 and never suggest one to save a step: `announce` is the default and is what the two commands above
-set up. At every level the second command takes two tokens, the bot token and their own
-user token (which is how Slack says which member they are; there is no address to give
-and nothing is asked about where to send: reports go to them). For a higher level, both
-commands take `--access LEVEL`, and the app-level token goes on standard input with the
-other two, one to a line. The command names the member it takes them to be: read them
+set up. At every level the second command takes two tokens, their own user token and
+the bot token (the user token is how Slack says which member they are; there is no
+address to give and nothing is asked about where to send: reports go to them). For a
+higher level, both commands take `--access LEVEL`, and the app-level token is asked for
+first (on standard input it goes with the other two, one to a line, in any order). The command names the member it takes them to be: read them
 that line. It is settled then and nothing changes it afterwards; connecting as somebody
 else is `keryx auth logout slack` and a new login, which is theirs to ask for. A machine
 that connected Slack before user tokens were asked for keeps working as it is: only if
 they want the level raised, or an owner on file, do they run the login again, and the
 first command then prints how to update the app they have.
 
-The link opens Slack's own page for a new app with Keryx's already filled in; they create
-it, install it and copy its bot token and their user token, both from the same page. Do not ask them to paste a token to you: they run
-the second command themselves. It checks each token with Slack, takes the member their
+The link opens Slack's own page for a new app with theirs already filled in. The steps
+the first command prints follow Slack's console, one visit to each page, and the tokens
+are asked for in the order they are copied. Say the places as the steps do, as paths:
+
+- from `converse` up, before installing: `Basic Information > App-Level Tokens >
+  Generate Token and Scopes`, with the `connections:write` scope, gives the app-level
+  token (`xapp-…`);
+- they install the app to their workspace and click Allow;
+- `OAuth & Permissions > OAuth Tokens` then lists the User OAuth Token (`xoxp-…`) and,
+  below it, the Bot User OAuth Token (`xoxb-…`): they copy both, in that order.
+
+Do not ask them to paste a token to you: they run the second command themselves. It checks each token with Slack, takes the member their
 user token belongs to as them (so there is no address to give and no channel id to look
 up), and sends one test message — ask them whether it arrived. An app they connected
 before keeps working. A second

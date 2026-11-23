@@ -865,6 +865,19 @@ Eleven rulings:
   there is one), `apps.connections.open` on the app-level token. The wizard saves nothing until every answer is in, and above
   `announce` never offers to save a token unchecked: what a message is held to is what
   Slack said of the token.
+- **The steps follow Slack's console, and the prompts follow the steps.** The owner
+  walked the real console: the app-level token is at `Basic Information > App-Level
+  Tokens > Generate Token and Scopes`, and one section, `OAuth & Permissions > OAuth
+  Tokens`, lists the User OAuth Token and below it the Bot User OAuth Token. So
+  `setup.slack.steps` is grouped by page, each visited once in the order it is met (the
+  app-level token, the install, the tokens section, the optional icon), every place is
+  written as that path from one constant, and `integrations.slack.token_kinds` is the
+  same order (app, user, bot), which the terminal and the wizard both ask in. The wizard
+  takes the answers in that order and shows them to Slack in the order the checks need
+  (the bot token says which workspace the user token is held to). Nothing else reads an
+  order: standard input is told apart by prefix. The install step names no button label,
+  since Slack's pages put the button in two places and its label carries the workspace's
+  name. Do not reorder one without the other; a test holds the prompt order to the steps.
 - **One owner, fixed at connect, and Slack says who.** The owner's rulings (2026-11-23:
   the owner is whoever set the connection up, and there is no option to change it;
   2026-11-24: "let's always require a user token"). `owner_id` is the member `auth.test`

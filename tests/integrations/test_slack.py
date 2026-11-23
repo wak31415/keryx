@@ -562,9 +562,11 @@ def test_each_level_has_a_link_and_a_manifest_to_paste(access):
 
 
 def test_connecting_takes_the_user_token_at_every_level_and_tokens_are_told_apart_by_prefix():
-    assert token_kinds(Access.ANNOUNCE) == ("bot", "user")
-    assert token_kinds(Access.CONVERSE) == ("bot", "app", "user")
-    assert token_kinds(Access.READ) == token_kinds(Access.WRITE) == ("bot", "app", "user")
+    # In the order Slack's console shows them: the app-level token on a page of its own,
+    # then the user token and, below it on the same page, the bot token.
+    assert token_kinds(Access.ANNOUNCE) == ("user", "bot")
+    assert token_kinds(Access.CONVERSE) == ("app", "user", "bot")
+    assert token_kinds(Access.READ) == token_kinds(Access.WRITE) == ("app", "user", "bot")
     # What a level runs on once connected is another matter: the user token only from read.
     assert slack.used_kinds(Access.ANNOUNCE) == ("bot",)
     assert slack.used_kinds(Access.CONVERSE) == ("bot", "app")

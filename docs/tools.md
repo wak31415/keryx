@@ -153,8 +153,8 @@ decides the app: what Keryx may see in your Slack, and where you can set it to w
 
 | Level | Where you can ask Keryx for something | What Keryx can see | What you paste |
 |---|---|---|---|
-| `announce` (the default) | nowhere on Slack: it only posts to you | nothing | the bot token (`xoxb-`) and your user token (`xoxp-`), which says which member you are and can see nothing but custom emoji |
-| `converse` | your direct messages with the app | the messages you type to the app itself, and nothing else | and the app-level token (`xapp-`) |
+| `announce` (the default) | nowhere on Slack: it only posts to you | nothing | your user token (`xoxp-`), which says which member you are and can see nothing but custom emoji, and the bot token (`xoxb-`) |
+| `converse` | your direct messages with the app | the messages you type to the app itself, and nothing else | the app-level token (`xapp-`) first, then the same two |
 | `read` | also any conversation you have added the app to, and it answers there | also every message that mentions it there (anyone's but yours is dropped); and Slack as you (every conversation you are in, their lists, the member list, search), only when you ask about messages | the same three; the user token can now read |
 | `write` | the same places | the same; and it can **send messages as you**, to other people and channels, when you ask for that message | the same three, after the app is reinstalled |
 
@@ -166,8 +166,19 @@ that comes with Keryx and whose path is printed
 ([this one](../src/keryx/setup/slack_app_icon.png)). Skipping it changes nothing else.
 
 `keryx setup` → Plugins asks the level, then shows a link that opens Slack's own page for
-a new app, with yours already filled in for that level: pick your workspace, create it,
-install it, and copy the tokens the level needs. Paste each once, at a hidden prompt.
+a new app, with yours already filled in for that level. The steps follow Slack's
+console, one visit to each page:
+
+1. Open the link, pick your workspace and create the app.
+2. From `converse` up: `Basic Information > App-Level Tokens > Generate Token and
+   Scopes`. Add the `connections:write` scope, generate the token and copy it (`xapp-…`).
+3. Install the app to your workspace and click Allow.
+4. `OAuth & Permissions > OAuth Tokens`: copy the User OAuth Token (`xoxp-…`), then the
+   Bot User OAuth Token (`xoxb-…`) below it.
+5. Optional: `Basic Information > Display Information`, to upload the icon.
+
+The tokens are asked for in that same order: app-level, user, bot. Paste each once, at
+a hidden prompt.
 Keryx checks each with Slack, tells you which workspace it connected to, and learns
 which member you are from your user token, so there is no address to give and no channel
 id to look up: reports go to you. Nothing is saved until every token has been checked.
@@ -184,8 +195,8 @@ tokens on standard input, one to a line in any order.
 **If you connected Slack before Keryx asked for a user token**, nothing stops working
 and there is nothing you have to do. The next time you run `keryx auth login slack` it
 shows how to update the app you have: paste the new manifest into it, reinstall it, and
-copy the User OAuth Token from the same page as the bot token. Reports keep going where
-they went.
+copy the User OAuth Token from `OAuth & Permissions > OAuth Tokens`, where it is the
+first of the two listed. Reports keep going where they went.
 
 **In your direct messages with the app, just type.** At `converse` and above,
 every message you send the app itself is a request, with no `@Lyra` needed: `look into

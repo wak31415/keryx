@@ -152,32 +152,62 @@ WRITE_NOTE = (
     "only when your request asks for that message to that person or channel."
 )
 
-#: The steps in Slack, after the link. Markdown; `plain` is the same without the marks.
-STEPS = (
+#: Places in Slack's app settings, each written as the console lays it out: the page in
+#: the sidebar, then the section on it, then what is clicked there. The steps and the
+#: prompts name a place only by one of these, so the two cannot drift apart.
+APP_TOKENS_PLACE = "Basic Information > App-Level Tokens > Generate Token and Scopes"
+OAUTH_TOKENS_PLACE = "OAuth & Permissions > OAuth Tokens"
+ICON_PLACE = "Basic Information > Display Information"
+#: What each of the two tokens in that section is called there, in the order it lists
+#: them: the user's first, the bot's below it.
+OAUTH_TOKEN_LABELS = {USER: "User OAuth Token", BOT: "Bot User OAuth Token"}
+
+#: The steps in Slack, after the link: one visit to each page, in the order someone meets
+#: the pages. Markdown; `plain` is the same without the marks.
+CREATE_STEP = (
     "Open the link: it is Slack's page for a new app, with yours already filled in and "
     "named {app}, after your assistant. Pick your workspace and click through to "
-    "**Create**.",
-    "Click **Install to Workspace**, then **Allow**.",
-    "Under **OAuth & Permissions**, copy the **Bot User OAuth Token** (`xoxb-…`).",
+    "**Create**."
 )
-#: The steps that change the app there is, in place of the first two above: to raise its
+#: From `converse`. The token needs no install, and its page is the one the new app
+#: opens on, so it comes before the install.
+APP_TOKEN_STEP = (
+    f"**{APP_TOKENS_PLACE}**: name the token anything, add the `connections:write` scope, "
+    "generate it, and copy the token (`xapp-…`)."
+)
+#: Said without one button's label: Slack's own pages put the install button at the top
+#: of OAuth & Permissions (its quickstart) and on Install App (its distribution guide),
+#: and the label carries the workspace's name. Both places are named.
+INSTALL_STEP = (
+    "Install the app to your workspace and click **Allow**: the install button is at the "
+    "top of **OAuth & Permissions**, and on **Install App** too."
+)
+#: The steps that change the app there is, in place of the first above: to raise its
 #: level, or to give an app made before user tokens the one it now needs.
 RAISE_STEPS = (
     f"Open {APPS_URL} and pick the app you already have for Keryx. Do not create a "
     "second one.",
-    "Open **App Manifest**, replace what is there with the manifest below, and click "
-    "**Save Changes**.",
-    "Open **Install App** and click **Reinstall to Workspace**, then **Allow**: the new "
-    "permissions count only after that.",
+    "**App Manifest**: replace what is there with the manifest below, and click **Save "
+    "Changes**.",
 )
-#: Where each token is found in the app's settings.
-TOKEN_STEPS = {
-    BOT: STEPS[2],
-    APP: "Under **Basic Information**, **App-Level Tokens**, click **Generate Token and "
-         "Scopes**, add the `connections:write` scope, and copy the token (`xapp-…`).",
-    USER: "Under **OAuth & Permissions**, the same page as the bot token, copy the **User "
-          "OAuth Token** (`xoxp-…`). It says which member you are.",
-}
+REINSTALL_STEP = (
+    "**Install App**: click **Reinstall to Workspace**, then **Allow**. The new "
+    "permissions count only after that."
+)
+
+
+def oauth_tokens_step(wanted: tuple[str, ...]) -> str | None:
+    """The one visit to the page that lists the user token and the bot token: which of
+    the two to copy, in the order the page lists them. None when neither is wanted."""
+    copied = [f"the **{OAUTH_TOKEN_LABELS[kind]}** (`{TOKEN_PREFIXES[kind]}…`)"
+              for kind in (USER, BOT) if kind in wanted]
+    if not copied:
+        return None
+    if len(copied) == 2:
+        return f"**{OAUTH_TOKENS_PLACE}**: copy {copied[0]}, then {copied[1]} below it."
+    which = "first" if USER in wanted else "second"
+    return f"**{OAUTH_TOKENS_PLACE}**: copy {copied[0]}, the {which} of the two there."
+
 
 #: The Keryx mark as a square PNG, shipped beside this module, for the app's icon. A
 #: manifest cannot carry an icon, so uploading it is a step of the owner's, and optional.
@@ -185,19 +215,18 @@ ICON = Path(__file__).resolve().with_name("slack_app_icon.png")
 #: The last step, for a new app and for one being changed: Markdown, with the file on a
 #: line of its own (`shown` makes the terminal's two lines of it).
 ICON_STEP = (
-    "Optional: under **Basic Information**, **Display Information**, click **Add App "
-    "Icon** and upload the Keryx mark from the file below. Skipping it changes nothing "
-    "else.\n\n   `{icon}`"
+    f"Optional: **{ICON_PLACE}**: upload the Keryx mark from the file below as the app's "
+    "icon. Skipping it changes nothing else.\n\n   `{icon}`"
 )
 
 #: What the app posts to show it arrives. The app is the assistant in Slack, so it does
 #: not call itself Keryx: it names nothing but what the owner would type (`@{app}`).
-#: Where each token is found in the app's settings, in the few words a prompt has room
-#: for: the page, then what the token is called on it.
-TOKEN_PAGES = {
-    BOT: "OAuth & Permissions, Bot User OAuth Token",
-    APP: "Basic Information, App-Level Tokens",
-    USER: "OAuth & Permissions, User OAuth Token",
+#: Where each token is found, for its prompt: the same place its step names, and for the
+#: two that share a section, what the token is called there.
+TOKEN_PLACES = {
+    APP: "Basic Information > App-Level Tokens",
+    USER: f"{OAUTH_TOKENS_PLACE} > {OAUTH_TOKEN_LABELS[USER]}",
+    BOT: f"{OAUTH_TOKENS_PLACE} > {OAUTH_TOKEN_LABELS[BOT]}",
 }
 #: How many times one token is asked for again after an answer that could not be it, and
 #: how many times Slack may refuse what was typed, before the login ends unsaved.
@@ -347,9 +376,20 @@ def steps(access: Access, *, app: str, raising: bool = False,
     `app` is what the app is called. `raising` is the app there is, changed in place;
     `have` is the tokens already on file, which that leaves as they are and which are not
     asked for again.
+
+    **Grouped by page, in the order the pages are met, and each page visited once** (the
+    owner's report from the real console): the app-level token before the install, then
+    the install, then the one section that lists the user token and the bot token, in
+    the order it lists them. `token_kinds` is the same order, so the prompts that follow
+    ask for the tokens as the steps had them copied.
     """
-    lines = list(RAISE_STEPS if raising else STEPS[:2])
-    lines += [TOKEN_STEPS[kind] for kind in token_kinds(access) if kind not in have]
+    wanted = tuple(kind for kind in token_kinds(access) if kind not in have)
+    lines = list(RAISE_STEPS) if raising else [CREATE_STEP]
+    if APP in wanted:
+        lines.append(APP_TOKEN_STEP)
+    lines.append(REINSTALL_STEP if raising else INSTALL_STEP)
+    if tokens := oauth_tokens_step(wanted):
+        lines.append(tokens)
     lines.append(ICON_STEP)
     return [line.format(app=app, icon=ICON) for line in lines]
 
@@ -717,7 +757,7 @@ def _write_workspace(
 def prompt_for(kind: str, *, saved: bool) -> str:
     """What a terminal asks for one token: which it is, where Slack shows it, and that
     Enter keeps the one on file when there is one."""
-    asked = f"{TOKEN_NAMES[kind].capitalize()} ({TOKEN_PREFIXES[kind]}…, {TOKEN_PAGES[kind]})"
+    asked = f"{TOKEN_NAMES[kind].capitalize()} ({TOKEN_PREFIXES[kind]}…, {TOKEN_PLACES[kind]})"
     return asked + (", or Enter to keep the one saved" if saved else "")
 
 
@@ -1134,7 +1174,8 @@ def _connected_line(workspace: str, team: Workspace, access: Access, kinds: tupl
     where = f"connected to the {team.team or 'Slack'} workspace"
     if workspace != DEFAULT:
         return f"{where} as {workspace}, at the {access} level; its tokens are saved"
-    saved = [TOKEN_KEYS[kind] for kind in kinds]
+    # In the order the settings are listed, whatever order the tokens were asked for in.
+    saved = [key for kind, key in TOKEN_KEYS.items() if kind in kinds]
     names = saved[0] if len(saved) == 1 else ", ".join(saved[:-1]) + " and " + saved[-1]
     level = "" if access is Access.ANNOUNCE else f" at the {access} level"
     return f"{where}{level}; {names} saved"

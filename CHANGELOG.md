@@ -63,6 +63,13 @@ the version starts with 0.
   Only your own request is acted on. Everything read is wrapped, attributed to who wrote
   it, and kept apart from what you asked, as a guard against a message that tries to give
   Keryx orders. `SECURITY.md` says what that does and does not protect against.
+- **The Slack steps follow Slack's console.** They are grouped by page, one visit each,
+  and name every place as a path: `Basic Information > App-Level Tokens > Generate Token
+  and Scopes` for the app-level token, then the install, then `OAuth & Permissions >
+  OAuth Tokens`, which lists the User OAuth Token and the Bot User OAuth Token below it.
+  The tokens are asked for in that order (app-level, user, bot), at the terminal and in
+  `keryx setup`, and each prompt names the same place. `--stdin` still takes them in any
+  order.
 - **Connecting Slack is one command at a terminal.** `keryx auth login slack` prints the
   steps and then waits: it asks for each token the level needs, hidden, keeps one it
   already has when you press Enter, and asks again for one that is the wrong kind or

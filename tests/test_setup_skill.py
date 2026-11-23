@@ -81,7 +81,11 @@ def test_the_skill_quotes_this_repositorys_caps(flat):
 def test_the_skill_connects_slack_without_ever_holding_its_token(flat):
     assert "keryx auth login slack --stdin # theirs to run" in flat
     assert "--email" not in flat, "no address is asked for: the user token says who they are"
-    assert "the bot token and their own user token" in flat
+    assert "their own user token and the bot token" in flat
+    # The places are said as Slack's console lays them out, and in the order it shows them.
+    assert "`Basic Information > App-Level Tokens > Generate Token and Scopes`" in flat
+    assert ("`OAuth & Permissions > OAuth Tokens` then lists the User OAuth Token "
+            "(`xoxp-…`) and, below it, the Bot User OAuth Token (`xoxb-…`)") in flat
     assert "Do not ask them to paste a token to you" in flat
     assert "ask them whether it arrived" in flat
 
