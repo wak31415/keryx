@@ -6,6 +6,7 @@ file, owner and line of text in here is invented.
 
 import asyncio
 import dataclasses
+import time
 from datetime import UTC, datetime
 
 import pytest
@@ -382,6 +383,74 @@ def test_stripping_runs_until_nothing_that_looks_like_a_marker_is_left(text):
     assert inside.startswith("before ") and inside.endswith(" after")
 
 
+#: Text written to make the strip expensive. With the first pattern, `<` and 40,000 spaces
+#: took 2.2 s a pass, and nesting multiplied it: 15 s on the event loop, where no timeout
+#: can interrupt it and every live call's audio stalls.
+HOSTILE = {
+    "a < and a long run of spaces": "<" + " " * 40000,
+    "a < and a long run of newlines": "<" + "\n" * 39990 + "x",
+    "many < each with its own run": ("<" + " " * 400) * 99,
+    "a run, then markers nested five deep": (
+        "<" + " " * 39000 + "<docu" * 5 + "<document>" + "ment>" * 5
+    ),
+    "markers nested four thousand deep": "<docu" * 4000 + "<document>" + "ment>" * 4000,
+    "a run broken by a slash": "<" + " " * 20000 + "/" + " " * 19990,
+    "closers nested four thousand deep": "</docu" * 4000 + "</document>" + "ment>" * 4000,
+    "an unclosed marker and a long tail": "<document " + "x" * 40000,
+    "the token nested in itself": TOKEN[:8] * 2000 + TOKEN + TOKEN[8:] * 2000,
+}
+
+
+@pytest.mark.parametrize("text", HOSTILE.values(), ids=HOSTILE.keys())
+def test_no_text_can_make_the_fence_expensive_to_build(text):
+    """A cost test. One pass is linear in the text and the passes are counted, so the
+    worst a document can cost is a few milliseconds, never seconds."""
+    started = time.perf_counter()
+
+    material = fenced(text, TOKEN)
+
+    assert time.perf_counter() - started < 0.25
+    inside = material.removeprefix(f"<document-{TOKEN}>\n").removesuffix(f"\n</document-{TOKEN}>")
+    assert not drive.marker_in(inside, TOKEN)
+
+
+def test_what_the_counted_passes_leave_is_made_harmless_rather_than_looped_over():
+    """Nesting deeper than the passes go is not stripped to the end. Every `<` left is
+    written as an entity, so no marker of any shape can remain."""
+    deep = "<docu" * 50 + "<document>" + "ment>" * 50 + " and a < b"
+
+    material = fenced(deep, TOKEN)
+
+    inside = material.removeprefix(f"<document-{TOKEN}>\n").removesuffix(f"\n</document-{TOKEN}>")
+    assert "<" not in inside and inside.endswith(" and a &lt; b")
+    assert fenced("a < b, plainly", TOKEN) == (
+        f"<document-{TOKEN}>\na < b, plainly\n</document-{TOKEN}>"
+    )  # untouched when there was nothing to strip
+
+
+async def test_a_hostile_document_cannot_hold_the_event_loop():
+    """Through the finder, with a clock running beside it: the loop never stalls."""
+    api = FakeDrive(named=[PLAN], texts={
+        "plan-id-0001": HOSTILE["a run, then markers nested five deep"]})
+    gaps: list[float] = []
+
+    async def heartbeat():
+        last = time.perf_counter()
+        while True:
+            await asyncio.sleep(0.01)
+            now = time.perf_counter()
+            gaps.append(now - last)
+            last = now
+
+    beat = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0.03)
+    result = await finder(api).find(search="plan", question="what is it")
+    await asyncio.sleep(0.03)
+    beat.cancel()
+
+    assert result["status"] == "ok" and max(gaps) < 0.25
+
+
 async def test_each_call_gets_a_fence_of_its_own_that_nobody_could_have_guessed():
     api = FakeDrive(named=[PLAN], texts={"plan-id-0001": "The plan."})
     summariser = FakeSummariser()
@@ -469,6 +538,55 @@ async def test_a_shortcut_whose_target_is_not_what_it_said_is_passed_over():
     assert result["read"]["name"] == "Q3 planning"
 
 
+@pytest.mark.parametrize("code", ["not_found", "forbidden"])
+async def test_a_shortcut_to_a_file_that_is_gone_is_passed_over_for_the_next_match(code):
+    """One dangling shortcut used to fail the whole answer."""
+    class Dangling(FakeDrive):
+        async def get(self, path, params=None):
+            if path == "files/gone-id-00001":
+                self.calls.append((path, dict(params or {})))
+                raise GoogleApiError(code, f"files: HTTP ({code})", status=404)
+            return await super().get(path, params)
+
+    api = Dangling(named=[shortcut_to("gone-id-00001", DOC), PLAN],
+                   texts={"plan-id-0001": "The plan."})
+
+    result = await finder(api).find(search="plan", question="what is it")
+
+    assert result["status"] == "ok" and result["read"]["name"] == "Q3 planning"
+    assert api.asked() == ["files", "files", "files/gone-id-00001",
+                           "files/plan-id-0001/export"]
+
+
+async def test_only_dangling_shortcuts_is_unreadable_not_a_failure():
+    class Dangling(FakeDrive):
+        async def get(self, path, params=None):
+            if path.startswith("files/"):
+                raise GoogleApiError("not_found", "files: HTTP 404 (not_found)", status=404)
+            return await super().get(path, params)
+
+    api = Dangling(named=[shortcut_to("gone-id-00001", DOC)])
+
+    result = await finder(api).find(search="plan", question="what is it")
+
+    assert result["status"] == "unreadable" and result["count"] == 1
+
+
+async def test_a_sign_in_that_failed_while_looking_a_shortcut_up_is_still_that_failure():
+    class SignedOut(FakeDrive):
+        async def get(self, path, params=None):
+            if path.startswith("files/"):
+                raise GoogleApiError("signed_out", "files: HTTP 401 after a refresh", status=401)
+            return await super().get(path, params)
+
+    api = SignedOut(named=[shortcut_to("plan-id-0001", DOC), PLAN])
+
+    with pytest.raises(GoogleApiError) as raised:
+        await finder(api).find(search="plan", question="what is it")
+
+    assert raised.value.code == "signed_out"
+
+
 async def test_a_shortcut_is_not_looked_up_just_to_be_listed():
     api = FakeDrive(named=[shortcut_to("plan-id-0001", DOC)])
 
@@ -518,6 +636,35 @@ async def test_more_matches_than_are_shown_and_a_search_drive_cut_short_are_both
 
     assert over["count"] == 5 and over["more"] == MORE_NOTE
     assert cut_short["more"] == MORE_NOTE and "more" not in whole
+
+
+async def test_an_answer_never_comes_with_the_note_to_name_the_best_match_or_two():
+    """`more` tells the model to say the best one or two. Beside an answer that is a
+    second instruction about what to say, and the answer is what they asked for."""
+    many = [a_file(f"many-id-{n:04d}", f"Plan {n}") for n in range(10)]
+    api = FakeDrive(named=many, texts={"many-id-0000": "The plan."})
+
+    answered = await finder(api).find(search="plan", question="what does it say")
+    listed = await finder(api).find(search="plan")
+
+    assert answered["answer"] and "more" not in answered
+    assert listed["more"] == MORE_NOTE and listed["count"] == 5
+
+
+@pytest.mark.parametrize(
+    "texts", [{"many-id-0000": " "}, {"many-id-0000": GoogleApiError("failed", "x")}, None]
+)
+async def test_no_outcome_of_a_question_carries_the_note_for_a_list(texts):
+    many = [a_file(f"many-id-{n:04d}", f"Plan {n}",
+                   DOC if texts is not None else "application/pdf") for n in range(10)]
+    api = FakeDrive(named=many, texts=texts or {})
+
+    try:
+        result = await finder(api).find(search="plan", question="what does it say")
+    except GoogleApiError:
+        return
+
+    assert "more" not in result
 
 
 async def test_a_full_first_page_is_one_request_a_search():

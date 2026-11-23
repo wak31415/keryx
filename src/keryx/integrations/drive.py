@@ -136,17 +136,47 @@ def new_fence() -> str:
     return secrets.token_hex(8)
 
 
+#: How many times the strip is run. Each pass undoes one level of nesting; past this,
+#: what is left is made harmless in one more pass instead of being chased.
+FENCE_PASSES = 4
+
+
+def _marker(token: str) -> re.Pattern[str]:
+    """Anything that could pass for a fence marker, and the token itself.
+
+    Linear in the text: after `<` there is one character class up to `document`, so a
+    failed match never retries the same run. (`<\\s*/?\\s*document` did, twice over, and a
+    `<` followed by 40,000 spaces cost seconds.)
+    """
+    return re.compile(rf"<[\s/]*document[^<>]*>|{re.escape(token)}", re.I)
+
+
+def marker_in(material: str, token: str) -> bool:
+    """Whether `material` still holds something that could pass for a marker."""
+    return _marker(token).search(material) is not None
+
+
 def fenced(material: str, token: str) -> str:
     """`material` between markers that carry `token`, with nothing left in it that could
     pass for one.
 
-    The token is the defence: a document cannot close a fence it cannot name. The
-    stripping is the second line, and it runs until it changes nothing, because one pass
-    over `</docu</document>ment>` leaves a closing tag behind.
+    The token is the defence: a document cannot close a fence it cannot name. The strip
+    is the second line. It runs more than once, because one pass over
+    `</docu</document>ment>` leaves a closing tag behind, and it runs a counted number of
+    times, because this is on the event loop and the text is somebody else's: depth is
+    theirs to choose. Whatever is still there after `FENCE_PASSES` is not chased. Every
+    `<` left becomes an entity and the token is broken up, each in one pass, after which
+    no marker of any shape can exist.
     """
-    marker = re.compile(rf"<\s*/?\s*document[^<>]*>|{re.escape(token)}", re.I)
-    while (stripped := marker.sub("", material)) != material:
-        material = stripped
+    marker = _marker(token)
+    for _ in range(FENCE_PASSES):
+        material, found = marker.subn("", material)
+        if not found:
+            break
+    else:
+        if marker.search(material):
+            # A space where the token was cannot make another; an entity is not a `<`.
+            material = " ".join(material.split(token)).replace("<", "&lt;")
     return f"<document-{token}>\n{material}\n</document-{token}>"
 
 
@@ -436,7 +466,14 @@ class DocumentFinder:
         """
         for hit in hits:
             if hit.readable and hit.shortcut:
-                hit = await self._one(hit.id)
+                try:
+                    hit = await self._one(hit.id)
+                except GoogleApiError as exc:
+                    # A shortcut outlives its file, and can point where they may not look.
+                    # That is this match gone, not the answer: the next one is read.
+                    if exc.code not in ("not_found", "forbidden"):
+                        raise
+                    continue
             if hit.readable and not hit.shortcut:
                 return hit
         return None
@@ -475,10 +512,12 @@ class DocumentFinder:
         if not hits:
             self._log(0, 0, started, found_at)
             return result | {"message": NOTHING_FOUND}
-        if more:
-            result["more"] = MORE_NOTE
         result["note"] = NAMES_NOTE
         if not question:
+            # Only a list says there were more matches. Beside an answer it would be a
+            # second thing to say, and the answer is the one they asked for.
+            if more:
+                result["more"] = MORE_NOTE
             self._log(len(hits), 0, started, found_at)
             return result
 
