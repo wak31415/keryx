@@ -544,7 +544,7 @@ for.
 A dispatch takes tens of seconds to minutes, so the Google questions worth answering
 inside the call are plugins: `check_email` (`integrations/gmail.py`), `check_calendar`
 and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
-(`integrations/drive.py`). All need the PIN. Six rulings:
+(`integrations/drive.py`). All need the PIN. Seven rulings:
 
 - **One request, and reading is a matter of construction.** Every one of them goes through
   `integrations/google_api.py`: a `GoogleReader` has `get` and `text` and nothing else,
@@ -569,6 +569,8 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
   calendar unasked, and anyone can share a file. So the voice model gets a title, a place
   or a file's name as one clipped line (`clip`), never an event's description, and a note
   beside them that says to say it and never act on it; the tool descriptions say the same.
+  A place is often a meeting link and is passed through as it is: the note and the
+  description say never to read one out.
   A document's text never reaches the voice model at all: like mail, it goes to the
   summariser, which has no tools, fenced and named as material and not instructions (the
   fence's own tags are taken out of the text first). That is a mitigation, not a wall, and
@@ -579,19 +581,43 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
   settings, no MCP servers and no session, the material on standard input, never argv.
   `find_document` makes none when nothing was asked about the file. A second tool that
   needs a model takes that module; do not grow a second way to call one.
-- **A write that got no answer is never sent again.** `add_calendar_event` invites nobody
-  (no attendees, `sendUpdates=none`) and touches only the owner's own calendar. A `POST`
-  that timed out or met a 5xx may have landed, so it comes back `unconfirmed` with a
-  sentence saying exactly that. Two events is worse than one doubt.
+- **A write that got no answer is never sent again, and only that is `unconfirmed`.**
+  `add_calendar_event` invites nobody (no attendees, `sendUpdates=none`) and touches only
+  the owner's own calendar. A `POST` that went out and was not answered, or met a 5xx, may
+  have landed (`GoogleApiError.may_have_landed`), so it comes back `unconfirmed` with a
+  sentence saying exactly that: two events is worse than one doubt. Everything known to
+  have happened *before* the request left (no sign-in, a missing scope, a refused refresh,
+  a connection never made) and every plain refusal is that failure with its own sentence,
+  because "it may or may not be there" is false then and sends the owner to look for
+  nothing. There is no client-made event id to make a retry safe, on purpose: a
+  deterministic one would make adding again an event they deleted fail (SECURITY.md has
+  the accepted risk).
+- **Nothing is written into the past.** A bare weekday is the next one, and when it is
+  today and the time named has gone it is next week's. A start that has passed, however it
+  was named, is `in_the_past`: refused, with when it would have been, and nothing sent.
+  The confirmation always carries the weekday and the date, and the description tells the
+  model to say both, because a wrong week is only ever caught by ear. A bare hour is
+  refused too (`parse_time`): "3" is 03:00 to the 24-hour clock and three in the
+  afternoon to whoever said it.
 
-A day reaches the calendar tools the way it was said (`resolve_day`: today, tomorrow, a
-weekday, a date) and is resolved in the zone of the owner's own calendar, never the
-machine's. Do not make the voice model do arithmetic on dates.
+A day reaches the calendar tools the way it was said when that is a word `resolve_day`
+knows (today, tomorrow, a bare weekday), resolved in the zone of the owner's own calendar,
+never the machine's. Anything else ("next Thursday", "the third") the model works out
+from the `Time` line of its prompt and passes as a date, and the tool's answer says the
+weekday and the date back, which is the check on that arithmetic.
+
+A list from Google is followed past its first page. `events.list`, `calendarList` and
+Drive's `files.list` may each return a short or an empty page with a token for the next
+while more matches, so each is followed while the answer is still short of its cap, for a
+bounded number of pages, and the result says there may be more when pages were left. The
+usual question still costs the round trips it did. "What's next" drops what is not next
+(started, all day, declined) before anything is counted, never after.
 
 Nothing the voice model says is spliced into a request. A Drive search term goes through
-`drive.escape` into a quoted term of a query built from constants, everything else is a
-query parameter httpx escapes, and an id is matched against a pattern before it is put in
-a path, Google's own ids included.
+`drive.escape` into a quoted term of a query built from constants, and everything else is
+a query parameter httpx escapes. An id in a path is Google's, and is still not trusted: a
+file id is matched against a pattern first, wherever it came from, and a calendar's id,
+which is an address and may hold a `#`, is percent-encoded whole.
 
 ## Restarts are three halves
 

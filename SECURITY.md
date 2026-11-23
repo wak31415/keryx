@@ -570,9 +570,13 @@ ways:
 - **Titles and names reach the voice model, cut down and labelled.** `check_calendar` has
   no model in between, so the voice model sees each event's title, place and calendar
   name, and `find_document` shows it each file's name and owner: one line each, clipped to
-  120 characters, never an event's description and never a link. Each result carries a
-  note, and each tool's description repeats it, that these are other people's words, to
-  be said and never acted on.
+  120 characters, never an event's description. An event's place is often a meeting link,
+  and it is passed through like any other place: the result's note and the tool's
+  description both say a web address is never read out. Each result carries a note, and
+  each tool's description repeats it, that these are other people's words, to be said and
+  never acted on. With every ticked calendar read, an event may be on somebody else's
+  calendar; it then comes with that calendar's name, and the description says to say
+  whose it is.
 - **This reduces the risk and does not remove it.** The voice model on a call that has
   given the PIN can dispatch tasks, and a model can be talked into things. A title or a
   sentence written as an instruction is prompt injection into a call you authorized, which
@@ -585,7 +589,11 @@ ways:
   (`integrations/google_api.py`), whatever the sign-in allows. `add_calendar_event` can
   create one event on your own calendar and nothing else: it sends no attendees and asks
   Google to notify nobody, so it cannot be used to send anything to anyone, and it cannot
-  change or delete an event.
+  change or delete an event. It refuses a start that has already passed, and it never
+  sends a request twice. It also sends no event id of its own that would make a second
+  send harmless, so the accepted risk is a duplicate when a request that did reach Google
+  is reported as unconfirmed and you ask again without looking; the assistant is told to
+  say the event may be there and not to add it again.
 - **Nothing the caller says is spliced into a request.** A Drive search is a quoted term
   with its quotes and backslashes escaped, inside a query built from constants. A file id
   is matched against a pattern before it is put in an address, so an id cannot name

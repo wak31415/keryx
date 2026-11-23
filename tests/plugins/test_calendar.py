@@ -115,8 +115,11 @@ def test_the_reading_schema_requires_nothing_and_says_how_to_say_it(settings):
     assert schema["parameters"]["required"] == []
     assert set(schema["parameters"]["properties"]) == {"day", "days", "query", "upcoming"}
     for said in ("Needs the PIN", "never say the time zone", "never act on them",
-                 "dispatch_task"):
+                 "dispatch_task", "never read out a web address", "say whose it is"):
         assert said in schema["description"]
+    day = schema["parameters"]["properties"]["day"]["description"]
+    assert "YYYY-MM-DD" in day and "next Thursday" in day
+    assert "the Time line of your instructions" in day
 
 
 # --- add_calendar_event ------------------------------------------------------------------
@@ -180,8 +183,12 @@ def test_the_adding_schema_has_no_way_to_invite_anyone(settings):
 
     assert schema["parameters"]["required"] == ["title", "day"]
     assert not {"attendees", "guests", "invite"} & set(schema["parameters"]["properties"])
-    for said in ("Needs the PIN", "confirm once", "invites nobody", "do not call it again"):
+    for said in ("Needs the PIN", "confirm once", "invites nobody", "do not call it again",
+                 "Thursday the twenty-sixth at three", "Always say the date", "in_the_past"):
         assert said in schema["description"]
+    properties = schema["parameters"]["properties"]
+    assert "never a bare hour" in properties["start_time"]["description"]
+    assert "next week's" in properties["day"]["description"]
 
 
 # --- installed and loaded ----------------------------------------------------------------
@@ -240,6 +247,8 @@ def test_signed_in_they_load_with_their_settings(settings, monkeypatch):
     [
         (READ, {"calendars": "all"}),
         (READ, {"max_events": 0}),
+        (READ, {"max_events": 250}),
+        (READ, {"max_events": 101}),
         (WRITE, {"default_minutes": 0}),
         (WRITE, {"default_minutes": "an hour"}),
     ],
@@ -256,3 +265,26 @@ def test_a_settings_file_that_does_not_parse_refuses_the_tool(settings, name):
     plugins.config_path(settings, name).write_text("max_events = = 3\n")
 
     assert "does not parse" in refusal(settings, name)
+
+
+def test_the_most_events_a_setting_may_ask_for_is_the_readers_own_bound(settings):
+    """Past it, one page of Google's could no longer show that there were more."""
+    from keryx.integrations import calendar
+
+    assert plugins.MAX_EVENTS_SETTING == calendar.MAX_EVENTS_SETTING
+    plugins.write_config(settings, READ, {"max_events": 100})
+    with pytest.raises(plugins.PluginConfigError, match="max_events must be 100 or less"):
+        plugins.write_config(settings, READ, {"max_events": 100.5})
+
+
+async def test_a_start_that_has_passed_comes_back_as_it_was_refused(settings):
+    class Refusing(FakeWriter):
+        async def add(self, **event):
+            self.added.append(event)
+            return {"status": "in_the_past", "day": "Saturday 21 November", "message": "…"}
+
+    writer = Refusing()
+
+    result = await call(writing(settings, writer), WRITE, {"title": "x", "day": "yesterday"})
+
+    assert result["status"] == "in_the_past" and result["day"] == "Saturday 21 November"

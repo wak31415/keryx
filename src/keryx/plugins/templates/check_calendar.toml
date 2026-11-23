@@ -9,6 +9,6 @@
 # list, as you see it there; "primary" is yours alone, which is one request fewer.
 calendars = {calendars}
 
-# The most events one answer holds. Past this the assistant says there are more.
+# The most events one answer holds, up to 100. Past this the assistant says there are more.
 max_events = {max_events}
 {extra}

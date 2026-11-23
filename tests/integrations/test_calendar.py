@@ -5,16 +5,20 @@ in here is invented, and the times asserted on were worked out by hand from the 
 """
 
 import asyncio
+import json
 from datetime import UTC, date, datetime, time
 from urllib.parse import unquote
 
+import httpx
 import pytest
 
 from keryx.integrations import calendar, google
 from keryx.integrations.calendar import (
     CREATED_MESSAGE,
+    MAYBE_MORE_NOTE,
     MORE_NOTE,
     NOTHING_FOUND,
+    PAST_MESSAGE,
     TEXT_NOTE,
     UNCONFIRMED_MESSAGE,
     CalendarReader,
@@ -30,7 +34,7 @@ from keryx.integrations.calendar import (
     say_time,
     write_problem,
 )
-from keryx.integrations.google_api import GoogleApiError
+from keryx.integrations.google_api import CALENDAR, MESSAGES, GoogleApiError, GoogleWriter
 
 #: Sunday 22 November 2026, 18:30 in New York (23:30 UTC).
 NOW = datetime(2026, 11, 22, 23, 30, tzinfo=UTC)
@@ -61,33 +65,64 @@ def all_day(title, start, end, **extra) -> dict:
 
 
 class FakeCalendar:
-    """Calendar by path: the calendar list, and each calendar's events by its id."""
+    """Calendar by path: the calendar list, and each calendar's events by its id.
 
-    def __init__(self, events=None, *, listing=LISTING, fail=None, delay=0.0, zone=NEW_YORK):
+    As Google does it: events in the order given, cut at `maxResults`, with a token for
+    the next page while there are more. `pages` overrides that for one calendar with the
+    pages to hand out, whatever was asked for, which is how a short or empty page with a
+    token is played.
+    """
+
+    def __init__(self, events=None, *, listing=LISTING, fail=None, delay=0.0, zone=NEW_YORK,
+                 pages=None, listing_pages=None):
         self.events = events or {}
         self.listing = listing
         self.fail = fail or {}
         self.delay = delay
         self.zone = zone
+        self.pages = pages or {}
+        self.listing_pages = listing_pages
         self.calls: list[tuple[str, dict]] = []
         self.posts: list[tuple[str, dict, dict]] = []
+        self.closed = 0
 
     async def get(self, path, params=None):
-        self.calls.append((path, dict(params or {})))
+        params = dict(params or {})
+        self.calls.append((path, params))
         await asyncio.sleep(self.delay)
+        at = int(params.get("pageToken") or 0)
         if path == "users/me/calendarList":
-            return self.listing
+            if self.listing_pages is None:
+                return self.listing
+            more = at + 1 < len(self.listing_pages)
+            return {"items": self.listing_pages[at], **({"nextPageToken": str(at + 1)} if more
+                                                        else {})}
         calendar_id = unquote(path.split("/")[1])
         if calendar_id in self.fail:
             raise self.fail[calendar_id]
-        return {"timeZone": self.zone, "items": self.events.get(calendar_id, [])}
+        if calendar_id in self.pages:
+            pages = self.pages[calendar_id]
+            more = at + 1 < len(pages)
+            return {"timeZone": self.zone, "items": pages[at],
+                    **({"nextPageToken": str(at + 1)} if more else {})}
+        items = self.events.get(calendar_id, [])
+        size = params.get("maxResults", 250)
+        page = {"timeZone": self.zone, "items": items[at : at + size]}
+        if at + size < len(items):
+            page["nextPageToken"] = str(at + size)
+        return page
 
-    async def post(self, path, body, params=None):
+    async def post(self, path, body, params=None, *, sending=None):
+        if sending is not None:
+            sending()
         self.posts.append((path, dict(body), dict(params or {})))
         await asyncio.sleep(self.delay)
         if "post" in self.fail:
             raise self.fail["post"]
         return {"id": "made"}
+
+    async def aclose(self):
+        self.closed += 1
 
     def asked(self) -> list[str]:
         return [path for path, _ in self.calls]
@@ -121,14 +156,18 @@ TODAY = date(2026, 11, 22)  # a Sunday
         ("Thursday", date(2026, 11, 26)),
         ("sat", date(2026, 11, 28)),
         ("2026-12-03", date(2026, 12, 3)),
-        ("2026-12-03T09:00:00", date(2026, 12, 3)),
+        ("2026-2-3", date(2026, 2, 3)),
     ],
 )
 def test_a_day_is_taken_the_way_it_is_said(said, day):
     assert resolve_day(said, TODAY) == day
 
 
-@pytest.mark.parametrize("said", ["", "next week", "the 3rd", "2026-13-40", "thursdayish"])
+@pytest.mark.parametrize(
+    "said",
+    ["", "next week", "the 3rd", "2026-13-40", "thursdayish", "2026-11-234",
+     "2026-12-03T09:00:00", "2026-12-03 or so"],
+)
 def test_a_day_that_is_not_one_says_what_is_wanted(said):
     with pytest.raises(Unclear, match="today, tomorrow, yesterday, a weekday"):
         resolve_day(said, TODAY)
@@ -138,10 +177,13 @@ def test_a_day_that_is_not_one_says_what_is_wanted(said):
     ("said", "at"),
     [
         ("14:30", time(14, 30)),
-        ("9", time(9)),
+        ("9:00", time(9)),
         ("09.05", time(9, 5)),
+        ("15h30", time(15, 30)),
         ("2:30 pm", time(14, 30)),
+        ("3pm", time(15)),
         ("12am", time(0)),
+        ("12:30 a.m.", time(0, 30)),
         ("12 p.m.", time(12)),
         ("noon", time(12)),
         ("midnight", time(0)),
@@ -151,9 +193,19 @@ def test_a_time_is_read_on_either_clock(said, at):
     assert parse_time(said) == at
 
 
-@pytest.mark.parametrize("said", ["", "25:00", "9:75", "13pm", "afternoon", "3ish"])
+@pytest.mark.parametrize(
+    "said", ["", "25:00", "24:00", "9:75", "13pm", "0 am", "afternoon", "3ish", "1430"]
+)
 def test_a_time_that_is_not_one_says_what_is_wanted(said):
     with pytest.raises(Unclear, match="24-hour clock"):
+        parse_time(said)
+
+
+@pytest.mark.parametrize("said", ["3", "9", "15", " 7 "])
+def test_a_bare_hour_is_refused_because_it_could_be_either_half_of_the_day(said):
+    """`3` is 03:00 on the clock that was asked for and three in the afternoon to whoever
+    said it. Twelve hours on a calendar is not a guess to make."""
+    with pytest.raises(Unclear, match="a bare hour could be either half of the day"):
         parse_time(said)
 
 
@@ -363,6 +415,157 @@ async def test_what_is_next_starts_now_and_leaves_out_what_has_begun_and_all_day
     assert result["from"] == "now" and "more" not in result
 
 
+DECLINED = [{"self": True, "responseStatus": "declined"}, {"responseStatus": "accepted"}]
+
+
+async def test_what_is_next_is_never_something_they_declined():
+    """Three declined invitations used to be the next three, and the meeting after them
+    never said."""
+    api = FakeCalendar({"primary": [
+        *(timed(f"Declined {n}", f"2026-11-22T19:{n}0:00-05:00", f"2026-11-22T19:{n}5:00-05:00",
+                attendees=DECLINED) for n in range(3)),
+        timed("Dinner", "2026-11-22T20:00:00-05:00", "2026-11-22T21:00:00-05:00"),
+    ]})
+
+    result = await reader(api).events(upcoming=True)
+
+    assert [e["title"] for e in result["events"]] == ["Dinner"]
+
+    said_all_the_same = await reader(api).events()
+    assert [e.get("response") for e in said_all_the_same["events"]] == ["declined"] * 3 + [None]
+
+
+async def test_what_is_not_next_is_left_out_before_the_count_is_taken():
+    """With `max_events` at 2, two all-day events and one already running filled the fetch
+    and the afternoon's appointment was never seen."""
+    api = FakeCalendar({"primary": [
+        all_day("Conference", "2026-11-22", "2026-11-25"),
+        all_day("Birthday", "2026-11-22", "2026-11-23"),
+        timed("Already on", "2026-11-22T18:00:00-05:00", "2026-11-22T19:00:00-05:00"),
+        timed("Dentist", "2026-11-22T19:00:00-05:00", "2026-11-22T20:00:00-05:00"),
+    ]})
+
+    result = await reader(api, max_events=2).events(upcoming=True)
+
+    assert [e["title"] for e in result["events"]] == ["Dentist"]
+    assert api.calls[1][1]["maxResults"] == 50
+
+
+async def test_what_is_next_is_looked_for_past_the_first_page():
+    busy = [timed(f"Declined {n}", "2026-11-22T19:00:00-05:00", "2026-11-22T19:30:00-05:00",
+                  attendees=DECLINED) for n in range(50)]
+    api = FakeCalendar({"primary": [
+        *busy, timed("Dinner", "2026-11-22T20:00:00-05:00", "2026-11-22T21:00:00-05:00"),
+    ]})
+
+    result = await reader(api, which="primary").events(upcoming=True)
+
+    assert [e["title"] for e in result["events"]] == ["Dinner"]
+    assert [params.get("pageToken") for _, params in api.calls[1:]] == [None, "50"]
+
+
+async def test_what_is_next_from_a_day_to_come_starts_at_that_day():
+    api = FakeCalendar({"primary": [
+        timed("Review", "2026-11-26T10:00:00-05:00", "2026-11-26T11:00:00-05:00"),
+    ]})
+
+    result = await reader(api).events(day="thursday", upcoming=True)
+
+    assert api.window() == ("2026-11-26T00:00:00-05:00", "2026-12-10T00:00:00-05:00")
+    assert (result["from"], result["to"]) == ("Thursday 26 November", "Thursday 10 December")
+    assert [e["title"] for e in result["events"]] == ["Review"]
+
+
+@pytest.mark.parametrize("day", ["today", "yesterday", "sunday"])
+async def test_what_is_next_never_starts_before_this_minute(day):
+    api = FakeCalendar()
+
+    result = await reader(api).events(day=day, upcoming=True)
+
+    assert api.window()[0] == "2026-11-22T18:30:00-05:00" and result["from"] == "now"
+
+
+# ----------------------------------------------------------------- a list in pages
+
+
+DENTIST = timed("Dentist", "2026-12-08T14:00:00-05:00", "2026-12-08T15:00:00-05:00")
+
+
+async def test_an_empty_page_with_more_behind_it_is_not_the_answer():
+    """Google hands back short and empty pages with a token for the next, readily for a
+    search over a long stretch. Stopping at the first read as "nothing matched"."""
+    api = FakeCalendar(pages={"primary": [[], [], [DENTIST]]})
+
+    result = await reader(api, which="primary").events(query="dentist")
+
+    assert [e["title"] for e in result["events"]] == ["Dentist"]
+    assert [params.get("pageToken") for _, params in api.calls[1:]] == [None, "1", "2"]
+    assert "more" not in result and "message" not in result
+
+
+async def test_a_list_is_followed_for_so_many_pages_and_then_says_it_may_not_be_all():
+    api = FakeCalendar(pages={"primary": [[], [], [], [], [DENTIST]]})
+
+    result = await reader(api, which="primary").events(query="dentist")
+
+    assert len(api.calls) == 1 + calendar.MAX_PAGES
+    assert result["count"] == 0 and result["more"] == MAYBE_MORE_NOTE
+    assert "message" not in result  # not "nothing matched": it was not all read
+
+
+async def test_a_page_of_what_is_not_an_event_does_not_end_the_list_short():
+    def cancelled(n):
+        return timed(f"Off {n}", "2026-11-22T09:00:00-05:00", "2026-11-22T10:00:00-05:00",
+                     status="cancelled")
+
+    api = FakeCalendar({"primary": [
+        *(cancelled(n) for n in range(3)),
+        *(timed(f"Event {n}", f"2026-11-22T1{n}:00:00-05:00", f"2026-11-22T1{n}:30:00-05:00")
+          for n in range(3)),
+    ]})
+
+    result = await reader(api, which="primary", max_events=2).events()
+
+    assert [e["title"] for e in result["events"]] == ["Event 0", "Event 1"]
+    assert result["more"] == MORE_NOTE.format(count=2)
+
+
+async def test_one_page_that_is_the_whole_answer_is_one_request_a_calendar():
+    api = FakeCalendar({"primary": [DENTIST]})
+
+    await reader(api).events(query="dentist")
+
+    assert len(api.calls) == 1 + 3  # the list, and each of three calendars once
+    assert not any("pageToken" in params for _, params in api.calls)
+
+
+async def test_their_own_calendar_on_a_second_page_of_the_list_is_still_found():
+    """Without it the zone fell back to the machine's, and every day was read in that."""
+    api = FakeCalendar(listing_pages=[[TEAM], [{**OWN, "timeZone": "Asia/Tokyo"}]])
+
+    result = await reader(api).events()
+
+    assert api.asked()[:2] == ["users/me/calendarList"] * 2
+    assert api.calls[1][1]["pageToken"] == "1"
+    assert result["timezone"] == "Asia/Tokyo" and result["today"] == "Monday 23 November"
+
+
+def test_the_cap_is_held_under_a_page_so_more_can_always_be_seen():
+    assert reader(FakeCalendar(), max_events=250)._max == calendar.MAX_EVENTS_SETTING == 100
+    assert calendar.MAX_EVENTS_SETTING < calendar.PAGE_SIZE
+
+
+async def test_the_connections_are_closed_when_it_has_answered_or_failed():
+    api = FakeCalendar()
+    one = reader(api)
+
+    await one.events()
+    with pytest.raises(Unclear):
+        await one.events(day="soon")
+
+    assert api.closed == 2
+
+
 async def test_more_than_the_cap_is_cut_and_said():
     events = [
         timed(f"Event {n}", f"2026-11-22T{n + 8:02d}:00:00-05:00",
@@ -378,10 +581,19 @@ async def test_more_than_the_cap_is_cut_and_said():
     assert [e["title"] for e in result["events"]] == ["Event 0", "Event 1", "Event 2"]
 
 
-@pytest.mark.parametrize("days", [0, 367, "a week", -1])
+@pytest.mark.parametrize("days", [367, "a week", -1])
 async def test_a_stretch_that_is_not_a_number_of_days_is_refused(days):
     with pytest.raises(Unclear, match="days is"):
         await reader(FakeCalendar()).events(days=days)
+
+
+async def test_a_zero_for_days_is_an_argument_filled_in_for_nothing_and_reads_one_day():
+    api = FakeCalendar()
+
+    result = await reader(api).events(days=0)
+
+    assert api.window() == ("2026-11-22T00:00:00-05:00", "2026-11-23T00:00:00-05:00")
+    assert "to" not in result
 
 
 async def test_a_day_that_is_not_one_is_refused_after_only_the_calendar_list():
@@ -472,14 +684,15 @@ async def test_a_timed_event_goes_on_their_own_calendar_in_its_zone_inviting_nob
         "start": "15:00", "end": "15:45", "location": "12 Main St",
         "message": CREATED_MESSAGE,
     }
+    assert "the weekday and the date" in CREATED_MESSAGE and api.closed == 1
 
 
 async def test_the_zone_is_read_once_from_an_events_listing():
     api = FakeCalendar()
     one = writer(api)
 
-    await one.add(title="a", day="today", start_time="9")
-    await one.add(title="b", day="today", start_time="10")
+    await one.add(title="a", day="tomorrow", start_time="9:00")
+    await one.add(title="b", day="tomorrow", start_time="10:00")
 
     assert api.calls == [("calendars/primary/events", {"maxResults": 1, "fields": "timeZone"})]
 
@@ -487,7 +700,9 @@ async def test_the_zone_is_read_once_from_an_events_listing():
 async def test_with_no_end_it_gets_the_usual_length_and_an_end_time_wins():
     api = FakeCalendar()
 
-    usual = await writer(api, default_minutes=30).add(title="a", day="today", start_time="9:00")
+    usual = await writer(api, default_minutes=30).add(
+        title="a", day="tomorrow", start_time="9:00"
+    )
     ended = await writer(api).add(
         title="b", day="today", start_time="23:00", end_time="23:30", duration_minutes=5
     )
@@ -517,14 +732,22 @@ async def test_without_a_time_it_lasts_all_day_and_days_makes_it_several():
     ("arguments", "says"),
     [
         ({"title": "  ", "day": "today"}, "title is required"),
-        ({"title": "x", "day": "today", "end_time": "10:00"}, "start_time is needed"),
+        ({"title": "x", "day": "today", "end_time": "22:00"}, "start_time is needed"),
         ({"title": "x", "day": "today", "duration_minutes": 30}, "start_time is needed"),
-        ({"title": "x", "day": "today", "start_time": "10", "end_time": "9"}, "not after"),
+        ({"title": "x", "day": "today", "start_time": "22:00", "end_time": "21:00"},
+         "not after"),
         ({"title": "x", "day": "today", "start_time": "soon"}, "24-hour clock"),
-        ({"title": "x", "day": "today", "start_time": "10", "duration_minutes": 0}, "between"),
-        ({"title": "x", "day": "today", "start_time": "10", "duration_minutes": "long"},
+        ({"title": "x", "day": "today", "start_time": "9"}, "a bare hour could be either"),
+        ({"title": "x", "day": "today", "start_time": "22:00", "end_time": "11"},
+         "a bare hour could be either"),
+        ({"title": "x", "day": "today", "start_time": "22:00", "duration_minutes": -5},
+         "between"),
+        ({"title": "x", "day": "today", "start_time": "22:00", "duration_minutes": "long"},
          "whole number of minutes"),
+        ({"title": "x", "day": "tomorrow", "start_time": "10:00", "days": 3},
+         "days is for an event that lasts all day"),
         ({"title": "x", "day": "someday"}, "a weekday"),
+        ({"title": "x", "day": "2026-11-234", "start_time": "9:00"}, "a weekday"),
     ],
 )
 async def test_what_does_not_make_an_event_is_refused_and_nothing_is_created(arguments, says):
@@ -536,14 +759,90 @@ async def test_what_does_not_make_an_event_is_refused_and_nothing_is_created(arg
     assert api.posts == []
 
 
+async def test_a_zero_in_an_optional_number_is_read_as_nothing_given():
+    """A model fills in arguments it had nothing for, and a 0 is how it does it."""
+    api = FakeCalendar()
+
+    timed_one = await writer(api).add(
+        title="a", day="tomorrow", start_time="10:00", duration_minutes=0, days=0
+    )
+    whole_day = await writer(api).add(title="b", day="tomorrow", duration_minutes=0, days=0)
+
+    assert (timed_one["start"], timed_one["end"]) == ("10:00", "11:00")
+    assert whole_day["all_day"] is True and "until" not in whole_day
+
+
 async def test_a_calendar_with_no_zone_gets_the_machines_offset_on_each_time():
     api = FakeCalendar(zone="")
 
-    await writer(api).add(title="a", day="today", start_time="9:00")
+    await writer(api).add(title="a", day="tomorrow", start_time="9:00")
 
     start = api.posts[0][1]["start"]
     assert "timeZone" not in start
     assert datetime.fromisoformat(start["dateTime"]).tzinfo is not None
+
+
+# --- never into the past ---------------------------------------------------------------------
+
+
+async def test_a_weekday_whose_time_has_gone_today_is_next_weeks():
+    """NOW is a Sunday at 18:30. "Sunday at nine" used to be created this morning."""
+    api = FakeCalendar()
+
+    gone = await writer(api).add(title="Brunch", day="sunday", start_time="09:00")
+    to_come = await writer(api).add(title="Film", day="Sunday", start_time="20:00")
+
+    assert (gone["status"], gone["day"]) == ("created", "Sunday 29 November")
+    assert api.posts[0][1]["start"]["dateTime"] == "2026-11-29T09:00:00"
+    assert (to_come["status"], to_come["day"]) == ("created", "Sunday 22 November")
+
+
+async def test_an_all_day_event_named_by_todays_weekday_is_today():
+    api = FakeCalendar()
+
+    result = await writer(api).add(title="Laundry", day="sunday")
+
+    assert result["day"] == "Sunday 22 November" and api.posts[0][1]["start"] == {
+        "date": "2026-11-22"
+    }
+
+
+@pytest.mark.parametrize(
+    ("arguments", "said"),
+    [
+        ({"day": "today", "start_time": "09:00"},
+         {"day": "Sunday 22 November", "start": "09:00", "end": "10:00"}),
+        ({"day": "yesterday"}, {"day": "Saturday 21 November", "all_day": True}),
+        ({"day": "yesterday", "start_time": "23:00"},
+         {"day": "Saturday 21 November", "start": "23:00", "end": "00:00",
+          "end_day": "Sunday 22 November"}),
+        ({"day": "2026-11-20", "start_time": "15:00"},
+         {"day": "Friday 20 November", "start": "15:00", "end": "16:00"}),
+        ({"day": "2025-12-25"}, {"day": "Thursday 25 December 2025", "all_day": True}),
+    ],
+)
+async def test_a_start_that_has_passed_is_refused_with_when_it_would_have_been(arguments, said):
+    api = FakeCalendar()
+
+    result = await writer(api).add(title="Dentist", **arguments)
+
+    assert result == {
+        "status": "in_the_past", "title": "Dentist", **said,
+        "today": "Sunday 22 November", "now": "18:30", "message": PAST_MESSAGE,
+    }
+    assert api.posts == []
+
+
+async def test_today_is_not_the_past_for_what_has_not_started():
+    api = FakeCalendar()
+
+    all_day_today = await writer(api).add(title="Laundry", day="today")
+    tonight = await writer(api).add(title="Film", day="2026-11-22", start_time="18:31")
+
+    assert (all_day_today["status"], tonight["status"]) == ("created", "created")
+
+
+# --- what is known to have happened, and what is not -----------------------------------------
 
 
 async def test_a_refusal_is_raised_since_nothing_was_created():
@@ -555,21 +854,141 @@ async def test_a_refusal_is_raised_since_nothing_was_created():
     assert raised.value.code == "forbidden"
 
 
+def google_writer(tmp_path, post, *, token=None, scopes=None, seen=None):
+    """A real `GoogleWriter` on a MockTransport: the token endpoint answers as `token`
+    says (a working one by default), the zone is read, and a POST meets `post`."""
+    path = tmp_path / "google_token.json"
+    path.write_text(json.dumps({
+        "client_id": "cid", "refresh_token": "rtoken",
+        "scopes": scopes or [google.CALENDAR_EVENTS],
+    }))
+    refreshes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "oauth2.googleapis.com":
+            refreshes.append(1)
+            if token is not None:
+                return token(len(refreshes))
+            return httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        if request.method == "GET":
+            return httpx.Response(200, json={"timeZone": NEW_YORK})
+        if seen is not None:
+            seen.append(request)
+        if isinstance(post, Exception):
+            raise post
+        return post
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return GoogleWriter(path, CALENDAR, needs=calendar.WRITE_SCOPES, client=client)
+
+
 @pytest.mark.parametrize(
-    "error",
+    "post",
     [
-        GoogleApiError("timeout", "events: ReadTimeout"),
-        GoogleApiError("failed", "events: ConnectError"),
-        GoogleApiError("failed", "events: HTTP 503 (failed)", status=503),
+        httpx.ReadTimeout("sent, never answered"),
+        httpx.RemoteProtocolError("cut off after sending"),
+        httpx.Response(503),
+        httpx.Response(500, json={"error": {"status": "INTERNAL"}}),
     ],
 )
-async def test_no_answer_to_the_request_is_unconfirmed_never_a_second_try(error):
-    api = FakeCalendar(fail={"post": error})
+async def test_a_request_that_left_and_was_not_answered_is_unconfirmed_and_never_resent(
+    tmp_path, post
+):
+    seen: list[httpx.Request] = []
+    api = google_writer(tmp_path, post, seen=seen)
 
-    result = await writer(api).add(title="a", day="today")
+    result = await writer(api).add(title="Dentist", day="tomorrow", start_time="15:00")
 
     assert result == {"status": "unconfirmed", "message": UNCONFIRMED_MESSAGE}
-    assert len(api.posts) == 1
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize(
+    ("post", "code"),
+    [
+        (httpx.ConnectError("no route"), "failed"),
+        (httpx.ConnectTimeout("slow to connect"), "timeout"),
+        (httpx.Response(403, json={"error": {"errors": [{"reason": "insufficientPermissions"}]}}),
+         "not_connected"),
+        (httpx.Response(403, json={"error": {"errors": [{"reason": "accessNotConfigured"}]}}),
+         "api_disabled"),
+        (httpx.Response(400), "rejected"),
+        (httpx.Response(404), "not_found"),
+    ],
+)
+async def test_what_is_known_to_have_created_nothing_is_that_failure_never_unconfirmed(
+    tmp_path, post, code
+):
+    """A connection never made and a plain refusal each have a sentence of their own.
+    "It may or may not be there" was said for all of them."""
+    api = google_writer(tmp_path, post)
+
+    with pytest.raises(GoogleApiError) as raised:
+        await writer(api).add(title="Dentist", day="tomorrow", start_time="15:00")
+
+    assert raised.value.code == code
+    assert raised.value.spoken("Calendar") == MESSAGES[code].format(service="Calendar")
+
+
+async def test_signed_out_while_adding_is_signed_out(tmp_path):
+    """The access token is refused and the refresh after it is too: nothing was created,
+    and the fix is a sign-in, not a look at the calendar."""
+    def token(attempt):
+        if attempt == 1:
+            return httpx.Response(200, json={"access_token": "at", "expires_in": 3600})
+        return httpx.Response(400, json={"error": "invalid_grant"})
+
+    seen: list[httpx.Request] = []
+    api = google_writer(tmp_path, httpx.Response(401, json={}), token=token, seen=seen)
+
+    with pytest.raises(GoogleApiError) as raised:
+        await writer(api).add(title="Dentist", day="tomorrow", start_time="15:00")
+
+    assert raised.value.code == "signed_out" and len(seen) == 1
+    assert "`keryx auth login google`" in raised.value.spoken("Calendar")
+
+
+@pytest.mark.parametrize(
+    ("token", "scopes", "code"),
+    [
+        (lambda n: httpx.Response(400, json={"error": "invalid_grant"}), None, "signed_out"),
+        (lambda n: httpx.Response(500), None, "failed"),
+        (None, [google.CALENDAR_READONLY], "not_connected"),
+    ],
+)
+async def test_a_sign_in_that_cannot_be_used_is_said_before_anything_is_sent(
+    tmp_path, token, scopes, code
+):
+    seen: list[httpx.Request] = []
+    api = google_writer(tmp_path, httpx.Response(200, json={}), token=token, scopes=scopes,
+                        seen=seen)
+
+    with pytest.raises(GoogleApiError) as raised:
+        await writer(api).add(title="Dentist", day="tomorrow", start_time="15:00")
+
+    assert raised.value.code == code and seen == []
+
+
+async def test_no_sign_in_at_all_is_not_signed_in(tmp_path):
+    api = GoogleWriter(tmp_path / "missing.json", CALENDAR, needs=calendar.WRITE_SCOPES)
+
+    with pytest.raises(GoogleApiError) as raised:
+        await writer(api).add(title="Dentist", day="tomorrow", start_time="15:00")
+
+    assert raised.value.code == "not_signed_in"
+
+
+async def test_a_real_writer_creates_the_event_with_one_post(tmp_path):
+    seen: list[httpx.Request] = []
+    api = google_writer(tmp_path, httpx.Response(200, json={"id": "made"}), seen=seen)
+
+    result = await writer(api).add(title="Dentist", day="tomorrow", start_time="15:00")
+
+    assert result["status"] == "created" and len(seen) == 1
+    assert seen[0].url.params["sendUpdates"] == "none"
+    assert json.loads(seen[0].content)["start"] == {
+        "dateTime": "2026-11-23T15:00:00", "timeZone": NEW_YORK,
+    }
 
 
 async def test_running_out_of_time_is_unconfirmed_only_once_the_request_went_out():
@@ -584,6 +1003,7 @@ async def test_running_out_of_time_is_unconfirmed_only_once_the_request_went_out
     with pytest.raises(GoogleApiError) as raised:
         await writer(never_sent, timeout_s=0.05).add(title="a", day="today")
     assert raised.value.code == "timeout" and never_sent.posts == []
+    assert never_sent.closed == 1
 
 
 # ---------------------------------------------------------------------------- building

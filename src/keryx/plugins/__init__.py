@@ -45,6 +45,9 @@ WORD = re.compile(r"[A-Za-z0-9_.-]+")
 
 #: Where a turned-off plugin's settings wait, so turning it back on remembers them.
 OFF_SUFFIX = ".toml.off"
+#: The most `check_calendar` may be set to say at once: under one page of Google's, so it
+#: can always tell that there were more. `integrations.calendar` holds the same number.
+MAX_EVENTS_SETTING = 100
 
 Kind = Literal["word", "choice", "number", "path", "table"]
 
@@ -64,6 +67,8 @@ class Key:
     choices: tuple[str, ...] = ()
     #: For a number: whether 0 is allowed (a budget of 0 is "none"; a timeout of 0 is not).
     positive: bool = False
+    #: For a number: the most it may be, when there is a most.
+    maximum: float | None = None
 
 
 @dataclass(frozen=True)
@@ -145,7 +150,8 @@ PLUGINS: dict[str, Plugin] = {
         keys=(
             Key("calendars", "choice", "selected", "Which calendars it reads",
                 choices=("selected", "primary")),
-            Key("max_events", "number", 25, "The most events one answer holds", positive=True),
+            Key("max_events", "number", 25, "The most events one answer holds", positive=True,
+                maximum=MAX_EVENTS_SETTING),
         ),
         module="calendar",
         google="calendar",
@@ -293,6 +299,8 @@ def _clean(name: str, key: Key, value: Any) -> Any:
         if number < 0 or (key.positive and number == 0) or number != number:
             limit = "more than 0" if key.positive else "0 or more"
             raise PluginConfigError(f"{where} must be {limit}")
+        if key.maximum is not None and number > key.maximum:
+            raise PluginConfigError(f"{where} must be {key.maximum:g} or less")
         return int(number) if number.is_integer() and isinstance(key.default, int) else number
     if key.kind == "path":
         text = "" if value is None else str(value).strip()

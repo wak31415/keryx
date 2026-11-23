@@ -86,10 +86,16 @@ keryx plugins install add_calendar_event --set default_minutes=30
 `check_calendar` reads every calendar ticked in Google Calendar's own list, in your
 calendar's time zone, and says the time on the clock `CLOCK_FORMAT` names; set
 `calendars = "primary"` in `check_calendar.toml` for your own calendar alone.
+`max_events` is how many it says at once, 100 at most. "What's my next meeting" leaves out
+what has already started, what lasts all day and what you declined.
 `add_calendar_event` writes to your own calendar only, one event at a time, timed or all
 day. It has no way to invite anyone, repeat an event, change one or delete one: those are a
-task for a coding agent, which has the whole Google toolset. If Google never confirms an
-event, it says so and does not try again, so a bad line cannot leave you with two.
+task for a coding agent, which has the whole Google toolset. It will not add an event whose
+start has passed: "Thursday at nine", said on Thursday afternoon, is next Thursday, and
+the assistant says the weekday and the date back so that a wrong week is heard. A time
+with no morning or afternoon to it ("at three") is asked about, not guessed. If Google
+never confirms an event, it says so and does not try again, so a bad line cannot leave you
+with two.
 
 **`find_document` finds, and reads when you ask it something.** "Find the doc about the
 offsite" is one Drive search by name and by text, and you hear the best match and when it
