@@ -167,3 +167,21 @@ def test_a_settings_file_that_does_not_parse_refuses_the_tool(settings):
     plugins.config_path(settings, NAME).write_text("model = = 3\n")
 
     assert "does not parse" in refusal(settings, NAME)
+
+
+async def test_a_missing_scope_mid_call_names_a_fix_that_can_work(settings, tmp_path, monkeypatch):
+    import json
+
+    client = tmp_path / "published_client.json"
+    client.write_text(json.dumps({
+        "installed": {"client_id": "keryx.apps", "client_secret": "GOCSPX-published"},
+        "keryx_services": ["gmail", "calendar"],
+    }))
+    monkeypatch.setattr(google, "PUBLISHED_CLIENT_FILE", client)
+    lacking = GoogleApiError("not_connected", "files: HTTP 403", status=403)
+
+    result = await call(offer(settings, FakeFinder(fail=lacking)), NAME, {"search": "plan"})
+
+    assert result["status"] == "not_connected"
+    assert "keryx auth login" not in result["message"]
+    assert "Drive" in result["message"] and "a Google client of their own" in result["message"]

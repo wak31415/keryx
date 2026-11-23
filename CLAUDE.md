@@ -568,7 +568,9 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
 - **A failure is a code and a sentence that names the fix.** `GoogleApiError`:
   `not_signed_in`, `not_connected` and `signed_out` name `keryx auth login google`;
   `api_disabled` says that signing in again will not help, because the API is off in the
-  Cloud project. Never an exception to the model, and never a response body anywhere: a
+  Cloud project. So does `not_connected` when Keryx's own Google app does not offer the
+  service (`failure(..., offered=False)`, asked of the client on this machine when the
+  tool loads): the sentence names a client of the owner's own and no sign-in. Never an exception to the model, and never a response body anywhere: a
   log line carries the status, one of a short list of Google's own reasons, and the kind of
   thing asked for, never which calendar or file (an id is somebody's address).
 - **What Google returns is somebody else's text.** An invitation puts a title on the

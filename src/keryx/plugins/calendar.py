@@ -25,7 +25,7 @@ from keryx.integrations.calendar import (
     read_problem,
     write_problem,
 )
-from keryx.integrations.google_api import GoogleApiError, failure
+from keryx.integrations.google_api import GoogleApiError, failure, offered
 
 log = logging.getLogger("keryx.plugins.calendar")
 
@@ -148,9 +148,9 @@ def _text(arguments: dict, key: str) -> str | None:
     return str(arguments.get(key) or "").strip() or None
 
 
-def _failed(tool: str, exc: GoogleApiError) -> dict:
+def _failed(tool: str, exc: GoogleApiError, *, can_sign_in: bool) -> dict:
     log.warning("%s failed: %s (%s)", tool, exc.code, exc.detail)
-    return failure(exc, SERVICE)
+    return failure(exc, SERVICE, offered=can_sign_in)
 
 
 def check_calendar_tool(config_path: Path, *, reader=None):
@@ -168,6 +168,9 @@ def check_calendar_tool(config_path: Path, *, reader=None):
         reader = build_calendar_reader(
             settings, which=values["calendars"], max_events=values["max_events"]
         )
+    # Whether signing in again could connect Calendar at all, for the sentence said when
+    # it turns out not to be: read from the client on this machine, once, as it loads.
+    can_sign_in = offered(settings, "calendar")
 
     async def check_calendar(ctx, arguments: dict) -> dict:
         try:
@@ -180,7 +183,7 @@ def check_calendar_tool(config_path: Path, *, reader=None):
         except Unclear as exc:
             return {"error": str(exc)}
         except GoogleApiError as exc:
-            return _failed(READ_TOOL, exc)
+            return _failed(READ_TOOL, exc, can_sign_in=can_sign_in)
 
     return CustomTool(
         name=READ_TOOL,
@@ -207,6 +210,7 @@ def add_calendar_event_tool(config_path: Path, *, writer=None):
         if problem := write_problem(settings):
             raise ToolUnavailable(problem)
         writer = build_calendar_writer(settings, default_minutes=values["default_minutes"])
+    can_sign_in = offered(settings, "calendar")
 
     async def add_calendar_event(ctx, arguments: dict) -> dict:
         title, day = _text(arguments, "title"), _text(arguments, "day")
@@ -226,7 +230,7 @@ def add_calendar_event_tool(config_path: Path, *, writer=None):
         except Unclear as exc:
             return {"error": str(exc)}
         except GoogleApiError as exc:
-            return _failed(WRITE_TOOL, exc)
+            return _failed(WRITE_TOOL, exc, can_sign_in=can_sign_in)
 
     return CustomTool(
         name=WRITE_TOOL,

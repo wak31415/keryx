@@ -18,7 +18,7 @@ from keryx.integrations.drive import (
     build_document_finder,
     document_problem,
 )
-from keryx.integrations.google_api import GoogleApiError, Unclear, failure
+from keryx.integrations.google_api import GoogleApiError, Unclear, failure, offered
 
 log = logging.getLogger("keryx.plugins.documents")
 
@@ -82,6 +82,9 @@ def find_document_tool(config_path: Path, *, finder=None):
         if problem := document_problem(settings):
             raise ToolUnavailable(problem)
         finder = build_document_finder(settings, model=values["model"], effort=values["effort"])
+    # Whether signing in again could connect Drive at all, for the sentence said when it
+    # turns out not to be.
+    can_sign_in = offered(settings, "drive")
 
     async def find_document(ctx, arguments: dict) -> dict:
         search = str(arguments.get("search") or "").strip() or None
@@ -95,7 +98,7 @@ def find_document_tool(config_path: Path, *, finder=None):
             return {"error": str(exc)}
         except GoogleApiError as exc:
             log.warning("find_document failed: %s (%s)", exc.code, exc.detail)
-            return failure(exc, SERVICE)
+            return failure(exc, SERVICE, offered=can_sign_in)
 
     return CustomTool(
         name=TOOL,

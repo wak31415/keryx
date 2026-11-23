@@ -32,6 +32,7 @@ may not be.
 """
 
 import asyncio
+import codecs
 import contextlib
 import json
 import time
@@ -167,8 +168,24 @@ class GoogleApiError(Exception):
         return MESSAGES[self.code].format(service=service)
 
 
-def failure(exc: GoogleApiError, service: str) -> dict[str, str]:
-    """What a tool returns for `exc`: a status and one sentence written to be spoken."""
+#: `not_connected`, when signing in again could not connect it either: Keryx's own Google
+#: app does not offer the service, and only a client of the owner's does.
+NOT_OFFERED = (
+    "{service} isn't part of the Google sign-in on this machine, and Keryx's own Google "
+    "app doesn't offer it yet. Say that in one sentence; it needs a Google client of "
+    "their own, set up at the keyboard, and signing in again as things are won't add it."
+)
+
+
+def failure(exc: GoogleApiError, service: str, *, offered: bool = True) -> dict[str, str]:
+    """What a tool returns for `exc`: a status and one sentence written to be spoken.
+
+    `offered` is whether a sign-in on this machine could connect the service at all
+    (`google_api.offered`, asked when the tool was built). When it could not, the
+    sentence for a missing scope does not send the owner to sign in again.
+    """
+    if exc.code == "not_connected" and not offered:
+        return {"status": exc.code, "message": NOT_OFFERED.format(service=service)}
     return {"status": exc.code, "message": exc.spoken(service)}
 
 
@@ -418,8 +435,11 @@ class GoogleReader:
             finally:
                 await response.aclose()
         cut = len(received) > budget
-        # A cut can fall inside a character, which is then dropped, not shown as damage.
-        text = bytes(received[:budget]).decode("utf-8", "ignore" if cut else "replace")
+        # Bytes that are not UTF-8 are shown as damage, wherever they are. A cut that
+        # falls inside a character is the one exception: an incremental decoder holds
+        # an unfinished character back, and it is told the text is over only when it is.
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        text = decoder.decode(bytes(received[:budget]), final=not cut)
         text = text.lstrip(BYTE_ORDER_MARK)
         return text[:limit], cut or len(text) > limit
 

@@ -221,6 +221,25 @@ def test_every_failure_has_a_sentence_that_names_what_was_asked_and_the_fix():
     assert all("{" not in GoogleApiError(code).spoken("Drive") for code in MESSAGES)
 
 
+def test_a_missing_scope_does_not_send_them_to_a_sign_in_that_cannot_add_it():
+    """When Keryx's own Google app does not offer the service, signing in again asks for
+    the same things again."""
+    missing = GoogleApiError("not_connected")
+
+    usual = failure(missing, "Calendar")
+    not_offered = failure(missing, "Calendar", offered=False)
+
+    assert "`keryx auth login google` at the keyboard adds it" in usual["message"]
+    assert not_offered["status"] == "not_connected"
+    assert "keryx auth login" not in not_offered["message"]
+    assert "a Google client of their own" in not_offered["message"]
+    assert "Calendar" in not_offered["message"] and "{" not in not_offered["message"]
+    # Only that one failure is about what the client offers.
+    assert failure(GoogleApiError("signed_out"), "Calendar", offered=False) == failure(
+        GoogleApiError("signed_out"), "Calendar"
+    )
+
+
 # ---------------------------------------------------------------------- the sign-in
 
 
@@ -314,6 +333,32 @@ async def test_text_that_fits_is_all_read_and_a_cut_never_shows_half_a_character
     wide = reader(tmp_path, lambda request: stream_of(["€".encode() * 40], []))
     text, cut = await wide.text("files/abc/export", limit=4)
     assert (text, cut) == ("€€€€", True)
+
+
+async def test_text_that_is_not_utf8_shows_its_damage_cut_or_not(tmp_path):
+    """A cut body was decoded dropping what it could not read, so a Latin-1 file lost
+    every accented letter without a trace."""
+    latin = "café, naïve, façade. ".encode("latin-1")
+    whole = reader(tmp_path, lambda request: stream_of([latin], []))
+    cut = reader(tmp_path, lambda request: stream_of([latin * 400], []))
+
+    text, was_cut = await whole.text("files/abc/export", limit=100)
+    assert (text, was_cut) == ("caf\ufffd, na\ufffdve, fa\ufffdade. ", False)
+
+    text, was_cut = await cut.text("files/abc/export", limit=30)
+    assert was_cut and text == ("caf\ufffd, na\ufffdve, fa\ufffdade. " * 2)[:30]
+
+
+async def test_only_a_character_split_by_the_cut_is_lost(tmp_path):
+    # limit 4 → a budget of 19 bytes; "€" is three, so the seventh is cut after one byte.
+    api = reader(tmp_path, lambda request: stream_of(["€".encode() * 40], []))
+
+    text, was_cut = await api.text("files/abc/export", limit=100)
+
+    assert was_cut is False and text == "€" * 40
+    api = reader(tmp_path, lambda request: stream_of([b"ab" + "€".encode() * 40], []))
+    text, was_cut = await api.text("files/abc/export", limit=5)
+    assert (text, was_cut) == ("ab€€€", True) and "\ufffd" not in text
 
 
 async def test_a_connection_lost_while_reading_text_is_a_failure_with_a_sentence(tmp_path):
