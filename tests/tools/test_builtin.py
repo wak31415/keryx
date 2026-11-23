@@ -1392,6 +1392,23 @@ class FakeSearcher:
         return self.answer
 
 
+async def test_web_search_says_where_what_is_theirs_goes_with_a_tool_for_it_and_without(
+    make_tools,
+):
+    """It used to send their mail to dispatch_task outright, and then to "the tool that
+    reads them when you have one" with nowhere to go when there was none."""
+    tools = make_tools(searcher=FakeSearcher())
+    description = " ".join(next(
+        schema["description"]
+        for schema in tools.registry.schemas()
+        if schema["name"] == "web_search"
+    ).split())
+
+    assert "It reads the web and nothing of theirs" in description
+    assert "the tool that reads them when you have one" in description
+    assert "dispatch_task when you have none" in description
+
+
 async def test_web_search_hands_back_a_spoken_answer(make_tools):
     searcher = FakeSearcher()
     tools = make_tools(searcher=searcher)

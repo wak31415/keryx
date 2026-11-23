@@ -623,12 +623,27 @@ def test_a_quick_read_of_their_mail_calendar_or_documents_goes_to_the_tool_that_
     assert "call it rather than dispatching" in mine
 
 
+def test_putting_one_new_event_on_their_calendar_goes_to_the_tool_that_adds_one(unwrapped):
+    """The reads were routed to their tools and the one write was left under "everything
+    else": "put the dentist on my calendar" was a dispatch beside a tool that does it."""
+    text = unwrapped(load_prompt("voice_system.md"))
+    answer, dispatch = text.index("**You answer it.**"), text.index("**Claude does it.**")
+    mine = text[answer:dispatch]
+    theirs = text[dispatch : text.index("There are no task types")]
+
+    assert "putting a single new event on their own calendar" in mine
+    assert "when you have a tool that adds one" in mine
+    # With no such tool it is a task, and so is every other change to a calendar.
+    assert "a new event is Claude's whenever you have no tool that adds one" in theirs
+    assert "an event that repeats" in theirs
+
+
 def test_what_those_tools_cannot_do_is_still_dispatched(unwrapped):
     text = unwrapped(load_prompt("voice_system.md"))
     theirs = text[text.index("**Claude does it.**") : text.index("There are no task types")]
 
     for work in ("replying to or sending mail", "changing or deleting an event",
-                 "inviting people", "editing or creating a document",
+                 "inviting people", "an event that repeats", "editing or creating a document",
                  "anything across many messages or files"):
         assert work in theirs
     assert theirs.rstrip().endswith("Dispatch it.")

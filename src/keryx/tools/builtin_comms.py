@@ -33,8 +33,9 @@ def register_comms_tools(registry: ToolRegistry, *, searcher: WebSearcher | None
             "for small, factual questions — a price, a date, a score, what a company "
             "announced — instead of dispatching a task. It reads the web and nothing of "
             "theirs: their mail, their calendar and their documents are for the tool that "
-            "reads them when you have one, and their files, their repositories, or more "
-            "than a couple of sentences of work go to dispatch_task.",
+            "reads them when you have one and for dispatch_task when you have none, and "
+            "their files, their repositories, or more than a couple of sentences of work "
+            "go to dispatch_task.",
             {
                 "type": "object",
                 "properties": {

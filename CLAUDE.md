@@ -177,7 +177,8 @@ is one sign-in"), the installed skills and subagents of its own, and decides for
 a request needs. The voice model's only routing
 decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
 Responses API; a quick read of their mail, calendar or a document goes through the plugin
-that reads it, when one is on) versus dispatch. The voice prompt says that without naming
+that reads it, and one new event on their own calendar through the plugin that adds one,
+when it is on) versus dispatch. The voice prompt says that without naming
 a plugin, since which ones a machine has is its owner's choice: "when you have a tool for
 it on this call", and dispatch for what such a tool does not do. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
