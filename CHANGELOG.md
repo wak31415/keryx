@@ -76,6 +76,9 @@ the version starts with 0.
   logged each one in full at the default log level, which for `check_email` meant message
   and thread ids and the search that was run. Requests are still counted in Keryx's own
   lines.
+- An email written for the purpose could stall the whole service while `check_email` read
+  its body: a body of nothing but `<`, or of script tags that never close, took time that
+  grew with the square of its length. Reading a body now takes time in proportion to it.
 - `keryx auth status` reported Gmail as missing however it was signed in.
 - `--headless` was ignored by both Google sign-ins.
 

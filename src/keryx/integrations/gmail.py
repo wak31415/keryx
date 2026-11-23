@@ -106,8 +106,14 @@ _FILTER_TERM = re.compile(
     r"larger|smaller):",
     re.I,
 )
-_TAG = re.compile(r"<[^>]+>")
-_SCRIPT = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
+#: Each is linear in the text it is run over, which is somebody else's and as long as they
+#: like. A tag stops at the next `<` as well as at `>`, or a body of nothing but `<` is
+#: rescanned from every one of them; `<[^>]+>` took minutes on a megabyte of it.
+_TAG = re.compile(r"<[^<>]+>")
+_BLOCK_OPEN = re.compile(r"<(script|style)\b[^<>]*>", re.I)
+_BLOCK_CLOSE = {
+    name: re.compile(rf"</{name}\s*>", re.I) for name in ("script", "style")
+}
 
 Day = Literal["today", "yesterday"]
 ErrorCode = Literal["not_configured", "signed_out", "gmail_failed", "model_failed", "timeout"]
@@ -395,6 +401,31 @@ def worth_reading(email: Email, me: str) -> int:
     return score if (personal or "IMPORTANT" in email.labels) else 0
 
 
+def _without_blocks(markup: str) -> str:
+    """`markup` without its `<script>` and `<style>` blocks, each from its opening tag to
+    the first tag that closes it.
+
+    One pass. A lazy `.*?</script>` looks for the closer afresh from every opener, and
+    when there is none it looks to the end each time. Here a kind of block that has no
+    closer left is not looked for again.
+    """
+    kept: list[str] = []
+    at = 0
+    closes = dict(_BLOCK_CLOSE)
+    for opener in _BLOCK_OPEN.finditer(markup):
+        closer = closes.get(opener[1].lower())
+        if opener.start() < at or closer is None:
+            continue
+        end = closer.search(markup, opener.end())
+        if end is None:
+            del closes[opener[1].lower()]  # none from here on, so none further on either
+            continue
+        kept += [markup[at : opener.start()], " "]
+        at = end.end()
+    kept.append(markup[at:])
+    return "".join(kept)
+
+
 def body_text(payload: dict) -> str:
     """A message's own words: its text/plain part, else its HTML stripped; no quoted history."""
     plain: list[str] = []
@@ -413,7 +444,7 @@ def body_text(payload: dict) -> str:
     if plain:
         text = "\n".join(plain)
     else:
-        text = html.unescape(_TAG.sub(" ", _SCRIPT.sub(" ", "\n".join(rich))))
+        text = html.unescape(_TAG.sub(" ", _without_blocks("\n".join(rich))))
     if match := _QUOTE_START.search(text):
         text = text[: match.start()]
     text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))

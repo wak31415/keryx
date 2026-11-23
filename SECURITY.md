@@ -566,8 +566,13 @@ ways:
   length. A document's text is fenced and described to that model as material and never
   instructions. The fence's markers carry a random token made for that one call, so a
   document cannot contain the marker that would close it, and anything in the text that
-  looks like a marker is removed, repeatedly, until nothing does. Text in a mail or a
-  document can still change what those sentences say. It has nothing to act with.
+  looks like a marker is removed, a fixed number of times, after which whatever is left
+  has every `<` rewritten so that no marker can remain. Text in a mail or a document can
+  still change what those sentences say. It has nothing to act with.
+- **A mail or a document cannot stall the service by its shape.** Their text is processed
+  inside the service, where a slow step would hold up every call in progress. Each
+  pattern run over it takes time in proportion to its length and no more, and each has a
+  test on how long hostile input takes.
 - **Titles and names reach the voice model, cut down and labelled.** `check_calendar` has
   no model in between, so the voice model sees each event's title, place and calendar
   name, and `find_document` shows it each file's name and owner: one line each, clipped to

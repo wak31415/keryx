@@ -580,10 +580,21 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
   A document's text never reaches the voice model at all: like mail, it goes to the
   summariser, which has no tools, inside a fence whose markers carry a token made for that
   one call (`drive.fenced`), so no document written beforehand can name the marker that
-  closes it. Anything that looks like a marker is still stripped, *until a pass changes
-  nothing*: one pass over `</docu</document>ment>` leaves a closing tag behind. The
+  closes it. Anything that looks like a marker is still stripped, more than once, because
+  one pass over `</docu</document>ment>` leaves a closing tag behind, and a *counted*
+  number of times (`FENCE_PASSES`), because depth is the document's to choose: what is
+  left after that has every `<` written as an entity, in one pass, and is not chased. The
   summariser's answer comes back clipped (`ANSWER_CHARS`). That is a mitigation, not a
   wall, and SECURITY.md says so.
+- **Fetched text is never worth a second of the event loop.** A title, a mail body, a
+  document: its length and its shape are somebody else's, it is handled on the loop every
+  live call's audio runs on, and no `wait_for` can interrupt a regular expression. So
+  every pattern run over it is linear (after `<`, one character class, never two that
+  can share a run; a tag stops at the next `<` as well as at `>`; a block with no closer
+  is looked for once), and every loop over it is counted. `<\s*/?\s*document` cost 2 s
+  on a `<` and 40,000 spaces, and `<[^>]+>` minutes on a megabyte of `<` in a mail.
+  Each has a test that fails on *time* (`HOSTILE`, `HOSTILE_MAIL`); a new pattern over
+  fetched text gets a row there.
 - **A model call is the exception, and there is one.** `check_calendar` and
   `add_calendar_event` make none. `check_email` and `find_document` make exactly one,
   through `integrations/summariser.py`: the bundled `claude` CLI with no tools, no

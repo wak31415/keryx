@@ -10,6 +10,7 @@ import base64
 import json
 import logging
 import stat
+import time
 from datetime import datetime
 
 import httpx
@@ -314,6 +315,42 @@ def test_html_alone_is_stripped_to_its_words():
     payload = {"mimeType": "text/html", "body": {"data": b64(html_body)}}
 
     assert body_text(payload) == "Deadline & budget"
+
+
+def html(markup: str) -> dict:
+    return {"mimeType": "text/html", "body": {"data": b64(markup.encode())}}
+
+
+def test_script_and_style_blocks_go_whole_and_what_is_between_them_stays():
+    body = body_text(html(
+        "<STYLE type='text/css'>p { color: red }</style ><p>Hello <b>Ann</b>,</p>"
+        "<script>track()</SCRIPT>the report is <i>due</i> Friday.<style>unclosed { x"
+    ))
+
+    assert body == "Hello Ann , the report is due Friday. unclosed { x"
+
+
+#: Mail written to make stripping it expensive. Anyone can send one, and the body of a
+#: message read in full is megabytes if they like: `<[^>]+>` took 0.25 s on 40,000 `<` and
+#: four times that on twice as many, on the event loop.
+HOSTILE_MAIL = {
+    "nothing but <": "<" * 200_000,
+    "style blocks never closed": "<style>" * 20_000 + "x" * 100_000,
+    "script blocks never closed": "<script src=x>" * 10_000 + "x" * 100_000,
+    "openers and closers of the other kind": "<script>" * 10_000 + "</style>" * 10_000,
+    "many closed blocks": "<style>a</style>b" * 20_000,
+    "a tag never closed after many": "<a " * 50_000 + "x" * 50_000,
+}
+
+
+@pytest.mark.parametrize("markup", HOSTILE_MAIL.values(), ids=HOSTILE_MAIL.keys())
+def test_no_mail_can_make_reading_its_body_expensive(markup):
+    """A cost test: every pass over a body is linear in it."""
+    started = time.perf_counter()
+
+    body_text(html(markup))
+
+    assert time.perf_counter() - started < 0.5
 
 
 def test_quoted_lines_go_and_a_long_body_is_cut_short():
