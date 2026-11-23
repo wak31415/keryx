@@ -23,6 +23,7 @@ version has, and the scopes each one checks for, were read from that version's s
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -356,7 +357,7 @@ def export_for_mcp(settings: Settings, token: GoogleToken, *, only: bool = False
         return None
     path = mcp_credential_path(settings, token.email)
     if only:
-        for other in mcp_credentials_dir(settings).glob("*.json"):
+        for other in _credential_files(settings):
             if other != path:
                 other.unlink(missing_ok=True)
     wanted = {**{key: getattr(token, key) for key in _IDENTITY_KEYS}, "scopes": list(token.scopes)}
@@ -369,21 +370,49 @@ def export_for_mcp(settings: Settings, token: GoogleToken, *, only: bool = False
     return path
 
 
+#: What the server keeps beside its credentials that is not one (its `list_users` skips it).
+_NOT_CREDENTIALS = frozenset({"oauth_states"})
+
+
+def _credential_files(settings: Settings) -> dict[Path, str]:
+    """Each credential file in the server's directory, with the address it is named for.
+
+    As the server's own `list_users` reads the directory: a `.json` file whose name is an
+    address, quoted or not, and not its own bookkeeping.
+    """
+    directory = mcp_credentials_dir(settings)
+    found: dict[Path, str] = {}
+    for path in sorted(directory.glob("*.json")) if directory.is_dir() else []:
+        address = unquote(path.stem)
+        if "@" in address and path.stem not in _NOT_CREDENTIALS:
+            found[path] = address
+    return found
+
+
 def _older_mcp_credential(settings: Settings) -> tuple[Path, GoogleToken] | None:
     """A credential `workspace-mcp` wrote itself, before Keryx signed in for it.
 
-    The one for `USER_GOOGLE_EMAIL` when that is set, else the only one there. Read, never
-    written and never adopted as Keryx's token: its scopes are whatever that flow asked for.
+    The one for `USER_GOOGLE_EMAIL` when that names one: by the address, or by the name an
+    older server gave the file, with every odd character an underscore. Then the address
+    handed back is the saved one, since the server checks it against the account. When the
+    saved address names none (an alias, or nothing saved), the only credential there is.
+    Read, never written and never adopted as Keryx's token: its scopes are whatever that
+    flow asked for.
     """
-    directory = mcp_credentials_dir(settings)
-    files = sorted(directory.glob("*.json")) if directory.is_dir() else []
-    wanted = (settings.user_google_email or "").lower()
-    if wanted:
-        files = [path for path in files if unquote(path.stem).lower() == wanted]
-    if len(files) != 1:
+    files = _credential_files(settings)
+    wanted = (settings.user_google_email or "").strip()
+    sanitised = re.sub(r"[^a-zA-Z0-9@._-]", "_", wanted).lower()
+    named = {
+        path: wanted if address.lower() != wanted.lower() else address
+        for path, address in files.items()
+        if wanted and address.lower() in (wanted.lower(), sanitised)
+    }
+    chosen = named or files
+    if len(chosen) != 1:
         return None
-    token = _token(_read_json(files[0]), email=unquote(files[0].stem))
-    return (files[0], token) if token is not None else None
+    [(path, address)] = chosen.items()
+    token = _token(_read_json(path), email=address)
+    return (path, token) if token is not None else None
 
 
 @dataclass(frozen=True)

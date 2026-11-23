@@ -283,11 +283,14 @@ def test_an_export_that_cannot_be_read_is_written_again(settings):
 def test_a_new_sign_in_leaves_no_other_accounts_credential_behind(settings):
     """The server's tools take an address as an argument: a file is an account to act as."""
     before = google.export_for_mcp(settings, token(email="old@example.com"))
+    (before.parent / "oauth_states.json").write_text("{}")  # the server's own, not an account
 
     path = google.export_for_mcp(settings, token(email="new@example.com"), only=True)
 
     assert not before.exists()
-    assert [p.name for p in path.parent.iterdir()] == ["new@example.com.json"]
+    assert sorted(p.name for p in path.parent.iterdir()) == [
+        "new@example.com.json", "oauth_states.json"
+    ]  # fmt: skip
 
 
 def test_an_ordinary_export_touches_nobody_elses_file(settings):
@@ -453,6 +456,46 @@ def test_an_older_install_with_several_accounts_uses_the_one_that_is_set(setting
     settings.user_google_email = "Bob@example.com"
 
     assert google.mcp_server(settings).config["env"]["USER_GOOGLE_EMAIL"] == "bob@example.com"
+
+
+def test_the_servers_own_bookkeeping_file_is_not_a_second_account(settings):
+    """workspace-mcp leaves `oauth_states.json` beside its credentials for ever."""
+    older_install(settings)
+    (settings.data_dir / "google" / "oauth_states.json").write_text("{}")
+
+    server = google.mcp_server(settings)
+
+    assert server.older and server.config["env"]["USER_GOOGLE_EMAIL"] == "ada@example.com"
+
+
+def test_an_older_credential_under_its_sanitised_name_is_found(settings):
+    """Before 2.x the server named the file with every odd character turned into `_`."""
+    older_install(settings, "ada_keryx@example.com")
+    settings.user_google_email = "ada+keryx@example.com"
+
+    server = google.mcp_server(settings)
+
+    assert server.older
+    # The server finds that file by the address, so the address is what it is handed.
+    assert server.config["env"]["USER_GOOGLE_EMAIL"] == "ada+keryx@example.com"
+
+
+def test_a_saved_address_that_matches_nothing_uses_the_only_credential_there_is(settings):
+    """An alias: the account signed in as ada@, and the owner wrote their other address."""
+    older_install(settings, "ada@example.com")
+    settings.user_google_email = "a.lovelace@example.org"
+
+    server = google.mcp_server(settings)
+
+    assert server.older and server.config["env"]["USER_GOOGLE_EMAIL"] == "ada@example.com"
+
+
+def test_a_saved_address_that_matches_nothing_cannot_choose_between_two(settings):
+    older_install(settings, "ada@example.com")
+    older_install(settings, "bob@example.com")
+    settings.user_google_email = "carol@example.com"
+
+    assert google.mcp_server(settings) is None
 
 
 def test_an_older_credential_that_cannot_refresh_is_not_used(settings):
