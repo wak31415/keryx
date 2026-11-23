@@ -443,7 +443,9 @@ def test_a_message_that_tries_to_end_the_context_cannot_in_what_is_printed(comma
         (("unanswered", "--workspace", "lab"), "no Slack workspace called lab is at the read", 2),
     ],
 )
-def test_what_cannot_be_asked_is_said_and_slack_is_not_asked(command, args, says, code):
+def test_a_command_that_cannot_be_asked_says_so_and_asks_slack_nothing(
+    command, args, says, code
+):
     command.calls.clear()
 
     result = run_slack(*args)
