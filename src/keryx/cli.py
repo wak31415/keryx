@@ -1953,16 +1953,28 @@ def slack_report_command(
     task: Annotated[
         int | None,
         typer.Option("--task", help="The task this is for. One that was typed on Slack is "
-                     "posted into the thread it was asked in."),
+                     "posted into the thread it was asked in. Inside a task it is that "
+                     "task, and need not be given."),
     ] = None,
     workspace: _SlackWorkspace = None,
 ) -> None:
     """Post what is on standard input to you, as Keryx: where your reports go, or (with
     --task, for a task typed on Slack) into the thread it was asked in. Nowhere else."""
+    from keryx.agents.session import TASK_ID_ENV
     from keryx.plugins import slack as plugin
 
     settings = _configure_readonly()
     text = _stdin_text()
+    # Inside a task, the task is the one whose agent is running this: its own thread, or
+    # the owner's destination, and never another task's thread.
+    own = os.environ.get(TASK_ID_ENV, "")
+    if own.isdigit():
+        if task is not None and task != int(own):
+            typer.echo(f"keryx slack: this is task {own}, and a report goes to its own "
+                       "thread or to where your reports go, never to another task's",
+                       err=True)
+            raise typer.Exit(1)
+        task = int(own)
 
     async def run() -> str:
         found = await _read_task(settings, task) if task is not None else None

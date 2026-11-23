@@ -74,7 +74,7 @@ from keryx.integrations.slack_socket import SocketModeListener
 from keryx.plugins import slack as plugin
 from keryx.plugins.slack import SLACK_CHANNEL, SlackWorkspace
 from keryx.tasks.manager import TaskLimitError, TaskManager
-from keryx.tasks.models import SlackThread, Task, TaskStatus
+from keryx.tasks.models import SlackThread, Task, TaskStatus, seen_on_slack
 
 log = logging.getLogger("keryx.slack.inbox")
 
@@ -160,6 +160,11 @@ def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
     event = payload["event"]
     if event.get("user") != workspace.owner_id:
         return Dropped("not_the_owner")
+    if "edited" in event:
+        # A message that was changed after it was sent, however the change arrives (a
+        # mention edited in may come as an `app_mention` of its own): what is acted on
+        # is what was typed and sent, once, never a later version of it.
+        return Dropped("edited")
     mentioned = event["type"] == MENTION
     if mentioned and not workspace.access.reaches(Access.READ):
         return Dropped("mention_below_read")
@@ -194,7 +199,12 @@ def own_words(text: str, bot_user_id: str) -> str | None:
     pasted: a mention in either is not theirs, and quoted lines are not part of what they
     asked. Each step is one pass over the text.
     """
-    lines = [line for line in text.split("\n") if not line.lstrip().startswith("&gt;")]
+    lines = text.split("\n")
+    # `>>>` quotes everything after it, to the end of the message: nothing from that
+    # line on is the owner's own words.
+    rest = next((index for index, line in enumerate(lines)
+                 if line.lstrip().startswith("&gt;&gt;&gt;")), len(lines))
+    lines = [line for line in lines[:rest] if not line.lstrip().startswith("&gt;")]
     # Outside code: the even pieces of the text split on the fence.
     pieces = "\n".join(lines).split("```")
     found = False
@@ -318,9 +328,10 @@ class SlackInbox:
             return _dropped(name, request.reason)
         if not self._first_time(name, request):
             return _dropped(name, "seen")
-        thread = SlackThread(name, request.channel, request.root, asked_at=request.ts)
+        thread = SlackThread(name, request.channel, request.root, asked_at=request.ts,
+                             team_id=workspace.team_id)
         task = await self._manager.task_in_slack_thread(thread)
-        if task is not None and request.ts in (task.slack_seen or "").split():
+        if task is not None and seen_on_slack(task.slack_seen, request.ts):
             return _dropped(name, "already_acted_on")
         if request.files:
             await self._say(workspace, request, TEXT_ONLY)

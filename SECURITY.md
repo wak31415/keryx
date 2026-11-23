@@ -301,10 +301,11 @@ direct messages typed to your Keryx app.
   happens: no reaction, no reply. A new message that mentions it starts a task with a
   coding agent that has your full access; a reply under a task's report that mentions it
   continues that task.
-- **Everything else is dropped silently.** An edit, a deletion, a message from a bot, a
-  message from anyone else, or a message from another workspace. A mention counts only
-  where you wrote it: one on a quoted line, or inside a pasted code block, is not yours,
-  and quoted lines are left out of what Keryx is asked. A workspace whose own id, your
+- **Everything else is dropped silently.** An edit (a mention you add by editing a
+  message does nothing: send a new one), a deletion, a message from a bot, a message
+  from anyone else, or a message from another workspace. A mention counts only where
+  you wrote it: one on a quoted line, after a `>>>` quote, or inside a pasted code
+  block, is not yours, and quoted lines are left out of what Keryx is asked. A workspace whose own id, your
   member id, or the app's member id is not on file is not listened to at all. Each
   dropped event leaves one log line with a reason code and nothing of the message.
 - **The PIN is not asked for, on purpose.** The PIN exists because caller ID is free to
@@ -444,12 +445,20 @@ says something to somebody else in your name, so read it as that.
   that holds it, for whatever its scopes allow. If you would not give a capable stranger
   who could be talked into things the ability to post as you in that workspace, stay at
   `read`, and know that at `read` the same stranger can read as you.
+- **What a coding agent posts to you goes to you.** `keryx slack report` posts as Keryx,
+  to where your reports go, or into the thread its own task was asked in, which in a
+  shared conversation its members read. The command holds an agent to its own task's
+  thread; it is not a sandbox, and an agent with a shell is bounded by what the bot
+  token can do, not by this command.
 - **What is sent is kept like everything else.** The words are in the call's transcript
   or the task's report.
 
 Each further workspace (`keryx auth login slack --workspace NAME`) is a separate app with
 its own level, tokens, and member id. A message in one workspace is checked against that
 workspace's ids only, and a report never leaves the workspace its task was asked in.
+A workspace here is the one Slack knows by its id, not the name you connected it under:
+if you log out of one and log in to another under the same name, a task asked for in the
+first is not reported into the second, and a reply there does not resume it.
 
 ### PIN and brute force
 

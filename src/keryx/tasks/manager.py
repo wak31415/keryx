@@ -365,6 +365,7 @@ class TaskManager:
                 slack_workspace=slack.workspace if slack else None,
                 slack_channel=slack.channel if slack else None,
                 slack_thread_ts=slack.ts if slack else None,
+                slack_team_id=(slack.team_id or None) if slack else None,
                 slack_seen=(slack.asked_at or slack.ts) if slack else None,
             )
         )
@@ -669,7 +670,8 @@ class TaskManager:
 
     async def task_in_slack_thread(self, thread: SlackThread) -> Task | None:
         """The task that lives in `thread`, if one does."""
-        return await self._store.find_by_slack_thread(thread.workspace, thread.channel, thread.ts)
+        return await self._store.find_by_slack_thread(
+            thread.workspace, thread.channel, thread.ts, team_id=thread.team_id)
 
     async def followup_from_slack(self, task_id: int, text: str, ts: str) -> Task:
         """`followup`, for a reply the owner typed on Slack at `ts`: counted against the

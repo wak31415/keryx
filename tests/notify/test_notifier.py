@@ -986,7 +986,8 @@ async def two_workspaces(tmp_path, monkeypatch):
 
 def personal_task(**fields) -> Task:
     return Task(id=None, kind=TaskKind.AGENT, description="a private thing",
-                origin_channel="slack", slack_workspace="personal", slack_channel="D0PERSO",
+                origin_channel="slack", slack_workspace="personal",
+                slack_team_id="T0PERSONAL", slack_channel="D0PERSO",
                 slack_thread_ts="1700000000.000500", **fields)
 
 
@@ -1007,7 +1008,8 @@ async def test_a_rate_limit_leaves_the_task_in_its_thread(two_workspaces):
     store, bus, http = two_workspaces
     task = await store.create(Task(
         id=None, kind=TaskKind.AGENT, description="x", origin_channel="phone",
-        slack_workspace="default", slack_channel="D0FIRST", slack_thread_ts="1700000000.000500",
+        slack_workspace="default", slack_team_id="T0EMPLOYER", slack_channel="D0FIRST",
+        slack_thread_ts="1700000000.000500",
     ))
     http.script["xoxb-first"] = [{"ok": False, "error": "ratelimited"}]
 
@@ -1039,7 +1041,7 @@ async def test_a_task_asked_for_in_a_channel_is_answered_in_that_thread(two_work
     store, bus, http = two_workspaces
     task = await store.create(Task(
         id=None, kind=TaskKind.AGENT, description="summarise this", origin_channel="slack",
-        slack_workspace="personal", slack_channel="C0SHARED",
+        slack_workspace="personal", slack_team_id="T0PERSONAL", slack_channel="C0SHARED",
         slack_thread_ts="1700000000.000500",
     ))
 
@@ -1048,6 +1050,33 @@ async def test_a_task_asked_for_in_a_channel_is_answered_in_that_thread(two_work
     assert http.calls == [("xoxb-perso", "C0SHARED", "1700000000.000500")]
     after = await store.get(task.id)
     assert (after.slack_channel, after.slack_thread_ts) == ("C0SHARED", "1700000000.000500")
+
+
+async def test_the_first_report_records_the_team_its_thread_is_in(two_workspaces):
+    store, bus, http = two_workspaces
+    task = await store.create(Task(id=None, kind=TaskKind.AGENT, description="q"))
+
+    await bus.publish(TaskCompleted(task.id, "answer"))
+
+    after = await store.get(task.id)
+    assert (after.slack_workspace, after.slack_team_id) == ("default", "T0EMPLOYER")
+    assert after.slack_thread_ts
+
+
+async def test_a_task_of_a_team_no_longer_connected_under_its_name_is_posted_nowhere(
+    two_workspaces,
+):
+    """`personal` was logged out and another team logged in under the same name."""
+    store, bus, http = two_workspaces
+    task = await store.create(Task(
+        id=None, kind=TaskKind.AGENT, description="summarise this", origin_channel="slack",
+        slack_workspace="personal", slack_team_id="T0BEFORE", slack_channel="C0SHARED",
+        slack_thread_ts="1700000000.000500",
+    ))
+
+    await bus.publish(TaskCompleted(task.id, "they decided to ship"))
+
+    assert http.calls == []
 
 
 async def test_a_long_first_report_whose_second_piece_fails_still_has_its_thread(

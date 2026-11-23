@@ -615,7 +615,7 @@ def reporting(settings, monkeypatch):
                         lambda self, channel=None: FakePoster(sent, channel or self.channel))
     tasks = {
         7: Task(id=7, kind=TaskKind.AGENT, description="x", origin_channel="slack",
-                slack_workspace="default", slack_channel="C0SHARED",
+                slack_workspace="default", slack_team_id="T0ACME", slack_channel="C0SHARED",
                 slack_thread_ts="1700000000.000100"),
         8: Task(id=8, kind=TaskKind.AGENT, description="y", origin_channel="phone"),
         9: Task(id=9, kind=TaskKind.AGENT, description="z", origin_channel="slack",
@@ -650,6 +650,47 @@ def test_for_any_other_task_it_is_the_owners_destination(reporting):
     run_slack("report", "--task", "8", text="here is the diff")
 
     assert reporting == [(OWNER, None, "here is the diff")]
+
+
+def test_inside_a_task_it_is_that_tasks_and_no_other_tasks_thread_can_be_named(
+    reporting, monkeypatch
+):
+    """Every agent's process is told which task it is: the command reads it, posts to
+    that task's own thread with no `--task`, and refuses another task's number."""
+    monkeypatch.setenv("KERYX_TASK_ID", "7")
+
+    own = run_slack("report", text="here is the diff")
+    same = run_slack("report", "--task", "7", text="again")
+    other = run_slack("report", "--task", "8", text="into somebody else's thread")
+
+    assert own.exit_code == same.exit_code == 0
+    assert reporting == [("C0SHARED", "1700000000.000100", "here is the diff"),
+                         ("C0SHARED", "1700000000.000100", "again")]
+    assert other.exit_code == 1 and "this is task 7" in other.output
+    assert "never to another task's" in other.output
+
+
+def test_a_phone_tasks_agent_reaches_the_owners_destination_and_no_tasks_thread(
+    reporting, monkeypatch
+):
+    monkeypatch.setenv("KERYX_TASK_ID", "8")
+
+    assert run_slack("report", text="x").exit_code == 0
+    assert run_slack("report", "--task", "7", text="y").exit_code == 1
+    assert reporting == [(OWNER, None, "x")]
+
+
+def test_every_agents_process_is_told_which_task_it_is(settings):
+    from keryx.agents.claude import CLAUDE_AUTH
+    from keryx.agents.session import TASK_ID_ENV, AgentContext
+    from keryx.tasks.models import Task, TaskKind
+
+    task = Task(id=41, kind=TaskKind.AGENT, description="x")
+    context = AgentContext.build(task, settings, auth=CLAUDE_AUTH, model=None)
+
+    assert context.task_env == {TASK_ID_ENV: "41"} == {"KERYX_TASK_ID": "41"}
+    assert AgentContext(cwd=context.cwd, instructions="", model=None,
+                        auth=context.auth).task_env == {}
 
 
 def test_it_has_no_option_that_names_a_conversation_or_a_person(reporting):
@@ -707,6 +748,6 @@ def test_every_subagent_is_told_of_each_command_only_while_it_would_work(setting
     off, announce, write = told(settings), told(at(settings, "announce")), told(at(settings))
 
     assert "keryx slack" not in off
-    assert "keryx slack report --task 7" in announce and "keryx slack message" not in announce
-    assert "keryx slack report --task 7" in write and "keryx slack message --to" in write
+    assert "`keryx slack report`" in announce and "keryx slack message" not in announce
+    assert "`keryx slack report`" in write and "keryx slack message --to" in write
     assert "xoxp" not in write and "xoxb" not in write

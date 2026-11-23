@@ -665,8 +665,10 @@ async def test_a_v6_database_gains_the_slack_columns_and_keeps_its_rows(tmp_path
         # The cut reviewed first: v7 with a column for the latest message alone.
         (7, ("slack_last_ts TEXT",)),
         # The cut after it: v8 with where a task was asked apart from where it is answered.
+        # (Before the team was kept beside the thread: v8 grew while it was unreleased.)
         (8, ("slack_last_ts TEXT", "slack_asked_channel TEXT", "slack_asked_ts TEXT",
-             *store_module._V8_COLUMNS)),
+             "slack_seen TEXT", "slack_reruns INTEGER NOT NULL DEFAULT 0",
+             "slack_reruns_on TEXT")),
     ],
 )
 async def test_a_database_an_earlier_cut_of_this_branch_touched_is_read_without_complaint(
@@ -692,6 +694,11 @@ async def test_a_database_an_earlier_cut_of_this_branch_touched_is_read_without_
         await store.heard_on_slack(task.id, "17.000100", rerun_on="2026-11-23")
         assert (await store.get(task.id)).slack_seen == "17.000100"
         assert await store.count_slack_reruns_on("2026-11-23") == 1
+        # And it has every column of today's v8, the team beside a thread included.
+        made = await store.create(Task(id=None, kind=TaskKind.AGENT, description="x",
+                                       slack_workspace="default", slack_team_id="T0A",
+                                       slack_channel="D1", slack_thread_ts="17.000100"))
+        assert (await store.get(made.id)).slack_team_id == "T0A"
     finally:
         await store.close()
     assert "ignoring task column" not in caplog.text
@@ -702,11 +709,13 @@ async def test_a_task_remembers_the_last_few_slack_messages_it_acted_on(store):
 
     for n in range(25):
         await store.heard_on_slack(task.id, f"1700000000.{n:06d}")
-    await store.heard_on_slack(task.id, "1700000000.000010")  # again: once, and now newest
+    await store.heard_on_slack(task.id, "1700000000.000010")  # again: still held once
 
     seen = (await store.get(task.id)).slack_seen.split()
-    assert len(seen) == 20 and seen[-1] == "1700000000.000010"
-    assert seen[0] == "1700000000.000005" and seen.count("1700000000.000010") == 1
+    assert len(seen) == 20 and seen.count("1700000000.000010") == 1
+    # Kept in the order of the messages: the oldest is what makes room, always.
+    assert (seen[0], seen[-1]) == ("1700000000.000005", "1700000000.000024")
+    assert seen == sorted(seen)
     with pytest.raises(KeyError):
         await store.heard_on_slack(999, "1700000000.000001")
 
@@ -802,3 +811,19 @@ async def test_a_column_we_cannot_model_survives_an_update(tmp_path):
         assert kept == "2026-08-25T22:15:46+00:00"
     finally:
         await store.close()
+
+
+async def test_a_thread_is_found_only_in_the_team_it_was_recorded_in(store):
+    """The name a workspace is connected under can come to mean another team."""
+    task = await store.create(Task(id=None, kind=TaskKind.AGENT, description="x",
+                                   slack_workspace="default", slack_team_id="T0A",
+                                   slack_channel="D1", slack_thread_ts="17.000100"))
+    bare = await store.create(Task(id=None, kind=TaskKind.AGENT, description="y",
+                                   slack_workspace="default", slack_channel="D2",
+                                   slack_thread_ts="17.000100"))
+
+    found = await store.find_by_slack_thread("default", "D1", "17.000100", team_id="T0A")
+    assert found.id == task.id
+    assert await store.find_by_slack_thread("default", "D1", "17.000100", team_id="T0B") is None
+    assert await store.find_by_slack_thread("default", "D1", "17.000100") is None
+    assert (await store.find_by_slack_thread("default", "D2", "17.000100")).id == bare.id

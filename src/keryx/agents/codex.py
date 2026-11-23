@@ -542,7 +542,8 @@ class CodexAgentRunner(AdapterRunner):
     async def connect(self, context: AgentContext, resume: str | None) -> CodexAdapter:
         """Start an app-server and a thread on it — or resume one — for `context`."""
         config, server_env = mcp_config(context.mcp_servers)
-        env = {**server_env, **await self._credential_env(context.auth)}
+        env = {**context.task_env, **server_env,
+               **await self._credential_env(context.auth)}
         client = self._client_factory(env, context.cwd)
         options = {
             "cwd": str(context.cwd),

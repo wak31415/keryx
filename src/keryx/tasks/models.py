@@ -194,6 +194,11 @@ class Task:
     slack_workspace: str | None = None
     slack_channel: str | None = None
     slack_thread_ts: str | None = None
+    #: The Slack workspace that thread is in, by Slack's own id for it (schema v8).
+    #: `slack_workspace` is the owner's *name* for a connection, and a name can come to
+    #: mean another workspace (log out of one, log in to another as the first): a thread
+    #: is only ever posted to with a token of the team it was recorded in.
+    slack_team_id: str | None = None
     #: The last few Slack messages this task has acted on, space-separated (schema v8).
     #: Slack delivers an event again when its acknowledgement was lost, and promises no
     #: order: a message is a repeat when it is in here, never because it is older.
@@ -251,6 +256,31 @@ class Task:
 SLACK_SEEN_MAX = 20
 
 
+def slack_ts_key(ts: str) -> tuple[int, int]:
+    """A Slack timestamp as something to order by; one that is not one sorts first."""
+    whole, _, part = ts.partition(".")
+    try:
+        return int(whole), int(part or 0)
+    except ValueError:
+        return (0, 0)
+
+
+def seen_on_slack(seen: str | None, ts: str) -> bool:
+    """Whether a task that remembers `seen` has already acted on the message at `ts`.
+
+    It has when it remembers it. And once its memory is full (`SLACK_SEEN_MAX`), it has
+    when `ts` is older than everything it remembers: what was dropped to make room was
+    always the oldest, so a message older than all that is left is one it once held, the
+    message that opened the task included. (A reply that really is new and older than
+    twenty others the task has acted on is dropped too: that is the price, and it is the
+    safe side of it.)
+    """
+    held = (seen or "").split()
+    if ts in held:
+        return True
+    return len(held) >= SLACK_SEEN_MAX and slack_ts_key(ts) < min(map(slack_ts_key, held))
+
+
 @dataclass(frozen=True)
 class SlackThread:
     """A thread on Slack: which workspace, which conversation, and the message it hangs from.
@@ -263,6 +293,8 @@ class SlackThread:
     channel: str
     ts: str
     asked_at: str | None = None
+    #: The workspace's own id at Slack, which is what the thread really belongs to.
+    team_id: str = ""
 
 
 @dataclass(frozen=True)

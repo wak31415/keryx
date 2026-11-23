@@ -212,27 +212,31 @@ def test_build_options_passes_the_resume_session_id(settings):
 def test_build_options_omits_the_env_without_an_api_key(settings):
     settings.anthropic_api_key = None
 
-    assert build_options(make_task(), settings).env == {}
+    # Nothing but which task this is: no credential, so the stored login is used.
+    assert build_options(make_task(), settings).env == {"KERYX_TASK_ID": "7"}
 
 
 def test_build_options_passes_the_anthropic_key_in_the_env(settings):
     settings.anthropic_api_key = "sk-ant-test"
 
-    assert build_options(make_task(), settings).env == {"ANTHROPIC_API_KEY": "sk-ant-test"}
+    assert build_options(make_task(), settings).env == {
+        "KERYX_TASK_ID": "7", "ANTHROPIC_API_KEY": "sk-ant-test"}
 
 
 def test_build_options_falls_back_to_the_oauth_token(settings):
     settings.anthropic_api_key = None
     settings.claude_code_oauth_token = "tok-1"
 
-    assert build_options(make_task(), settings).env == {"CLAUDE_CODE_OAUTH_TOKEN": "tok-1"}
+    assert build_options(make_task(), settings).env == {
+        "KERYX_TASK_ID": "7", "CLAUDE_CODE_OAUTH_TOKEN": "tok-1"}
 
 
 def test_build_options_prefers_the_api_key_over_the_oauth_token(settings):
     settings.anthropic_api_key = "sk-ant-test"
     settings.claude_code_oauth_token = "tok-1"
 
-    assert build_options(make_task(), settings).env == {"ANTHROPIC_API_KEY": "sk-ant-test"}
+    assert build_options(make_task(), settings).env == {
+        "KERYX_TASK_ID": "7", "ANTHROPIC_API_KEY": "sk-ant-test"}
 
 
 def test_build_options_resolves_the_task_model(settings):

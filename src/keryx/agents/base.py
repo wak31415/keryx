@@ -299,7 +299,7 @@ def render_subagent_suffix(
         # Where the owner has given subagents an MCP server for Slack, that stays the way.
         slack = render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
     elif slack_report:
-        slack = render_prompt(SUBAGENT_SLACK_REPORT_PROMPT, task_id=task.id).strip()
+        slack = render_prompt(SUBAGENT_SLACK_REPORT_PROMPT).strip()
     else:
         slack = ""
     parts = [slack]

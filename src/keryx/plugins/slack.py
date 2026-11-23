@@ -334,6 +334,8 @@ class ReportRoute:
     #: Where the *same* workspace would post a message of its own, for a thread that is
     #: gone for good. Never another workspace's destination.
     usual: SlackPoster | None = None
+    #: Slack's own id for the workspace posted to, kept beside the thread it starts.
+    team_id: str = ""
 
 
 def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
@@ -347,17 +349,25 @@ def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
     report Keryx posted is also shown in the conversation, as each report always was; one
     under the owner's own message is not, since they are in that thread already.
 
-    **A report never leaves the workspace its task belongs to.** A task asked for on Slack
-    is that workspace's: if the workspace is no longer connected, its report is posted
-    nowhere (it is still in the task, for the next call's digest and `keryx tasks show`),
-    because the first workspace may be somebody else's employer. A task asked for anywhere
-    else was always the first workspace's, so with no thread, or with a thread in a
-    workspace that is gone, it goes where the first workspace usually posts.
+    **A report never leaves the workspace its task belongs to**, and a workspace is the
+    team Slack knows, not the name it is connected under. `default` is a name: log out of
+    one workspace and log in to another as the first, and the name means another team.
+    So a recorded thread is only ever posted to with a token of the team it was recorded
+    in (`Task.slack_team_id` against the connection's `team_id`, compared here), and its
+    fallback is that same connection's. A task asked for on Slack whose team is no longer
+    connected under that name is posted nowhere (it is still in the task, for the next
+    call's digest and `keryx tasks show`), because whatever is connected now may be
+    somebody else's employer. A task asked for anywhere else was always the first
+    workspace's, so with no thread, or with one in a team that is gone, it goes where the
+    first workspace usually posts, as a message of its own, and that becomes its thread.
+    A thread with no team beside it is one recorded while the connection had none on file
+    either (an install from before levels): it stands only for as long as that is so.
     """
     found = {each.name: each for each in connected(settings)}
     asked_here = task.origin_channel == SLACK_CHANNEL
     home = found.get(task.slack_workspace or "")
-    if task.slack_channel and task.slack_thread_ts and home is not None:
+    same_team = home is not None and (task.slack_team_id or "") == home.team_id
+    if task.slack_channel and task.slack_thread_ts and home is not None and same_team:
         poster = home.poster(task.slack_channel)
         # When its thread is gone for good, a task asked for on Slack falls back to the
         # owner's own direct messages with the app, never to a channel that workspace's
@@ -370,12 +380,15 @@ def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
                 thread_ts=task.slack_thread_ts,
                 broadcast=not asked_here,
                 usual=usual,
+                team_id=home.team_id,
             )
     if asked_here:
         return None
     first = found.get(DEFAULT)
     poster = first.poster() if first is not None else None
-    return ReportRoute(workspace=DEFAULT, poster=poster) if poster is not None else None
+    if first is None or poster is None:
+        return None
+    return ReportRoute(workspace=DEFAULT, poster=poster, team_id=first.team_id)
 
 
 def description(owner: str) -> str:
@@ -495,4 +508,21 @@ def slack_report_tool(
 #: then still has `send_to_slack.py`, whose one line calls this name: it stays an entry
 #: point for as long as such a file may be on a machine, and what it builds is the same
 #: tool, offered as `slack_report`.
-send_to_slack_tool = slack_report_tool
+def send_to_slack_tool(config_path: Path, **fakes):
+    """`slack_report_tool`, for a `send_to_slack.py` installed before the rename.
+
+    With `slack_report.py` beside it, it stands aside: two files would otherwise define
+    one tool, the older one would load first and win, and it would read the settings
+    nothing writes any more. The new pair is then the one loaded, and this file is said
+    to be removable.
+    """
+    from keryx.tools.custom import ToolUnavailable
+
+    # (Not when this *is* that file: an edited one line keeps calling this name after
+    # the owner's install has renamed it.)
+    if config_path.stem != TOOL and (config_path.parent / f"{TOOL}.py").exists():
+        raise ToolUnavailable(
+            f"{TOOL}.py is beside this file and is the one that is loaded: this copy, "
+            f"under the plugin's old name, and {config_path.name} can be deleted"
+        )
+    return slack_report_tool(config_path, **fakes)

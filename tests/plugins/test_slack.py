@@ -406,7 +406,8 @@ def test_a_first_report_is_a_message_of_its_own_in_the_first_workspace(two_works
 def test_a_task_asked_for_on_slack_reports_in_its_own_thread_in_its_own_workspace(
     two_workspaces,
 ):
-    task = slack_task(origin_channel="slack", slack_workspace="work", slack_channel="D0WORK",
+    task = slack_task(origin_channel="slack", slack_workspace="work",
+                      slack_team_id="T0WORK", slack_channel="D0WORK",
                       slack_thread_ts="1700000000.000100")
 
     route = report_route(two_workspaces, task)
@@ -420,7 +421,8 @@ def test_a_task_asked_for_on_slack_reports_in_its_own_thread_in_its_own_workspac
 def test_a_later_report_of_a_phone_task_is_a_reply_under_its_first_shown_in_the_dm(
     two_workspaces,
 ):
-    task = slack_task(origin_channel="phone", slack_workspace="default", slack_channel="D0ME",
+    task = slack_task(origin_channel="phone", slack_workspace="default",
+                      slack_team_id="T0HOME", slack_channel="D0ME",
                       slack_thread_ts="1700000000.000100")
 
     route = report_route(two_workspaces, task)
@@ -453,10 +455,12 @@ def test_a_phone_task_whose_thread_is_in_a_workspace_that_is_gone_goes_where_it_
 
 
 def test_a_thread_that_is_gone_falls_back_inside_its_own_workspace_only(two_workspaces):
-    typed = slack_task(origin_channel="slack", slack_workspace="work", slack_channel="D0WORK",
+    typed = slack_task(origin_channel="slack", slack_workspace="work",
+                      slack_team_id="T0WORK", slack_channel="D0WORK",
                        slack_thread_ts="1700000000.000100")
     spoken = slack_task(origin_channel="phone", slack_workspace="default",
-                        slack_channel="D0ME", slack_thread_ts="1700000000.000100")
+                        slack_team_id="T0HOME", slack_channel="D0ME",
+                        slack_thread_ts="1700000000.000100")
 
     # Typed on Slack: back to the owner's own direct messages with that workspace's app.
     assert report_route(two_workspaces, typed).usual._token == "xoxb-work"
@@ -533,7 +537,8 @@ def test_what_is_on_file_is_keryxs_own_and_never_the_mcp_servers(settings, monke
 
 def test_a_task_asked_for_in_a_shared_conversation_is_answered_in_that_thread(two_workspaces):
     """The owner's ruling: the answer goes where the question was, and its members read it."""
-    task = slack_task(origin_channel="slack", slack_workspace="work", slack_channel="C0SHARED",
+    task = slack_task(origin_channel="slack", slack_workspace="work",
+                      slack_team_id="T0WORK", slack_channel="C0SHARED",
                       slack_thread_ts="1700000000.000100")
 
     route = report_route(two_workspaces, task)
@@ -549,3 +554,69 @@ def test_a_task_asked_for_in_a_shared_conversation_is_answered_in_that_thread(tw
 def test_a_slack_task_with_no_thread_is_posted_nowhere(two_workspaces):
     assert report_route(two_workspaces, slack_task(origin_channel="slack",
                                                    slack_workspace="work")) is None
+
+
+# --- a name is not a workspace: the team is what a thread belongs to ---------------------------
+
+
+def reconnected(settings):
+    """`default` logged out of T0HOME and logged in to another team, as the first workspace."""
+    plugins.write_config(settings, NAME, {
+        "channel_id": "U0BOWNER", "owner_id": "U0BOWNER", "team": "Team B",
+        "team_id": "T0TEAMB", "bot_user_id": "U0BBOT", "access": "read"})
+    return settings
+
+
+def test_a_task_asked_for_in_one_team_is_never_reported_into_another_under_the_same_name(
+    two_workspaces,
+):
+    """Its thread is in team A; what is connected as `default` now is team B. Not into the
+    thread with team B's token, and not to team B's owner when Slack says the thread is
+    gone: nowhere on Slack."""
+    task = slack_task(origin_channel="slack", slack_workspace="default",
+                      slack_team_id="T0HOME", slack_channel="C0TEAMA",
+                      slack_thread_ts="1700000000.000100")
+    assert report_route(two_workspaces, task) is not None
+
+    assert report_route(reconnected(two_workspaces), task) is None
+
+
+def test_a_phone_tasks_thread_in_a_team_that_is_gone_is_left_and_a_new_one_started(
+    two_workspaces,
+):
+    task = slack_task(origin_channel="phone", slack_workspace="default",
+                      slack_team_id="T0HOME", slack_channel="D0ME",
+                      slack_thread_ts="1700000000.000100")
+
+    route = report_route(reconnected(two_workspaces), task)
+
+    assert (route.workspace, route.thread_ts, route.usual, route.team_id) == (
+        "default", None, None, "T0TEAMB")
+    assert route.poster._channel == "U0BOWNER"
+
+
+def test_a_route_carries_the_team_it_posts_in_for_the_thread_it_may_start(two_workspaces):
+    assert report_route(two_workspaces, slack_task()).team_id == "T0HOME"
+    work = slack_task(origin_channel="slack", slack_workspace="work", slack_team_id="T0WORK",
+                      slack_channel="D0WORK", slack_thread_ts="1700000000.000100")
+    assert report_route(two_workspaces, work).team_id == "T0WORK"
+
+
+def test_a_thread_with_no_team_beside_it_stands_only_while_the_connection_has_none_either(
+    slack_settings,
+):
+    """An install from before levels never wrote its team down, and neither did its
+    tasks: one connection, one team. Once the connection knows its team, a thread that
+    does not is not posted to."""
+    plugins.write_config(slack_settings, NAME, {"channel_id": "U0ME"})
+    plugins.install(slack_settings, NAME)
+    task = slack_task(origin_channel="phone", slack_workspace="default", slack_channel="D0ME",
+                      slack_thread_ts="1700000000.000100")
+    assert report_route(slack_settings, task).thread_ts == "1700000000.000100"
+
+    plugins.write_config(slack_settings, NAME, {"team_id": "T0HOME"})
+
+    assert report_route(slack_settings, task).thread_ts is None
+    asked = slack_task(origin_channel="slack", slack_workspace="default", slack_channel="D0ME",
+                       slack_thread_ts="1700000000.000100")
+    assert report_route(slack_settings, asked) is None

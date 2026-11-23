@@ -337,6 +337,7 @@ class Notifier:
                         slack_workspace=route.workspace,
                         slack_channel=posted.channel,
                         slack_thread_ts=posted.ts,
+                        slack_team_id=route.team_id or None,
                     )
                 except Exception:
                     log.exception("could not record where task %s was posted", task.id)

@@ -192,3 +192,23 @@ def test_the_old_name_is_still_taken_on_a_command_line_and_means_the_new(setting
     assert plugins.canonical(OLD) == NEW and plugins.canonical("check_email") == "check_email"
     assert plugins.command_line_values(OLD, ["channel_id=C0X"]) == {"channel_id": "C0X"}
     assert plugins.render_config(OLD, {}).startswith("# slack_report:")
+
+
+def test_with_both_pairs_there_the_new_one_is_loaded_and_the_old_one_stands_aside(
+    installed_before,
+):
+    """An older build made its pair after this one made its own. Two files would define
+    one tool and the older would load first: it refuses itself instead, so one tool is
+    offered, from the settings that are written, and `keryx plugins` shows one state."""
+    tools = installed_before.custom_tools_dir
+    (tools / f"{NEW}.py").write_text(plugins._template(f"{NEW}.py"))
+    (tools / f"{NEW}.toml").write_text('channel_id = "C0NEW"\n')
+    for path in tools.iterdir():
+        path.chmod(0o600)
+
+    assert names(installed_before) == {NEW} and refusal(installed_before, NEW) is None
+    assert "is the one that is loaded" in refusal(installed_before, OLD)
+    assert "can be deleted" in refusal(installed_before, OLD)
+    assert plugin.slack_route(installed_before).channel == "C0NEW"
+    [status] = [each for each in plugins.status(installed_before) if each.name == NEW]
+    assert (status.on, status.refused, status.tool_file.name) == (True, None, f"{NEW}.py")

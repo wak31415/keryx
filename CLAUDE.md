@@ -159,7 +159,9 @@ remember:
   point for the installed one line). Only the owner's `keryx plugins install` renames
   the pair (`plugins.adopt`), because several builds share one tools directory here and
   an older one finds its plugin only under the name it knows; there is a test named
-  after that. `keryx plugins` shows one plugin, and the old name is still taken on a
+  after that. With both pairs in the directory (an older build made its own after this
+  one did), the old entry point stands aside (`ToolUnavailable`), so the new pair is
+  the one loaded and there is one state to show. `keryx plugins` shows one plugin, and the old name is still taken on a
   command line.
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
   The `can_text` gate is asserted there and nowhere else. Slack reaches the notifiers only
@@ -757,7 +759,9 @@ Eleven rulings:
   owner; mentioning the app; the conversation and timestamps held to an id's shape. A
   workspace with no `team_id`, `owner_id` or `bot_user_id` on file is `missing` and hears
   nothing. **A mention counts only where the owner wrote it** (`own_words`): not on a
-  quoted line, not inside a code block, and quoted lines are left out of the request.
+  quoted line, not after a `>>>` (which quotes to the end of the message), not inside a
+  code block, and quoted lines are left out of the request. An event that carries an
+  `edited` key is dropped like every other edit, however it arrives.
   **`authorizations` is not a check**: it was one for a day, and Slack's own `app_mention`
   example carries a user's id with `is_bot: false`, which that check dropped; under the
   mention rule it defended nothing. Do not widen the rest, and never add
@@ -839,11 +843,24 @@ Eleven rulings:
   thread is gone for good (`integrations.slack.THREAD_GONE`) is sent as a message of its
   own **in the same workspace**, which becomes the thread; a timeout or `ratelimited`
   moves nothing, and that report is then simply not on Slack (it is still in the task,
-  for the digest and `get_task_result`). **A report never crosses workspaces**: a task
-  typed in a workspace since disconnected is posted nowhere. **Each message is acted on
-  once**: Slack sends an event again when its acknowledgement was lost and promises no
-  order, so a task remembers the last several messages it acted on (`Task.slack_seen`,
-  which survives a restart) and membership, never age, makes a repeat.
+  for the digest and `get_task_result`). **A report never crosses workspaces**, and a
+  workspace is the team Slack knows, not the name it is connected under: `default` is a
+  name, and logging out of one workspace and into another as the first makes it mean
+  another team. So `Task.slack_team_id` is kept beside the thread, and a recorded thread
+  is only ever posted to with a token of the team it was recorded in
+  (`plugins.slack.report_route`, and `find_by_slack_thread` for a reply). A task asked
+  for on Slack whose team is no longer connected under that name is posted nowhere; any
+  other task starts a thread of its own where the first workspace now posts. A thread
+  with no team beside it stands only while the connection has none on file either.
+  **Each message is acted on once**: Slack sends an event again when its acknowledgement
+  was lost and promises no order, so a task remembers the last twenty messages it acted
+  on (`Task.slack_seen`, kept in the order of the messages, which survives a restart).
+  Membership makes a repeat; and once that memory is full, so does being older than
+  everything in it (`models.seen_on_slack`), because what was dropped to make room was
+  always the oldest, the message that opened the task included. A reply that really is
+  new and older than twenty others the task acted on is dropped with them: the safe side.
+  A message answered only with a sentence leaves no row, and is answered again if it is
+  redelivered after a restart.
 - **A task asked for on Slack leaves the phone alone, and the socket's address is a
   secret.** No text, and no call-back unless a call later asks for one; it still rides in
   the next call's digest, because only `mark_reported` stamps `reported_at`. The one
@@ -978,7 +995,11 @@ second way to read. Nine rulings:
   accepted risk plainly: at `write` a prompt-injected agent could send as the owner, and
   `read` or lower removes the capability. `slack_report` and `keryx slack report` are
   the other direction and reach only the owner: their destination, or the thread a
-  Slack-typed task was asked in. Neither takes a recipient.
+  Slack-typed task was asked in. Neither takes a recipient. Every agent's process is
+  told which task it is (`agents.session.TASK_ID_ENV`, set by each backend from
+  `AgentContext.task_env`), and inside a task the command is that task's: `--task` with
+  another number is refused, so one task's agent does not post into another's thread.
+  That binds the command, not a shell that can unset a variable (SECURITY.md).
 
 `slack_read` and `slack_message` need the PIN and load only when a workspace is at their
 level (refused with the reason otherwise). `slack_read` makes no model call to list and

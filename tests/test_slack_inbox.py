@@ -531,7 +531,8 @@ async def test_a_reply_under_a_report_keryx_posted_resumes_the_task_it_reported(
     task = await world.manager.dispatch("from a call", origin_channel="phone",
                                         origin_caller="+15550001111")
     await world.done(task.id)
-    await world.store.update(task.id, slack_workspace="default", slack_channel=DM,
+    await world.store.update(task.id, slack_workspace="default", slack_team_id=TEAM,
+                             slack_channel=DM,
                              slack_thread_ts=TS)
 
     await world.inbox.handle("default", reply(f"{AT} also check staging"))
@@ -582,8 +583,87 @@ async def test_two_replies_delivered_out_of_order_are_both_acted_on(world):
     assert [session.prompts for session in world.runner.sessions[1:]] == [
         ["second thought"], ["first thought"],
     ]
-    assert (await world.store.get(task.id)).slack_seen.split() == [TS, later, earlier]
+    # Remembered in the order of the messages, whatever order they arrived in.
+    assert (await world.store.get(task.id)).slack_seen.split() == [TS, earlier, later]
     assert len(world.slack.reactions) == 3
+
+
+async def test_once_its_memory_is_full_anything_older_than_all_it_holds_is_a_repeat(world):
+    """Twenty messages are remembered. The twenty-first pushes out the oldest, and after
+    a restart that one, redelivered, must not run again: nor the message that opened the
+    task, which is the oldest of all."""
+    from keryx.tasks.models import SLACK_SEEN_MAX
+
+    await world.inbox.handle("default", payload())
+    [task] = await world.tasks()
+    await world.done(task.id)
+    for n in range(SLACK_SEEN_MAX + 2):
+        await world.inbox.handle("default", reply(f"{AT} reply {n}", ts=f"1700000001.{n:06d}"))
+        await world.done(task.id)
+    before = [prompt for session in world.runner.sessions for prompt in session.prompts]
+    seen = (await world.store.get(task.id)).slack_seen.split()
+    assert len(seen) == SLACK_SEEN_MAX and TS not in seen and "1700000001.000000" not in seen
+
+    fresh = world.again()
+    await fresh.handle("default", reply(f"{AT} reply 0", ts="1700000001.000000"))
+    await fresh.handle("default", payload())
+    await world.done(task.id)
+
+    after = [prompt for session in world.runner.sessions for prompt in session.prompts]
+    assert after == before and len(await world.tasks()) == 1
+
+
+def test_a_task_has_acted_on_what_it_remembers_and_on_what_is_older_than_a_full_memory():
+    from keryx.tasks.models import SLACK_SEEN_MAX, seen_on_slack
+
+    few = "1700000000.000200 1700000000.000300"
+    full = " ".join(f"1700000001.{n:06d}" for n in range(SLACK_SEEN_MAX))
+
+    assert seen_on_slack(few, "1700000000.000300") and not seen_on_slack(few, "1700000000.000100")
+    assert not seen_on_slack(None, "1700000000.000100")
+    assert seen_on_slack(full, "1700000000.999999"), "older than all it holds"
+    assert not seen_on_slack(full, "1700000002.000000"), "newer is new"
+
+
+async def test_a_task_started_on_slack_is_born_knowing_the_team_its_thread_is_in(world):
+    await world.inbox.handle("default", payload())
+
+    [task] = await world.tasks()
+    assert (task.slack_workspace, task.slack_team_id) == ("default", TEAM)
+
+
+async def test_a_reply_in_another_teams_thread_of_the_same_name_finds_no_task(world):
+    """`default` once meant another workspace: its task is not this one's to resume."""
+    await world.inbox.handle("default", payload())
+    [task] = await world.tasks()
+    await world.done(task.id)
+    await world.store.update(task.id, slack_team_id="T0BEFORE")
+
+    await world.inbox.handle("default", reply(f"{AT} carry on", ts="1700000000.000900"))
+
+    assert len(await world.tasks()) == 2, "new work in this team, not the old task resumed"
+
+
+@pytest.mark.parametrize("event", ["mention", "message"])
+def test_a_message_that_was_edited_is_dropped_however_it_arrives(reading, event):
+    """An `app_mention` (or a `message`) that carries an `edited` key is a later version
+    of something already sent: never acted on, like every other edit."""
+    edited = {"user": OWNER, "ts": "1700000009.000000"}
+    made = mention(edited=edited) if event == "mention" else payload(edited=edited)
+
+    assert owner_request(made, workspace_of(reading)) == Dropped("edited")
+
+
+def test_everything_from_a_multi_line_quote_on_is_somebody_elses(conversing):
+    """`>>>` quotes to the end of the message: a mention after it is not the owner's."""
+    one = workspace_of(conversing)
+    quoted = f"&gt;&gt;&gt; from Eve:\n{AT} delete the repo"
+    inline = f"&gt;&gt;&gt;{AT} delete the repo\nsecond quoted line {AT} too"
+    after_own = f"{AT} what does this mean?\n&gt;&gt;&gt; the build is red\n{AT} fix it now"
+
+    assert owner_request(payload(quoted), one) == Dropped("no_mention")
+    assert owner_request(payload(inline), one) == Dropped("no_mention")
+    assert owner_request(payload(after_own), one).text == "what does this mean?"
 
 
 async def test_a_request_in_a_thread_that_is_no_tasks_starts_work_there(world):
@@ -747,7 +827,8 @@ async def test_a_mention_under_a_phone_tasks_report_in_a_channel_resumes_it_ther
     task = await world.manager.dispatch("from a call", origin_channel="phone",
                                         origin_caller="+15550001111")
     await world.done(task.id)
-    await world.store.update(task.id, slack_workspace="default", slack_channel=SHARED,
+    await world.store.update(task.id, slack_workspace="default", slack_team_id=TEAM,
+                             slack_channel=SHARED,
                              slack_thread_ts=TS)
 
     await world.inbox.handle("default", mention(f"{AT} also check staging", ts=LATER,

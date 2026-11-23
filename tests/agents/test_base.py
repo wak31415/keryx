@@ -492,7 +492,7 @@ def test_with_no_mcp_server_of_theirs_slack_is_sent_through_keryx_own_command(un
     own = unwrapped(render_subagent_suffix(task, slack_report=True))
     theirs = unwrapped(render_subagent_suffix(task, slack_report=True, slack_mcp_server="slack"))
 
-    assert "pipe the text to `keryx slack report --task 7`" in own
+    assert "pipe the text to `keryx slack report`:" in own
     assert "Do not send them anything on Slack unless they asked for Slack" in own
     assert "and nowhere else" in own
     # Where they have given subagents an MCP server for Slack, that stays the way.
