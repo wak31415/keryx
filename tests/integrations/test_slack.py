@@ -1,10 +1,12 @@
 """Tests for sending Slack messages. No network: the transport is injected."""
 
 import http.client
+import inspect
 import io
 import json
 import urllib.error
 import urllib.parse
+from pathlib import Path
 
 import pytest
 
@@ -19,7 +21,6 @@ from keryx.integrations.slack import (
     auth_test,
     is_dm,
     is_ts,
-    lookup_by_email,
     manifest_json,
     markdown_pieces,
     new_app_url,
@@ -224,14 +225,14 @@ async def test_a_transport_failure_is_a_failure_not_a_crash():
 # --- connecting: the app's manifest, and the three calls setup makes ----------------------
 
 
-def test_the_manifest_is_a_bot_that_can_message_and_look_a_member_up_and_nothing_more():
+def test_the_manifest_is_a_bot_that_can_message_and_a_user_token_that_sees_nothing():
     manifest = app_manifest()
 
     assert manifest["display_information"]["name"] == "Keryx"
     assert manifest["features"]["bot_user"]["display_name"] == "Keryx"
     assert manifest["features"]["app_home"]["messages_tab_enabled"] is True
     assert manifest["oauth_config"] == {
-        "scopes": {"bot": ["chat:write", "users:read", "users:read.email"]}
+        "scopes": {"bot": ["chat:write"], "user": ["emoji:read"]}
     }
     # No events, no redirect URLs, no socket mode: nothing of Keryx's listens to Slack.
     assert set(manifest) == {"display_information", "features", "oauth_config"}
@@ -266,7 +267,6 @@ def test_a_name_slack_gives_is_kept_to_one_line():
     reply = {"ok": True, "team": "Acme\n  Corp", "user": {"id": "U0OWNER", "real_name": "Sam\tDoe"}}
 
     assert auth_test("xoxb-test", post=lambda *a: reply).team == "Acme Corp"
-    assert lookup_by_email("xoxb-test", "sam@x.io", get=lambda *a: reply).name == "Sam Doe"
 
 
 def test_a_refused_token_is_slacks_own_code_and_a_sentence_without_the_token():
@@ -335,52 +335,6 @@ def test_an_answer_that_is_not_an_object_is_a_failure():
     assert auth_test("xoxb-test", post=lambda *a: ["ok"]).error == "unknown_error"
 
 
-def test_a_member_is_looked_up_by_the_address_they_use_in_slack():
-    calls = []
-
-    def get(url, params, token):
-        calls.append((url, params, token))
-        return {"ok": True, "user": {"id": "U0OWNER", "name": "sam", "real_name": "Sam Doe"}}
-
-    member = lookup_by_email("xoxb-test", " sam@example.com ", get=get)
-
-    assert member.ok and member.user_id == "U0OWNER" and member.name == "Sam Doe"
-    assert calls == [
-        ("https://slack.com/api/users.lookupByEmail", {"email": "sam@example.com"}, "xoxb-test")
-    ]
-
-
-def test_a_member_with_no_real_name_goes_by_their_handle():
-    reply = {"ok": True, "user": {"id": "U0OWNER", "name": "sam"}}
-
-    assert lookup_by_email("xoxb-test", "sam@example.com", get=lambda *a: reply).name == "sam"
-
-
-@pytest.mark.parametrize(
-    ("code", "sentence"),
-    [
-        ("users_not_found", "nobody in that workspace has that address (users_not_found)"),
-        ("missing_scope", "the app lacks a permission this needs (missing_scope)"),
-    ],
-)
-def test_a_member_slack_will_not_give_says_why(code, sentence):
-    member = lookup_by_email(
-        "xoxb-test", "sam@example.com", get=lambda *a: {"ok": False, "error": code}
-    )
-
-    assert not member.ok and member.user_id == ""
-    assert member.problem == sentence
-
-
-@pytest.mark.parametrize("user", [None, {}, {"id": "not an id"}, "U0OWNER"])
-def test_a_member_without_a_usable_id_is_a_failure(user):
-    member = lookup_by_email(
-        "xoxb-test", "sam@example.com", get=lambda *a: {"ok": True, "user": user}
-    )
-
-    assert member.error == "unknown_error" and member.user_id == ""
-
-
 def test_a_test_message_is_plain_text_to_the_member_or_channel():
     calls = []
 
@@ -405,35 +359,32 @@ def test_a_test_message_slack_refuses_says_its_code():
     assert result.problem == "Slack does not know that channel or member (channel_not_found)"
 
 
-def test_the_lookup_is_one_get_with_the_token_in_a_header_and_never_in_the_address(monkeypatch):
-    seen = []
-
-    class Response(io.BytesIO):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    def urlopen(request, timeout):
-        seen.append(request)
-        return Response(b'{"ok": false, "error": "users_not_found"}')
-
-    monkeypatch.setattr("urllib.request.urlopen", urlopen)
-
-    member = lookup_by_email("xoxb-secret", "sam+slack@example.com")
-
-    (request,) = seen
-    assert member.error == "users_not_found"
-    assert request.get_method() == "GET"
-    assert request.full_url == (
-        "https://slack.com/api/users.lookupByEmail?email=sam%2Bslack%40example.com"
-    )
-    assert request.get_header("Authorization") == "Bearer xoxb-secret"
-    assert "xoxb-secret" not in request.full_url
+def test_the_bot_reads_nothing_about_members_and_no_address_is_ever_looked_up():
+    """Who the owner is comes from their own user token: the lookup by address, and the
+    two bot scopes it needed, are gone."""
+    for access in Access:
+        assert not any(scope.startswith("users:") for scope in slack.bot_scopes(access))
+    assert not hasattr(slack, "lookup_by_email") and not hasattr(slack, "Member")
+    assert "lookupByEmail" not in inspect.getsource(slack)
 
 
-# --- the three access levels --------------------------------------------------------------
+@pytest.mark.parametrize("access", list(Access))
+def test_every_level_issues_the_owner_a_user_token(access):
+    """An install issues one only when the manifest asks for a user scope, and the token
+    is how Slack says who installed the app."""
+    assert app_manifest(access)["oauth_config"]["scopes"]["user"]
+    assert "user" in token_kinds(access)
+
+
+@pytest.mark.parametrize("access", [Access.ANNOUNCE, Access.CONVERSE])
+def test_below_read_the_user_token_has_one_scope_that_sees_nothing_of_anybodys(access):
+    """`emoji:read`: "View custom emoji in a workspace", granted to user tokens, not a
+    legacy scope, and its one method is `emoji.list`, which Keryx never calls."""
+    assert slack.user_scopes(access) == slack.IDENTITY_USER_SCOPES == ("emoji:read",)
+    assert app_manifest(access)["oauth_config"]["scopes"]["user"] == ["emoji:read"]
+    for module in ("slack", "slack_read", "slack_write", "slack_query"):
+        source = Path(slack.__file__).with_name(f"{module}.py").read_text()
+        assert "emoji.list" not in source.replace("`emoji.list`", "")
 
 
 def test_the_levels_are_a_ladder():
@@ -454,9 +405,8 @@ def test_announce_is_exactly_the_app_there_was():
 def test_converse_hears_its_own_direct_messages_over_a_socket_and_nothing_else():
     manifest = app_manifest(Access.CONVERSE)
 
-    assert manifest["oauth_config"] == {"scopes": {"bot": [
-        "chat:write", "users:read", "users:read.email", "im:history", "reactions:write",
-    ]}}
+    assert manifest["oauth_config"] == {"scopes": {
+        "bot": ["chat:write", "im:history", "reactions:write"], "user": ["emoji:read"]}}
     assert manifest["settings"] == {
         "event_subscriptions": {"bot_events": ["message.im"]},
         "socket_mode_enabled": True,
@@ -472,8 +422,7 @@ def test_read_is_also_sent_mentions_of_the_app_and_asks_the_owner_for_a_user_tok
 
     # The bot may hear a mention of itself, and still read no conversation at all.
     assert manifest["oauth_config"]["scopes"]["bot"] == [
-        "chat:write", "users:read", "users:read.email", "im:history", "reactions:write",
-        "app_mentions:read",
+        "chat:write", "im:history", "reactions:write", "app_mentions:read",
     ]
     assert not any(scope.split(":")[0] in ("channels", "groups", "mpim")
                    for scope in manifest["oauth_config"]["scopes"]["bot"])
@@ -520,10 +469,14 @@ def test_each_level_has_a_link_and_a_manifest_to_paste(access):
     assert "\n" in manifest_json(access)
 
 
-def test_each_level_needs_one_more_token_told_apart_by_prefix():
-    assert token_kinds(Access.ANNOUNCE) == ("bot",)
-    assert token_kinds(Access.CONVERSE) == ("bot", "app")
-    assert token_kinds(Access.READ) == ("bot", "app", "user")
+def test_connecting_takes_the_user_token_at_every_level_and_tokens_are_told_apart_by_prefix():
+    assert token_kinds(Access.ANNOUNCE) == ("bot", "user")
+    assert token_kinds(Access.CONVERSE) == ("bot", "app", "user")
+    assert token_kinds(Access.READ) == token_kinds(Access.WRITE) == ("bot", "app", "user")
+    # What a level runs on once connected is another matter: the user token only from read.
+    assert slack.used_kinds(Access.ANNOUNCE) == ("bot",)
+    assert slack.used_kinds(Access.CONVERSE) == ("bot", "app")
+    assert slack.used_kinds(Access.READ) == ("bot", "app", "user")
     assert [token_kind(t) for t in ("xoxb-1", "xapp-1-A", "xoxp-1", "xoxe-1", "")] == [
         "bot", "app", "user", None, None,
     ]
@@ -746,7 +699,7 @@ def test_write_is_read_and_the_two_user_scopes_that_send_as_the_owner():
     assert write["oauth_config"]["scopes"]["bot"] == read["oauth_config"]["scopes"]["bot"]
     assert write["settings"] == read["settings"]
     assert slack.token_kinds(Access.WRITE) == slack.token_kinds(Access.READ)
-    assert slack.user_scopes(Access.CONVERSE) == ()
+    assert slack.user_scopes(Access.CONVERSE) == ("emoji:read",)
 
 
 def test_checking_a_token_also_says_what_it_may_do_when_slack_says():

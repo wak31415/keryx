@@ -153,21 +153,28 @@ decides the app: what Keryx may see in your Slack, and where you can set it to w
 
 | Level | Where you can ask Keryx for something | What Keryx can see | What you paste |
 |---|---|---|---|
-| `announce` (the default) | nowhere on Slack: it only posts to you | nothing | the bot token (`xoxb-`) |
+| `announce` (the default) | nowhere on Slack: it only posts to you | nothing | the bot token (`xoxb-`) and your user token (`xoxp-`), which says which member you are and can see nothing but custom emoji |
 | `converse` | your direct messages with the Keryx app | the messages you type to the app itself, and nothing else | and the app-level token (`xapp-`) |
-| `read` | also any conversation you have added the app to, and it answers there | also every message that mentions it there (anyone's but yours is dropped); and Slack as you (every conversation you are in, their lists, the member list, search), only when you ask about messages | and your user token (`xoxp-`) |
-| `write` | the same places | the same; and it can **send messages as you**, to other people and channels, when you ask for that message | the same three tokens, after the app is reinstalled |
+| `read` | also any conversation you have added the app to, and it answers there | also every message that mentions it there (anyone's but yours is dropped); and Slack as you (every conversation you are in, their lists, the member list, search), only when you ask about messages | the same three; the user token can now read |
+| `write` | the same places | the same; and it can **send messages as you**, to other people and channels, when you ask for that message | the same three, after the app is reinstalled |
 
 `keryx setup` → Plugins asks the level, then shows a link that opens Slack's own page for
 a new app, with Keryx's already filled in for that level: pick your workspace, create it,
 install it, and copy the tokens the level needs. Paste each once, at a hidden prompt.
-Keryx checks each with Slack, tells you which workspace it connected to, and finds you by
-the email address you use there, so there is no channel id to look up. Nothing is saved
-until every token has been checked. Then it offers to send a test message, which arrives
-under Apps in Slack. The app is yours alone. From the command line it is two steps:
-`keryx auth login slack --access LEVEL` says what the level means and prints the link, and
-`keryx auth login slack --stdin --access LEVEL --email you@example.com` takes the tokens on
-standard input, one to a line in any order (never as arguments), and does the rest.
+Keryx checks each with Slack, tells you which workspace it connected to, and learns
+which member you are from your user token, so there is no address to give and no channel
+id to look up: reports go to you. Nothing is saved until every token has been checked.
+Then it offers to send a test message, which arrives under Apps in Slack. The app is
+yours alone. From the command line it is two steps: `keryx auth login slack --access
+LEVEL` says what the level means and prints the link, and `keryx auth login slack --stdin
+--access LEVEL` takes the tokens on standard input, one to a line in any order (never as
+arguments), and does the rest.
+
+**If you connected Slack before Keryx asked for a user token**, nothing stops working
+and there is nothing you have to do. The next time you run `keryx auth login slack` it
+shows how to update the app you have: paste the new manifest into it, reinstall it, and
+copy the User OAuth Token from the same page as the bot token. Reports keep going where
+they went.
 
 **In your direct messages with the Keryx app, just type.** At `converse` and above,
 every message you send the app itself is a request, with no `@Keryx` needed: `look into
@@ -199,12 +206,11 @@ send one as well, when the request asks for exactly that message; nothing asks y
 then, which is the trade [SECURITY.md](../SECURITY.md) spells out. Lowering the level to
 `read` takes all of it away at once.
 
-**Whose messages are acted on is set once, and that is all.** The first time you connect
-at `converse` or above, Keryx finds you in Slack by your address (the one you give, or
-the one you signed in to Google with) or by your user token, and says which member it
-takes to be you. Where reports are sent never decides that. Nothing changes it
-afterwards: not sending reports somewhere else (`--email`), and there is no option for it.
-To connect as somebody else, `keryx auth logout slack` and log in again.
+**Whose messages are acted on is set once, and that is all.** When you connect, Slack
+says which member your user token belongs to, and that is who Keryx takes to be you.
+Where reports are sent never decides that, and nothing changes it afterwards: there is
+no option for it. To connect as somebody else, `keryx auth logout slack` and log in
+again.
 
 **Changing the level later.** A higher one changes the app you have, never makes a second:
 `keryx auth login slack --access converse` on a workspace that is connected prints the
@@ -221,16 +227,14 @@ your first workspace; "send that to my work Slack" goes to the one you name, and
 you asked for in one workspace is answered there and nowhere else. `keryx auth status`
 lists each with its level.
 
-The question that takes your address takes a channel or member id as well, and that is
-what to give it if Slack cannot find you: your member id is in Slack under your profile,
-More, Copy member ID. An app you made by hand before keeps working exactly as it was. It
-can only look you up by address if it has the `users:read.email` permission.
+**Sending reports somewhere else.** They go to you by default. To send them to a channel
+instead, `keryx plugins install slack_report --set channel_id=ID` with the channel's id
+(in the conversation's details); the bot has to be in that channel.
 
 A new token brings its destination with it. The id of a direct message belongs to the app
 that opened it, so when you paste a token that is not the one Keryx has, an old `D…` id is
-not kept beside it: you are looked up again (the command line needs `--email` for that, or
-your Google address on file, and saves nothing without one). A member id or a channel's id
-is kept. The same goes for an MCP server named in `slack_report.toml`: a token of the
+not kept beside it: reports go to your own member id instead. A member id or a
+channel's id is kept. The same goes for an MCP server named in `slack_report.toml`: a token of the
 plugin's own never posts to the server's channel, and once it has its own destination the
 voice tool uses that pair while subagents go on using the server. If Keryx was running with
 an older token, `keryx restart` moves it to the new one.

@@ -16,7 +16,6 @@ from keryx.integrations.slack import (
     WRITE_USER_SCOPES,
     Access,
     Connection,
-    Member,
     SlackResult,
     Workspace,
     app_manifest,
@@ -45,34 +44,36 @@ class FakeSlack:
     workspace: Workspace = field(
         default_factory=lambda: Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")
     )
-    member: Member = field(default_factory=lambda: Member(user_id="U0OWNER", name="Sam Doe"))
     sent: SlackResult = field(default_factory=SlackResult)
-    #: What `auth.test` says of a user token, and `apps.connections.open` of an app one.
-    user: Workspace = field(
-        default_factory=lambda: Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER")
-    )
+    #: What `auth.test` says of a user token (None: the owner, in the bot token's own
+    #: workspace), and `apps.connections.open` of an app one.
+    user: Workspace | None = None
     opened: Connection = field(default_factory=lambda: Connection(url="wss://x/?ticket=t"))
     calls: list = field(default_factory=list)
 
     def api(self) -> SlackApi:
         def auth_test(token):
             self.calls.append(("auth", token))
-            return self.user if token.startswith("xoxp-") else self.workspace
+            if not token.startswith("xoxp-"):
+                return self.workspace
+            return self.user or Workspace(team=self.workspace.team,
+                                          team_id=self.workspace.team_id, user_id="U0OWNER")
 
         return SlackApi(
             auth_test=auth_test,
-            lookup_by_email=lambda token, email: self.calls.append(("member", token, email))
-            or self.member,
             post_text=lambda token, channel, text: self.calls.append(("post", channel, text))
             or self.sent,
             open_connection=lambda token: self.calls.append(("open", token)) or self.opened,
         )
 
 
-def connect(settings, fake, *, token=TOKEN, email="sam@example.com", test=True,
-            **more) -> list[str]:
+def connect(settings, fake, *, token=TOKEN, user=True, test=True, **more) -> list[str]:
+    """`keryx auth login slack --stdin` with `token` on standard input, and (unless
+    `user` is False, or one is already among them) the user token beside it."""
     lines: list[str] = []
-    slack.connect(settings, ConfigStore(), tokens=token, email=email, test=test,
+    if user and "xoxp-" not in token:
+        token = f"{token}\n{USER}".strip()
+    slack.connect(settings, ConfigStore(), tokens=token, test=test,
                   echo=lines.append, api=fake.api(), **more)
     return lines
 
@@ -89,59 +90,24 @@ def test_with_no_token_it_prints_the_link_the_steps_and_the_next_command(setting
     text = "\n".join(lines)
     assert new_app_url() in lines  # on a line of its own, to be relayed whole
     assert "1. Open the link" in text and "3. Under OAuth & Permissions" in text
-    assert "keryx auth login slack --stdin --email ADDRESS" in text
+    assert ("4. Under OAuth & Permissions, the same page as the bot token, copy the User "
+            "OAuth Token (xoxp-…). It says which member you are.") in text
+    assert ("Then hand the tokens over on standard input, never on the command line, one "
+            "to a line in any order:\n  keryx auth login slack --stdin") in text
+    assert lines[-1] == ("The user token says which member you are: reports go to you, and "
+                         "nothing else is asked.")
+    assert "--email" not in text and "address" not in text.lower()
     assert "**" not in text and "`" not in text
-
-
-def said_without_email(settings) -> str:
-    lines: list[str] = []
-    slack.start(settings, lines.append)
-    return lines[-1]
-
-
-def test_the_next_command_says_what_happens_without_an_address(settings):
-    """Each sentence is what `connect` then does: the tests below hold it to them."""
-    google = settings.model_copy(update={"user_google_email": "sam@example.com"})
-
-    assert said_without_email(settings) == (
-        "Without --email there is no address to look for, and it stops."
-    )
-    assert said_without_email(google) == "Without --email it looks for sam@example.com."
-
-    plugins.write_config(settings, "slack_report", {"channel_id": "U0MEMBER"})
-    assert said_without_email(google) == "Without --email it keeps sending to U0MEMBER."
-
-    plugins.write_config(settings, "slack_report", {"channel_id": "D123"})
-    assert said_without_email(google) == (
-        "The channel on file (D123) is a direct message with the app its token came from, "
-        "so a different token does not keep it: without --email it looks for sam@example.com."
-    )
 
 
 def test_settings_that_do_not_parse_do_not_stop_the_link(settings):
     settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
     plugins.config_path(settings, "slack_report").write_text("channel_id = [")
+    lines: list[str] = []
 
-    assert said_without_email(settings).startswith("Without --email there is no address")
+    slack.start(settings, lines.append)
 
-
-def test_a_token_and_an_address_are_everything(settings):
-    fake = FakeSlack()
-
-    lines = connect(settings, fake, token=f"  {TOKEN}\n")
-
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
-    assert channel(settings) == "U0OWNER"
-    assert plugins.is_on(settings, "slack_report")
-    assert lines == [
-        "connected to the Acme workspace; SLACK_BOT_TOKEN saved",
-        "found Sam Doe (U0OWNER): messages go to them",
-        "slack_report is on, from the next call",
-        "sent a test message: it is in Slack, under Apps",
-    ]
-    assert fake.calls == [
-        ("auth", TOKEN), ("member", TOKEN, "sam@example.com"), ("post", "U0OWNER", TEST_MESSAGE)
-    ]
+    assert new_app_url() in lines
 
 
 def test_no_test_message_when_it_is_not_wanted_and_it_says_none_was_sent(settings):
@@ -153,24 +119,6 @@ def test_no_test_message_when_it_is_not_wanted_and_it_says_none_was_sent(setting
     assert lines[-1] == "no test message was sent (--no-test), so nothing has shown it arrives"
 
 
-def test_without_an_address_the_google_one_is_looked_up(settings):
-    fake = FakeSlack()
-    settings = settings.model_copy(update={"user_google_email": "sam@example.com"})
-
-    connect(settings, fake, email=None)
-
-    assert ("member", TOKEN, "sam@example.com") in fake.calls
-
-
-def test_with_nowhere_to_send_nothing_is_saved_and_slack_is_not_asked(settings):
-    fake = FakeSlack()
-
-    with pytest.raises(SlackSetupError, match="add --email ADDRESS"):
-        connect(settings, fake, email=None)
-
-    assert fake.calls == [] and ConfigStore()._secrets() == {}
-
-
 @pytest.mark.parametrize(
     ("token", "message"),
     [("", "no token on standard input"), ("hunter2-secret", "a bot token starts xoxb-")],
@@ -179,7 +127,7 @@ def test_what_is_not_a_token_is_refused_before_slack_and_never_repeated(settings
     fake = FakeSlack()
 
     with pytest.raises(SlackSetupError, match=message) as refused:
-        connect(settings, fake, token=token)
+        connect(settings, fake, token=token, user=False)
 
     assert fake.calls == [] and ConfigStore()._secrets() == {}
     assert "hunter2" not in str(refused.value)
@@ -210,21 +158,6 @@ def test_a_token_that_could_not_be_checked_is_not_called_refused(settings):
     assert ConfigStore()._secrets() == {}
 
 
-def test_an_address_slack_cannot_find_saves_nothing_and_says_what_to_do(settings):
-    fake = FakeSlack(member=Member(error="users_not_found"))
-
-    with pytest.raises(SlackSetupError) as refused:
-        connect(settings, fake)
-
-    message = str(refused.value)
-    assert "(users_not_found)" in message and "Nothing was saved" in message
-    assert "keryx config set SLACK_BOT_TOKEN --stdin" in message
-    assert "keryx plugins install slack_report --set channel_id=ID" in message
-    assert TOKEN not in message
-    assert ConfigStore()._secrets() == {}
-    assert not plugins.config_path(settings, "slack_report").exists()
-
-
 def test_a_test_message_that_fails_is_an_error_and_undoes_nothing(settings):
     fake = FakeSlack(sent=SlackResult(error="channel_not_found"))
 
@@ -235,7 +168,7 @@ def test_a_test_message_that_fails_is_an_error_and_undoes_nothing(settings):
         "everything is saved, but the test message to U0OWNER did not go through: "
         "Slack does not know that channel or member (channel_not_found)"
     )
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
     assert plugins.is_on(settings, "slack_report") and channel(settings) == "U0OWNER"
 
 
@@ -249,47 +182,16 @@ def with_token(settings, token="xoxb-the-old-one", **more):
     return settings.model_copy(update={"slack_bot_token": token, **more})
 
 
-def test_a_new_token_never_keeps_a_direct_messages_id_and_looks_the_owner_up(settings):
+def test_a_new_token_never_keeps_a_direct_messages_id_and_reports_go_to_the_owner(settings):
     plugins.write_config(settings, "slack_report", {"channel_id": "D123"})
     fake = FakeSlack()
 
-    lines = connect(with_token(settings, user_google_email="sam@example.com"), fake, email=None)
+    lines = connect(with_token(settings), fake)
 
     assert channel(settings) == "U0OWNER"
-    assert fake.calls == [
-        ("auth", TOKEN), ("member", TOKEN, "sam@example.com"), ("post", "U0OWNER", TEST_MESSAGE)
-    ]
-    assert "found Sam Doe (U0OWNER): messages go to them" in lines
-
-
-def test_a_new_token_with_only_a_direct_messages_id_and_no_address_changes_nothing(settings):
-    plugins.write_config(settings, "slack_report", {"channel_id": "D123"})
-    ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-the-old-one"})
-    fake = FakeSlack()
-
-    with pytest.raises(SlackSetupError) as stopped:
-        connect(with_token(settings), fake, email=None)
-
-    assert str(stopped.value) == (
-        "the channel on file (D123) is a direct message with the app the old token came "
-        "from, and this token cannot post to it: add --email ADDRESS, the one you use in "
-        "Slack. Nothing was saved"
-    )
-    assert fake.calls == []
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-the-old-one"}
-    assert channel(settings) == "D123"
-
-
-def test_an_address_slack_cannot_find_leaves_the_old_token_and_channel_working(settings):
-    plugins.write_config(settings, "slack_report", {"channel_id": "D123"})
-    ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-the-old-one"})
-    fake = FakeSlack(member=Member(error="missing_scope"))
-
-    with pytest.raises(SlackSetupError, match="Nothing was saved"):
-        connect(with_token(settings), fake)
-
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-the-old-one"}
-    assert channel(settings) == "D123"
+    assert fake.calls == [("auth", TOKEN), ("auth", USER), ("post", "U0OWNER", TEST_MESSAGE)]
+    assert "you are U0OWNER there: reports go to you" in lines
+    assert slack.ELSEWHERE in lines and "--set channel_id=ID" in slack.ELSEWHERE
 
 
 @pytest.mark.parametrize("on_file", ["U0MEMBER", "W0MEMBER", "C0CHANNEL"])
@@ -297,10 +199,10 @@ def test_a_new_token_keeps_a_member_or_a_channel_and_tests_it(settings, on_file)
     plugins.write_config(settings, "slack_report", {"channel_id": on_file})
     fake = FakeSlack()
 
-    lines = connect(with_token(settings, user_google_email="sam@example.com"), fake, email=None)
+    lines = connect(with_token(settings), fake)
 
-    assert channel(settings) == on_file
-    assert fake.calls == [("auth", TOKEN), ("post", on_file, TEST_MESSAGE)]
+    assert channel(settings) == on_file and saved(settings)["owner_id"] == "U0OWNER"
+    assert fake.calls == [("auth", TOKEN), ("auth", USER), ("post", on_file, TEST_MESSAGE)]
     assert f"it keeps sending to {on_file}" in lines
     assert lines[-1] == "sent a test message: it is in Slack, under Apps"
 
@@ -309,38 +211,17 @@ def test_the_same_token_again_keeps_even_a_direct_messages_id(settings):
     plugins.write_config(settings, "slack_report", {"channel_id": "D123"})
     fake = FakeSlack()
 
-    lines = connect(with_token(settings, TOKEN), fake, email=None)
+    lines = connect(with_token(settings, TOKEN), fake)
 
     assert channel(settings) == "D123"
-    assert fake.calls == [("auth", TOKEN), ("post", "D123", TEST_MESSAGE)]
+    assert fake.calls == [("auth", TOKEN), ("auth", USER), ("post", "D123", TEST_MESSAGE)]
     assert not any("keryx restart" in line for line in lines)
-
-
-def test_a_kept_destination_that_fails_its_test_says_how_to_change_it(settings):
-    plugins.write_config(settings, "slack_report", {"channel_id": "C0CHANNEL"})
-    fake = FakeSlack(sent=SlackResult(error="not_in_channel"))
-
-    with pytest.raises(SlackSetupError) as failed:
-        connect(with_token(settings), fake, email=None)
-
-    assert str(failed.value) == (
-        "everything is saved, but the test message to C0CHANNEL did not go through: Slack "
-        "said not_in_channel. To send to yourself instead, run it again with --email ADDRESS"
-    )
-
-
-def test_an_address_given_replaces_the_channel_there_was(settings):
-    plugins.write_config(settings, "slack_report", {"channel_id": "U0MEMBER"})
-
-    connect(with_token(settings, TOKEN), FakeSlack())
-
-    assert channel(settings) == "U0OWNER"
 
 
 def test_a_token_that_replaces_another_says_a_running_keryx_needs_a_restart(settings):
     plugins.write_config(settings, "slack_report", {"channel_id": "U0MEMBER"})
 
-    replaced = connect(with_token(settings), FakeSlack(), email=None)
+    replaced = connect(with_token(settings), FakeSlack())
     first = connect(settings, FakeSlack())
 
     note = "A Keryx that started with the old token keeps it until `keryx restart`."
@@ -362,29 +243,23 @@ def chat_server(settings, tmp_path, monkeypatch):
 
 
 def test_a_token_is_never_paired_with_the_mcp_servers_channel(chat_server):
-    """With no address it stops: the server's channel is a direct message with *its* app."""
+    """The server's channel is a direct message with *its* app: a token of Keryx's own
+    posts to the owner, who the user token says they are."""
     fake = FakeSlack()
 
-    with pytest.raises(SlackSetupError) as stopped:
-        connect(chat_server, fake, email=None)
+    connect(chat_server, fake)
 
-    assert str(stopped.value) == (
-        "a token of its own needs somewhere of its own to send, and the channel so far is "
-        "the chat MCP server's: add --email ADDRESS, the one you use in Slack. Nothing was "
-        "saved"
-    )
-    assert fake.calls == [] and ConfigStore()._secrets() == {}
-    route = slack_route(chat_server)
-    assert (route.token, route.channel) == ("xoxb-the-servers", "D0SERVER")
+    assert ("post", "U0OWNER", TEST_MESSAGE) in fake.calls
+    assert not any(call[0] == "post" and call[1] == "D0SERVER" for call in fake.calls)
+    assert channel(chat_server) == "U0OWNER"
 
 
 def test_beside_an_mcp_server_a_token_brings_its_own_destination_and_says_so(chat_server):
     fake = FakeSlack()
-    settings = chat_server.model_copy(update={"user_google_email": "sam@example.com"})
+    settings = chat_server
 
-    lines = connect(settings, fake, email=None)
+    lines = connect(settings, fake)
 
-    assert ("member", TOKEN, "sam@example.com") in fake.calls
     assert ("post", "U0OWNER", TEST_MESSAGE) in fake.calls
     assert (
         "note: slack_report now posts with this token to U0OWNER, not with the chat MCP "
@@ -465,14 +340,16 @@ def workspace_tokens() -> dict:
     return json.loads(ConfigStore()._secrets().get("SLACK_WORKSPACE_TOKENS", "{}"))
 
 
-def connected_at(settings, level="announce", **tokens):
-    """`settings` with a first workspace already connected at `level`."""
+def connected_at(settings, level="announce", user=True, **tokens):
+    """`settings` with a first workspace already connected at `level`, its user token on
+    file unless `user` is False (a workspace connected before user tokens were asked for)."""
     plugins.write_config(settings, "slack_report", {
         "channel_id": "U0OWNER", "owner_id": "U0OWNER", "access": level, "team": "Acme",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX",
     })
     plugins.install(settings, "slack_report")
-    secrets = {"SLACK_BOT_TOKEN": TOKEN, **tokens}
+    secrets = {"SLACK_BOT_TOKEN": TOKEN, **({"SLACK_USER_TOKEN": USER} if user else {}),
+               **tokens}
     ConfigStore().set(secrets)
     return settings.model_copy(update={key.lower(): value for key, value in secrets.items()})
 
@@ -498,11 +375,14 @@ def test_a_chosen_level_says_what_it_sees_then_its_own_link_steps_and_command(se
     assert new_app_url(Access.CONVERSE) in text.splitlines()
     assert new_app_url() not in text
     assert "4. Under Basic Information, App-Level Tokens, click Generate Token and Scopes" in text
-    assert "connections:write" in text and "5." not in text
+    assert "connections:write" in text
+    assert "5. Under OAuth & Permissions, the same page as the bot token" in text
+    assert "6." not in text
     assert "hand the tokens over on standard input, never on the command line, one to a line" in (
         text
     )
-    assert "keryx auth login slack --stdin --access converse --email ADDRESS" in text
+    assert "keryx auth login slack --stdin --access converse\n" in text
+    assert "--email" not in text
     assert "**" not in text and "`" not in text and "·" not in text
 
 
@@ -510,11 +390,12 @@ def test_read_asks_for_three_tokens_and_no_address_and_says_nothing_reads_yet(se
     text = said(settings, access=Access.READ)
 
     assert new_app_url(Access.READ) in text.splitlines()
-    assert "5. Under OAuth & Permissions, copy the User OAuth Token (xoxp-…)." in text
+    assert "5. Under OAuth & Permissions, the same page as the bot token, copy the User" in text
     assert READ_NOTE in text
     assert "keryx auth login slack --stdin --access read\n" in text
     assert "--email" not in text
-    assert text.endswith("The user token says which member you are, so no address is needed.")
+    assert text.endswith("The user token says which member you are: reports go to you, and "
+                         "nothing else is asked.")
 
 
 def test_raising_the_level_of_an_app_there_is_never_makes_a_second_one(settings):
@@ -532,7 +413,7 @@ def test_raising_the_level_of_an_app_there_is_never_makes_a_second_one(settings)
     assert json.loads(manifest) == app_manifest(Access.CONVERSE)
     assert "The bot token stays as it is." in text
     assert "hand the app-level token over on standard input" in text
-    assert "keryx auth login slack --stdin --access converse --email ADDRESS" in text
+    assert "keryx auth login slack --stdin --access converse\n" in text
 
 
 def test_a_workspace_connected_at_that_level_is_told_so_and_never_shown_the_link(settings):
@@ -579,26 +460,29 @@ def test_when_every_token_is_saved_there_is_nothing_to_hand_over(settings):
     assert "Every token this level needs is saved already, so there is nothing to hand over." in (
         text
     )
-    assert "keryx auth login slack --stdin --access converse --email ADDRESS < /dev/null" in text
+    assert "keryx auth login slack --stdin --access converse < /dev/null" in text
 
 
-def test_converse_takes_two_tokens_in_either_order_and_knows_who_the_owner_is(settings):
+def test_converse_takes_three_tokens_in_any_order_and_the_user_token_says_who_is_the_owner(
+    settings
+):
     fake = FakeSlack(workspace=Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"))
 
     lines = connect(settings, fake, token=f"{APP}\n\n  {TOKEN}\n", access=Access.CONVERSE)
 
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
+                                        "SLACK_USER_TOKEN": USER}
     assert saved(settings) == {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX", "mcp_server": "",
     }
     assert lines[0] == (
-        "connected to the Acme workspace at the converse level; SLACK_BOT_TOKEN and "
-        "SLACK_APP_TOKEN saved"
+        "connected to the Acme workspace at the converse level; SLACK_BOT_TOKEN, "
+        "SLACK_APP_TOKEN and SLACK_USER_TOKEN saved"
     )
     assert LISTEN_NOTE in lines
     assert fake.calls == [
-        ("auth", TOKEN), ("open", APP), ("member", TOKEN, "sam@example.com"),
+        ("auth", TOKEN), ("auth", USER), ("open", APP),
         ("post", "U0OWNER", TEST_MESSAGE + CONVERSE_TEST_MESSAGE),
     ]
     assert not any("secret" in line for line in lines)
@@ -608,7 +492,7 @@ def test_a_level_names_the_token_it_still_needs_and_saves_nothing(settings):
     fake = FakeSlack()
 
     with pytest.raises(SlackSetupError) as refused:
-        connect(settings, fake, access=Access.READ)
+        connect(settings, fake, access=Access.READ, user=False)
 
     assert str(refused.value) == (
         "the read level also needs the app-level token (xapp-) and the user token (xoxp-), "
@@ -621,14 +505,12 @@ def test_a_token_the_level_does_not_use_is_named_and_nothing_is_saved(settings):
     fake = FakeSlack()
 
     with pytest.raises(SlackSetupError) as refused:
-        connect(settings, fake, token=f"{TOKEN}\n{APP}\n{USER}", access=Access.CONVERSE)
+        connect(settings, fake, token=f"{TOKEN}\n{APP}\n{USER}")
 
     assert str(refused.value) == (
-        "the converse level does not use a user token (xoxp-): leave it out, or choose a "
-        "higher level with --access. Nothing was saved"
+        "the announce level does not use an app-level token (xapp-): leave it out, or "
+        "choose a higher level with --access. Nothing was saved"
     )
-    with pytest.raises(SlackSetupError, match="does not use an app-level token"):
-        connect(settings, fake, token=f"{TOKEN}\n{APP}")
     assert fake.calls == [] and ConfigStore()._secrets() == {}
 
 
@@ -671,11 +553,12 @@ def test_raising_the_level_needs_only_the_token_that_is_new(settings):
     settings = connected_at(settings)
     fake = FakeSlack()
 
-    lines = connect(settings, fake, token=APP, email=None, access=Access.CONVERSE, test=False)
+    lines = connect(settings, fake, token=APP, access=Access.CONVERSE, test=False)
 
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
+                                        "SLACK_USER_TOKEN": USER}
     assert saved(settings)["access"] == "converse" and saved(settings)["owner_id"] == "U0OWNER"
-    assert fake.calls == [("auth", TOKEN), ("open", APP)]
+    assert fake.calls == [("auth", TOKEN), ("auth", USER), ("open", APP)]
     assert "it keeps sending to U0OWNER" in lines
     assert not any("keryx restart`." in line and "old token" in line for line in lines)
 
@@ -684,9 +567,9 @@ def test_with_every_token_on_file_nothing_need_be_typed_again(settings):
     settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
     fake = FakeSlack()
 
-    connect(settings, fake, token="", email=None, test=False)
+    connect(settings, fake, token="", user=False, test=False)
 
-    assert fake.calls == [("auth", TOKEN), ("open", APP)]
+    assert fake.calls == [("auth", TOKEN), ("auth", USER), ("open", APP)]
     assert saved(settings)["access"] == "converse"
 
 
@@ -694,14 +577,14 @@ def test_read_knows_the_owner_from_the_user_token_and_needs_no_address(settings)
     fake = FakeSlack(workspace=Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
                      user=Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"))
 
-    lines = connect(settings, fake, token=f"{USER}\n{TOKEN}\n{APP}", email=None,
+    lines = connect(settings, fake, token=f"{USER}\n{TOKEN}\n{APP}",
                     access=Access.READ)
 
     assert ConfigStore()._secrets() == {
         "SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP, "SLACK_USER_TOKEN": USER,
     }
     assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == ("U0SAM", "U0SAM")
-    assert "you are U0SAM there: messages go to you" in lines
+    assert "you are U0SAM there: reports go to you" in lines
     assert READ_NOTE in lines and LISTEN_NOTE in lines
     assert lines[0].endswith("SLACK_BOT_TOKEN, SLACK_APP_TOKEN and SLACK_USER_TOKEN saved")
     assert not any(call[0] == "member" for call in fake.calls)
@@ -735,7 +618,7 @@ def test_at_read_a_destination_on_file_is_kept_and_the_token_still_says_who(sett
     fake = FakeSlack(workspace=Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
                      user=Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"))
 
-    lines = connect(settings, fake, token=f"{USER}\n{APP}", email=None, access=Access.READ,
+    lines = connect(settings, fake, token=f"{USER}\n{APP}", access=Access.READ,
                     test=False)
 
     assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == ("U0SAM", "C0CHANNEL")
@@ -743,28 +626,11 @@ def test_at_read_a_destination_on_file_is_kept_and_the_token_still_says_who(sett
                for line in lines)
 
 
-def test_converse_refuses_a_destination_that_does_not_say_who_the_owner_is(settings):
-    settings = connected_at(settings)
-    plugins.write_config(settings, "slack_report", {"channel_id": "C0CHANNEL", "owner_id": ""})
-    fake = FakeSlack()
-
-    with pytest.raises(SlackSetupError) as refused:
-        connect(settings, fake, token=APP, email=None, access=Access.CONVERSE)
-
-    assert str(refused.value) == (
-        "at the converse level Keryx acts only on messages from your own member id, and "
-        "where reports go (C0CHANNEL) does not say which member you are: add --email "
-        "ADDRESS, the one you use in Slack. Nothing was saved"
-    )
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
-    assert saved(settings)["access"] == "announce"
-
-
 def test_an_owner_on_file_stands_whatever_the_destination(settings):
     settings = connected_at(settings)
     plugins.write_config(settings, "slack_report", {"channel_id": "C0CHANNEL"})
 
-    connect(settings, FakeSlack(), token=APP, email=None, access=Access.CONVERSE, test=False)
+    connect(settings, FakeSlack(), token=APP, access=Access.CONVERSE, test=False)
 
     assert saved(settings)["owner_id"] == "U0OWNER"
 
@@ -772,11 +638,10 @@ def test_an_owner_on_file_stands_whatever_the_destination(settings):
 def test_a_bot_token_from_another_workspace_is_refused_while_one_is_connected(settings):
     """It would bring another owner with it, and the owner is fixed until logout."""
     settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
-    elsewhere = FakeSlack(workspace=Workspace(team="Other", team_id="T0OTHER", user_id="U0BOT2"),
-                          member=Member(user_id="U0ELSE"))
+    elsewhere = FakeSlack(workspace=Workspace(team="Other", team_id="T0OTHER", user_id="U0BOT2"))
 
     with pytest.raises(SlackSetupError) as refused:
-        connect(settings, elsewhere, token="xoxb-another-app", email="else@x.io")
+        connect(settings, elsewhere, token="xoxb-another-app")
 
     assert str(refused.value) == (
         "that bot token is for Other, and Acme is connected here: `keryx auth logout "
@@ -789,28 +654,6 @@ def test_a_bot_token_from_another_workspace_is_refused_while_one_is_connected(se
 # --- where reports go is never whose messages are acted on -------------------------------
 
 
-def test_sending_reports_to_someone_else_never_makes_them_the_owner(settings):
-    """The blocker: `--email colleague` rewrote whose messages start work with no PIN."""
-    connect(settings, FakeSlack(), token=f"{TOKEN}\n{APP}", access=Access.CONVERSE, test=False)
-    settings = settings.model_copy(update={"slack_bot_token": TOKEN, "slack_app_token": APP})
-    colleague = FakeSlack(member=Member(user_id="U0COLLEAGUE", name="Col League"))
-
-    lines = connect(settings, colleague, token="", email="colleague@example.com", test=False)
-
-    assert (saved(settings)["channel_id"], saved(settings)["owner_id"]) == (
-        "U0COLLEAGUE", "U0OWNER"
-    )
-    assert "found Col League (U0COLLEAGUE): messages go to them" in lines
-    assert OWNER_LINE.format(who="U0OWNER") in lines
-
-
-def test_the_first_owner_is_said_by_name_when_it_is_derived(settings):
-    lines = connect(settings, FakeSlack(), token=f"{TOKEN}\n{APP}", access=Access.CONVERSE,
-                    test=False)
-
-    assert OWNER_LINE.format(who="Sam Doe (U0OWNER)") in lines
-
-
 def older_install(settings, channel):
     """An install from before levels: a bot token and where reports go, nothing else."""
     settings = settings.model_copy(update={"slack_bot_token": TOKEN})
@@ -821,136 +664,94 @@ def older_install(settings, channel):
     return settings
 
 
-@pytest.mark.parametrize("channel", ["U0COLLEAGUE", "U0OWNER", "D0OLDDM", "C0REPORTS"])
+@pytest.mark.parametrize("channel", ["U0COLLEAGUE", "D0OLDDM", "C0REPORTS"])
 def test_where_reports_go_never_makes_anybody_the_owner(settings, channel):
-    """An owner is established only by a lookup or a user token. At announce reports may
-    go to a colleague's member id: raising the level made that colleague the one whose
-    messages start work, with no PIN."""
+    """The owner is whoever the user token belongs to, and nothing else says who: at
+    announce reports may go to a colleague's member id, which once made the colleague
+    the one whose messages start work when the level was raised."""
     settings = older_install(settings, channel)
 
     with pytest.raises(SlackSetupError) as refused:
-        connect(settings, FakeSlack(), token=APP, email=None, access=Access.CONVERSE)
-
-    assert f"where reports go ({channel}) does not say which member you are" in str(
-        refused.value)
-    assert "add --email ADDRESS" in str(refused.value)
-    assert saved(settings).get("owner_id", "") == ""
-    assert saved(settings).get("access", "announce") == "announce"
-    assert "SLACK_APP_TOKEN" not in ConfigStore()._secrets()
-
-
-def test_raising_the_level_tries_the_google_address_before_asking_for_an_email(settings):
-    """The common case: an older install whose destination is a direct message's id. No
-    address was looked for, and the connect stopped. The address they signed in to
-    Google with is tried first; who it finds is the owner, and the destination, which was
-    usable, stays where it was."""
-    settings = older_install(settings, "D0OLDDM").model_copy(
-        update={"user_google_email": "sam@example.com"})
-    fake = FakeSlack()
-
-    lines = connect(settings, fake, token=APP, email=None, access=Access.CONVERSE,
-                    test=False)
-
-    assert ("member", TOKEN, "sam@example.com") in fake.calls
-    assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == (
-        "U0OWNER", "D0OLDDM")
-    assert ("found Sam Doe (U0OWNER) by your Google address, sam@example.com: that member "
-            "is taken to be you") in lines
-    assert "it keeps sending to D0OLDDM" in lines
-    assert OWNER_LINE.format(who="Sam Doe (U0OWNER)") in lines
-
-
-def test_a_google_address_slack_does_not_know_leaves_the_add_email_error_standing(settings):
-    settings = older_install(settings, "D0OLDDM").model_copy(
-        update={"user_google_email": "sam@example.com"})
-    fake = FakeSlack(member=Member(error="users_not_found"))
-
-    with pytest.raises(SlackSetupError, match="add --email ADDRESS"):
-        connect(settings, fake, token=APP, email=None, access=Access.CONVERSE)
-
+        connect(settings, FakeSlack(), token=APP, user=False, access=Access.CONVERSE)
+    assert "the converse level also needs the user token (xoxp-)" in str(refused.value)
     assert saved(settings).get("owner_id", "") == ""
 
+    lines = connect(settings, FakeSlack(), token=APP, access=Access.CONVERSE, test=False)
 
-def test_the_google_address_is_not_asked_when_something_else_already_says_who(settings):
-    """An owner on file, a user token, or an address that was given."""
-    google = {"user_google_email": "google@example.com"}
-    standing = connected_at(settings, "converse", SLACK_APP_TOKEN=APP).model_copy(update=google)
-    fake = FakeSlack()
-    connect(standing, fake, token="", email=None, test=False)
-    assert not [call for call in fake.calls if call[0] == "member"]
-
-    given = FakeSlack()
-    connect(standing, given, token="", email="sam@example.com", test=False)
-    assert [call[2] for call in given.calls if call[0] == "member"] == ["sam@example.com"]
-
-    by_token = FakeSlack()
-    connect(standing, by_token, token=USER, email=None, access=Access.READ, test=False)
-    assert not [call for call in by_token.calls if call[0] == "member"]
+    assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == ("U0OWNER", channel)
+    assert f"it keeps sending to {channel}" in lines
+    assert OWNER_LINE.format(who="U0OWNER") in lines
 
 
-def test_below_converse_the_google_address_is_not_looked_up_for_an_owner(settings):
-    settings = older_install(settings, "D0OLDDM").model_copy(
-        update={"user_google_email": "sam@example.com"})
-    fake = FakeSlack()
-
-    connect(settings, fake, token="", email=None, test=False)
-
-    assert not [call for call in fake.calls if call[0] == "member"]
-    assert saved(settings)["owner_id"] == ""
-
-
-def test_at_announce_nobody_is_made_the_owner_and_nothing_is_said_of_one(settings):
+def test_the_owner_is_recorded_at_announce_too_and_nothing_says_messages_are_acted_on(settings):
+    """So raising the level later changes nothing about who the owner is."""
     lines = connect(settings, FakeSlack(), test=False)
 
-    assert saved(settings)["owner_id"] == ""
-    assert not any("acted on" in line for line in lines)
+    assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == ("U0OWNER", "U0OWNER")
+    assert not any("are acted on there" in line for line in lines)
+    assert slack.OWNER_NOTED.format(who="U0OWNER") in lines
+
+    raised = connected_like(settings)
+    connect(raised, FakeSlack(), token=APP, access=Access.CONVERSE, test=False)
+    assert saved(settings)["owner_id"] == "U0OWNER"
+
+
+def connected_like(settings):
+    """`settings` holding what the store now does, as the next command would load them."""
+    secrets = ConfigStore()._secrets()
+    return settings.model_copy(update={
+        "slack_bot_token": secrets.get("SLACK_BOT_TOKEN"),
+        "slack_app_token": secrets.get("SLACK_APP_TOKEN"),
+        "slack_user_token": secrets.get("SLACK_USER_TOKEN"),
+    })
 
 
 def test_an_owner_on_file_is_kept_through_announce_for_the_day_it_is_raised_again(settings):
     settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
-    colleague = FakeSlack(member=Member(user_id="U0COLLEAGUE"))
 
-    connect(settings, colleague, token=TOKEN, email="colleague@example.com",
-            access=Access.ANNOUNCE, test=False)
+    connect(settings, FakeSlack(), token=TOKEN, access=Access.ANNOUNCE, test=False)
 
-    assert (saved(settings)["channel_id"], saved(settings)["owner_id"]) == (
-        "U0COLLEAGUE", "U0OWNER"
-    )
+    assert (saved(settings)["access"], saved(settings)["owner_id"]) == ("announce", "U0OWNER")
 
 
 def test_there_is_no_way_to_change_the_owner_in_place(settings):
-    """One owner, fixed at connect: no option, no argument, nothing but logout and login."""
+    """One owner, fixed at connect: no option, no argument, no address, nothing but
+    logout and login. Somebody else's user token is refused, whoever hands it over."""
     import inspect
 
     from keryx.setup.auth import LoginOptions
 
-    assert "owner" not in inspect.signature(slack.connect).parameters
-    assert not hasattr(LoginOptions(), "owner")
+    parameters = inspect.signature(slack.connect).parameters
+    assert "owner" not in parameters and "email" not in parameters
+    assert not hasattr(LoginOptions(), "owner") and not hasattr(LoginOptions(), "email")
     settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
-    for email in ("colleague@example.com", "another@example.com"):
-        connect(settings, FakeSlack(member=Member(user_id="U0COLLEAGUE")), token="",
-                email=email, test=False)
+    theirs = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0COLLEAGUE"))
+    for level in (Access.ANNOUNCE, Access.CONVERSE, Access.READ):
+        with pytest.raises(SlackSetupError, match="the user token belongs to U0COLLEAGUE"):
+            connect(settings, theirs, token="xoxp-theirs", access=level, test=False)
         assert saved(settings)["owner_id"] == "U0OWNER"
+        assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == USER
 
 
 def test_logging_out_and_in_again_is_how_somebody_else_connects(settings):
     settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
     slack.logout(settings, ConfigStore(), workspace="default", echo=lambda line: None)
+    cleared = settings.model_copy(update={"slack_bot_token": None, "slack_app_token": None,
+                                          "slack_user_token": None})
 
-    connect(settings.model_copy(update={"slack_bot_token": None, "slack_app_token": None}),
-            FakeSlack(member=Member(user_id="U0NEWME")), token=f"{TOKEN}\n{APP}",
-            email="me@new.example", access=Access.CONVERSE, test=False)
+    connect(cleared, FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0NEWME")),
+            token=f"{TOKEN}\n{APP}", access=Access.CONVERSE, test=False)
 
     assert saved(settings)["owner_id"] == "U0NEWME"
 
 
 def test_at_read_a_user_token_that_is_not_the_owners_on_file_is_refused(settings):
     """Somebody else's token would otherwise make them the owner without a word."""
-    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    settings = connected_at(settings, "converse", user=False, SLACK_APP_TOKEN=APP)
     fake = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0ELSE"))
 
     with pytest.raises(SlackSetupError) as refused:
-        connect(settings, fake, token=USER, email=None, access=Access.READ)
+        connect(settings, fake, token=USER, access=Access.READ)
 
     assert str(refused.value) == (
         "the user token belongs to U0ELSE, and the member whose messages Keryx acts on "
@@ -962,16 +763,12 @@ def test_at_read_a_user_token_that_is_not_the_owners_on_file_is_refused(settings
 
 
 def test_at_read_the_first_owner_is_whom_the_user_token_belongs_to(settings):
-    fake = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"),
-                     member=Member(user_id="U0COLLEAGUE"))
+    fake = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"))
 
-    connect(settings, fake, token=f"{USER}\n{TOKEN}\n{APP}", email="colleague@example.com",
+    connect(settings, fake, token=f"{USER}\n{TOKEN}\n{APP}",
             access=Access.READ, test=False)
 
-    # The address chose where reports go, and only that.
-    assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == (
-        "U0SAM", "U0COLLEAGUE"
-    )
+    assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == ("U0SAM", "U0SAM")
 
 
 def test_above_announce_a_bot_token_slack_names_no_workspace_for_is_refused(settings):
@@ -986,12 +783,26 @@ def test_above_announce_a_bot_token_slack_names_no_workspace_for_is_refused(sett
 def test_a_lower_level_given_with_a_token_forgets_what_it_no_longer_uses(settings):
     settings = connected_at(settings, "read", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
 
-    lines = connect(settings, FakeSlack(), token=TOKEN, email=None, access=Access.CONVERSE,
+    fake = FakeSlack()
+    lines = connect(settings, fake, token=TOKEN, user=False, access=Access.CONVERSE,
                     test=False)
 
+    # The token that could read Slack as them is not kept below read, and Slack is not
+    # asked about it: the owner on file stands.
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
-    assert saved(settings)["access"] == "converse"
-    assert "SLACK_USER_TOKEN is forgotten: the converse level does not use it" in lines
+    assert (saved(settings)["access"], saved(settings)["owner_id"]) == ("converse", "U0OWNER")
+    assert ("SLACK_USER_TOKEN is forgotten: the converse level does not use it, and until "
+            "the app is reinstalled it could still read Slack as you") in lines
+    assert ("auth", USER) not in fake.calls
+
+
+def test_a_lower_level_given_with_the_reinstalled_apps_user_token_keeps_that_one(settings):
+    settings = connected_at(settings, "read", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+
+    connect(settings, FakeSlack(), token="xoxp-after-reinstall", access=Access.CONVERSE,
+            test=False)
+
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-after-reinstall"
 
 
 def test_lowering_asks_slack_nothing_and_forgets_the_tokens_at_once(settings):
@@ -1016,7 +827,8 @@ def test_the_same_level_or_a_higher_one_is_not_a_lowering(settings, level):
 
     assert not slack.lower(settings, ConfigStore(), workspace="default", access=level,
                            echo=pytest.fail)
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
+                                        "SLACK_USER_TOKEN": USER}
 
 
 def test_a_workspace_that_is_not_connected_has_nothing_to_lower(settings):
@@ -1030,13 +842,16 @@ def test_a_workspace_that_is_not_connected_has_nothing_to_lower(settings):
 def test_a_further_workspace_has_its_own_app_tokens_owner_and_destination(settings):
     settings = connected_at(settings)
     fake = FakeSlack(workspace=LAB,
-                     member=Member(user_id="U0LAB", name="Sam at the lab"))
+                     user=Workspace(team="Lab", team_id="T0LAB", user_id="U0LAB"))
 
-    lines = connect(settings, fake, token="xoxb-lab-secret\nxapp-lab-secret",
-                    email="sam@lab.example", workspace="lab", access=Access.CONVERSE)
+    lines = connect(settings, fake, token="xoxb-lab-secret\nxapp-lab-secret\nxoxp-lab-secret",
+                    workspace="lab", access=Access.CONVERSE)
 
     assert ConfigStore()._secrets()["SLACK_BOT_TOKEN"] == TOKEN
-    assert workspace_tokens() == {"lab": {"bot": "xoxb-lab-secret", "app": "xapp-lab-secret"}}
+    assert workspace_tokens() == {"lab": {"bot": "xoxb-lab-secret", "app": "xapp-lab-secret",
+                                          "user": "xoxp-lab-secret"}}
+    assert ("To send reports somewhere else: set channel_id under [workspace-lab] in "
+            "slack_report.toml.") in lines
     data = saved(settings)
     assert {"lab": data["workspace-lab"]} == {"lab": {
         "channel_id": "U0LAB", "access": "converse", "owner_id": "U0LAB", "team": "Lab",
@@ -1059,7 +874,8 @@ def test_a_second_further_workspace_keeps_the_first(settings):
                     test=False)
 
     assert workspace_tokens() == {
-        "lab": {"bot": "xoxb-lab-secret"}, "work": {"bot": "xoxb-work-secret"},
+        "lab": {"bot": "xoxb-lab-secret", "user": USER},
+        "work": {"bot": "xoxb-work-secret", "user": USER},
     }
     assert {"workspace-lab", "workspace-work"} <= set(saved(settings))
     # A process that started before either is told nothing of a restart, and needs none:
@@ -1078,7 +894,8 @@ def test_a_further_workspace_is_lowered_by_its_own_name(settings):
     assert slack.lower(settings, ConfigStore(), workspace="lab", access=Access.ANNOUNCE,
                        echo=lines.append)
 
-    assert workspace_tokens() == {"lab": {"bot": "xoxb-lab-secret"}}
+    # Its user token could only ever say who they are, so it is kept.
+    assert workspace_tokens() == {"lab": {"bot": "xoxb-lab-secret", "user": USER}}
     assert saved(settings)["workspace-lab"]["access"] == "announce"
     assert lines[0].startswith("lab (Lab) is now at the announce level")
     assert lines[1] == "lab's app-level token is forgotten."
@@ -1101,9 +918,7 @@ def test_the_link_for_a_further_workspace_names_it_on_the_next_command(settings)
     text = said(settings, workspace="lab", access=Access.CONVERSE)
 
     assert new_app_url(Access.CONVERSE) in text
-    assert "keryx auth login slack --stdin --workspace lab --access converse --email ADDRESS" in (
-        text
-    )
+    assert "keryx auth login slack --stdin --workspace lab --access converse\n" in text
 
 
 def test_a_workspaces_name_is_a_short_word_and_a_level_is_one_of_three():
@@ -1127,7 +942,12 @@ def test_one_line_that_starts_xox_is_still_taken_as_the_bot_token(settings):
     """As it always was: a rotating bot token does not start xoxb-."""
     connect(settings, FakeSlack(), token="xoxe.xoxb-1-very-secret", test=False)
 
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxe.xoxb-1-very-secret"}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxe.xoxb-1-very-secret",
+                                        "SLACK_USER_TOKEN": USER}
+    with pytest.raises(SlackSetupError, match="that is not a Slack token"):
+        slack.read_tokens("hunter2")
+    with pytest.raises(SlackSetupError, match="two bot tokens"):
+        slack.read_tokens("xoxb-1\nxoxe.xoxb-2")
 
 
 def test_the_link_for_a_further_workspace_says_when_the_first_is_not_there_yet(settings):
@@ -1175,7 +995,7 @@ def test_logging_out_a_further_workspace_removes_its_tokens_and_its_table(settin
 
     lines = logged_out(settings, "lab")
 
-    assert workspace_tokens() == {"work": {"bot": "xoxb-work-secret"}}
+    assert workspace_tokens() == {"work": {"bot": "xoxb-work-secret", "user": USER}}
     assert "workspace-lab" not in saved(settings) and "workspace-work" in saved(settings)
     assert lines[0] == "lab (Lab) is disconnected: its tokens and its settings are removed."
     assert "api.slack.com/apps" in lines[-1] and "at once" in lines[-1]
@@ -1225,7 +1045,7 @@ def test_the_first_workspace_is_not_logged_out_from_under_the_others(settings):
 
 def test_logging_out_beside_an_mcp_server_leaves_the_servers_route(chat_server):
     settings = chat_server.model_copy(update={"user_google_email": "sam@example.com"})
-    connect(settings, FakeSlack(), email=None, test=False)
+    connect(settings, FakeSlack(), test=False)
 
     lines = logged_out(settings.model_copy(update={"slack_bot_token": TOKEN}))
 
@@ -1288,7 +1108,7 @@ def test_write_says_plainly_before_the_link_that_keryx_can_then_send_as_you(sett
     assert text.index(MEANING[Access.WRITE]) < text.index(new_app_url(Access.WRITE))
     assert slack.WRITE_NOTE in text and slack.READ_NOTE in text
     assert "other people read it as written by you" in slack.WRITE_NOTE
-    assert "The user token says which member you are, so no address is needed." in text
+    assert "The user token says which member you are: reports go to you" in text
 
 
 def test_raising_read_to_write_changes_the_app_there_is_and_asks_for_no_new_kind_of_token(
@@ -1313,7 +1133,7 @@ def test_write_is_refused_while_the_user_token_may_not_post_as_the_owner_yet(set
                                     scopes=USER_SCOPES))
 
     with pytest.raises(SlackSetupError) as refused:
-        connect(settings, fake, token="", email=None, access=Access.WRITE)
+        connect(settings, fake, token="", access=Access.WRITE)
 
     assert str(refused.value) == (
         "the user token cannot be used: it may not yet do what the write level needs (it "
@@ -1331,7 +1151,7 @@ def test_write_is_saved_once_the_token_may_or_when_slack_does_not_say(settings, 
     fake = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER",
                                     scopes=scopes))
 
-    lines = connect(settings, fake, token="", email=None, access=Access.WRITE, test=False)
+    lines = connect(settings, fake, token="", access=Access.WRITE, test=False)
 
     assert saved(settings)["access"] == "write" and saved(settings)["owner_id"] == "U0OWNER"
     assert slack.WRITE_NOTE in lines
@@ -1375,3 +1195,94 @@ def test_what_is_said_at_connect_states_the_direct_message_rule(settings):
     assert "elsewhere only one that mentions it (@Keryx)" in said
     assert "also acts on every message you send the Keryx app itself" in slack.SHORT[
         Access.CONVERSE]
+
+
+# --- an install from before user tokens ---------------------------------------------------------
+
+
+def test_an_older_install_is_shown_how_to_update_the_app_it_has(settings):
+    """Bot token and a destination, no user token: the next login takes one, so the
+    steps are the ones that change the app there is, one to a line, and never the link
+    that would make a second app."""
+    settings = older_install(settings, "D0OLDDM")
+
+    text = said(settings)
+
+    assert "api.slack.com/apps?new_app=1" not in text
+    assert "from before Keryx asked for a user token. Nothing about it stops working." in text
+    lines = text.splitlines()
+    for step in (
+        "1. Open https://api.slack.com/apps and pick the Keryx app you already have. Do not "
+        "create a second one.",
+        "2. Open App Manifest, replace what is there with the manifest below, and click "
+        "Save Changes.",
+        "3. Open Install App and click Reinstall to Workspace, then Allow: the new "
+        "permissions count only after that.",
+        "4. Under OAuth & Permissions, the same page as the bot token, copy the User OAuth "
+        "Token (xoxp-…). It says which member you are.",
+    ):
+        assert step in lines
+    assert "5." not in text
+    manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("The bot token")]
+    assert json.loads(manifest) == app_manifest(Access.ANNOUNCE)
+    assert "hand the user token over on standard input" in text
+    assert "keryx auth login slack --stdin\n" in text
+
+
+def test_an_older_install_keeps_posting_untouched_and_is_asked_only_at_the_next_login(
+    settings,
+):
+    """No user token, no owner on file: it sends, it lacks nothing it runs on, and the
+    login is where the user token is asked for, in the sentence every missing token gets."""
+    settings = older_install(settings, "D0OLDDM")
+    [one] = workspaces(settings)
+
+    assert one.sends and one.missing == () and one.owner_id == ""
+    with pytest.raises(SlackSetupError) as asked:
+        connect(settings, FakeSlack(), token=TOKEN, user=False)
+    assert str(asked.value) == (
+        "the announce level also needs the user token (xoxp-), one to a line. Nothing was "
+        "saved")
+    assert saved(settings) == {"channel_id": "D0OLDDM"} or channel(settings) == "D0OLDDM"
+
+
+def test_that_login_establishes_the_owner_and_keeps_the_destination_it_had(settings):
+    settings = older_install(settings, "D0OLDDM")
+
+    lines = connect(settings, FakeSlack(), token="", test=False)
+
+    assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == ("U0OWNER", "D0OLDDM")
+    assert "it keeps sending to D0OLDDM" in lines and slack.ELSEWHERE in lines
+    assert slack.OWNER_NOTED.format(who="U0OWNER") in lines
+
+
+def test_a_user_token_from_another_workspace_is_refused_at_every_level(settings):
+    fake = FakeSlack(user=Workspace(team="Other", team_id="T0OTHER", user_id="U0ELSE"))
+
+    for level in Access:
+        with pytest.raises(SlackSetupError, match="belongs to another workspace than the bot"):
+            connect(settings, fake, token=f"{TOKEN}\n{APP}" if level.reaches(
+                Access.CONVERSE) else TOKEN, access=level)
+    assert ConfigStore()._secrets() == {}
+
+
+def test_below_read_the_user_token_is_asked_who_it_is_and_for_no_scope(settings):
+    """One that carries only the least scope there is, or more than the level asks."""
+    for scopes in (("emoji:read",), USER_SCOPES, None):
+        fake = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER",
+                                        scopes=scopes))
+        connect(settings, fake, token=f"{TOKEN}\n{APP}", access=Access.CONVERSE, test=False)
+        assert saved(settings)["owner_id"] == "U0OWNER"
+
+
+def test_lowering_converse_to_announce_keeps_the_user_token_that_only_says_who_they_are(
+    settings,
+):
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    lines: list[str] = []
+
+    slack.lower(settings, ConfigStore(), workspace="default", access=Access.ANNOUNCE,
+                echo=lines.append)
+
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
+    assert lines[1] == "SLACK_APP_TOKEN is forgotten."

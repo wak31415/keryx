@@ -180,43 +180,43 @@ def _word(value: str) -> str | None:
 #: The Slack step's questions. Their wording never changes, whatever is saved, so a replay
 #: of the step finds the questions it recorded.
 SLACK_ACCESS = "What may Keryx see in your Slack?"
-SLACK_WHERE = "Where to send: the address you use in Slack, or a channel or member id"
 
 
 def run_slack(ctx: SetupContext) -> None:
-    """The level; each token it needs, checked with Slack; where to send; one test message.
+    """The level; each token it takes, checked with Slack; one test message.
 
     The level comes first, because it decides the app, and what it lets Keryx see is said
     before any link. After it the questions are always the same ones in the same order,
     whatever is already saved: the bot token, the app-level token at `converse` and above,
-    the user token at `read`, and where to send.
+    and the user token, at every level. Nothing is asked about where to send.
 
     **Nothing is saved until every answer is in**, as on the command line: a level is all
     of its tokens or none of it, so a token Slack refuses, or a walk abandoned half-way,
     leaves the install exactly as it was. Going back runs the step again from a record of
     its answers (`rewind`), which has to find the questions it recorded: so which are
     asked follows from this run's answers alone, and what is saved changes only what each
-    *offers* — a token to keep, the destination on file, the test as a yes or a no. A
-    token typed again after going back is not shown to Slack a second time (`ctx.memo`).
-    The one exception is the house rule: the test is not offered on a plain walk that
-    changed nothing, so an owner already set up answers what they always did, and a
-    review asks it, as a review asks about everything that is set.
+    *offers* — a token to keep, the test as a yes or a no. A token typed again after
+    going back is not shown to Slack a second time (`ctx.memo`). The one exception is the
+    house rule: the test is not offered on a plain walk that changed nothing, so an owner
+    already set up answers what they always did, and a review asks it, as a review asks
+    about everything that is set.
 
     A token that is not the one on file brings its destination with it (`slack.keeps`). A
-    direct message's id belongs to the app that opened it, so it is not offered beside
-    another token; and beside a named MCP server, a new token may not be left to post to
-    the server's channel. Raising the level of an app there is shows its new manifest,
-    never the link that would make a second app, and a lower level forgets the tokens it
-    no longer uses. Above `announce` no token is saved unchecked: what a message is held
-    to is the workspace Slack names for it.
+    direct message's id belongs to the app that opened it, so it is not kept beside
+    another token; and beside a named MCP server, a new token never posts to the server's
+    channel. Raising the level of an app there is shows its new manifest, never the link
+    that would make a second app, and a lower level forgets the tokens it no longer uses.
+    Above `announce` no token is saved unchecked: what a message is held to is the
+    workspace Slack names for it.
 
-    **One owner, fixed at connect.** The owner on file stands (`slack.standing_owner`),
-    and no question here can change it: where to send only ever chooses a destination. It
-    is established once, when there is none, and only by something Slack said of them:
-    at `read` from the user token, and at `converse` from an address looked up (the one
-    typed as where to send, or the Google address on file when an id was typed), never
-    from an id, which only says where reports go. At `converse` and
-    above a line names the member every time.
+    **One owner, fixed at connect, and Slack says who.** The owner is the member the user
+    token belongs to (`auth.test`, in the bot token's own workspace), at every level, and
+    reports go to that member unless a destination on file still goes with the bot token.
+    An owner on file stands (`slack.standing_owner`), a user token that is somebody
+    else's is asked for again, and no question here can change who the owner is. **An
+    install from before user tokens walks through untouched**: with the bot token kept
+    and the level not raised, the user token may be left blank, and everything stays as
+    it was.
     """
     ui = ctx.ui
     values = current_values(ctx, slack.PLUGIN)
@@ -241,10 +241,14 @@ def run_slack(ctx: SetupContext) -> None:
         if server and access is Access.ANNOUNCE:
             ui.note(f"Leave the token blank to go on using the {server} MCP server's token "
                     "and channel.")
-    elif access is not was and access.reaches(was):
+    elif access.reaches(was) and (
+            access is not was or not ctx.current(slack.TOKEN_KEYS[USER])):
         have = tuple(kind for kind in needed if ctx.current(slack.TOKEN_KEYS[kind]))
         ui.note(f"Slack is connected at the {was} level, so the app you have is changed, "
-                "not made again.")
+                "not made again." if access is not was else
+                f"Slack is connected at the {was} level, from before Keryx asked for a user "
+                "token. A user token is how Slack says which member you are, so the app "
+                "you have is updated, not made again.")
         ui.markdown(slack.guide(access, raising=True, have=have))
         ui.panel("The manifest", manifest_json(access))
     token, team = _slack_token(ctx, before, server, access)
@@ -274,19 +278,42 @@ def run_slack(ctx: SetupContext) -> None:
     owner = standing
     if APP in needed:
         tokens[APP] = _slack_app_token(ctx)
-    if USER in needed:
-        tokens[USER], owner = _slack_user_token(
-            ctx, team, standing, access, raised=not was.reaches(access))
-    channel, found = _slack_where(
-        ctx, token, new=token != before, on_file=on_file, server=server, access=access,
-        owner=owner, says_who=above and not owner,
-    )
-    if above and not owner:
-        # Nobody is on file: the first owner is the member an address was looked up to
-        # be, and never an id that only says where reports go.
-        owner = found
-    if above:
-        ui.note(slack.OWNER_LINE.format(who=owner))
+    if (token == before and standing and was.reaches(Access.READ)
+            and not access.reaches(Access.READ)):
+        # Lowered out of reading: the owner on file stands, and the token that could
+        # read Slack as them is not kept below `read` (`slack.lower` does the same). It
+        # is left out here, which is what forgets it.
+        pass
+    elif token:
+        # An install from before user tokens, walked with nothing changed, may leave it
+        # blank and stay exactly as it was; anything else takes one.
+        untouched = (token == before and was.reaches(access)
+                     and not ctx.current(slack.TOKEN_KEYS[USER])
+                     and (bool(standing) or not above))
+        tokens[USER], owner, team = _slack_user_token(
+            ctx, team, standing, access, raised=not was.reaches(access), optional=untouched,
+            bot_token=token)
+        if not tokens[USER]:
+            del tokens[USER]
+    # Where reports go: where they went, while that still goes with this token; else to
+    # the owner themselves. Blank beside a named server's own token: the server's.
+    kept = on_file if slack.keeps(on_file, new_token=token != before) else ""
+    if on_file and not kept:
+        ui.note(f"The channel on file ({on_file}) is a direct message with the app the old "
+                "token came from, so it is not kept: this token cannot post to it.")
+    channel = kept or (owner if token else "")
+    # Blank stays the named server's channel only while the token is the one that has
+    # been posting there all along; a new token never posts to the server's channel.
+    servers = bool(server) and token == before and access is Access.ANNOUNCE
+    if token and not channel and not servers:
+        ui.error("Nothing says where reports would go: there is no destination on file "
+                 "and no user token to say which member you are. Nothing was saved.")
+        return
+    if token and channel:
+        ui.note((f"It keeps sending to {channel}. " if kept else
+                 f"Reports go to you ({channel}). ") + slack.ELSEWHERE)
+    if owner:
+        ui.note((slack.OWNER_LINE if above else slack.OWNER_NOTED).format(who=owner))
     keys = {kind: ctx.current(key) for kind, key in slack.TOKEN_KEYS.items()}
     changed = (access is not was or channel != on_file or owner != values["owner_id"]
                or any(tokens[kind] != keys[kind] for kind in tokens))
@@ -435,25 +462,48 @@ def _slack_app_token(ctx: SetupContext) -> str:
 
 
 def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str,
-                      access: Access = Access.READ, *, raised: bool = False) -> tuple[str, str]:
-    """The owner's own token, and the member it says they are.
+                      access: Access = Access.READ, *, raised: bool = False,
+                      optional: bool = False, bot_token: str = "",
+                      ) -> tuple[str, str, Workspace]:
+    """The owner's own token, the member it says they are, and the workspace the bot
+    token belongs to (asked of Slack here when the file never learned it, because the
+    user token has to be one of the same workspace).
 
     Never taken unchecked: which member it belongs to is the whole of what it is asked,
     and only Slack can say. A kept one stands for the owner on file, and is asked again
     only when there is none, or when the level was `raised`, because what it may do has
     to have grown with it. One that belongs to another member than the owner on file is
-    refused: a token is never how the owner changes. Nothing is saved here.
+    refused: a token is never how the owner changes. Nothing is saved here. `optional`
+    is an install from before user tokens, walked with nothing changed: blank leaves it
+    as it was, with the owner (or none) it had.
     """
     ui = ctx.ui
     before = ctx.current(slack.TOKEN_KEYS[USER])
 
     def problem(value: str) -> str | None:
-        return "Required." if not value.strip() else slack.token_problem(value, USER)
+        if not value.strip():
+            return None if optional else "Required."
+        return slack.token_problem(value, USER)
 
+    if optional:
+        ui.note("This workspace was connected before Keryx asked for a user token, and "
+                "goes on working without one. Leave it blank to keep it exactly as it is.")
     while True:
         answer = ui.secret("User token (xoxp-…)", validate=problem, current=before).strip()
+        if not answer and optional:
+            return "", standing, team
         if answer == before and standing and not raised:
-            return answer, standing
+            return answer, standing, team
+        if not team.team_id and bot_token:
+            # Only now, when there is a user token to hold to it: a walk that changes
+            # nothing asks Slack nothing.
+            asked = _asked_slack(ctx, BOT, bot_token, ctx.probes.slack_auth_test)
+            team = asked if asked.ok else team
+            if not team.team_id and not access.reaches(Access.CONVERSE):
+                ui.note("Slack could not say which workspace this is, so the user token, "
+                        "which says which member you are, is asked for another time: "
+                        "`keryx auth login slack`.")
+                return "", standing, team
         checked = _asked_slack(ctx, USER, answer, ctx.probes.slack_auth_test)
         why = slack.user_token_problem(checked, team) or slack.scope_problem(checked, access)
         if why is None and standing and checked.user_id != standing:
@@ -465,79 +515,7 @@ def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str,
             ui.error(f"That user token cannot be used: {why}")
             continue
         ui.success(f"it is yours: you are {checked.user_id} there")
-        return answer, checked.user_id
-
-
-def _slack_where(
-    ctx: SetupContext,
-    token: str,
-    *,
-    new: bool,
-    on_file: str,
-    server: str,
-    access: Access = Access.ANNOUNCE,
-    owner: str = "",
-    says_who: bool = False,
-) -> tuple[str, str]:
-    """Where to send, as an id: one typed or kept, or the member behind an address.
-
-    One question, asked again while an address is not found. `token` is "" when the named
-    server's is used, and `new` says it is not the token that was on file. With the id
-    comes the member an address was found to be ("" when none was looked up), who is the
-    owner. `owner` is who a user token already said they are: the default, at `read`.
-    `says_who` is the first connect above `announce` with nobody on file and no user
-    token to say who they are: the owner is then whoever an address is looked up to be,
-    never an id that was typed or kept, which only says where reports go. An answer that
-    is an id is kept as the destination, and the Google address on file is looked up for
-    who they are; when that finds nobody, the question is asked again for an address.
-    """
-    ui = ctx.ui
-    kept = on_file if slack.keeps(on_file, new_token=new) else ""
-    if on_file and not kept:
-        ui.note(f"The channel on file ({on_file}) is a direct message with the app the old "
-                "token came from, so it is not offered: this token cannot post to it.")
-    # Blank leaves the channel to the named server: right only while the token is the
-    # server's too, or the one that has been posting there all along.
-    blank = bool(server) and not (token and new) and access is Access.ANNOUNCE
-
-    def problem(value: str) -> str | None:
-        value = value.strip()
-        if not value:
-            if blank:
-                return None
-            return (f"A token of its own needs somewhere of its own to send, not the {server} "
-                    "MCP server's channel." if server else "Required.")
-        if "@" not in value:
-            return _word(value)
-        return None if token else "An id: there is no token of its own to look an address up with."
-
-    default = kept or owner or (ctx.current("USER_GOOGLE_EMAIL") if token else "")
-    while True:
-        answer = ui.text(SLACK_WHERE, default=default, validate=problem).strip()
-        if "@" not in answer and says_who:
-            google = ctx.current("USER_GOOGLE_EMAIL") or ""
-            if google:
-                with ui.spinner("Finding you in Slack…"):
-                    member = ctx.probes.slack_member(token, google)
-                if member.ok:
-                    ui.success(f"found {member.name or google} ({member.user_id}) by your "
-                               f"Google address, {google}: that member is taken to be you")
-                    return answer, member.user_id
-            ui.warn("The first time at this level Keryx has to know which member you are, "
-                    "and an id for where reports go does not say: type the address you "
-                    "use in Slack. A channel can be chosen afterwards.")
-            default = ""
-            continue
-        if "@" not in answer:
-            return answer, ""
-        with ui.spinner("Finding you in Slack…"):
-            member = ctx.probes.slack_member(token, answer)
-        if member.ok:
-            ui.success(f"found {member.name or answer}: messages go to you, from the Keryx app")
-            return member.user_id, member.user_id
-        ui.warn(f"Slack could not find you by that address: {member.problem}")
-        ui.note(slack.MEMBER_ID_HINT)
-        default = kept or owner
+        return answer, checked.user_id, team
 
 
 #: What each Google plugin needs of the sign-in before it can answer: the question its own

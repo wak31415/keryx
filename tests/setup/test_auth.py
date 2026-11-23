@@ -347,9 +347,12 @@ def test_slack_that_is_on_is_ok_and_says_where_it_posts(settings):
     assert entry == {
         "state": "ok", "detail": "on — posts to U0OWNER", "optional": True,
         "workspaces": [{"name": "default", "team": "", "label": "your first workspace",
-                        "access": "announce", "listens": False, "missing": []}],
+                        "access": "announce", "listens": False, "missing": [], "owner": ""}],
     }
-    assert auth.slack_lines(entry) == ["your first workspace: announce level, posts only"]
+    # Connected before Keryx asked for a user token: it works, and says what it has not.
+    assert auth.slack_lines(entry) == [
+        "your first workspace: announce level, posts only, no owner on file yet (the next "
+        "`keryx auth login slack` adds one)"]
 
 
 def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
@@ -374,8 +377,8 @@ def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
         "`keryx auth login slack --workspace work --access read`"
     )
     assert auth.slack_lines(entry) == [
-        "Acme: converse level, acts when you mention the app",
-        "work: read level, without its app token or its user token",
+        "Acme: converse level, acts on what you type to the app, you are U0OWNER",
+        "work: read level, without its app token or its user token, you are U0WORK",
     ]
     assert "xoxb" not in str(entry) and "xapp" not in str(entry)
 

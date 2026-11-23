@@ -1656,15 +1656,6 @@ def auth_login(
             "(xoxb-, xapp-, xoxp-); one already saved need not be given again.",
         ),
     ] = False,
-    email: Annotated[
-        str | None,
-        typer.Option(
-            "--email",
-            help="slack: the address you use there, to send to you. The first time, at "
-            "converse and above, it is also who you are there; after that it only ever "
-            "changes where reports go.",
-        ),
-    ] = None,
     test: Annotated[
         bool, typer.Option("--test/--no-test", help="slack: send one test message.")
     ] = True,
@@ -1707,9 +1698,9 @@ def auth_login(
     for_google = name == "google" or name in auth_flow.GOOGLE_ALIASES
     googles = (services, account, client_file, callback_url)
     misplaced = (
-        (name != "slack" and (stdin or email is not None or not test
-                              or access is not None or workspace is not None),
-         "--stdin, --email, --no-test, --access and --workspace are for slack"),
+        (name != "slack" and (stdin or not test or access is not None
+                              or workspace is not None),
+         "--stdin, --no-test, --access and --workspace are for slack"),
         (not for_google and any(value is not None for value in googles),
          "--services, --account, --client-file and --callback-url are for google"),
         (name == "slack" and headless is not None,
@@ -1739,7 +1730,6 @@ def auth_login(
         services=wanted,
         account=account,
         tokens=_read_slack_tokens(settings, workspace, access) if stdin else None,
-        email=email,
         test=test,
         workspace=workspace,
         access=access,

@@ -248,8 +248,10 @@ def test_the_agent_instructions_name_this_machines_paths(make_ctx):
     assert str(ctx.settings.data_dir / "projects") in text
     assert "--from-env" in text and "never set it yourself" in text
     assert "keryx auth login google --headless" in text and "--callback-url - < " in text
-    assert "keryx auth login slack --stdin --email ADDRESS" in text
-    assert "That token is not yours to see" in " ".join(text.split())
+    flat = " ".join(text.split())
+    assert "they run `keryx auth login slack --stdin` themselves" in flat
+    assert "--email" not in text and "the bot token and their own user token" in flat
+    assert "Those tokens are not yours to see" in flat
     # Above announce a Slack message can start work with no PIN: the owner's choice alone.
     assert "Never choose `converse`, `read` or `write` for them" in " ".join(text.split())
     assert "{" not in text

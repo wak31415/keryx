@@ -4,27 +4,27 @@ Each owner makes a Slack app of their own, from the manifest in `integrations.sl
 pastes its tokens once. **The access level comes first** (`integrations.slack.Access`),
 because it decides the manifest: what each level lets Keryx see is said in plain words
 (`MEANING`) before any link is shown. Everything after the tokens Keryx does: `auth.test`
-says whose each is, `apps.connections.open` shows the app-level one is taken,
-`users.lookupByEmail` turns the address they use in Slack into the member to send to
-(stored as `channel_id`, so nobody copies a channel id out of Slack), and one test message
-shows it arriving.
+says whose each is, `apps.connections.open` shows the app-level one is taken, the member
+the user token belongs to is where reports go (stored as `channel_id`, so nobody copies
+a channel id out of Slack), and one test message shows it arriving.
 
 The wizard asks its questions in `setup/plugins.py::run_slack`, through `Probes`. This
 module holds the wording both use and `connect`, the command-line path, which is the same
 steps with nothing to ask: the tokens on standard input, one to a line and told apart by
-how each starts, the address as `--email`. A token is never an argument, never echoed and
+how each starts. A token is never an argument, never echoed and
 never in an error; what Slack refused is its error code and nothing else it said.
 
 Four rules both paths keep. **A token brings its destination with it** (`keeps`): a direct
 message's id (`D…`) belongs to the app that opened it, so a token that is not the one on
 file is never paired with one — not the one in the plugin's file, and not a named MCP
-server's — and the owner is looked up again instead. A member's id or a channel's is the
-workspace's and is kept. **Nothing is called connected that was not shown to arrive**:
-either the test message went, or the last line says none was sent and why. **A level is
-all of its tokens or none of it**: every token the level needs is checked before anything
-is saved, one the level does not use is refused by name, and lowering the level forgets
-the tokens it no longer uses. **An app is never made twice**: raising the level of a
-workspace that is connected prints the new manifest to paste into the app there is.
+server's — and reports go to the owner's own member id instead. A member's id or a
+channel's is the workspace's and is kept. **Nothing is called connected that was not shown
+to arrive**: either the test message went, or the last line says none was sent and why.
+**A level is all of its tokens or none of it**: every token the level needs is checked
+before anything is saved, one the level does not use is refused by name, and lowering the
+level forgets the tokens it no longer uses. **An app is never made twice**: raising the
+level of a workspace that is connected prints the new manifest to paste into the app there
+is.
 
 **What sets Keryx to work is the owner writing to it.** In the app's own direct messages
 that is any message of theirs; anywhere else, one that mentions the app. The app's own
@@ -32,17 +32,20 @@ member id (`bot_user_id`, what `auth.test` says of the bot token) is stored at c
 because a mention is a mention of it and because nothing is ever sent to it as the
 owner; a workspace above `announce` without it hears nothing.
 
-**One owner, fixed at connect** (the owner's ruling of 2026-11-23). The owner is whoever
-set the connection up, and `owner_id` (the one member whose messages may start work with
-no PIN) is established once, and only by something Slack said of that person: at `read`
-and above the user token's own member, and at `converse` the member an address is looked
-up to be (the one given at connect, else the Google address on file). Never from where
-reports go, which may be a colleague's member id. After that nothing changes it in place:
-not `--email` or the wizard's "where to send", which only ever choose where reports go;
-not a user token, which is refused when it is somebody else's; not a bot token from
-another workspace, which is refused too. There is no option for it. `keryx auth logout
-slack` and a new login is the one way to connect as somebody else. `OWNER_LINE` names the
-member on every connect at `converse` or above.
+**One owner, fixed at connect, and Slack says who** (the owner's rulings of 2026-11-23
+and 2026-11-24, "let's always require a user token"). A bot token names the bot, not
+whoever installed it, so connecting takes the owner's user token at every level, and
+`owner_id` (the one member whose messages may start work with no PIN) is the member
+`auth.test` says that token belongs to, in the bot token's own workspace. Nothing else
+establishes one: not an address looked up, not where reports go. It is recorded at
+`announce` too, so raising the level changes nothing about who the owner is. After that
+nothing changes it in place: a user token that is somebody else's is refused, a bot
+token from another workspace is refused, and there is no option for it. `keryx auth
+logout slack` and a new login is the one way to connect as somebody else. `OWNER_LINE`
+names the member on every connect at `converse` or above. **Below `read` the user token
+is used for that one `auth.test` and nothing after**: the clients that read and send as
+the owner are gated on the level (`SlackWorkspace.reads`, `.writes`), not on a token
+being on file.
 
 A second workspace is the same flow with `--workspace NAME`: its own app from the same
 manifest, its own level, tokens, member id and destination (`plugins.slack`), and
@@ -68,7 +71,6 @@ from keryx.integrations.slack import (
     USER,
     Access,
     Connection,
-    Member,
     SlackResult,
     Workspace,
     token_kinds,
@@ -145,7 +147,8 @@ STEPS = (
     "Click **Install to Workspace**, then **Allow**.",
     "Under **OAuth & Permissions**, copy the **Bot User OAuth Token** (`xoxb-…`).",
 )
-#: The steps that raise the level of the app there is, in place of the first two above.
+#: The steps that change the app there is, in place of the first two above: to raise its
+#: level, or to give an app made before user tokens the one it now needs.
 RAISE_STEPS = (
     f"Open {APPS_URL} and pick the Keryx app you already have. Do not create a second one.",
     "Open **App Manifest**, replace what is there with the manifest below, and click "
@@ -158,14 +161,9 @@ TOKEN_STEPS = {
     BOT: STEPS[2],
     APP: "Under **Basic Information**, **App-Level Tokens**, click **Generate Token and "
          "Scopes**, add the `connections:write` scope, and copy the token (`xapp-…`).",
-    USER: "Under **OAuth & Permissions**, copy the **User OAuth Token** (`xoxp-…`).",
+    USER: "Under **OAuth & Permissions**, the same page as the bot token, copy the **User "
+          "OAuth Token** (`xoxp-…`). It says which member you are.",
 }
-
-#: Said with the question that asks for an id by hand, when Slack could not find them.
-MEMBER_ID_HINT = (
-    "A member id works as well as a channel id: in Slack, open your profile, click More "
-    "(⋮), then Copy member ID."
-)
 
 TEST_MESSAGE = (
     "Keryx is connected. What you ask for in writing on a call arrives here, and so does "
@@ -177,7 +175,20 @@ CONVERSE_TEST_MESSAGE = (
     "report resumes that task, and a new message starts one."
 )
 
-BY_HAND = f"`keryx plugins install {PLUGIN} --set channel_id=ID` with a channel or member id"
+#: Said where the destination is printed: the one way reports go anywhere else.
+ELSEWHERE = (
+    f"To send reports somewhere else: `keryx plugins install {PLUGIN} --set "
+    "channel_id=ID`, with a channel's id or a member's."
+)
+#: The same for a further workspace, whose settings no command line sets.
+ELSEWHERE_NAMED = (
+    "To send reports somewhere else: set channel_id under [workspace-{name}] in {file}."
+)
+#: Said below `converse`, where nobody's messages are acted on yet.
+OWNER_NOTED = (
+    "{who} is taken to be you there, by your user token. Nothing you type is acted on at "
+    "this level, and raising it later keeps you as the owner."
+)
 
 #: Said when a token replaces another: `plugins.secret` prefers the settings a process
 #: started with, so a running service goes on using the old one.
@@ -211,7 +222,6 @@ class SlackApi:
     """The calls `connect` makes, replaced in the tests."""
 
     auth_test: Callable[[str], Workspace] = slack.auth_test
-    lookup_by_email: Callable[[str, str], Member] = slack.lookup_by_email
     post_text: Callable[[str, str, str], SlackResult] = slack.post_text
     open_connection: Callable[[str], Connection] = slack.open_connection
 
@@ -303,23 +313,6 @@ def on_file(
     return plugin.on_file(settings, name, _config(settings) if values is None else values)
 
 
-def without_email(settings: Settings, name: str = DEFAULT) -> str:
-    """What `connect` does when no `--email` is given, in a sentence, as things stand."""
-    try:
-        channel = on_file(settings, name).channel
-    except SlackSetupError:
-        channel = ""
-    address = settings.user_google_email
-    looks = (f"without --email it looks for {address}" if address
-             else "without --email there is no address to look for, and it stops")
-    if not channel:
-        return looks[0].upper() + looks[1:] + "."
-    if slack.is_dm(channel):
-        return (f"The channel on file ({channel}) is a direct message with the app its token "
-                f"came from, so a different token does not keep it: {looks}.")
-    return f"Without --email it keeps sending to {channel}."
-
-
 def _flags(name: str, access: Access, current: Access) -> str:
     """The options that name this workspace and level again on the next command."""
     flags = "" if name == DEFAULT else f" --workspace {name}"
@@ -335,8 +328,9 @@ def start(
 ) -> None:
     """`keryx auth login slack` with no token: what the level means, then the link (or
     the manifest, for an app there already is), the steps, and the next command. A
-    workspace that is connected at that level already is told so, and never shown the
-    link that would make a second app."""
+    workspace that is connected at that level already, with every token a login takes,
+    is told so, and never shown the link that would make a second app. One connected
+    before user tokens were asked for is shown how to update the app it has."""
     try:
         values = _config(settings)
         saved = on_file(settings, workspace, values)
@@ -350,9 +344,13 @@ def start(
     current = saved.access
     chosen = access is not None or connected
     access = access or current
-    if connected and access is current:
+    lacking = [kind for kind in token_kinds(access) if not saved.token(kind)]
+    if connected and access is current and lacking != [USER]:
+        # Whole, or without something its level runs on, which `_already` says.
         _already(saved, echo)
         return
+    # The app there is, is changed and never made again: to raise its level, or (at the
+    # level it has) to give it the user token an app made before them never issued.
     raising = connected and access.reaches(current)
     have = tuple(kind for kind in token_kinds(access) if saved.token(kind)) if raising else ()
     if chosen:
@@ -370,7 +368,12 @@ def start(
     if access.reaches(Access.WRITE):
         echo(WRITE_NOTE)
     echo("")
-    if raising:
+    if raising and access is current:
+        echo(f"{saved.label} is connected at the {current} level, from before Keryx asked "
+             "for a user token. Nothing about it stops working. The next login takes "
+             "one, because it is how Slack says which member you are, so the app you "
+             "have is updated, not made again:\n")
+    elif raising:
         echo(f"{saved.label} is connected at the {current} level, so the app you have is "
              "changed, not made again:\n")
     else:
@@ -386,14 +389,12 @@ def start(
             echo("\nThe bot token stays as it is.")
     wanted = [kind for kind in token_kinds(access) if kind not in have]
     many = len(wanted) > 1
-    address = "" if access.reaches(Access.READ) else " --email ADDRESS"
-    command = f"keryx auth login slack --stdin{_flags(workspace, access, current)}{address}"
+    command = f"keryx auth login slack --stdin{_flags(workspace, access, current)}"
     if wanted:
         what = "the tokens" if many else f"the {TOKEN_NAMES[wanted[0]]}"
         echo(
             f"\nThen hand {what} over on standard input, never on the command line"
             + (", one to a line in any order" if many else "")
-            + ("" if access.reaches(Access.READ) else ", with the address you use in Slack")
             + f":\n  {command}"
         )
     else:
@@ -402,10 +403,8 @@ def start(
         if USER in have:
             echo("If Slack shows a different User OAuth Token after the reinstall, hand "
                  "that one over instead of nothing.")
-    if access.reaches(Access.READ):
-        echo("The user token says which member you are, so no address is needed.")
-    else:
-        echo(without_email(settings, workspace))
+    echo("The user token says which member you are: reports go to you, and nothing else "
+         "is asked.")
 
 
 def _already(saved: SlackWorkspace, echo: Callable[[str], None]) -> None:
@@ -447,7 +446,14 @@ def lower(
     saved = on_file(settings, workspace, values)
     if not saved.token(BOT) or access is saved.access or access.reaches(saved.access):
         return False
-    kept = {kind: saved.tokens[kind] for kind in token_kinds(access) if saved.token(kind)}
+    # What the lower level works with; and the user token, when all it could ever do was
+    # say who they are. One that could read or send as them is forgotten below `read`:
+    # it keeps those permissions at Slack until the app is reinstalled, and Keryx has no
+    # use for it meanwhile. The next login asks for the one the reinstalled app issues.
+    keeping = set(slack.used_kinds(access))
+    if not saved.access.reaches(Access.READ):
+        keeping.add(USER)
+    kept = {kind: saved.tokens[kind] for kind in saved.tokens if kind in keeping}
     dropped = [kind for kind in saved.tokens if kind not in kept]
     _save_tokens(store, settings, workspace, kept)
     _write_workspace(settings, values, workspace, {"access": str(access)})
@@ -598,14 +604,17 @@ def read_tokens(text: str) -> dict[str, str]:
     """The tokens on standard input, by kind: one to a line, in any order.
 
     Raises `SlackSetupError` for a line that is none of the three, or a kind given twice.
-    A bot token is told by `xox` alone when it is the only line, as it always was.
+    A bot token is told by `xox` alone when it is the only line, as it always was; and
+    among several, a line that starts `xox` and holds `xoxb-` further in is one too: a
+    rotating bot token is written `xoxe.xoxb-…`, and it no longer arrives alone, since
+    the user token comes with it.
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     found: dict[str, str] = {}
     for line in lines:
         kind = slack.token_kind(line)
         if kind is None:
-            if len(lines) == 1 and line.startswith("xox"):
+            if line.startswith("xox") and (len(lines) == 1 or "xoxb-" in line):
                 kind = BOT
             else:
                 raise SlackSetupError(
@@ -652,27 +661,27 @@ def connect(
     store: ConfigStore,
     *,
     tokens: str,
-    email: str | None,
     test: bool,
     echo: Callable[[str], None],
     api: SlackApi | None = None,
     workspace: str = DEFAULT,
     access: Access | None = None,
 ) -> None:
-    """Check the tokens, find where to send, save it all, turn the plugin on, and prove it.
+    """Check the tokens, learn who the owner is, save it all, turn the plugin on, and
+    prove it.
 
     `tokens` is standard input: one token to a line, told apart by how each starts. A
-    token the level needs and that is on file already need not be given again. Raises
-    `SlackSetupError` saying how far it got. Nothing is saved until every token the level
-    needs is one Slack takes *and* there is a destination that goes with the bot token, so
-    a token Slack refuses or an address it cannot find leaves a working install exactly as
-    it was. A token that is not the one on file brings its destination with it (`keeps`):
-    an address is looked up, never a direct message's old id kept. After the save, only
-    the test message can fail, and that says so and undoes nothing.
+    token the level takes and that is on file already need not be given again. Raises
+    `SlackSetupError` saying how far it got. Nothing is saved until every token is one
+    Slack takes, so a token Slack refuses leaves a working install exactly as it was.
+    After the save, only the test message can fail, and that says so and undoes nothing.
 
-    **Where reports go and whose messages are acted on are two things.** `email` is the
-    first, and the second only the first time, when nobody is on file: after that the
-    owner stands (`standing_owner`) until the workspace is logged out.
+    **The owner is whoever the user token belongs to**, at every level: `auth.test` on
+    it has to name the bot token's own workspace, and its member is the owner. An owner
+    on file stands, and a user token that is somebody else's is refused. **Reports go to
+    the owner's own member id**, unless a destination is on file that still goes with the
+    bot token (`keeps`), which stays: an install from before any of this keeps posting
+    where it always did. Nothing is asked about where to send, and nothing is looked up.
     """
     api = api or SlackApi()
     given = read_tokens(tokens)
@@ -702,16 +711,6 @@ def connect(
                               "Nothing was saved")
     before = saved.token(BOT) or ""
     token = held[BOT]
-    # An address that was asked for replaces the destination; otherwise one is looked for
-    # only when what is on file does not stand for this token.
-    address = (email or "").strip()
-    kept = saved.channel if not address and keeps(saved.channel, new_token=token != before) else ""
-    by_token = access.reaches(Access.READ)  # the user token says who they are, and so where to send
-    if not (address or kept or by_token):
-        address = settings.user_google_email or ""
-    if not (address or kept or by_token):
-        raise SlackSetupError(f"{_nowhere(saved.channel, server)}: add --email ADDRESS, "
-                              "the one you use in Slack. Nothing was saved")
 
     team = api.auth_test(token)
     if not team.ok:
@@ -726,9 +725,16 @@ def connect(
         )
     if problem := another_workspace(saved, team):
         raise SlackSetupError(problem)
-    token_owner = ""
-    if USER in needed:
-        token_owner = _check_user_token(api, held[USER], team, access)
+    standing = standing_owner(saved, team, same_app=token == before)
+    # Lowered out of reading with nothing new handed over: the owner on file stands, and
+    # the token that could read Slack as them is not kept below `read`, as `lower` does
+    # not keep it. One handed over now is the reinstalled app's, and is kept.
+    retired = (bool(standing) and USER not in given and saved.access.reaches(Access.READ)
+               and not access.reaches(Access.READ))
+    if retired:
+        needed = tuple(kind for kind in needed if kind != USER)
+        held.pop(USER)
+    token_owner = standing if retired else _check_user_token(api, held[USER], team, access)
     if APP in needed:
         opened = api.open_connection(held[APP])
         if not opened.ok:
@@ -736,31 +742,12 @@ def connect(
                 f"the app-level token could not be used ({opened.problem}): it needs the "
                 "connections:write scope, and Socket Mode on in the app. Nothing was saved"
             )
-    found = None
-    if address:
-        found = api.lookup_by_email(token, address)
-        if not found.ok:
-            raise SlackSetupError(
-                f"Slack could not find {address}: {found.problem}. Nothing was saved. Try "
-                f"another --email, or by hand: `keryx config set {TOKEN_KEY} --stdin`, "
-                f"then {BY_HAND}"
-            )
-    channel = found.user_id if found is not None else (kept or token_owner)
-    standing = standing_owner(saved, team, same_app=token == before)
-    # An owner has to be established, and nothing given says who: not an owner on file,
-    # not a user token, not an address. Before stopping for one, the address they signed
-    # in to Google with is tried: on an install whose destination was kept (an older
-    # one's direct-message id, say), nothing else was looked up.
-    by_google, google = None, (settings.user_google_email or "").strip()
-    if (access.reaches(Access.CONVERSE) and not standing and not token_owner
-            and found is None and google):
-        looked = api.lookup_by_email(token, google)
-        by_google = looked if looked.ok else None
-    acted_on, who = _owner(
-        access=access, standing=standing, token_owner=token_owner,
-        found=found or by_google, channel=channel,
-        named="" if workspace == DEFAULT else f" --workspace {workspace}",
-    )
+    named = "" if workspace == DEFAULT else f" --workspace {workspace}"
+    acted_on = _owner(standing=standing, token_owner=token_owner, named=named)
+    # Where reports go: where they went, while that still goes with this token; else to
+    # the owner themselves.
+    kept = saved.channel if keeps(saved.channel, new_token=token != before) else ""
+    channel = kept or acted_on
 
     _save_tokens(store, settings, workspace, held)
     echo(_connected_line(workspace, team, access, needed))
@@ -772,17 +759,13 @@ def connect(
         echo(RESTART_NOTE)
     if workspace == DEFAULT:
         settings = settings.model_copy(update={"slack_bot_token": token})
-    if found is not None:
-        echo(f"found {found.name or address} ({channel}): messages go to them")
-    elif kept:
+    if kept:
         echo(f"it keeps sending to {channel}")
     else:
-        echo(f"you are {channel} there: messages go to you")
-    if by_google is not None:
-        echo(f"found {by_google.name or google} ({by_google.user_id}) by your Google "
-             f"address, {google}: that member is taken to be you")
-    if access.reaches(Access.CONVERSE):
-        echo(OWNER_LINE.format(who=who))
+        echo(f"you are {channel} there: reports go to you")
+    echo(ELSEWHERE if workspace == DEFAULT else ELSEWHERE_NAMED.format(
+        name=workspace, file=plugins.config_path(settings, PLUGIN).name))
+    echo((OWNER_LINE if access.reaches(Access.CONVERSE) else OWNER_NOTED).format(who=acted_on))
     try:
         _write_workspace(settings, values, workspace, {
             "channel_id": channel,
@@ -813,62 +796,38 @@ def connect(
     for kind in saved.tokens:
         if kind not in needed:
             echo(f"{_stored_as(workspace, kind)} is forgotten: the {access} level does not "
-                 "use it")
+                 "use it" + (", and until the app is reinstalled it could still read Slack "
+                             "as you" if kind == USER else ""))
 
     if not test:
         echo("no test message was sent (--no-test), so nothing has shown it arrives")
         return
     sent = api.post_text(token, channel, test_message(access))
     if not sent.ok:
-        elsewhere = "" if found is not None else (
-            ". To send to yourself instead, run it again with --email ADDRESS")
         raise SlackSetupError(
             f"everything is saved, but the test message to {channel} did not go through: "
-            f"{sent.problem}{elsewhere}"
+            f"{sent.problem}"
         )
     echo("sent a test message: it is in Slack, under Apps")
 
 
-def _owner(
-    *,
-    access: Access,
-    standing: str,
-    token_owner: str,
-    found: Member | None,
-    channel: str,
-    named: str,
-) -> tuple[str, str]:
-    """The member whose messages are acted on, and how to name them in a line.
+def _owner(*, standing: str, token_owner: str, named: str) -> str:
+    """The member whose messages are acted on: whom the user token belongs to.
 
-    The owner on file stands. Only when there is none is one established, and only by
-    something Slack said of this person: whom the user token belongs to, else the member
-    an address was looked up to be (the one given, or the Google address `connect` tries
-    before giving up). **Never from where reports go**: a destination that happens to be
-    a member's id says who receives reports, which may be a colleague, and made that
-    colleague the owner. Below `converse` nobody's messages are acted on, so nothing is
-    established: an owner on file is kept for the day the level is raised. Nothing here
-    replaces an owner: that is `keryx auth logout slack` and a new login.
+    **Slack says who the owner is, and nothing else does.** Not an address looked up, not
+    where reports go: the member `auth.test` names for the user token, in the bot token's
+    own workspace. An owner on file stands, and a user token that is somebody else's is
+    refused: nothing here replaces an owner, which is `keryx auth logout slack` and a new
+    login. Recorded at every level, `announce` included, so raising the level later
+    changes nothing about who the owner is.
     """
-    if standing:
-        acted_on = standing
-    elif not access.reaches(Access.CONVERSE):
-        return "", ""
-    else:
-        acted_on = token_owner or (found.user_id if found is not None else "")
-    if token_owner and acted_on != token_owner:
+    if standing and token_owner != standing:
         raise SlackSetupError(
             f"the user token belongs to {token_owner}, and the member whose messages Keryx "
-            f"acts on there is {acted_on}: paste your own user token. To connect as "
+            f"acts on there is {standing}: paste your own user token. To connect as "
             f"somebody else, `keryx auth logout slack{named}` first. Nothing was saved"
         )
-    if access.reaches(Access.CONVERSE) and not acted_on:
-        raise SlackSetupError(
-            f"at the {access} level Keryx acts only on messages from your own member id, "
-            f"and where reports go ({channel}) does not say which member you are: add "
-            "--email ADDRESS, the one you use in Slack. Nothing was saved"
-        )
-    name = found.name if found is not None and found.user_id == acted_on else ""
-    return acted_on, f"{name} ({acted_on})" if name else acted_on
+    return token_owner
 
 
 def test_message(access: Access) -> str:
@@ -902,7 +861,9 @@ def scope_problem(checked: Workspace, access: Access) -> str | None:
     it may, and when Slack did not say what it may do (which is then found out in use)."""
     if checked.scopes is None:
         return None
-    lacking = [scope for scope in slack.user_scopes(access) if scope not in checked.scopes]
+    # Below `read` the token is asked who it is and nothing more, which takes no scope.
+    wanted = slack.user_scopes(access) if access.reaches(Access.READ) else ()
+    lacking = [scope for scope in wanted if scope not in checked.scopes]
     if not lacking:
         return None
     return (f"it may not yet do what the {access} level needs (it lacks "
@@ -927,14 +888,3 @@ def _connected_line(workspace: str, team: Workspace, access: Access, kinds: tupl
     names = saved[0] if len(saved) == 1 else ", ".join(saved[:-1]) + " and " + saved[-1]
     level = "" if access is Access.ANNOUNCE else f" at the {access} level"
     return f"{where}{level}; {names} saved"
-
-
-def _nowhere(on_file: str, server: str) -> str:
-    """Why there is no destination for a token, when no address was given to look for."""
-    if on_file:
-        return (f"the channel on file ({on_file}) is a direct message with the app the old "
-                "token came from, and this token cannot post to it")
-    if server:
-        return (f"a token of its own needs somewhere of its own to send, and the channel so "
-                f"far is the {server} MCP server's")
-    return "nowhere to send yet"

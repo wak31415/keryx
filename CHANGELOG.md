@@ -62,9 +62,15 @@ the version starts with 0.
   first and saves nothing until every token has been checked. Whose messages are acted
   on is settled when you connect and nothing changes it afterwards: where reports are
   sent never does, and connecting as somebody else is a logout and a new login.
-- **Raising the Slack level finds you by your Google address** when nothing else says
-  which member you are, before asking for `--email`. Where reports are sent never decides
-  whose messages are acted on, even when it is a member's id.
+- **Connecting Slack takes your user token at every level, and no address.** A bot token
+  does not say who installed the app; a user token does. So `keryx auth login slack` now
+  takes the bot token and your user token (plus the app-level token from `converse`),
+  Slack says which member you are, and reports go to you. `--email` is gone, and so is
+  the question about where to send. Below `read` the user token has one permission
+  (`emoji:read`) and is used only to ask Slack whose it is. The bot no longer asks for
+  `users:read` or `users:read.email`. A workspace connected before this keeps working
+  untouched; the next login shows how to update the app you have. To send reports
+  somewhere else: `keryx plugins install slack_report --set channel_id=ID`.
 - **`keryx auth logout slack [--workspace NAME]`** forgets a Slack workspace's tokens and
   settings.
 - **More than one Slack workspace.** `keryx auth login slack --workspace NAME` connects

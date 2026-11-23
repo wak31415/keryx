@@ -702,7 +702,29 @@ def test_an_install_from_before_levels_is_one_workspace_at_announce_and_fine(set
 
     assert checks["slack_report"].detail == "on — posts to D123"
     assert checks["slack_report: default"].ok
-    assert checks["slack_report: default"].detail == "at the announce level, posts to D123"
+    assert checks["slack_report: default"].detail == (
+        "at the announce level, posts to D123; no owner on file yet (it was connected "
+        "before Keryx asked for a user token): `keryx auth login slack --access announce` "
+        "adds one"
+    )
+
+
+def test_a_workspace_with_no_owner_on_file_is_said_in_one_line_and_never_fails(settings):
+    """An install from before user tokens goes on posting: nothing it does needs an
+    owner, so doctor says how to add one and passes."""
+    settings = settings.model_copy(update={"slack_bot_token": "xoxb-first-secret"})
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "slack_report").write_text('channel_id = "D123"\n')
+    plugins.install(settings, "slack_report")
+
+    older = {check.name: check for check in doctor_module.plugin_checks(settings)}
+    plugins.write_config(settings, "slack_report", {"owner_id": "U0OWNER"})
+    with_owner = {check.name: check for check in doctor_module.plugin_checks(settings)}
+
+    assert older["slack_report: default"].ok and older["slack_report: default"].state == "ok"
+    assert older["slack_report: default"].detail.count("\n") == 0
+    assert "no owner on file" not in with_owner["slack_report: default"].detail
+    assert with_owner["slack_report: default"].detail == "at the announce level, posts to D123"
 
 
 def test_slack_workspaces_that_cannot_be_read_are_said_not_raised(settings, monkeypatch):

@@ -465,6 +465,38 @@ def test_below_write_it_is_refused_with_the_command_that_raises_the_level(settin
         slack_message_tool(plugins.config_path(settings, NAME))
 
 
+@pytest.mark.parametrize("access", ["announce", "converse"])
+def test_a_user_token_on_file_below_read_reads_nothing_and_sends_nothing(settings, access):
+    """Keryx holds a user token at every level now, because it is how Slack says who the
+    owner is. Below read it is used for that one check at connect and nothing after: the
+    clients that read and send as the owner are gated on the level, never on the token
+    being there."""
+    from keryx.integrations.slack import USER
+    from keryx.plugins import slack_read
+    from keryx.plugins.slack import can_read, can_write, workspaces
+
+    made = at(settings, access)
+    for name in ("slack_read", NAME):
+        plugins.write_config(made, name, {})
+        plugins.install(made, name)
+
+    [one] = workspaces(made)
+    assert one.token(USER) == "xoxp-1" and (one.reads, one.writes) == (False, False)
+    assert slack_read.reading(made) == [] and slack_message.writing(made) == []
+    assert not can_read(made) and not can_write(made)
+    assert not {"slack_read", NAME} & names(made)
+    for command in (("read",), ("conversations",), ("members",)):
+        assert _slack_exit(made, *command) == 2
+    assert _slack_exit(made, "message", "--to", "Sam", text="hi") == 2
+
+
+def _slack_exit(made, *args, text="") -> int:
+    from unittest import mock
+
+    with mock.patch("keryx.cli._configure_readonly", lambda **k: made):
+        return run_slack(*args, text=text).exit_code
+
+
 def test_lowering_the_level_takes_the_capability_away_at_once(settings):
     settings = at(settings)
     plugins.install(settings, NAME)

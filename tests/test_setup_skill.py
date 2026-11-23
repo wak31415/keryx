@@ -79,8 +79,10 @@ def test_the_skill_quotes_this_repositorys_caps(flat):
 
 
 def test_the_skill_connects_slack_without_ever_holding_its_token(flat):
-    assert "keryx auth login slack --stdin --email ADDRESS" in flat
-    assert "Do not ask them to paste the token to you" in flat
+    assert "keryx auth login slack --stdin # theirs to run" in flat
+    assert "--email" not in flat, "no address is asked for: the user token says who they are"
+    assert "the bot token and their own user token" in flat
+    assert "Do not ask them to paste a token to you" in flat
     assert "ask them whether it arrived" in flat
 
 

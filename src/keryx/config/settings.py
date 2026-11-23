@@ -590,8 +590,9 @@ class Settings(BaseSettings):
     )
     slack_user_token: str | None = setting(
         None,
-        "Your own user token (`xoxp-`) from your Slack app, at the `read` level: it reads "
-        "Slack as you. `keryx auth login slack` sets it.",
+        "Your own user token (`xoxp-`) from your Slack app. It is how Slack says which "
+        "member you are, at every level; from the `read` level it also reads Slack as you, "
+        "and at `write` sends as you. `keryx auth login slack` sets it.",
         group="plugins",
         repr=False,
     )

@@ -105,7 +105,7 @@ Slack is a sign-in too, and it turns `slack_report` on by itself (it was called
 
 ```bash
 keryx auth login slack          # says the four access levels, then a link and steps: relay them
-keryx auth login slack --stdin --email ADDRESS    # theirs to run: it asks for the token hidden
+keryx auth login slack --stdin  # theirs to run: it asks for each token hidden
 ```
 
 **The access level is theirs to choose, and it comes first**, because it decides the app
@@ -118,18 +118,23 @@ read too, and it reads Slack as them when they ask about messages) and `write` (
 also send messages as them, to other people and channels).
 Read them those sentences and ask. Never choose `converse`, `read` or `write` for them,
 and never suggest one to save a step: `announce` is the default and is what the two commands above
-set up. For a higher level, both commands take `--access LEVEL`, and the level's extra
-tokens go on standard input with the bot token, one to a line. At `converse` and above the
-command names the member whose messages will be acted on: read them that line. It is
-settled then and nothing changes it afterwards, `--email` least of all; connecting as
-somebody else is `keryx auth logout slack` and a new login, which is theirs to ask for.
+set up. At every level the second command takes two tokens, the bot token and their own
+user token (which is how Slack says which member they are; there is no address to give
+and nothing is asked about where to send: reports go to them). For a higher level, both
+commands take `--access LEVEL`, and the app-level token goes on standard input with the
+other two, one to a line. The command names the member it takes them to be: read them
+that line. It is settled then and nothing changes it afterwards; connecting as somebody
+else is `keryx auth logout slack` and a new login, which is theirs to ask for. A machine
+that connected Slack before user tokens were asked for keeps working as it is: only if
+they want the level raised, or an owner on file, do they run the login again, and the
+first command then prints how to update the app they have.
 
 The link opens Slack's own page for a new app with Keryx's already filled in; they create
-it, install it and copy its bot token. Do not ask them to paste the token to you: they run
-the second command themselves, with the address they use in Slack. It checks each token
-with Slack, finds them by that address (so there is no channel id to look up), and sends
-one test message — ask them whether it arrived. If Slack could not find the address, the
-command says what to run instead; an app they made by hand before keeps working. A second
+it, install it and copy its bot token and their user token, both from the same page. Do not ask them to paste a token to you: they run
+the second command themselves. It checks each token with Slack, takes the member their
+user token belongs to as them (so there is no address to give and no channel id to look
+up), and sends one test message — ask them whether it arrived. An app they connected
+before keeps working. A second
 workspace is the same two commands with `--workspace NAME`, and `keryx auth logout slack
 [--workspace NAME]` disconnects one.
 

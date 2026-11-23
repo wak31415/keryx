@@ -15,15 +15,15 @@ The second half is connecting in the first place (`keryx setup`, `keryx auth log
 Each owner has a Slack app of their own, because a bot token cannot be handed to a command
 line by an app Keryx publishes without a server holding its client secret. `app_manifest`
 is that app, written down once, and `new_app_url` the link that opens Slack's "create an
-app" page with it filled in. Three calls follow the token they paste: `auth_test` (is it
-one, and whose), `lookup_by_email` (the member to send to, so nobody hunts for a channel
-id) and `post_text` (one message, to see it arrive). Each answers with a `SlackResult`,
+app" page with it filled in. Two calls follow the tokens they paste: `auth_test` (is it
+one, and whose: for the user token, the member who installed the app, which is who the
+owner is) and `post_text` (one message, to see it arrive). Each answers with a `SlackResult`,
 never an exception. A failure is an error code and a sentence to print, and of what
 Slack said about it only the code is kept, so no refusal can carry the token back. A
 success carries what was asked for: the workspace's name and address, or the member's id
 and name, each cut to one line.
 
-The app comes at one of three **access levels** (`Access`), chosen before it is created
+The app comes at one of four **access levels** (`Access`), chosen before it is created
 because the level decides the manifest: `announce` posts and reads nothing, `converse`
 also hears the direct messages typed to the app itself (Socket Mode, an app-level token),
 and `read` also holds a user token that reads Slack as the owner. `app_manifest(access)`
@@ -50,7 +50,6 @@ log = logging.getLogger("keryx.slack")
 
 POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
 AUTH_TEST_URL = "https://slack.com/api/auth.test"
-LOOKUP_BY_EMAIL_URL = "https://slack.com/api/users.lookupByEmail"
 CONNECTIONS_OPEN_URL = "https://slack.com/api/apps.connections.open"
 REACTIONS_ADD_URL = "https://slack.com/api/reactions.add"
 CONVERSATIONS_HISTORY_URL = "https://slack.com/api/conversations.history"
@@ -87,10 +86,10 @@ class Access(StrEnum):
 LEVELS = tuple(Access)
 
 #: What the app may do at every level. `chat:write` posts, and with a member id as the
-#: channel it posts to that member's conversation with the app, so no `im:write`.
-#: `users:read.email` is `users.lookupByEmail`, and Slack grants it only together with
-#: `users:read`.
-BOT_SCOPES = ("chat:write", "users:read", "users:read.email")
+#: channel it posts to that member's conversation with the app, so no `im:write`. The bot
+#: reads nothing about members: who the owner is comes from their own user token, so the
+#: `users:read` and `users:read.email` an address lookup needed are gone.
+BOT_SCOPES = ("chat:write",)
 #: Added at `converse`: `im:history` is the `message.im` event (only the app's own direct
 #: messages, as a bot scope), and `reactions:write` is the acknowledgement, a reaction,
 #: because a reaction notifies nobody and a "got it" message does.
@@ -122,6 +121,14 @@ USER_SCOPES = (
     "users:read",
     *SEARCH_SCOPES,
 )
+#: What the user token may do below `read`: one scope, the least revealing Slack grants a
+#: user token, because an install issues a user token only when it asks for a user
+#: scope, and the token is what says who installed the app (`auth.test`, which needs no
+#: scope itself). `emoji:read` is "View custom emoji in a workspace": its one method is
+#: `emoji.list`, it is granted to user tokens, it is not a legacy scope, and nothing it
+#: shows is anybody's. (`team:read` also shows the workspace's email domain and lists
+#: external teams and contacts; `identify` is legacy.) Keryx never calls `emoji.list`.
+IDENTITY_USER_SCOPES = ("emoji:read",)
 #: Added to the user token at `write`: `chat:write` posts as the owner wherever they could
 #: post, and `im:write` opens their direct conversation with a member they have not
 #: written to before (`conversations.open`). Nothing that edits, deletes, uploads or
@@ -138,7 +145,20 @@ TOKEN_PREFIXES = {BOT: "xoxb-", APP: "xapp-", USER: "xoxp-"}
 
 
 def token_kinds(access: Access) -> tuple[str, ...]:
-    """The tokens a level needs, in the order they are asked for."""
+    """The tokens connecting at a level takes, in the order they are asked for.
+
+    The user token at every level (the owner's ruling of 2026-11-24, "let's always
+    require a user token"): a bot token names the bot, not whoever installed it, and
+    `auth.test` on the user token is how Slack itself says who the owner is.
+    """
+    return (BOT, APP, USER) if access.reaches(Access.CONVERSE) else (BOT, USER)
+
+
+def used_kinds(access: Access) -> tuple[str, ...]:
+    """The tokens a level works with once it is connected: the bot's to post, the app's
+    to listen from `converse`, the user's to read from `read`. Below `read` the user
+    token is used to connect and for nothing after, so a workspace an older build
+    connected, which has none, lacks nothing it runs on."""
     kinds = [BOT]
     if access.reaches(Access.CONVERSE):
         kinds.append(APP)
@@ -340,9 +360,10 @@ def _get(url: str, params: dict, token: str) -> dict:
 
 
 def user_scopes(access: Access) -> tuple[str, ...]:
-    """What the user token may do at `access`: nothing below `read`."""
+    """What the user token may do at `access`: below `read`, the one scope that makes
+    Slack issue it at all."""
     if not access.reaches(Access.READ):
-        return ()
+        return IDENTITY_USER_SCOPES
     return USER_SCOPES + (WRITE_USER_SCOPES if access.reaches(Access.WRITE) else ())
 
 
@@ -365,8 +386,10 @@ def bot_events(access: Access) -> tuple[str, ...]:
 def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
     """The Slack app each owner creates, at the level they chose.
 
-    The only place it is written down. At `announce` it is a bot that posts and can find
-    the owner by address: nothing listens to Slack — no events, no redirect URL, no socket
+    The only place it is written down. At every level the install also issues the owner
+    a user token (`user_scopes`): it is how Slack says who installed the app, and below
+    `read` its one scope lets it see nothing of theirs. At `announce` it is a bot that
+    posts: nothing listens to Slack — no events, no redirect URL, no socket
     mode — and the Messages tab is on, read-only, because that tab is where a message to
     a member arrives and there is nothing to answer one typed there. At `converse` the
     tab takes messages, the bot subscribes to `message.im` and nothing else, and Socket
@@ -389,10 +412,9 @@ def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
             },
             "bot_user": {"display_name": "Keryx"},
         },
-        "oauth_config": {"scopes": {"bot": list(bot_scopes(access))}},
+        "oauth_config": {"scopes": {"bot": list(bot_scopes(access)),
+                                    "user": list(user_scopes(access))}},
     }
-    if access.reaches(Access.READ):
-        manifest["oauth_config"]["scopes"]["user"] = list(user_scopes(access))
     if converse:
         manifest["settings"] = {
             "event_subscriptions": {"bot_events": list(bot_events(access))},
@@ -499,14 +521,6 @@ class Connection(SlackResult):
     """
 
     url: str = field(default="", repr=False)
-
-
-@dataclass(frozen=True)
-class Member(SlackResult):
-    """`users.lookupByEmail`: the member an address belongs to."""
-
-    user_id: str = ""
-    name: str = ""
 
 
 def _ask(call, url: str, payload: dict, token: str) -> tuple[dict, str]:
@@ -617,18 +631,6 @@ def add_reaction(
     payload = {"channel": channel, "timestamp": ts, "name": name}
     _, error = _ask(post, REACTIONS_ADD_URL, payload, token)
     return SlackResult(error="" if error == "already_reacted" else error)
-
-
-def lookup_by_email(token: str, email: str, *, get=_get) -> Member:
-    """The member of the token's workspace whose address is `email`."""
-    result, error = _ask(get, LOOKUP_BY_EMAIL_URL, {"email": email.strip()}, token)
-    if error:
-        return Member(error=error)
-    user = result.get("user")
-    user_id = str(user.get("id") or "") if isinstance(user, dict) else ""
-    if not _MEMBER_ID.fullmatch(user_id):
-        return Member(error=UNKNOWN_ERROR)
-    return Member(user_id=user_id, name=_line(user.get("real_name") or user.get("name")))
 
 
 def post_text(token: str, channel: str, text: str, *, post=_post) -> SlackResult:

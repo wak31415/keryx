@@ -118,7 +118,8 @@ def _slack_workspaces(settings: Settings) -> list[dict[str, Any]]:
         return []
     return [
         {"name": each.name, "team": each.team, "label": each.label,
-         "access": str(each.access), "listens": each.listens, "missing": list(each.missing)}
+         "access": str(each.access), "listens": each.listens, "missing": list(each.missing),
+         "owner": each.owner_id}
         for each in found
     ]
 
@@ -129,8 +130,10 @@ def slack_lines(entry: dict[str, Any]) -> list[str]:
     for each in entry.get("workspaces", []):
         name = each["label"]
         state = (f"without {' or '.join(each['missing'])}" if each["missing"]
-                 else ("acts when you mention the app" if each["listens"] else "posts only"))
-        lines.append(f"{name}: {each['access']} level, {state}")
+                 else ("acts on what you type to the app" if each["listens"] else "posts only"))
+        owner = (f", you are {each['owner']}" if each.get("owner")
+                 else ", no owner on file yet (the next `keryx auth login slack` adds one)")
+        lines.append(f"{name}: {each['access']} level, {state}{owner}")
     return lines
 
 
@@ -152,11 +155,9 @@ class LoginOptions:
     #: Google: the account the owner means to sign in as, when it is not the one saved.
     account: str | None = None
     #: Slack: what standard input held, one token to a line (None: say what the level
-    #: means and print the link instead), the address to find the owner by, whether to
-    #: send one test message, which workspace (None: the first) and which access level
-    #: (None: the one it has).
+    #: means and print the link instead), whether to send one test message, which
+    #: workspace (None: the first) and which access level (None: the one it has).
     tokens: str | None = field(default=None, repr=False)
-    email: str | None = None
     test: bool = True
     workspace: str | None = None
     access: str | None = None
@@ -277,7 +278,6 @@ def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, ech
             settings,
             store,
             tokens=options.tokens,
-            email=options.email,
             test=options.test,
             echo=echo,
             workspace=workspace,

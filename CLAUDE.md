@@ -39,10 +39,12 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   `google-workspace` still mean it, for one release. `slack [--access
   announce|converse|read|write] [--workspace NAME]` alone says what that access level lets Keryx
   see and prints the link that creates the owner's Slack app (for an app there is, the
-  manifest that raises its level; a lower level is applied at once), and `slack --stdin
-  [--email ADDRESS] [--no-test]` takes the level's tokens on standard input, one to a line
-  (never argv), checks each, finds where to send, turns `slack_report` on and sends one
-  test message; nothing changes whose messages are acted on but a logout and a new login;
+  manifest that raises its level, or that gives an app made before user tokens the one
+  it now needs; a lower level is applied at once), and `slack --stdin [--no-test]` takes
+  the level's tokens on standard input, one to a line (never argv: the bot token and the
+  user token at every level, the app-level one from `converse`), checks each, learns who
+  the owner is from the user token, turns `slack_report` on and sends one test message;
+  nothing changes whose messages are acted on but a logout and a new login;
   see "Slack runs both ways". `uv run keryx auth logout google` revokes the grant at Google
   and removes every file a sign-in left; `auth logout slack [--workspace NAME]` forgets a
   Slack workspace's tokens and settings (the app is the owner's own, so nothing is
@@ -187,13 +189,13 @@ remember:
   because an app Keryx published could not hand a command line a bot token without a
   server holding its client secret: `app_manifest(access)` is that app at each access
   level and the only place its scopes are written, `new_app_url` is Slack's link that
-  opens it ready to create, and `auth_test`, `open_connection`, `lookup_by_email` and
-  `post_text` are what setup does with the pasted tokens (`setup/slack.py`, and the
-  wizard's Slack step through four `Probes` fields). `slack_socket` is the Socket Mode
+  opens it ready to create, and `auth_test`, `open_connection` and `post_text` are what
+  setup does with the pasted tokens (`setup/slack.py`, and the wizard's Slack step
+  through three `Probes` fields). `slack_socket` is the Socket Mode
   connection a workspace is heard over. A
   member id is a valid `channel_id` (`chat.postMessage` delivers it to that member's
-  messages from the app), so setup finds the owner by their address, and an id typed by
-  hand is the fallback when Slack cannot. A Slack refusal is repeated as its error code
+  messages from the app), so reports go to the member the owner's user token names, and
+  nobody copies a channel id out of Slack. A Slack refusal is repeated as its error code
   and nothing else it said. **A token brings its destination with it**
   (`setup.slack.keeps`): a direct message's id belongs to the app that opened it, so a
   token that is not the one on file is never paired with one, in the plugin's file or in a
@@ -722,15 +724,24 @@ which is an address and may hold a `#`, is percent-encoded whole.
 Until 2026-11-23 Slack only carried things out. The owner's app now comes at one of four
 **access levels** (`integrations.slack.Access`), a ladder, each holding the one below:
 
-- **`announce`** — exactly the app there was. Keryx posts; nothing listens, nothing is read.
+**A user token at every level** (the owner's ruling of 2026-11-24, "let's always
+require a user token"): a bot token names the bot, not whoever installed it, so the
+install issues the owner a user token and `auth.test` on it is how Slack itself says who
+the owner is. Below `read` the manifest asks for exactly one user scope
+(`IDENTITY_USER_SCOPES`, `emoji:read`: "View custom emoji in a workspace", granted to user
+tokens, not legacy, and nothing it shows is anybody's), because Slack issues a user token
+only for a user scope; Keryx never calls the method it allows. The bot reads nothing
+about members: `users:read` and `users:read.email` went with the address lookup.
+
+- **`announce`** — Keryx posts; nothing listens, nothing is read.
 - **`converse`** — and Keryx is sent the direct messages typed to the app itself, and
   nothing else: `im:history` as a bot scope, the `message.im` bot event, Socket Mode, the
   Messages tab writable, and `reactions:write` for the acknowledgement. One more token,
   the app-level `xapp-` with `connections:write`.
 - **`read`** — and it is sent the mentions of it in conversations it was added to
   (`app_mentions:read`, the `app_mention` bot event: anyone's mention arrives, and only
-  the owner's is acted on, and answered there), and holds a user token (`xoxp-`)
-  that reads Slack as the owner: the four `*:history` scopes, the four `*:read` listings,
+  the owner's is acted on, and answered there), and the user token (`xoxp-`) may now
+  read Slack as the owner: the four `*:history` scopes, the four `*:read` listings,
   `users:read` and search (see "Slack reads with one tool and sends with two").
 - **`write`** — and that user token may also post as the owner (`chat:write`, and
   `im:write` to open a direct conversation they have not had before): one message to a
@@ -827,29 +838,40 @@ Eleven rulings:
   Tokens arrive on standard input, one to a line, told apart by prefix; one the level
   does not use is refused by name, one it needs and lacks likewise, and every one is
   checked before anything is saved: `auth.test` on the bot token, `auth.test` on the user
-  token (the same team, and its `user_id` must be the owner), `apps.connections.open` on
-  the app-level token. The wizard saves nothing until every answer is in, and above
+  token (the same team; its `user_id` is the owner, and must be the one on file when
+  there is one), `apps.connections.open` on the app-level token. The wizard saves nothing until every answer is in, and above
   `announce` never offers to save a token unchecked: what a message is held to is what
   Slack said of the token.
-- **One owner, fixed at connect.** The owner's ruling (2026-11-23): the owner is whoever
-  set the connection up, and there is no option to change it. `owner_id` is established
-  once, and only by something Slack said of that person: at `read` and above the user
-  token's own member, at `converse` the member an address is looked up to be (the one
-  given at connect, else the Google address on file, which `connect` and the wizard try
-  before stopping to ask for `--email`). **Never from where reports go**: a destination
-  that is a member's id may be a colleague's, and once made that colleague the owner
-  (`setup.slack._owner`). It is said aloud (`OWNER_LINE`, on every connect at `converse`
-  and above). After that nothing changes it in place. `channel_id` (the destination: `--email`, the wizard's "where to
-  send") is a separate setting and only ever chooses where reports go
-  (`setup.slack.standing_owner`); a user token that belongs to anybody else is refused; a
-  bot token from another workspace is refused while one is connected; the wizard has no
-  question that can change it, and the first time above `announce` its "where to send"
-  must say who they are. `keryx auth logout slack` and a new login is the one way to
-  connect as somebody else. Do not add an option for it, and mind the ones that are
-  there: `keryx plugins install slack_report --set` refuses `owner_id`, `access` and
-  everything else a sign-in settles (`Key.by_sign_in`; `channel_id` and `mcp_server` stay
-  settable), and the wizard and the command line ask one function,
+- **One owner, fixed at connect, and Slack says who.** The owner's rulings (2026-11-23:
+  the owner is whoever set the connection up, and there is no option to change it;
+  2026-11-24: "let's always require a user token"). `owner_id` is the member `auth.test`
+  names for the user token, in the bot token's own workspace, at every level, recorded at
+  `announce` too so that raising the level changes nothing about who the owner is.
+  **Nothing else establishes one**: not an address (there is no `--email`, no lookup, no
+  question about where to send), not where reports go (`setup.slack._owner`). It is said
+  aloud on every connect (`OWNER_LINE` at `converse` and above, `OWNER_NOTED` below).
+  After that nothing changes it in place: a user token that belongs to anybody else is
+  refused, a bot token from another workspace is refused while one is connected, and
+  `keryx auth logout slack` and a new login is the one way to connect as somebody else.
+  Do not add an option for it, and mind the ones that are there: `keryx plugins install
+  slack_report --set` refuses `owner_id`, `access` and everything else a sign-in settles
+  (`Key.by_sign_in`), and the wizard and the command line ask one function,
   `setup.slack.another_workspace`, so neither lets through what the other refuses.
+  **Reports go to the owner's member id**, unless a destination on file still goes with
+  the bot token (`keeps`), which stays; `--set channel_id=…` is the one way to send them
+  anywhere else, and the line that prints the destination says so. **Below `read` the
+  user token is used for that one `auth.test` and nothing after**: `SlackWorkspace.reads`
+  and `.writes` are gated on the level, never on a token being on file, and a test is
+  named after it. **An install from before user tokens keeps working untouched**: what a
+  level runs on is `integrations.slack.used_kinds`, not what a login takes
+  (`token_kinds`), so a workspace with a bot token and a destination lacks nothing,
+  `doctor` says in one line that it has no owner on file yet and passes, the wizard lets
+  its user token be left blank when nothing else changed, and only the next `keryx auth
+  login slack` asks for one (showing how to update the app it has, never the link that
+  makes a second). **A token that could read or send as the owner is not kept below
+  `read`**: lowering out of `read` forgets it, as it always did, because it keeps those
+  permissions at Slack until the app is reinstalled; one that could only say who they
+  are is kept.
 - **One app per workspace, in shapes every build on the machine writes back.** The first
   workspace is the top of `slack_report.toml` and the three plain settings
   (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_USER_TOKEN`); a file from before reads as

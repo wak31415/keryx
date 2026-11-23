@@ -288,7 +288,10 @@ aloud also works, because `submit_pin` answers at every trust level.
 
 Your Slack app has one of four access levels, which you choose before the app is created
 and can lower at any time. **`announce` is the default and the off switch:** Keryx posts
-to you and reads nothing, exactly as before there were levels.
+to you and reads nothing. At every level, this one included, Keryx holds your Slack user
+token, because it is how Slack says which member you are; below `read` that token can see
+nothing but the workspace's custom emoji, and Keryx uses it once, when you connect
+(see [Where secrets live](#where-secrets-live)).
 
 **At `converse`, a Slack message can start work on your machine without the phone PIN.**
 That is the trade you make by choosing it, so it is said plainly. Keryx opens a connection
@@ -346,10 +349,9 @@ direct messages typed to your Keryx app.
   and no keypress on this channel. Over the cap, Keryx says so in one sentence and does
   nothing. Follow-ups on the phone are not counted, as before.
 - **There is one owner, fixed when you connect.** Whose messages start work is settled
-  once: from your user token at `read`, or at `converse` from an address looked up in
-  Slack (the one you give, else the one you signed in to Google with). Never from where
-  reports are sent, which may be somebody else. It is named on a line of its own each
-  time you connect. Nothing changes it afterwards:
+  once, by Slack itself: it is the member your user token belongs to, at every level.
+  Never an address, and never where reports are sent, which may be somebody else. It is
+  named on a line of its own each time you connect. Nothing changes it afterwards:
   not changing where reports are sent, not a user token (somebody else's is refused), and
   there is no option for it. To connect as somebody else, `keryx auth logout slack` and
   log in again.
@@ -575,15 +577,22 @@ atomically, so it never exists with looser permissions. The plain settings are i
 a client of your own. **Keep this directory out of any dotfiles repository.** It holds
 secrets despite its name.
 
-What each of those secrets can do is up to whoever issued it, and one is worth knowing
-about. The Slack app that `keryx setup` has you create gives its bot token two powers:
-posting messages as the app (`chat:write`), and reading your workspace's member list with
-email addresses (`users:read`, `users:read.email`). Keryx uses the second for one lookup,
-to find you by your address so that you do not have to copy a channel id out of Slack. The
-token keeps that reach for as long as it is valid, though, and so does anyone who can read
-`secrets.toml`. An app you made by hand with `chat:write` alone still works; setup then
-asks you for a channel or member id instead. At the higher access levels the app holds
-more, and the section below says what.
+What each of those secrets can do is up to whoever issued it, and Slack's are worth
+knowing about. The Slack app that `keryx setup` has you create gives its bot token one
+power at the lowest level, posting messages as the app (`chat:write`); it can no longer
+read your workspace's member list or anybody's email address, which an earlier version
+used to find you by your address. **Keryx also holds a Slack user token at every level
+now**, because a bot token does not say who installed the app and a user token does: it
+is how Keryx knows which member you are. At `announce` and `converse` that token has one
+permission, `emoji:read`, which lets it list the workspace's custom emoji and nothing
+else; Keryx uses the token once, when you connect, to ask Slack whose it is, and never
+again. At `read` and `write` the same token can read your Slack, and at `write` post as
+you: the section below says what. Whatever a token can do, it can do for as long as it
+is valid, and so can anyone who can read `secrets.toml`. **Lowering the level does not
+shrink a token**: one issued at `read` keeps its `read` permissions at Slack until you
+reinstall the app with the lower level's manifest, so Keryx forgets that token when you
+lower out of `read`, and asks for the new one at your next login. An app connected
+before any of this, with a bot token alone, keeps working as it was.
 
 Keryx uses a file rather than a keyring on purpose. A service that systemd starts at boot,
 with nobody logged in, cannot unlock a keyring. Claude Code and Codex keep their credentials

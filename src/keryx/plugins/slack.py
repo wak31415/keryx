@@ -42,7 +42,7 @@ from keryx.integrations.slack import (
     SlackSender,
     SlackWebApi,
     slack_credentials,
-    token_kinds,
+    used_kinds,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -130,7 +130,7 @@ class SlackWorkspace:
     @property
     def missing(self) -> tuple[str, ...]:
         """What its level needs that is not there, in words to print; empty when whole."""
-        gaps = [f"its {kind} token" for kind in token_kinds(self.access)
+        gaps = [f"its {kind} token" for kind in used_kinds(self.access)
                 if not self.token(kind)]
         if not self.channel:
             gaps.append("somewhere to post")

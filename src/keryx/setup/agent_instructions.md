@@ -31,18 +31,20 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    messages as them) and then prints a link and its steps. The level is the person's to
    choose: read them what it printed and ask. Never choose `converse`, `read` or `write`
    for them, since at those any message of theirs to the Keryx app (and one that
-   mentions it elsewhere) can start work without the phone PIN, and at `write` Keryx can post in their name; with no
-   answer it is `announce`, which the commands here set up (a higher one adds `--access
+   mentions it elsewhere) can start work without the phone PIN, and at `write` Keryx can
+   post in their name; with no answer it is `announce`, which the commands here set up (a higher one adds `--access
    LEVEL` to both, and its extra tokens to standard input, one to a line). Relay the link
    and the steps; the
-   person creates and installs the Slack app it describes and copies its bot token. That
-   token is not yours to see: they run `keryx auth login slack --stdin --email ADDRESS`
-   themselves, with the address they use in Slack, and it asks for the token hidden
-   (only with the token already in a variable of your environment do you run it:
-   `printenv VAR | keryx auth login slack --stdin --email ADDRESS`). It checks the
-   token, finds them by that address, turns `slack_report` on and sends them one test
-   message; ask whether it arrived. If it could not find them, it says what to run
-   instead.
+   person creates and installs the Slack app it describes and copies two tokens from one
+   page, the bot token and their own user token (the user token is how Slack says which
+   member they are; no address is asked for). Those tokens are not yours to see: they
+   run `keryx auth login slack --stdin` themselves, and it asks for each hidden (only
+   with the tokens already in variables of your environment do you run it: `printenv
+   BOT_VAR USER_VAR | keryx auth login slack --stdin`, one token to a line). It checks
+   both, takes the member the user token belongs to as them, sends reports to that
+   member, turns `slack_report` on and sends them one test message; ask whether it
+   arrived. To send reports somewhere else afterwards: `keryx plugins install
+   slack_report --set channel_id=ID`.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
    Slack, reading Slack (which needs a workspace at the `read` level), sending Slack
    messages as them (the `write` level, and its own yes), email, reading the
