@@ -683,6 +683,21 @@ def test_a_secret_set_for_a_plugin_that_is_off_is_a_warning(healthy, name, says)
     assert f"keryx plugins install {name}" in check.detail
 
 
+def test_slack_that_was_never_connected_is_pointed_at_its_sign_in(healthy):
+    """`plugins install send_to_slack` has no token and nowhere to send; the sign-in gets both."""
+    bare = healthy.model_copy(update={"slack_bot_token": None})
+    for name in ("send_to_slack", "check_billing"):
+        plugins.remove(bare, name)
+        plugins.off_path(bare, name).unlink()
+
+    checks = by_name(run_doctor_checks(bare))
+
+    slack = checks["send_to_slack"]
+    assert (slack.state, slack.severity) == ("missing", "soft")
+    assert slack.detail == "off (optional) — `keryx setup` → Plugins, or `keryx auth login slack`"
+    assert "`keryx plugins install check_billing`" in checks["check_billing"].detail
+
+
 def test_a_google_sign_in_does_not_nag_about_email_answers_being_off(healthy):
     """The sign-in is the agents' as well: having it says nothing about wanting the plugin."""
     plugins.remove(healthy, "check_email")

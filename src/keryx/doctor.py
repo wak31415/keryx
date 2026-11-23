@@ -780,6 +780,10 @@ _UNUSED_SECRET = {
     "check_email": "questions about your email are dispatched as tasks instead",
 }
 
+#: What turns a plugin on from nothing, where `keryx plugins install NAME` cannot: Slack's
+#: needs a token and somewhere to send first, and its sign-in gets both and turns it on.
+_FIRST_TIME = {"send_to_slack": "keryx auth login slack"}
+
 
 def _secret_without_plugin(settings: Settings, name: str) -> str | None:
     """The secret (or sign-in) this plugin uses that is there while the plugin is off."""
@@ -840,9 +844,9 @@ def plugin_checks(settings: Settings) -> list[Check]:
                 severity="soft", section="plugins",
             ))
         else:
+            how = _FIRST_TIME.get(name, f"keryx plugins install {name}")
             checks.append(Check(
-                name, False,
-                f"off (optional) — `keryx setup` → Plugins, or `keryx plugins install {name}`",
+                name, False, f"off (optional) — `keryx setup` → Plugins, or `{how}`",
                 severity="soft", section="plugins", unset=True,
             ))
     return checks
