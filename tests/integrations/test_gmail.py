@@ -101,6 +101,10 @@ class FakeGmail:
         self.threads = threads
         self.bodies = bodies or {}
         self.calls: list[tuple[str, dict]] = []
+        self.closed = 0
+
+    async def aclose(self):
+        self.closed += 1
 
     async def get(self, path, params=None):
         self.calls.append((path, dict(params or {})))
@@ -358,6 +362,27 @@ async def test_an_empty_day_is_said_without_a_model_call(fixed_day):
         "else is already answered."
     )
     assert summariser.calls == []
+
+
+async def test_the_connections_are_closed_when_it_has_answered_or_failed(fixed_day):
+    api = FakeGmail({"t1": [message("m1", "t1", 10)]})
+
+    await EmailReader(api, FakeSummariser()).ask("anything?", day="yesterday")
+    with pytest.raises(EmailError):
+        await EmailReader(api, FakeSummariser(delay=5), timeout_s=0.05).ask(
+            "anything?", day="yesterday"
+        )
+
+    assert api.closed == 2
+
+
+async def test_gmails_own_client_closes_what_the_shared_request_opened(tmp_path):
+    api = HttpGmail(token_file(tmp_path))
+    opened = api._api._http()
+
+    await api.aclose()
+
+    assert opened.is_closed
 
 
 async def test_a_model_call_that_fails_is_model_failed_with_its_sentence(fixed_day):

@@ -19,6 +19,7 @@ from keryx.integrations.google_api import (
     GoogleWriter,
     access_problem,
     failure,
+    offered,
 )
 
 NEEDS = (google.CALENDAR_READONLY,)
@@ -260,3 +261,183 @@ def test_holding_a_scope_is_narrower_than_a_service_being_connected():
     assert not google.holds(read_only, (google.CALENDAR_EVENTS,))
     assert "calendar" not in google.connected_services(read_only)
     assert google.holds([google.DRIVE_FULL], (google.DRIVE_READONLY,))
+
+
+def test_a_service_keryxs_own_app_does_not_offer_names_what_would_add_it(
+    settings, tmp_path, monkeypatch
+):
+    """Signing in again cannot add what the client does not ask for."""
+    client = tmp_path / "google_client.json"
+    client.write_text(json.dumps({
+        "installed": {"client_id": "keryx.apps", "client_secret": "GOCSPX-published"},
+        "keryx_services": ["gmail"],
+    }))
+    monkeypatch.setattr(google, "PUBLISHED_CLIENT_FILE", client)
+    settings.ensure_dirs()
+    sign_in(settings, ["gmail"])
+
+    problem = access_problem(settings, "calendar", NEEDS)
+
+    assert "Keryx's Google app does not offer it yet" in problem
+    assert "`keryx auth login google --client-file FILE`" in problem
+    assert not offered(settings, "calendar") and offered(settings, "gmail")
+
+
+# ---------------------------------------------------- a request with no answer, and text
+
+
+def stream_of(chunks, served):
+    async def body():
+        for chunk in chunks:
+            served.append(len(chunk))
+            yield chunk
+
+    return httpx.Response(200, content=body())
+
+
+async def test_text_stops_reading_at_the_cap_whatever_the_size_of_the_file(tmp_path):
+    served: list[int] = []
+    api = reader(tmp_path, lambda request: stream_of([b"x" * 100] * 1000, served))
+
+    text, cut = await api.text("files/abc/export", limit=50)
+
+    assert (text, cut) == ("x" * 50, True)
+    assert len(served) < 10  # 100 kB on offer, a few hundred bytes taken
+
+
+async def test_text_that_fits_is_all_read_and_a_cut_never_shows_half_a_character(tmp_path):
+    whole = reader(tmp_path, lambda request: stream_of([b"caf", "é!".encode()], []))
+    assert await whole.text("files/abc/export", limit=50) == ("café!", False)
+
+    # Three-byte characters, cut by the byte budget in the middle of one.
+    wide = reader(tmp_path, lambda request: stream_of(["€".encode() * 40], []))
+    text, cut = await wide.text("files/abc/export", limit=4)
+    assert (text, cut) == ("€€€€", True)
+
+
+async def test_a_connection_lost_while_reading_text_is_a_failure_with_a_sentence(tmp_path):
+    def broken(request):
+        async def body():
+            yield b"some"
+            raise httpx.ReadError("gone")
+
+        return httpx.Response(200, content=body())
+
+    with pytest.raises(GoogleApiError) as raised:
+        await reader(tmp_path, broken).text("files/abc/export", limit=50)
+
+    assert raised.value.code == "failed" and raised.value.detail == "files: ReadError"
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "may_have_landed"),
+    [
+        (httpx.ConnectError("refused"), "failed", False),
+        (httpx.ConnectTimeout("slow to connect"), "timeout", False),
+        (httpx.PoolTimeout("no connection free"), "timeout", False),
+        (httpx.ReadTimeout("sent, no answer"), "timeout", True),
+        (httpx.WriteError("lost while sending"), "failed", True),
+        (httpx.RemoteProtocolError("cut off"), "failed", True),
+    ],
+)
+async def test_a_request_never_sent_is_told_from_one_never_answered(
+    tmp_path, error, code, may_have_landed
+):
+    def fail(request):
+        raise error
+
+    raised = await failing(tmp_path, fail)
+
+    assert (raised.code, raised.may_have_landed) == (code, may_have_landed)
+
+
+@pytest.mark.parametrize(
+    ("status", "may_have_landed"), [(500, True), (503, True), (400, False), (403, False),
+                                    (404, False)]
+)
+async def test_only_a_fault_of_googles_own_leaves_a_write_in_doubt(
+    tmp_path, status, may_have_landed
+):
+    assert (await failing(tmp_path, httpx.Response(status))).may_have_landed is may_have_landed
+
+
+async def test_nothing_that_fails_before_the_request_is_in_doubt(tmp_path):
+    def no_refresh(request):
+        if request.url.host == "oauth2.googleapis.com":
+            raise httpx.ReadTimeout("the token endpoint, not the API")
+        raise AssertionError("never reached")
+
+    api = GoogleWriter(
+        token_file(tmp_path), CALENDAR,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(no_refresh)),
+    )
+    told: list[str] = []
+
+    with pytest.raises(GoogleApiError) as raised:
+        await api.post("calendars/primary/events", {}, sending=lambda: told.append("sending"))
+
+    assert (raised.value.code, raised.value.may_have_landed) == ("timeout", False)
+    assert told == []
+    assert not GoogleApiError("signed_out").may_have_landed
+    assert not GoogleApiError("not_connected").may_have_landed
+
+
+async def test_a_writer_says_when_the_request_is_about_to_leave(tmp_path):
+    seen: list[httpx.Request] = []
+    order: list[str] = []
+
+    def answer(request):
+        order.append("request")
+        return httpx.Response(200, json={"id": "e1"})
+
+    api = GoogleWriter(token_file(tmp_path), CALENDAR, client=client_for(answer, seen))
+
+    await api.post("calendars/primary/events", {"summary": "x"},
+                   sending=lambda: order.append("sending"))
+
+    assert order == ["sending", "request"]
+
+
+async def test_a_401_closes_what_it_was_reading_and_tries_once_more(tmp_path):
+    answers = [httpx.Response(401, json={}), httpx.Response(200, content=b"fine")]
+    api = reader(tmp_path, lambda request: answers.pop(0))
+
+    assert await api.text("files/abc/export", limit=10) == ("fine", False)
+
+
+async def test_the_connections_it_opened_are_closed_and_opened_again_when_needed(tmp_path):
+    api = GoogleReader(token_file(tmp_path), CALENDAR)
+    first = api._http()
+
+    assert first.timeout.connect == 5.0 and first.timeout.read == 15.0
+    await api.aclose()
+    await api.aclose()  # nothing open is nothing to close
+
+    assert first.is_closed and api._client is None
+    assert api._http() is not first
+    await api.aclose()
+
+
+async def test_a_client_it_was_handed_is_not_its_to_close(tmp_path):
+    client = client_for(httpx.Response(200, json={}))
+    api = GoogleReader(token_file(tmp_path), CALENDAR, client=client)
+
+    await api.get("x")
+    await api.aclose()
+
+    assert not client.is_closed
+    await client.aclose()
+
+
+async def test_a_refusal_whose_body_breaks_off_is_still_a_failure_with_a_sentence(tmp_path):
+    def broken(request):
+        async def body():
+            yield b'{"error": '
+            raise httpx.ReadError("gone")
+
+        return httpx.Response(403, content=body())
+
+    with pytest.raises(GoogleApiError) as raised:
+        await reader(tmp_path, broken).text("files/abc/export", limit=50)
+
+    assert raised.value.code == "failed"

@@ -550,7 +550,9 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
   `integrations/google_api.py`: a `GoogleReader` has `get` and `text` and nothing else,
   and only a `GoogleWriter` can `post`. A tool that reads is built on the first, so it has
   no method to write with whatever the token allows. `add_calendar_event` is the only
-  writer.
+  writer. `text` reads a body as it arrives and stops at its cap, so a file of any size
+  costs the memory of what is kept. Each tool calls `aclose` when it has answered: one
+  question is one set of connections, and the access token is what is kept between them.
 - **A tool asks for the scope it uses, not for the service.** `google.holds(scopes, needs)`
   is narrower than a service being connected, which wants every scope the agents' tools
   use: reading the calendar needs `calendar.readonly`, adding to it only

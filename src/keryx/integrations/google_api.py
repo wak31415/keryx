@@ -50,8 +50,12 @@ CALENDAR = "https://www.googleapis.com/calendar/v3"
 DRIVE = "https://www.googleapis.com/drive/v3"
 
 REQUEST_TIMEOUT_S = 15.0
+#: Making the connection gets less: a host that cannot be reached is known quickly, and
+#: known to be a request that was never sent.
+CONNECT_TIMEOUT_S = 5.0
 #: One line of somebody else's text, clipped: a title, a place, a file's name.
 TEXT_CHARS = 120
+BYTE_ORDER_MARK = "\ufeff"
 #: Refresh the access token this long before Google says it expires.
 EXPIRY_MARGIN_S = 60.0
 
@@ -126,13 +130,35 @@ class GoogleApiError(Exception):
 
     `code` is what went wrong, `detail` is for the log (never a credential, never a
     response body), and `status` is the HTTP status when Google itself answered.
+    `unanswered` is the one case with no answer that is not a plain failure: the request
+    went out and nothing came back (a read that timed out, a connection lost after
+    sending), so Google may have acted on it.
     """
 
-    def __init__(self, code: ErrorCode, detail: str = "", *, status: int | None = None) -> None:
+    def __init__(
+        self,
+        code: ErrorCode,
+        detail: str = "",
+        *,
+        status: int | None = None,
+        unanswered: bool = False,
+    ) -> None:
         self.code = code
         self.detail = detail
         self.status = status
+        self.unanswered = unanswered
         super().__init__(detail or code)
+
+    @property
+    def may_have_landed(self) -> bool:
+        """Whether a write that ended this way might have been carried out all the same:
+        it went out and was not answered, or Google answered with a fault of its own.
+
+        False for everything known to have happened before the request was sent (no
+        sign-in, a missing scope, a refused refresh, a connection never made) and for
+        everything Google plainly refused.
+        """
+        return self.unanswered or (self.status is not None and self.status >= 500)
 
     def spoken(self, service: str) -> str:
         """The sentence the voice model is handed, for a tool that reads `service`."""
@@ -205,8 +231,14 @@ class GoogleReader:
     `path` is the token file, read at every refresh, so a sign-in made since is the one
     used. `base` is the API's root, and every request is a path under it. `needs` is the
     scopes this tool cannot work without: a token whose saved scopes lack one is
-    `not_connected` before anything is sent. A file with no list of scopes (an older
-    sign-in's) is tried as it is, and Google says.
+    `not_connected` before anything is sent. Only a file with no list of scopes at all is
+    sent as it is, for Google to judge: that is the Gmail-only file an older sign-in left,
+    which `check_email` still reads. Keryx's own token always lists its scopes, and a
+    plugin that asks `access_problem` first is refused before it gets here without them.
+
+    The client is opened when first needed and closed by `aclose`, which a tool calls when
+    it has answered: one question is one set of connections, and none outlives it. The
+    access token is kept across them.
     """
 
     def __init__(
@@ -222,6 +254,8 @@ class GoogleReader:
         self._base = base
         self._needs = tuple(needs)
         self._client = client
+        #: A client handed in is its owner's to close.
+        self._owns_client = client is None
         self._clock = clock
         self._access: str | None = None
         self._expires_at = 0.0
@@ -229,8 +263,16 @@ class GoogleReader:
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S)
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(REQUEST_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
+            )
         return self._client
+
+    async def aclose(self) -> None:
+        """Close the connections this opened. The next request opens them again."""
+        if self._owns_client and self._client is not None:
+            client, self._client = self._client, None
+            await client.aclose()
 
     async def _token(self, *, force: bool = False) -> str:
         async with self._lock:
@@ -274,32 +316,51 @@ class GoogleReader:
         path: str,
         params: Mapping[str, Any] | None,
         body: Mapping[str, Any] | None = None,
+        *,
+        stream: bool = False,
+        sending: Callable[[], None] | None = None,
     ) -> httpx.Response:
-        """One authorized request; a 2xx response, or the `GoogleApiError` it came to."""
+        """One authorized request; a 2xx response, or the `GoogleApiError` it came to.
+
+        With `stream` the body has not been read: the caller reads what it wants and closes
+        it. `sending` is called just before each attempt is handed to the network, after
+        the token is in hand, so its caller knows nothing went out before that.
+        """
         # The log names the kind of thing asked for and never which: the rest of a path is
-        # an id, and a calendar's id is somebody's address.
+        # an id, and a calendar's id is somebody's address. (The HTTP client's own request
+        # log would name it in full; `logging_util.configure_logging` keeps that quiet.)
         what = path.split("/", 1)[0]
         for attempt in range(2):
             token = await self._token(force=attempt > 0)
+            client = self._http()
+            request = client.build_request(
+                method,
+                f"{self._base}/{path}",
+                params=params,
+                json=body,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if sending is not None:
+                sending()
             try:
-                response = await self._http().request(
-                    method,
-                    f"{self._base}/{path}",
-                    params=params,
-                    json=body,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
+                response = await client.send(request, stream=stream)
             except httpx.HTTPError as exc:
-                raise _unreachable(what, exc) from exc
+                raise _unreachable(what, exc, sent=True) from exc
             status = response.status_code
+            if 200 <= status < 300:
+                return response
+            try:
+                await response.aread()
+            except httpx.HTTPError as exc:
+                raise _unreachable(what, exc, sent=True) from exc
+            finally:
+                await response.aclose()
             if status == 401:
                 if attempt == 0:
                     continue  # an access token revoked early: refresh once, then believe it
                 raise GoogleApiError("signed_out", f"{what}: HTTP 401 after a refresh", status=401)
-            if not 200 <= status < 300:
-                code = _classify(response)
-                raise GoogleApiError(code, f"{what}: HTTP {status} ({code})", status=status)
-            return response
+            code = _classify(response)
+            raise GoogleApiError(code, f"{what}: HTTP {status} ({code})", status=status)
         raise AssertionError("unreachable")  # pragma: no cover
 
     async def get(self, path: str, params: Mapping[str, Any] | None = None) -> dict:
@@ -310,34 +371,83 @@ class GoogleReader:
     ) -> tuple[str, bool]:
         """A response that is text rather than JSON (an export), cut to `limit` characters.
 
-        Returns the text and whether it was cut.
+        Returns the text and whether it was cut. The body is read as it arrives and no
+        further than the cut: a file of any size costs the memory of `limit` characters,
+        and the connection is closed on what was not read.
         """
-        response = await self._send("GET", path, params)
-        text = response.content.decode("utf-8", "replace").lstrip("﻿")
-        return text[:limit], len(text) > limit
+        response = await self._send("GET", path, params, stream=True)
+        # UTF-8 at its widest is four bytes a character; a byte-order mark is three more.
+        budget = limit * 4 + 3
+        received = bytearray()
+        try:
+            async for chunk in response.aiter_bytes():
+                received += chunk
+                if len(received) > budget:
+                    break
+        except httpx.HTTPError as exc:
+            raise _unreachable(path.split("/", 1)[0], exc, sent=True) from exc
+        finally:
+            await response.aclose()
+        cut = len(received) > budget
+        # A cut can fall inside a character, which is then dropped, not shown as damage.
+        text = bytes(received[:budget]).decode("utf-8", "ignore" if cut else "replace")
+        text = text.lstrip(BYTE_ORDER_MARK)
+        return text[:limit], cut or len(text) > limit
 
 
 class GoogleWriter(GoogleReader):
     """A `GoogleReader` that can also `post`: the one class a tool that writes is built on."""
 
     async def post(
-        self, path: str, body: Mapping[str, Any], params: Mapping[str, Any] | None = None
+        self,
+        path: str,
+        body: Mapping[str, Any],
+        params: Mapping[str, Any] | None = None,
+        *,
+        sending: Callable[[], None] | None = None,
     ) -> dict:
-        return _json(await self._send("POST", path, params, body))
+        """`sending` is called once the request is about to leave: before it, a failure is
+        known to have created nothing."""
+        return _json(await self._send("POST", path, params, body, sending=sending))
 
 
-def _unreachable(what: str, exc: httpx.HTTPError) -> GoogleApiError:
+#: The failures of a connection that was never made: nothing was sent.
+_NEVER_SENT = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout,
+               httpx.UnsupportedProtocol, httpx.ProxyError)  # fmt: skip
+
+
+def _unreachable(what: str, exc: httpx.HTTPError, *, sent: bool = False) -> GoogleApiError:
+    """A request with no answer. `sent` says it was a request to the API itself, which was
+    then either never connected or, failing any other way, is `unanswered`."""
     code: ErrorCode = "timeout" if isinstance(exc, httpx.TimeoutException) else "failed"
-    return GoogleApiError(code, f"{what}: {type(exc).__name__}")
+    unanswered = sent and not isinstance(exc, _NEVER_SENT)
+    return GoogleApiError(code, f"{what}: {type(exc).__name__}", unanswered=unanswered)
 
 
 def access_problem(settings: Settings, service: str, needs: Sequence[str]) -> str | None:
     """Why the sign-in cannot serve a tool that needs `needs`, in a sentence; None when it
-    can. `service` is the label of the Google service those scopes belong to."""
+    can. `service` is the name of the Google service those scopes belong to.
+
+    The sentence names what fixes it, which is not always signing in again: Keryx's own
+    Google app may not offer the service yet, and then only a client of the owner's does.
+    """
     token = google.read_token(settings)
     if token is None:
         return "not signed in to Google: `keryx auth login google`"
     if not google.holds(token.scopes, needs):
         label = google.SERVICES[service].label
+        if not offered(settings, service):
+            return (
+                f"{label} is not part of your Google sign-in, and Keryx's Google app does "
+                "not offer it yet: `keryx auth login google --client-file FILE` with a "
+                "Google client of your own"
+            )
         return f"{label} is not part of your Google sign-in: `keryx auth login google`"
     return None
+
+
+def offered(settings: Settings, service: str) -> bool:
+    """Whether a sign-in on this machine could connect `service` at all: the client it
+    would use offers it. True with no client to ask, since making one offers everything."""
+    client = google.resolve_client(settings)
+    return client is None or service in client.services

@@ -181,6 +181,8 @@ class GmailApi(Protocol):
 
     async def get(self, path: str, params: Mapping[str, Any] | None = None) -> dict: ...
 
+    async def aclose(self) -> None: ...
+
 
 def legacy_token_path(settings: Settings) -> Path:
     return settings.data_dir / LEGACY_TOKEN_FILE
@@ -224,6 +226,9 @@ class HttpGmail(GmailApi):
             return await self._api.get(path, params)
         except GoogleApiError as exc:
             raise EmailError(_email_code(exc), exc.detail) from exc
+
+    async def aclose(self) -> None:
+        await self._api.aclose()
 
 
 def _email_code(exc: GoogleApiError) -> ErrorCode:
@@ -652,6 +657,9 @@ class EmailReader:
             )
         except TimeoutError as exc:
             raise EmailError("timeout", f"over {self._timeout_s:.0f}s") from exc
+        finally:
+            # One question is one set of connections: none is left open behind the call.
+            await self._api.aclose()
 
     async def _answer(self, question: str, query: str | None, day: Day | None) -> dict:
         started = time.monotonic()
