@@ -291,7 +291,7 @@ async def test_the_daily_cap_applies_and_is_said_in_one_sentence_in_the_thread(
     assert len(await world.tasks()) == 1
     assert world.slack.posts == [
         ("xoxb-first", DM, LATER,
-         "Keryx has reached today's limit of 1 tasks, so this was not started."),
+         "Keryx has reached today's task limit (1), so this was not started."),
     ]
     assert world.slack.posts[0][3] == CAP_REACHED.format(cap=1)
     assert world.slack.reactions == [("xoxb-first", DM, TS)]

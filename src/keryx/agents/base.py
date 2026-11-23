@@ -37,6 +37,10 @@ log = logging.getLogger("keryx.agents")
 SUBAGENT_SUFFIX_PROMPT = "subagent_suffix.md"
 #: Spliced into the suffix only when a Slack MCP server is configured.
 SUBAGENT_SLACK_PROMPT = "subagent_slack.md"
+#: Said to a subagent whose request was typed to the owner's app on Slack, not spoken.
+SUBAGENT_SLACK_ORIGIN_PROMPT = "subagent_slack_origin.md"
+#: `Task.origin_channel` for such a request (`keryx.plugins.slack.SLACK_CHANNEL`).
+SLACK_ORIGIN = "slack"
 SUBAGENT_CUSTOM_TOOLS_PROMPT = "subagent_custom_tools.md"
 #: Spliced in only when there is a repository to file on (`keryx.issues`).
 SUBAGENT_ISSUES_PROMPT = "subagent_issues.md"
@@ -247,7 +251,8 @@ def render_subagent_suffix(
 
     The number is in there for the commit trailer: it is what ties a change in a repo back
     to the sentence they said out loud, which is the one thing `git log` cannot recover. The
-    Slack paragraph is there only when `slack_mcp_server` names a route to use. `owner` is
+    Slack paragraph is there only when `slack_mcp_server` names a route to use, and a task
+    that was typed on Slack rather than spoken is told so, and where its report goes. `owner` is
     whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
     `assistant` is who dispatched it (`Settings.assistant_name`).
     `tools_dir` is where the owner's own voice tools live (`keryx.tools.custom`), and the
@@ -259,6 +264,9 @@ def render_subagent_suffix(
         if slack_mcp_server
         else ""
     )
+    if task.origin_channel == SLACK_ORIGIN:
+        typed = render_prompt(SUBAGENT_SLACK_ORIGIN_PROMPT, owner=owner or OWNER_FALLBACK)
+        slack = "\n".join(part for part in (typed.strip(), slack) if part)
     custom_tools = (
         render_prompt(
             SUBAGENT_CUSTOM_TOOLS_PROMPT,

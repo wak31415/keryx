@@ -293,6 +293,22 @@ def test_the_subagent_suffix_says_whom_the_work_is_for():
     assert "dispatched on the owner's behalf" in render_subagent_suffix(task)
 
 
+def test_a_task_typed_on_slack_is_told_so_and_where_its_report_goes(unwrapped):
+    typed = Task(id=7, kind=TaskKind.AGENT, description="x", origin_channel="slack")
+    spoken = Task(id=7, kind=TaskKind.AGENT, description="x", origin_channel="phone")
+
+    suffix = unwrapped(render_subagent_suffix(typed, owner="Ada", slack_mcp_server="chat"))
+
+    assert "This request was not said out loud: Ada typed it to Keryx on Slack" in suffix
+    assert "posted back in that same thread" in suffix and "Nothing rings them" in suffix
+    assert "Your SPOKEN_SUMMARY line is still required" in suffix
+    # Beside the paragraph about sending things on Slack, not instead of it.
+    assert "`chat` MCP server" in suffix
+    assert "typed it to Keryx on Slack" not in unwrapped(render_subagent_suffix(spoken))
+    assert "{" not in render_subagent_suffix(typed)
+
+
+
 def test_the_subagent_suffix_names_the_assistant_that_dispatched_it(unwrapped, tmp_path):
     task = Task(id=1, kind=TaskKind.AGENT, description="x")
 

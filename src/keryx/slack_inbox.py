@@ -60,7 +60,7 @@ NOTHING_TO_RESUME = (
 CANCELLED = "Task {task_id} was cancelled, so there is nothing here to resume."
 STARTING = "Task {task_id} is only just starting, so send that again in a moment."
 NOT_PASSED_ON = "Keryx could not confirm that reached task {task_id}."
-CAP_REACHED = "Keryx has reached today's limit of {cap} tasks, so this was not started."
+CAP_REACHED = "Keryx has reached today's task limit ({cap}), so this was not started."
 NOT_STARTED = "Keryx could not start that."
 
 

@@ -440,3 +440,10 @@ def test_a_further_workspace_that_cannot_post_is_not_offered(two_workspaces):
     [(_, loaded_tool)] = loaded(settings).tools
 
     assert "workspace" not in loaded_tool.parameters["properties"]
+
+
+def test_the_word_for_a_task_typed_on_slack_is_one_word_everywhere():
+    from keryx.agents.base import SLACK_ORIGIN
+    from keryx.plugins.slack import SLACK_CHANNEL
+
+    assert SLACK_ORIGIN == SLACK_CHANNEL == "slack"
