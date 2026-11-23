@@ -403,8 +403,10 @@ def start(
         if USER in have:
             echo("If Slack shows a different User OAuth Token after the reinstall, hand "
                  "that one over instead of nothing.")
-    echo("The user token says which member you are: reports go to you, and nothing else "
-         "is asked.")
+    # Where reports will go: where they go now, while the bot token stays; else to them.
+    where = (f"reports keep going to {saved.channel}" if BOT in have and saved.channel
+             else "reports go to you")
+    echo(f"The user token says which member you are: {where}, and nothing else is asked.")
 
 
 def _already(saved: SlackWorkspace, echo: Callable[[str], None]) -> None:

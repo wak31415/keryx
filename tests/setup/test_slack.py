@@ -1227,6 +1227,8 @@ def test_an_older_install_is_shown_how_to_update_the_app_it_has(settings):
     assert json.loads(manifest) == app_manifest(Access.ANNOUNCE)
     assert "hand the user token over on standard input" in text
     assert "keryx auth login slack --stdin\n" in text
+    assert text.endswith("The user token says which member you are: reports keep going to "
+                         "D0OLDDM, and nothing else is asked.")
 
 
 def test_an_older_install_keeps_posting_untouched_and_is_asked_only_at_the_next_login(
