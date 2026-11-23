@@ -2,8 +2,9 @@
 
 `check_email`, `check_calendar`, `add_calendar_event` and `find_document` each ask Google
 something in the middle of a call. What they share is here: the access token (refreshed
-from `DATA_DIR/google_token.json`, kept and reused), one authorized request, and what a
-failure *means*, because the voice has to say it in a sentence.
+from `DATA_DIR/google_token.json`, kept and reused), one authorized request, what a
+failure *means*, because the voice has to say it in a sentence, and the three small things
+every answer is put together from (`Unclear`, `clip`, `say_day`).
 
 Two classes, so that reading is a matter of construction and not of care: a `GoogleReader`
 has `get` and `text` and nothing else, whatever the token would allow, and only a
@@ -34,6 +35,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable, Mapping, Sequence
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -48,6 +50,8 @@ CALENDAR = "https://www.googleapis.com/calendar/v3"
 DRIVE = "https://www.googleapis.com/drive/v3"
 
 REQUEST_TIMEOUT_S = 15.0
+#: One line of somebody else's text, clipped: a title, a place, a file's name.
+TEXT_CHARS = 120
 #: Refresh the access token this long before Google says it expires.
 EXPIRY_MARGIN_S = 60.0
 
@@ -138,6 +142,28 @@ class GoogleApiError(Exception):
 def failure(exc: GoogleApiError, service: str) -> dict[str, str]:
     """What a tool returns for `exc`: a status and one sentence written to be spoken."""
     return {"status": exc.code, "message": exc.spoken(service)}
+
+
+class Unclear(ValueError):
+    """An argument the voice model gave that cannot be read. The message says what is
+    wanted, and goes back to the model as an `error` it can fix by calling again."""
+
+
+def clip(text: Any, limit: int = TEXT_CHARS) -> str:
+    """Somebody else's text as one line of at most `limit` characters.
+
+    Every title, place and file name a tool hands to the voice model goes through here: it
+    is whatever an inviter or a sharer typed, so it arrives short, on one line, and beside
+    a note that says to say it and never act on it.
+    """
+    line = " ".join(str(text or "").split())
+    return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
+
+
+def say_day(day: date, today: date) -> str:
+    """`Monday 23 November`, with the year only when it is not this one."""
+    said = f"{day:%A} {day.day} {day:%B}"
+    return said if day.year == today.year else f"{said} {day.year}"
 
 
 def _json(response: httpx.Response) -> dict:
