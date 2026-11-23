@@ -43,7 +43,8 @@ tools — because reaching that phone proves something an inbound number cannot.
 The tools only some people want are plugins: none is offered until you turn it on, and
 turning one on or off, or changing its settings, needs no restart — each call reads them
 afresh. Slack and email are the ones most people want, so `keryx setup` ticks them the
-first time through.
+first time through, and `check_calendar` and `find_document` too once Calendar or Drive is
+connected. `add_calendar_event` writes, so it is never ticked for you.
 
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|

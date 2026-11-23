@@ -2,7 +2,10 @@
 important settings.
 
 One checklist of them all (`keryx.plugins.PLUGINS`). A plugin that is on is ticked, and on
-a first walk so are the ones most owners want (Slack and email); each ticked plugin then
+a first walk so are the ones most owners want: Slack and email, and reading the calendar
+and documents once their Google service is connected (neither is worth a sign-in of its
+own to somebody who has none, and `add_calendar_event` writes, so it is never ticked for
+anybody). Each ticked plugin then
 runs its step, which asks only its `important` keys and its secret, starting from what its
 file holds now — so walking this section again is also how a plugin's settings are edited.
 Every step ends by naming the file the rest of its settings are in. A plugin that is on and
@@ -12,7 +15,10 @@ The plugins that use the Google sign-in (`Plugin.google`: email, the calendar pa
 documents) share one step, `run_google`. One whose service is connected is turned on and
 asked nothing. One whose service is not offers the sign-in (`setup.google.connect`), at
 most once in a walk however many of them were ticked, and is left off, with the two
-commands that finish it, when the service is still not connected afterwards.
+commands that finish it, when the service is still not connected afterwards. A service
+that Keryx's own Google app does not offer is not something a sign-in can add, so that
+one is neither offered a sign-in nor told to try one: it is told what would, a Google
+client of the owner's own.
 
 `cluster_stats` is the one with a step of its own: it reads `~/.ssh/config`, shows the hosts
 with a ControlMaster (a host without one is never offered: Keryx rides a login the owner
@@ -30,7 +36,7 @@ from typing import Any
 from keryx import plugins
 from keryx.agents import registry
 from keryx.config import Settings
-from keryx.integrations import calendar, drive, gmail
+from keryx.integrations import calendar, drive, gmail, google_api
 from keryx.integrations import google as account
 from keryx.setup import google
 from keryx.setup.context import SetupContext
@@ -68,8 +74,11 @@ def run_section(ctx: SetupContext) -> None:
         disabled = None
         if spec.claude and not claude_ready:
             disabled = f"needs Claude Code: {registry.install_command('claude')}"
-        hint = spec.summary + (" · recommended" if spec.default and not on[name] else "")
-        checked = on[name] or (first and spec.default and disabled is None)
+        wanted = spec.default or (
+            spec.default_when_connected and GOOGLE_READY[name](ctx.settings)
+        )
+        hint = spec.summary + (" · recommended" if wanted and not on[name] else "")
+        checked = on[name] or (first and wanted and disabled is None)
         choices.append(Choice(name, f"{spec.title} ({name})", hint=hint, checked=checked,
                               disabled=disabled))
     picked = ui.checkbox("Which plugins should Keryx have?", choices)
@@ -182,6 +191,12 @@ def run_google(ctx: SetupContext, name: str, *, offer: bool = True) -> bool:
     offered = False
     if ready(ctx.settings):
         ui.success(f"{label}: connected")
+    elif not google_api.offered(ctx.settings, spec.google):
+        # Signing in again asks for what the client offers, and this is not among it.
+        ui.note(f"{label} is not offered by Keryx's Google app yet, so {name} is left off: "
+                f"it needs your own Google client ({google.own_client_hint()}), and then "
+                f"`keryx plugins install {name}`.")
+        return offered
     elif offer:
         ui.note(f"{spec.title} uses {label} through your Google sign-in.")
         google.connect(ctx)

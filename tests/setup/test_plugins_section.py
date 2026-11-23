@@ -185,14 +185,136 @@ def test_email_is_left_off_when_gmail_was_not_granted(make_ctx, world):
 # --- the calendar pair, and the sign-in they share with email ----------------------------
 
 
-def test_the_newer_google_plugins_are_never_ticked_unasked(make_ctx):
+def choices_of(ctx) -> dict:
+    return {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
+
+
+def test_without_a_sign_in_no_newer_google_plugin_is_ticked(make_ctx):
+    """None is worth a sign-in of its own to somebody who has none."""
     ctx = make_ctx([("Which plugins", [])])
 
     section.run_section(ctx)
 
-    choices = {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
     for name in ("check_calendar", "add_calendar_event", "find_document"):
-        assert not choices[name].checked and choices[name].disabled is None
+        choice = choices_of(ctx)[name]
+        assert not choice.checked and choice.disabled is None
+        assert "recommended" not in choice.hint
+
+
+def test_reading_the_calendar_and_documents_is_ticked_once_their_service_is_connected(make_ctx):
+    ctx = make_ctx([("Which plugins", [])])
+    google_signed_in(ctx, ("calendar", "drive"))
+
+    section.run_section(ctx)
+
+    choices = choices_of(ctx)
+    assert [name for name, c in choices.items() if c.checked] == [
+        "send_to_slack", "check_email", "check_calendar", "find_document",
+    ]
+    assert "recommended" in choices["check_calendar"].hint
+    assert "recommended" in choices["find_document"].hint
+
+
+def test_the_plugin_that_writes_is_never_ticked_for_anybody(make_ctx):
+    ctx = make_ctx([("Which plugins", [])])
+    google_signed_in(ctx, ("calendar", "drive"))
+
+    section.run_section(ctx)
+
+    writing = choices_of(ctx)["add_calendar_event"]
+    assert not writing.checked and "recommended" not in writing.hint
+
+
+def test_only_the_connected_service_ticks_its_plugin(make_ctx):
+    ctx = make_ctx([("Which plugins", [])])
+    google_signed_in(ctx, ("calendar",))
+
+    section.run_section(ctx)
+
+    choices = choices_of(ctx)
+    assert choices["check_calendar"].checked and not choices["find_document"].checked
+
+
+def test_a_later_walk_ticks_no_plugin_that_is_off_however_connected(make_ctx):
+    ConfigStore().mark_walked("plugins")
+    ctx = make_ctx([("Which plugins", [])])
+    google_signed_in(ctx, ("calendar", "drive"))
+
+    section.run_section(ctx)
+
+    choices = choices_of(ctx)
+    assert not any(c.checked for c in choices.values())
+    assert "recommended" in choices["check_calendar"].hint  # still said, never imposed
+
+
+def test_documents_connected_without_the_claude_extra_is_not_ticked(make_ctx, monkeypatch):
+    monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
+    ctx = make_ctx([("Which plugins", [])])
+    google_signed_in(ctx, ("calendar", "drive"))
+
+    section.run_section(ctx)
+
+    choices = choices_of(ctx)
+    assert choices["check_calendar"].checked
+    assert not choices["find_document"].checked and choices["find_document"].disabled
+
+
+def test_a_first_walk_that_takes_the_defaults_turns_the_ticked_ones_on(make_ctx, world):
+    ctx = make_ctx([("Which plugins", ["check_calendar", "find_document"])])
+    google_signed_in(ctx, ("calendar", "drive"))
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and world.calls == []
+    assert on(ctx, "check_calendar") and on(ctx, "find_document")
+    assert not on(ctx, "add_calendar_event")
+
+
+def keryx_app_offers(tmp_path, monkeypatch, services):
+    """Keryx's own published Google client, approved for `services` only."""
+    import json
+
+    client = tmp_path / "published_client.json"
+    client.write_text(json.dumps({
+        "installed": {"client_id": "keryx.apps", "client_secret": "GOCSPX-published"},
+        "keryx_services": list(services),
+    }))
+    monkeypatch.setattr(account, "PUBLISHED_CLIENT_FILE", client)
+
+
+def test_a_service_keryxs_app_does_not_offer_is_not_sent_to_a_sign_in_that_cannot_add_it(
+    make_ctx, world, tmp_path, monkeypatch
+):
+    """The note used to say `keryx auth login google`, which asks for what the client
+    offers and so could never connect it."""
+    keryx_app_offers(tmp_path, monkeypatch, ["gmail"])
+    ctx = make_ctx([("Which plugins", ["check_calendar", "find_document"])])
+    google_signed_in(ctx, ("gmail",))
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and world.calls == []
+    assert not on(ctx, "check_calendar") and not on(ctx, "find_document")
+    notes = [line for line in ctx.ui.lines("note") if "left off" in line]
+    assert len(notes) == 2
+    for note, label, name in zip(notes, ("Calendar", "Drive"),
+                                 ("check_calendar", "find_document"), strict=True):
+        assert f"{label} is not offered by Keryx's Google app yet" in note
+        assert "keryx auth login google --client-file FILE" in note
+        assert f"`keryx plugins install {name}`" in note
+        assert "`keryx setup` again" not in note
+
+
+def test_a_service_keryxs_app_does_offer_is_still_offered_the_sign_in(
+    make_ctx, world, tmp_path, monkeypatch
+):
+    keryx_app_offers(tmp_path, monkeypatch, ["gmail", "calendar"])
+    ctx = make_ctx([("Which plugins", ["check_calendar"]), ("Sign in to Google?", DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert [call[0] for call in world.calls] == ["google_browser"]
+    assert on(ctx, "check_calendar")
 
 
 def test_calendar_connected_turns_both_on_and_asks_nothing(make_ctx, world):

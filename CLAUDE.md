@@ -120,7 +120,8 @@ remember:
   `cluster_stats`), none registered from the source tree. `PLUGINS` in
   `plugins/__init__.py` is the table everything reads (its `important` keys are what the
   wizard asks; `google` names the service of the one sign-in a plugin uses, `claude` that it
-  answers through the bundled CLI), with the file helpers (`install`, `remove`, `write_config`, `status`). One module per service builds its
+  answers through the bundled CLI, `default_when_connected` that a first walk ticks it only
+  once that service is connected, which is never true of one that writes), with the file helpers (`install`, `remove`, `write_config`, `status`). One module per service builds its
   tools (`<name>_tool(config_path, fake=…)`; `calendar` builds two), `ssh_hosts` reads `~/.ssh/config`, and
   `templates/` is data — a one-line `.py` and a commented `.toml` per plugin, copied into
   `DATA_DIR/tools`, never imported from there. So a plugin *is* a custom tool: loaded per

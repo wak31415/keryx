@@ -94,6 +94,9 @@ class Plugin:
     google: str = ""
     #: Whether it answers through the bundled `claude` CLI, and so needs the claude extra.
     claude: bool = False
+    #: Ticked on a first walk as well, but only once its Google service is connected:
+    #: wanted by most, and not worth a sign-in of its own to somebody who has none.
+    default_when_connected: bool = False
 
     def key(self, name: str) -> Key:
         return next(key for key in self.keys if key.name == name)
@@ -155,6 +158,7 @@ PLUGINS: dict[str, Plugin] = {
         ),
         module="calendar",
         google="calendar",
+        default_when_connected=True,
     ),
     "add_calendar_event": Plugin(
         name="add_calendar_event",
@@ -184,6 +188,7 @@ PLUGINS: dict[str, Plugin] = {
         module="documents",
         google="drive",
         claude=True,
+        default_when_connected=True,
     ),
     "check_billing": Plugin(
         name="check_billing",

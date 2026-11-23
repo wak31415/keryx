@@ -22,7 +22,8 @@ the version starts with 0.
   my next meeting", "when is the dentist" are answered in a second or two from Google
   Calendar itself, with no task dispatched. It reads every calendar you have ticked in
   Google Calendar, in your calendar's time zone, and needs the PIN.
-  `keryx plugins install check_calendar`, or tick it in `keryx setup`.
+  `keryx plugins install check_calendar`, or `keryx setup`, which ticks it the first time
+  through once Calendar is connected.
 - **`add_calendar_event`, a plugin of its own**, so reading your calendar can be on without
   anything on the phone being able to write to it. One event on your own calendar, timed or
   all day, with nobody invited; the assistant says back what it created. Anything more
