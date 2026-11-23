@@ -661,6 +661,27 @@ def test_slack_turned_off_with_its_token_kept_is_said_and_does_not_fail_auth_sta
     assert "optional" not in report["openai"]
 
 
+def test_a_google_sign_in_that_connected_nothing_is_said_and_does_not_fail_auth_status(
+    home, tmp_path
+):
+    """Google is optional in `doctor` (soft, and `missing` when nobody signed in), so it is
+    here: the one state of it that is `failed` is reported, under all three names."""
+    from keryx.integrations import google as account
+    from keryx.plugins import current_settings
+
+    account.write_token(current_settings(), account.GoogleToken("rt", "cid", "cs", (), "a@b.c"))
+
+    result = run("auth", "status")
+    report = json.loads(run("auth", "status", "--json").output)
+
+    assert result.exit_code == 0, result.output
+    assert report["google"]["state"] == "failed" and report["google"]["services"] == []
+    for name in ("google", "gmail", "google-workspace", "slack"):
+        assert report[name]["optional"] is True
+    for name in ("openai", "claude", "codex", "twilio"):
+        assert "optional" not in report[name]
+
+
 def test_auth_status_still_fails_for_a_sign_in_keryx_needs(home, monkeypatch):
     monkeypatch.setattr(
         "keryx.setup.auth.status",

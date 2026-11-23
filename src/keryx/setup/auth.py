@@ -50,10 +50,12 @@ GOOGLE_ALIASES = ("gmail", "google-workspace")
 LOGINS = ("claude", "codex", "google", *GOOGLE_ALIASES, "slack")
 #: What `logout` can end: a grant Keryx holds, and the files a sign-in left.
 LOGOUTS = ("google",)
-#: Sign-ins Keryx runs without, whose check is a plugin's and soft in `doctor`. One that
-#: has failed is reported as failed, and marked, so `keryx auth status` can say so without
-#: exiting 1: a plugin turned off with its token kept is a choice, not a broken install.
-OPTIONAL = ("slack",)
+#: Sign-ins Keryx runs without: `doctor` calls each optional, with a soft check that is
+#: `missing` until somebody signs in. One that has failed (a Google sign-in that connected
+#: nothing, a Slack token with its plugin off) is reported as failed, and marked, so
+#: `keryx auth status` says so without exiting 1. Google's two older names copy its entry,
+#: mark and all.
+OPTIONAL = ("google", "slack")
 
 
 class AuthError(RuntimeError):
