@@ -56,7 +56,13 @@ from keryx.install import (
     release,
 )
 from keryx.integrations.google import parse_services as parse_google_services
-from keryx.logging_util import LOG_FORMAT, configure_logging, mask_number
+from keryx.logging_util import (
+    LOG_FORMAT,
+    configure_logging,
+    drop_queries_from_the_access_log,
+    mask_number,
+    uvicorn_log_level,
+)
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
 from keryx.realtime.openai import OpenAIRealtimeClient
@@ -413,15 +419,21 @@ def _build_server(state: AppState) -> uvicorn.Server:
 
     `lifespan="off"`: the app has no startup/shutdown hooks, and everything it needs is
     already built in `AppState`.
+
+    uvicorn's own logging is held back twice (`keryx.logging_util`): it is never run below
+    `info`, where it would log the media socket's frames, and its access log loses the
+    query string, which for a report link is the token. The filter goes on after
+    `uvicorn.Config`, which is what sets that logger up.
     """
     settings = state.settings
     config = uvicorn.Config(
         create_app(state),
         host=settings.host,
         port=settings.port,
-        log_level=settings.log_level.lower(),
+        log_level=uvicorn_log_level(settings.log_level),
         lifespan="off",
     )
+    drop_queries_from_the_access_log()
     return uvicorn.Server(config)
 
 
