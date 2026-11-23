@@ -173,7 +173,10 @@ caller says or does changes anything or outlasts the call.
 - **A spoken PIN is never written down.** Transcript lines are redacted as they are
   written, whether the PIN was said as digits or as words. Everything that reads a
   transcript back to a model redacts it again, because older logs may still contain it. No
-  log line contains the PIN.
+  log line contains the PIN, spoken or keyed, at any log level. Keryx's own lines say that
+  a digit arrived and never which. The libraries under the two connections a PIN crosses
+  (keypad digits from Twilio, and the voice model's messages) would each log what they
+  carry at `DEBUG`, so both are held above it whatever `LOG_LEVEL` says.
 
 ### Setting the first PIN, on the first call
 
