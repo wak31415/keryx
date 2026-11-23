@@ -1,7 +1,7 @@
 # The tools the voice model can call
 
 Seventeen tools are built in. They're Keryx's own machinery for a call: dispatching work,
-following it, and getting off the phone. Four more are [plugins](#plugins) that you turn on
+following it, and getting off the phone. Six more are [plugins](#plugins) that you turn on
 if you want them, and anything else is [a tool of your own](#your-own-tools).
 
 <!-- tools:start -->
@@ -49,6 +49,8 @@ first time through.
 |---|---|---|---|
 | `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too | yes | `SLACK_BOT_TOKEN`, or the MCP server's |
 | `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | your Google sign-in (`keryx auth login google`) and the `claude` extra |
+| `check_calendar` | what is on your Google Calendar in a second or two: a day, a week, your next meeting, or a search ("when is the dentist"), across every calendar you have ticked there | yes | your Google sign-in |
+| `add_calendar_event` | put one event on your own calendar and say back what it created; it invites nobody | yes | your Google sign-in |
 | `check_billing` | what the month has cost and where it is heading, from the provider's billing API | no | `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` |
 | `cluster_stats` | what is free on your Slurm clusters and whether your jobs are still running | no | none: it rides the ssh login you already have open |
 
@@ -67,8 +69,25 @@ for next time. They are custom tools like your own (below), and `keryx tools` li
 too.
 
 `check_billing` and `cluster_stats` answer before the PIN: they cannot change anything and
-read nothing of yours. `send_to_slack` writes as you and `check_email` reads your mail, so
-both wait for it.
+read nothing of yours. `send_to_slack` writes as you, `check_email` and `check_calendar`
+read what is yours, and `add_calendar_event` changes it, so all four wait for it.
+
+**The calendar is two plugins, so reading can be on without writing.** Both run on the one
+Google sign-in (`keryx auth login google`, with Calendar ticked) and answer inside the call,
+with no coding agent and no model in between:
+
+```bash
+keryx plugins install check_calendar
+keryx plugins install add_calendar_event --set default_minutes=30
+```
+
+`check_calendar` reads every calendar ticked in Google Calendar's own list, in your
+calendar's time zone, and says the time on the clock `CLOCK_FORMAT` names; set
+`calendars = "primary"` in `check_calendar.toml` for your own calendar alone.
+`add_calendar_event` writes to your own calendar only, one event at a time, timed or all
+day. It has no way to invite anyone, repeat an event, change one or delete one: those are a
+task for a coding agent, which has the whole Google toolset. If Google never confirms an
+event, it says so and does not try again, so a bad line cannot leave you with two.
 
 **`check_billing` needs an admin key.** The key Keryx talks to the model with can't read
 billing: OpenAI wants an Admin key from the organization's admin-keys page, and Anthropic

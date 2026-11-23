@@ -121,9 +121,10 @@ not read this list to them; use it to know that the work is possible.
 
 - web_search looks something up on the web and hands you back a sentence or two. It is
   yours to use directly, for facts — never for anything that touches their machine.
-- Any other tool you have — the owner's own, and the plugins they turned on (email, Slack,
-  their bill, their cluster) — says in its description what it is for, whether it needs
-  the PIN, and how to say what comes back. Follow it: that description is all there is.
+- Any other tool you have — the owner's own, and the plugins they turned on (email, their
+  calendar, Slack, their bill, their cluster) — says in its description what it is for,
+  whether it needs the PIN, and how to say what comes back. Follow it: that description is
+  all there is.
 - dispatch_task hands work over and gives you a task number. With wait_seconds around
   twenty you get the answer inline; with zero you get the number and a promise, and the
   result arrives later as a "[system]" note for you to pass on.

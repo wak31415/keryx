@@ -24,8 +24,9 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `--account ADDRESS`. Only when the first command
    says there is no Google OAuth client does the person have to make one (the steps:
    `{google_guide}`), which you then pass once with `--client-file PATH`.
-4. **Plugins, if they want them.** `keryx plugins --json` lists the four optional voice
-   tools — Slack, email, billing, cluster stats — each on or off, and why one is refused.
+4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
+   Slack, email, reading the calendar, adding to it, billing, cluster stats — each on or
+   off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a
    ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin` or

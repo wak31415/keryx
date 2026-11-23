@@ -18,6 +18,15 @@ the version starts with 0.
   simply not connected, and the command says which services are.
 - **`keryx auth logout google`** revokes Keryx's access at Google and deletes the sign-in
   from this machine.
+- **Your calendar on the call: the `check_calendar` plugin.** "What's on tomorrow", "what's
+  my next meeting", "when is the dentist" are answered in a second or two from Google
+  Calendar itself, with no task dispatched. It reads every calendar you have ticked in
+  Google Calendar, in your calendar's time zone, and needs the PIN.
+  `keryx plugins install check_calendar`, or tick it in `keryx setup`.
+- **`add_calendar_event`, a plugin of its own**, so reading your calendar can be on without
+  anything on the phone being able to write to it. One event on your own calendar, timed or
+  all day, with nobody invited; the assistant says back what it created. Anything more
+  (guests, repeats, changes) is still a task for a coding agent.
 - Agents get Drive, Docs, Sheets and Slides as well as Gmail and Calendar, and both Claude
   and Codex get them the same way.
 - When a release ships Keryx's own Google app, signing in needs no Google Cloud project.

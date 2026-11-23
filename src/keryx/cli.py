@@ -991,17 +991,18 @@ def plugins_list(
         }, indent=2))
         return
     typer.echo(f"# {settings.custom_tools_dir}")
+    width = max(len(name) for name in plugins.PLUGINS) + 1
     for status in found:
         spec = plugins.PLUGINS[status.name]
         state = "on" if status.on else ("refused" if status.installed else "off")
-        typer.echo(f"{status.name:<16} {state:<8} {spec.summary}")
+        typer.echo(f"{status.name:<{width}} {state:<8} {spec.summary}")
         if status.refused:
-            typer.echo(f"{'':<16} {status.refused}")
+            typer.echo(f"{'':<{width}} {status.refused}")
         if status.installed or status.config_file.exists():
             shown = {key: (status.values or {}).get(key) for key in spec.important}
             settings_line = ", ".join(f"{key}={_plain(value)}" for key, value in shown.items())
-            typer.echo(f"{'':<16} {status.config_file}" + (f"  ({settings_line})"
-                                                            if settings_line else ""))
+            typer.echo(f"{'':<{width}} {status.config_file}" + (f"  ({settings_line})"
+                                                                 if settings_line else ""))
 
 
 @plugins_app.command("hosts")

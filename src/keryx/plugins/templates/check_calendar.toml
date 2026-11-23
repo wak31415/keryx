@@ -1,0 +1,14 @@
+# check_calendar: what is on your Google Calendar, said on a call in a second or two.
+# Changes here count from the next call; no restart.
+#
+# It reads Calendar with your Google sign-in (`keryx auth login google`) and only ever
+# reads: adding an event is a plugin of its own, add_calendar_event.
+# `keryx plugins remove check_calendar` turns this off and leaves the sign-in alone.
+
+# Which calendars it reads: "selected" is every calendar ticked in Google Calendar's own
+# list, as you see it there; "primary" is yours alone, which is one request fewer.
+calendars = {calendars}
+
+# The most events one answer holds. Past this the assistant says there are more.
+max_events = {max_events}
+{extra}

@@ -11,7 +11,8 @@ Everything Google in Keryx hangs off one sign-in (`keryx auth login google`, the
   at `keryx/data/google_client.json` that may not be there at all.
 - **`GoogleToken`** is `DATA_DIR/google_token.json` (0600): the refresh token, the client
   that minted it, the scopes Google literally granted, and the account's address. It is the
-  one token Keryx owns. `check_email` reads it (`keryx.integrations.gmail`).
+  one token Keryx owns. The Google voice tools read it, through the one request in
+  `keryx.integrations.google_api`.
 - **`mcp_server`** is how the coding agents get the same sign-in: `export_for_mcp` copies
   the token into the credential file the `workspace-mcp` server reads, and the server is
   started pinned, on the connected services only, with no OAuth client in its environment,
@@ -86,7 +87,8 @@ SERVICES: dict[str, Service] = {
     "calendar": Service(
         "Calendar",
         (CALENDAR_READONLY, CALENDAR_EVENTS),
-        "agents see your calendars and create or change events",
+        "agents see your calendars and create or change events, and calendar answers on a "
+        "call",
     ),
     "drive": Service(
         "Drive",

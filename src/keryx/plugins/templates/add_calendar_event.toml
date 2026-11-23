@@ -1,0 +1,11 @@
+# add_calendar_event: "put the dentist on my calendar Thursday at three", done on the call.
+# Changes here count from the next call; no restart.
+#
+# It writes to your own Google Calendar with your Google sign-in (`keryx auth login
+# google`), one event at a time, and invites nobody: an event with guests is a task for a
+# coding agent. It needs the PIN.
+# `keryx plugins remove add_calendar_event` turns this off and leaves the sign-in alone.
+
+# How long an event is, in minutes, when you gave a start and no end.
+default_minutes = {default_minutes}
+{extra}

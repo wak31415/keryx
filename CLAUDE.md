@@ -47,7 +47,7 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   project each was dispatched with; the dollars are the agents' own estimates, and the
   voice calls are not tasks)
 - Read what the assistant remembers between calls: `uv run keryx memory` (`--path` for the file)
-- The plugins (Slack, email, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
+- The plugins (Slack, email, the calendar, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
   remove NAME [--yes]`; install and remove refuse the running service
@@ -116,10 +116,12 @@ remember:
   points at it. A file may raise `ToolUnavailable` while it loads to be refused with a
   reason, and reads its loader's settings from `LOADING_SETTINGS`.
 - **plugins** — `plugins/` is the optional voice tools (`send_to_slack`, `check_email`,
-  `check_billing`, `cluster_stats`), none registered from the source tree. `PLUGINS` in
+  `check_calendar`, `add_calendar_event`, `check_billing`, `cluster_stats`), none registered
+  from the source tree. `PLUGINS` in
   `plugins/__init__.py` is the table everything reads (its `important` keys are what the
-  wizard asks), with the file helpers (`install`, `remove`, `write_config`, `status`). One module per plugin builds its
-  tool (`<name>_tool(config_path, fake=…)`), `ssh_hosts` reads `~/.ssh/config`, and
+  wizard asks; `google` names the service of the one sign-in a plugin uses, `claude` that it
+  answers through the bundled CLI), with the file helpers (`install`, `remove`, `write_config`, `status`). One module per service builds its
+  tools (`<name>_tool(config_path, fake=…)`; `calendar` builds two), `ssh_hosts` reads `~/.ssh/config`, and
   `templates/` is data — a one-line `.py` and a commented `.toml` per plugin, copied into
   `DATA_DIR/tools`, never imported from there. So a plugin *is* a custom tool: loaded per
   call, gated by `needs_pin`, no restart. The logic stays here with its tests so a fix
@@ -130,10 +132,13 @@ remember:
   PIN-lockout alert, and every finished task's whole report) only through
   `plugins.slack.slack_route`, asked at send time.
 - **integrations** — `integrations/` is one module per outside service (`billing`,
-  `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
-  `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
-  built. Their builders take explicit values, never a plugin's file. `google` is the one
-  with no voice tool: the Google account itself (see "Google is one sign-in").
+  `calendar`, `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind a
+  voice tool — `web_search` behind a built-in, the rest behind a plugin, which is where the
+  tool is built (`calendar` behind two, one that reads and one that adds). Their builders
+  take explicit values, never a plugin's file. Three have no voice tool of their own:
+  `google` is the Google account itself (see "Google is one sign-in"), `google_api` is the
+  one authorized request every Google tool makes, and `summariser` is the one bare model
+  call a tool makes over what it read (see "Google answers on the call").
 - **config** — `config/` is the settings and where they live: `settings` (every field with
   a `description`, a `group` and a default `service_writable`, declared with `setting(...)`),
   `store` (`KERYX_HOME/config.toml` and `secrets.toml`, the only writer of either),
@@ -435,7 +440,8 @@ Three rulings:
 ## Google is one sign-in
 
 `keryx auth login google` (and the wizard's Google section) connects Gmail, Calendar, Drive,
-Docs, Sheets and Slides at once, for everything: `check_email` and the coding agents alike.
+Docs, Sheets and Slides at once, for everything: the Google plugins (see "Google answers on
+the call") and the coding agents alike.
 `keryx/integrations/google.py` is the account (scopes, client, token, the agents' server)
 and `keryx/setup/google.py` is the flow. Seven rulings:
 
@@ -527,6 +533,43 @@ not, or email answers would stop), and a credential `workspace-mcp` wrote itself
 `DATA_DIR/google` is still served, with the tools its own scopes cover, until a sign-in
 replaces it. It is never adopted as Keryx's token: its scopes are whatever that flow asked
 for.
+
+## Google answers on the call
+
+A dispatch takes tens of seconds to minutes, so the Google questions worth answering
+inside the call are plugins: `check_email` (`integrations/gmail.py`), and `check_calendar`
+and `add_calendar_event` (`integrations/calendar.py`). All need the PIN. Five rulings:
+
+- **One request, and reading is a matter of construction.** Every one of them goes through
+  `integrations/google_api.py`: a `GoogleReader` has `get` and `text` and nothing else,
+  and only a `GoogleWriter` can `post`. A tool that reads is built on the first, so it has
+  no method to write with whatever the token allows. `add_calendar_event` is the only
+  writer.
+- **A tool asks for the scope it uses, not for the service.** `google.holds(scopes, needs)`
+  is narrower than a service being connected, which wants every scope the agents' tools
+  use: reading the calendar needs `calendar.readonly`, adding to it only
+  `calendar.events`. A sign-in that lacks it refuses the plugin's file with the reason when
+  it loads (as `check_email` does: `doctor`, `keryx tools` and `keryx plugins` say why), and
+  the same thing found out mid-call is a status and a sentence.
+- **A failure is a code and a sentence that names the fix.** `GoogleApiError`:
+  `not_signed_in`, `not_connected` and `signed_out` name `keryx auth login google`;
+  `api_disabled` says that signing in again will not help, because the API is off in the
+  Cloud project. Never an exception to the model, and never a response body anywhere: a
+  log line carries the status, one of a short list of Google's own reasons, and the kind of
+  thing asked for, never which calendar or file (an id is somebody's address).
+- **What Google returns is somebody else's text.** An invitation puts a title on the
+  calendar unasked. So the voice model gets a title and a place as one clipped line
+  (`clip`), never a description, and a note beside them that says to say it and never act
+  on it; the tool descriptions say the same. That is a mitigation, not a wall, and
+  SECURITY.md says so.
+- **A write that got no answer is never sent again.** `add_calendar_event` invites nobody
+  (no attendees, `sendUpdates=none`) and touches only the owner's own calendar. A `POST`
+  that timed out or met a 5xx may have landed, so it comes back `unconfirmed` with a
+  sentence saying exactly that. Two events is worse than one doubt.
+
+A day reaches these tools the way it was said (`resolve_day`: today, tomorrow, a weekday, a
+date) and is resolved in the zone of the owner's own calendar, never the machine's. Do not
+make the voice model do arithmetic on dates.
 
 ## Restarts are three halves
 

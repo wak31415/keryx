@@ -1,12 +1,18 @@
 """The Plugins section of `keryx setup`: which optional voice tools Keryx has, and each one's
 important settings.
 
-One checklist of the four (`keryx.plugins.PLUGINS`). A plugin that is on is ticked, and on
+One checklist of them all (`keryx.plugins.PLUGINS`). A plugin that is on is ticked, and on
 a first walk so are the ones most owners want (Slack and email); each ticked plugin then
 runs its step, which asks only its `important` keys and its secret, starting from what its
 file holds now — so walking this section again is also how a plugin's settings are edited.
 Every step ends by naming the file the rest of its settings are in. A plugin that is on and
 left unticked is turned off, after a confirm.
+
+The plugins that use the Google sign-in (`Plugin.google`: email, the calendar pair) share
+one step, `run_google`. One whose service is connected is turned on and asked nothing. One
+whose service is not offers the sign-in (`setup.google.connect`), at most once in a walk
+however many of them were ticked, and is left off, with the two commands that finish it,
+when the service is still not connected afterwards.
 
 `cluster_stats` is the one with a step of its own: it reads `~/.ssh/config`, shows the hosts
 with a ControlMaster (a host without one is never offered: Keryx rides a login the owner
@@ -18,11 +24,14 @@ Values the old settings held (before these were plugins) are the defaults, and t
 the store once the plugin that replaced them is on.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 from keryx import plugins
 from keryx.agents import registry
-from keryx.integrations import gmail
+from keryx.config import Settings
+from keryx.integrations import calendar, gmail
+from keryx.integrations import google as account
 from keryx.setup import google
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
@@ -57,17 +66,22 @@ def run_section(ctx: SetupContext) -> None:
     choices = []
     for name, spec in plugins.PLUGINS.items():
         disabled = None
-        if name == "check_email" and not claude_ready:
+        if spec.claude and not claude_ready:
             disabled = f"needs Claude Code: {registry.install_command('claude')}"
         hint = spec.summary + (" · recommended" if spec.default and not on[name] else "")
         checked = on[name] or (first and spec.default and disabled is None)
         choices.append(Choice(name, f"{spec.title} ({name})", hint=hint, checked=checked,
                               disabled=disabled))
     picked = ui.checkbox("Which plugins should Keryx have?", choices)
-    for name in plugins.PLUGINS:
-        if name in picked:
+    # Asked at most once in a walk: three plugins waiting on the same sign-in are one
+    # question, not three.
+    sign_in_offered = False
+    for name, spec in plugins.PLUGINS.items():
+        if name in picked and spec.google:
+            sign_in_offered = run_google(ctx, name, offer=not sign_in_offered) or sign_in_offered
+        elif name in picked:
             STEPS[name](ctx)
-        elif on[name] and not (name == "check_email" and not claude_ready):
+        elif on[name] and not (spec.claude and not claude_ready):
             _turn_off(ctx, name)
 
 
@@ -145,19 +159,38 @@ def run_slack(ctx: SetupContext) -> None:
     _finish(ctx, "send_to_slack", {"channel_id": channel})
 
 
-def run_email(ctx: SetupContext) -> None:
-    """Email answers read Gmail with the one Google sign-in: asked nothing when it is there."""
-    ui = ctx.ui
-    if gmail.signed_in(ctx.settings):
-        ui.success("Gmail: connected")
-    else:
-        ui.note("Email answers read Gmail with your Google sign-in.")
+#: What each Google plugin needs of the sign-in before it can answer: the question its own
+#: loader asks, so the wizard never turns on a plugin the next call would refuse.
+GOOGLE_READY: dict[str, Callable[[Settings], bool]] = {
+    "check_email": gmail.signed_in,
+    "check_calendar": lambda settings: calendar.read_problem(settings) is None,
+    "add_calendar_event": lambda settings: calendar.write_problem(settings) is None,
+}
+
+
+def run_google(ctx: SetupContext, name: str, *, offer: bool = True) -> bool:
+    """A plugin that uses the one Google sign-in: asked nothing when its service is there.
+
+    Returns whether the sign-in was offered, so the section offers it once. `offer=False`
+    is a plugin after one that already did: it is turned on if that sign-in connected its
+    service, and left off with the same note otherwise.
+    """
+    ui, spec = ctx.ui, plugins.PLUGINS[name]
+    label = account.SERVICES[spec.google].label
+    ready = GOOGLE_READY[name]
+    offered = False
+    if ready(ctx.settings):
+        ui.success(f"{label}: connected")
+    elif offer:
+        ui.note(f"{spec.title} uses {label} through your Google sign-in.")
         google.connect(ctx)
-    if not gmail.signed_in(ctx.settings):
-        ui.note("Gmail is not connected, so it is left off: `keryx setup` again, or "
-                "`keryx auth login google` and then `keryx plugins install check_email`.")
-        return
-    _finish(ctx, "check_email", {})
+        offered = True
+    if not ready(ctx.settings):
+        ui.note(f"{label} is not connected, so {name} is left off: `keryx setup` again, or "
+                f"`keryx auth login google` and then `keryx plugins install {name}`.")
+        return offered
+    _finish(ctx, name, {})
+    return offered
 
 
 def run_billing(ctx: SetupContext) -> None:
@@ -270,7 +303,6 @@ def _partition(ctx: SetupContext, alias: str, default: str, alive: bool) -> str:
 
 STEPS = {
     "send_to_slack": run_slack,
-    "check_email": run_email,
     "check_billing": run_billing,
     "cluster_stats": run_cluster,
 }

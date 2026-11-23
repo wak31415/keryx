@@ -1229,15 +1229,42 @@ def test_tools_refuses_a_built_in_name_this_machine_does_not_offer(settings_stub
 # --- plugins -------------------------------------------------------------------------
 
 
-def test_plugins_lists_all_four_off_on_a_fresh_machine(settings_stub):
+def test_plugins_lists_every_one_off_on_a_fresh_machine(settings_stub):
     result = runner.invoke(app, ["plugins", "--json"])
 
     assert result.exit_code == 0, result.output
     found = json.loads(result.output)["plugins"]
     assert [(one["name"], one["on"]) for one in found] == [
         ("send_to_slack", False), ("check_email", False),
+        ("check_calendar", False), ("add_calendar_event", False),
         ("check_billing", False), ("cluster_stats", False),
     ]
+
+
+def test_plugins_lists_them_in_columns_whatever_the_longest_name(settings_stub):
+    lines = runner.invoke(app, ["plugins"]).output.splitlines()[1:]
+
+    assert len(lines) == len(plugins.PLUGINS)
+    assert {line.index(" off ") for line in lines} == {len("add_calendar_event") + 1}
+
+
+def test_a_google_plugin_names_the_sign_in_when_given_a_setting_it_lacks(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "check_calendar", "--set", "token=x"])
+
+    assert result.exit_code == 1
+    assert "check_calendar has no setting 'token'" in result.output
+    assert "its sign-in is `keryx auth login google`" in result.output
+    assert not plugins.tool_path(settings_stub, "check_calendar").exists()
+
+
+def test_a_google_plugin_installed_without_a_sign_in_says_it_is_refused(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "check_calendar",
+                                 "--set", "calendars=primary"])
+
+    assert result.exit_code == 1
+    assert ("check_calendar is installed but refused: not signed in to Google: "
+            "`keryx auth login google`") in result.output
+    assert plugins.read_config(settings_stub, "check_calendar")["calendars"] == "primary"
 
 
 def test_plugins_install_with_values_turns_one_on(settings_stub):
@@ -1248,7 +1275,7 @@ def test_plugins_install_with_values_turns_one_on(settings_stub):
     assert "check_billing is on, from the next call" in result.output
     assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 40
     listed = runner.invoke(app, ["plugins"]).output
-    assert "check_billing    on" in listed and "monthly_budget=40" in listed
+    assert re.search(r"^check_billing +on ", listed, re.M) and "monthly_budget=40" in listed
 
 
 def test_plugins_install_never_takes_a_secret(settings_stub):

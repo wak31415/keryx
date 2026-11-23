@@ -169,6 +169,134 @@ def test_email_is_left_off_when_gmail_was_not_granted(make_ctx, world):
     assert any("Gmail is not connected" in line for line in ctx.ui.lines("note"))
 
 
+# --- the calendar pair, and the sign-in they share with email ----------------------------
+
+
+def test_neither_calendar_plugin_is_ticked_unasked(make_ctx):
+    ctx = make_ctx([("Which plugins", [])])
+
+    section.run_section(ctx)
+
+    choices = {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
+    for name in ("check_calendar", "add_calendar_event"):
+        assert not choices[name].checked and choices[name].disabled is None
+
+
+def test_calendar_connected_turns_both_on_and_asks_nothing(make_ctx, world):
+    ctx = make_ctx([("Which plugins", ["check_calendar", "add_calendar_event"])])
+    google_signed_in(ctx, ("calendar",))
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and world.calls == []
+    assert ctx.ui.lines("success").count("Calendar: connected") == 2
+    assert on(ctx, "check_calendar") and on(ctx, "add_calendar_event")
+    assert toml(ctx, "check_calendar") == {"calendars": "selected", "max_events": 25}
+    assert toml(ctx, "add_calendar_event") == {"default_minutes": 60}
+
+
+def test_calendar_needs_no_claude(make_ctx, monkeypatch):
+    monkeypatch.setattr(registry, "installed", lambda agent: False)
+    ctx = make_ctx([("Which plugins", ["check_calendar"])])
+    google_signed_in(ctx, ("calendar",))
+
+    section.run_section(ctx)
+
+    assert on(ctx, "check_calendar")
+
+
+def test_several_plugins_waiting_on_the_sign_in_ask_for_it_once(make_ctx, world):
+    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+    ctx = make_ctx([
+        ("Which plugins", ["check_email", "check_calendar", "add_calendar_event"]),
+        ("Sign in to Google?", DEFAULT),
+    ])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert [call[0] for call in world.calls] == ["google_browser"]
+    assert all(on(ctx, name) for name in ("check_email", "check_calendar",
+                                          "add_calendar_event"))
+
+
+def test_going_back_after_the_sign_in_never_signs_in_a_second_time(make_ctx, world):
+    """Esc runs the section again from its record. By then the sign-in is kept, so the
+    section no longer asks for one and the probe that ran it is not run again."""
+    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+
+    def after(ctx) -> None:
+        ctx.ui.text("And then?", default="")
+
+    walk = [wizard.Section("plugins", "Plugins", section.run_section),
+            wizard.Section("after", "After", after)]
+    ctx = make_ctx([
+        ("Which plugins", ["check_email", "check_calendar"]),
+        ("Sign in to Google?", DEFAULT),
+        ("And then?", Back()),
+        ("And then?", "done"),
+    ])
+
+    assert wizard.run_walk(ctx, walk, {}) is True
+
+    assert ctx.ui.done()
+    assert [call[0] for call in world.calls] == ["google_browser"]
+    assert on(ctx, "check_email") and on(ctx, "check_calendar")
+
+
+def test_a_sign_in_turned_down_is_not_offered_again_for_the_next_plugin(make_ctx, world):
+    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+    ctx = make_ctx([
+        ("Which plugins", ["check_email", "check_calendar"]),
+        ("Sign in to Google?", "skip"),
+    ])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and world.calls == []
+    assert not on(ctx, "check_email") and not on(ctx, "check_calendar")
+    notes = ctx.ui.lines("note")
+    assert any("keryx plugins install check_email" in line for line in notes)
+    assert any("Calendar is not connected, so check_calendar is left off" in line
+               for line in notes)
+
+
+def test_a_sign_in_that_left_calendar_out_offers_to_sign_in_again(make_ctx, world):
+    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+    ctx = make_ctx([("Which plugins", ["check_calendar"]), ("Sign in again?", DEFAULT)])
+    google_signed_in(ctx, ("gmail",))
+
+    section.run_section(ctx)
+
+    assert [call[0] for call in world.calls] == ["google_browser"]
+    assert on(ctx, "check_calendar")
+
+
+def test_calendar_still_not_granted_is_left_off(make_ctx, world):
+    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+    world.google_services = ("gmail",)
+    ctx = make_ctx([("Which plugins", ["check_calendar"]), ("Sign in to Google?", DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert not on(ctx, "check_calendar")
+    assert any("Calendar is not connected" in line for line in ctx.ui.lines("note"))
+
+
+def test_turning_a_calendar_plugin_off_leaves_the_other_and_the_sign_in(make_ctx):
+    ctx = make_ctx([])
+    google_signed_in(ctx, ("calendar",))
+    plugins.install(ctx.settings, "check_calendar")
+    plugins.install(ctx.settings, "add_calendar_event")
+    ctx.ui.answers = [("Which plugins", ["check_calendar"]), ("Turn off Add to calendar", True)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert on(ctx, "check_calendar") and not on(ctx, "add_calendar_event")
+    assert account.read_token(ctx.settings) is not None
+
+
 # --- billing -----------------------------------------------------------------------------
 
 
