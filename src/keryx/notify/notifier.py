@@ -37,7 +37,6 @@ call-back, and nothing here may ever raise into the event bus.
 """
 
 import asyncio
-import dataclasses
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -319,17 +318,18 @@ class Notifier:
             posted = await route.poster.post(
                 text, fallback=header, thread_ts=route.thread_ts, broadcast=route.broadcast
             )
-            if posted is None and route.thread_ts is not None:
-                # The thread could not be posted to (a token since replaced by another
-                # app's cannot reach it): the report still goes, as a message of its own,
-                # and that is where the task lives from now on.
-                unthreaded = dataclasses.replace(task, slack_channel=None, slack_thread_ts=None)
-                route = self._reports(unthreaded)
-                if route is not None:
-                    posted = await route.poster.post(text, fallback=header)
-            if posted is None or route is None:
+            moved = False
+            if posted.gone and route.thread_ts is not None and route.usual is not None:
+                # The thread is gone for good (its conversation, or the app that opened
+                # it): the report goes as a message of its own in the same workspace, and
+                # that is where the task lives from now on. Anything Slack may get over
+                # (a timeout, a rate limit) leaves the thread where it is: this report is
+                # then not on Slack, and is still in the task for a call to read out.
+                posted = await route.usual.post(text, fallback=header)
+                moved = True
+            if not posted.ok:
                 return False
-            if route.thread_ts is None and posted.ts:
+            if (route.thread_ts is None or moved) and posted.ts:
                 # The first report: where it landed is this task's thread from now on.
                 try:
                     await self._store.update(

@@ -427,13 +427,39 @@ def test_a_later_report_of_a_phone_task_is_a_reply_under_its_first_shown_in_the_
     assert route.poster._channel == "D0ME"
 
 
-def test_a_thread_in_a_workspace_that_is_gone_falls_back_to_a_new_message(two_workspaces):
+def test_a_task_asked_for_in_a_workspace_that_is_gone_is_reported_nowhere_on_slack(
+    two_workspaces,
+):
+    """Never to another workspace: the first one may be somebody else's employer."""
     task = slack_task(origin_channel="slack", slack_workspace="left", slack_channel="D0GONE",
+                      slack_thread_ts="1700000000.000100")
+
+    assert report_route(two_workspaces, task) is None
+
+
+def test_a_phone_task_whose_thread_is_in_a_workspace_that_is_gone_goes_where_it_always_would(
+    two_workspaces,
+):
+    task = slack_task(origin_channel="phone", slack_workspace="left", slack_channel="D0GONE",
                       slack_thread_ts="1700000000.000100")
 
     route = report_route(two_workspaces, task)
 
-    assert (route.workspace, route.thread_ts) == ("default", None)
+    assert (route.workspace, route.thread_ts, route.usual) == ("default", None, None)
+
+
+def test_a_thread_that_is_gone_falls_back_inside_its_own_workspace_only(two_workspaces):
+    typed = slack_task(origin_channel="slack", slack_workspace="work", slack_channel="D0WORK",
+                       slack_thread_ts="1700000000.000100")
+    spoken = slack_task(origin_channel="phone", slack_workspace="default",
+                        slack_channel="D0ME", slack_thread_ts="1700000000.000100")
+
+    # Typed on Slack: back to the owner's own direct messages with that workspace's app.
+    assert report_route(two_workspaces, typed).usual._token == "xoxb-work"
+    assert report_route(two_workspaces, typed).usual._channel == "U0WORK"
+    # Spoken: to where the first workspace's reports go.
+    assert report_route(two_workspaces, spoken).usual._token == "xoxb-test-token"
+    assert report_route(two_workspaces, spoken).usual._channel == "U0ME"
 
 
 def test_with_the_plugin_off_a_report_goes_nowhere(two_workspaces):

@@ -257,30 +257,46 @@ class ReportRoute:
     thread_ts: str | None = None
     #: Whether a reply is also shown in the conversation itself.
     broadcast: bool = False
+    #: Where the *same* workspace would post a message of its own, for a thread that is
+    #: gone for good. Never another workspace's destination.
+    usual: SlackPoster | None = None
 
 
 def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
-    """Where `task`'s report goes: its own thread once it has one, else the first
-    workspace's usual destination. None while the plugin is off or has no token.
+    """Where `task`'s report goes, or None when it goes nowhere on Slack.
 
     A task has a thread from the moment it is asked for on Slack, or from its first report.
     Every later report is a reply there, so one task stays one thread and a reply in it
     always finds the task. A reply under a report Keryx posted is also shown in the
     conversation, as each report always was; one under the owner's own message is not,
     since they are in that thread already.
+
+    **A report never leaves the workspace its task belongs to.** A task asked for on Slack
+    is that workspace's: if the workspace is no longer connected, its report is posted
+    nowhere (it is still in the task, for the next call's digest and `keryx tasks show`),
+    because the first workspace may be somebody else's employer. A task asked for anywhere
+    else was always the first workspace's, so with no thread, or with a thread in a
+    workspace that is gone, it goes where the first workspace usually posts.
     """
-    found = connected(settings)
-    if task.slack_channel and task.slack_thread_ts:
-        home = next((each for each in found if each.name == task.slack_workspace), None)
-        poster = home.poster(task.slack_channel) if home is not None else None
+    found = {each.name: each for each in connected(settings)}
+    asked_here = task.origin_channel == SLACK_CHANNEL
+    home = found.get(task.slack_workspace or "")
+    if task.slack_channel and task.slack_thread_ts and home is not None:
+        poster = home.poster(task.slack_channel)
+        # A task asked for on Slack falls back to the owner's own direct messages with
+        # the app, never to a channel that workspace's reports happen to go to.
+        usual = home.poster(home.owner_id) if asked_here and home.owner_id else home.poster()
         if poster is not None:
             return ReportRoute(
                 workspace=home.name,
                 poster=poster,
                 thread_ts=task.slack_thread_ts,
-                broadcast=task.origin_channel != SLACK_CHANNEL,
+                broadcast=not asked_here,
+                usual=usual,
             )
-    first = next((each for each in found if each.name == DEFAULT), None)
+    if asked_here:
+        return None
+    first = found.get(DEFAULT)
     poster = first.poster() if first is not None else None
     return ReportRoute(workspace=DEFAULT, poster=poster) if poster is not None else None
 

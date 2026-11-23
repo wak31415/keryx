@@ -603,7 +603,7 @@ async def test_a_reply_goes_in_its_thread_and_only_its_first_piece_is_broadcast(
         long, thread_ts="1699999999.000001", broadcast=True
     )
 
-    assert posted == Posted("D1", "1700000000.000001")
+    assert posted == Posted(channel="D1", ts="1700000000.000001")
     assert [p["thread_ts"] for p in payloads] == ["1699999999.000001"] * 2
     assert [p.get("reply_broadcast") for p in payloads] == [True, None]
 
@@ -619,13 +619,70 @@ async def test_a_reply_that_is_not_broadcast_says_nothing_about_it():
 
     assert "reply_broadcast" not in payloads[0] and payloads[0]["thread_ts"] == "1.1"
     # An answer without the two fields still counts as sent, with what is known.
-    assert posted == Posted("D1", "")
+    assert posted == Posted(channel="D1", ts="")
 
 
 async def test_a_post_slack_refuses_landed_nowhere():
     refuse = lambda *a: {"ok": False, "error": "channel_not_found"}  # noqa: E731
 
-    assert await SlackWebApi("t", "D1", post=refuse).post("x") is None
+    refused = await SlackWebApi("t", "D1", post=refuse).post("x")
+
+    assert not refused.ok and refused.error == "channel_not_found" and refused.gone
+    assert (refused.channel, refused.ts) == ("", "")
+
+
+@pytest.mark.parametrize(
+    ("answer", "error", "gone"),
+    [
+        ({"ok": False, "error": "ratelimited"}, "ratelimited", False),
+        ({"ok": False, "error": "thread_not_found"}, "thread_not_found", True),
+        ({"ok": False, "error": "not_in_channel"}, "not_in_channel", True),
+        ({"ok": False, "error": "invalid_auth"}, "invalid_auth", True),
+        ({"ok": False, "error": "see https://x.example"}, "unknown_error", False),
+        (TimeoutError("timed out"), "unreachable", False),
+    ],
+)
+async def test_a_post_says_whether_its_thread_is_gone_or_only_not_reached(answer, error, gone):
+    """What may pass (a timeout, a rate limit) is never taken for a thread that is gone."""
+    def post(url, payload, token):
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    result = await SlackWebApi("t", "D1", post=post).post("x", thread_ts="1.1")
+
+    assert (result.error, result.gone, result.ok) == (error, gone, False)
+
+
+async def test_a_long_message_posted_on_its_own_is_one_thread_under_its_first_piece():
+    """A reply under any piece of a long report is then in the one thread."""
+    payloads: list[dict] = []
+
+    def post(url, payload, token):
+        payloads.append(payload)
+        return {"ok": True, "channel": "D0REAL", "ts": f"1700000000.00000{len(payloads)}"}
+
+    long = "\n\n".join(["x" * 7000, "y" * 7000, "z" * 7000])
+
+    posted = await SlackWebApi("t", "U0OWNER", post=post).post(long, fallback="Task 3")
+
+    assert posted == Posted(channel="D0REAL", ts="1700000000.000001")
+    assert [p.get("thread_ts") for p in payloads] == [
+        None, "1700000000.000001", "1700000000.000001",
+    ]
+    # In the conversation Slack put the first one in, which is where its thread is.
+    assert [p["channel"] for p in payloads] == ["U0OWNER", "D0REAL", "D0REAL"]
+
+
+async def test_a_long_message_sent_by_the_tool_is_still_several_messages():
+    payloads: list[dict] = []
+
+    def post(url, payload, token):
+        payloads.append(payload)
+        return {"ok": True, "channel": "D0REAL", "ts": "1700000000.000001"}
+
+    assert await SlackWebApi("t", "U0OWNER", post=post).send("\n\n".join(["x" * 7000] * 2))
+    assert [p.get("thread_ts") for p in payloads] == [None, None]
 
 
 def test_a_timestamp_is_recognised_and_ordered():

@@ -165,19 +165,6 @@ class SlackSender(Protocol):
         ...
 
 
-@dataclass(frozen=True)
-class Posted:
-    """Where a message landed: the conversation Slack put it in, and its timestamp.
-
-    The conversation is Slack's answer, not what was asked for: a message sent to a
-    member's id lands in their direct message with the app, whose id (`D…`) is the one
-    a reply to it arrives with.
-    """
-
-    channel: str
-    ts: str
-
-
 class SlackPoster(Protocol):
     """A sender that can also post into a thread, and says where the message landed."""
 
@@ -188,11 +175,12 @@ class SlackPoster(Protocol):
         fallback: str | None = None,
         thread_ts: str | None = None,
         broadcast: bool = False,
-    ) -> Posted | None:
-        """Post `text`; where its first piece landed, or None when Slack did not take it.
+    ) -> "Posted":
+        """Post `text`, and say where its first piece landed or why Slack did not take it.
 
         With `thread_ts` it is a reply in that thread, and `broadcast` also shows it in
-        the conversation itself.
+        the conversation itself. Without one, a text too long for one message is one
+        thread: every piece after the first is a reply under the first.
         """
         ...
 
@@ -409,6 +397,34 @@ class SlackResult:
         return f"{known} ({self.error})" if known else f"Slack said {self.error}"
 
 
+#: The refusals that mean a thread cannot be posted to any more, as opposed to not just
+#: now: the conversation or the message is gone, the app is no longer in it, or the token
+#: is not the app's that opened it. A timeout or `ratelimited` is not among them.
+THREAD_GONE = frozenset({
+    "channel_not_found", "thread_not_found", "message_not_found", "not_in_channel",
+    "is_archived", "invalid_auth", "account_inactive", "token_revoked",
+})
+
+
+@dataclass(frozen=True)
+class Posted(SlackResult):
+    """Where a message landed: the conversation Slack put it in, and its timestamp; or,
+    with `error`, why it did not land.
+
+    The conversation is Slack's answer, not what was asked for: a message sent to a
+    member's id lands in their direct message with the app, whose id (`D…`) is the one
+    a reply to it arrives with.
+    """
+
+    channel: str = ""
+    ts: str = ""
+
+    @property
+    def gone(self) -> bool:
+        """Slack refused it because the thread or its conversation is gone for good."""
+        return self.error in THREAD_GONE
+
+
 @dataclass(frozen=True)
 class Workspace(SlackResult):
     """`auth.test`: the workspace a token belongs to, and whom it acts as.
@@ -549,7 +565,7 @@ class SlackWebApi:
         self._post = post
 
     async def send(self, text: str, *, fallback: str | None = None) -> bool:
-        return await self.post(text, fallback=fallback) is not None
+        return (await self._deliver(text, fallback=fallback, chain=False)).ok
 
     async def post(
         self,
@@ -558,11 +574,31 @@ class SlackWebApi:
         fallback: str | None = None,
         thread_ts: str | None = None,
         broadcast: bool = False,
-    ) -> Posted | None:
+    ) -> Posted:
+        return await self._deliver(
+            text, fallback=fallback, thread_ts=thread_ts, broadcast=broadcast, chain=True
+        )
+
+    async def _deliver(
+        self,
+        text: str,
+        *,
+        fallback: str | None,
+        thread_ts: str | None = None,
+        broadcast: bool = False,
+        chain: bool,
+    ) -> Posted:
+        """Post each piece of `text`; the first piece's landing, or the first failure.
+
+        `chain` makes a text of several pieces one thread: with no `thread_ts`, every
+        piece after the first is a reply under the first, in the conversation Slack put
+        that one in. A reply typed under any of them is then in the one thread.
+        """
         first: Posted | None = None
+        channel = self._channel
         for piece in markdown_pieces(text):
             plain = {
-                "channel": self._channel,
+                "channel": channel,
                 "text": piece,
                 "unfurl_links": False,
                 "unfurl_media": False,
@@ -587,15 +623,19 @@ class SlackWebApi:
                     )
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
                 log.warning("could not post to Slack: %s", exc)
-                return None
+                return Posted(error=UNREACHABLE)
             if not result.get("ok"):
                 # Slack reports failure in the body with a 200, e.g. {"ok": false, "error": …}
-                log.warning("Slack refused the message: %s", result.get("error"))
-                return None
+                code = str(result.get("error") or "")
+                log.warning("Slack refused the message: %s", code)
+                return Posted(error=code if _ERROR_CODE.fullmatch(code) else UNKNOWN_ERROR)
             if first is None:
-                channel, ts = result.get("channel"), result.get("ts")
+                landed, ts = result.get("channel"), result.get("ts")
                 first = Posted(
-                    channel=channel if isinstance(channel, str) and channel else self._channel,
+                    channel=landed if isinstance(landed, str) and landed else self._channel,
                     ts=ts if is_ts(ts) else "",
                 )
+                if chain and not thread_ts and first.ts:
+                    thread_ts, channel = first.ts, first.channel
+        assert first is not None  # `markdown_pieces` always yields one piece
         return first

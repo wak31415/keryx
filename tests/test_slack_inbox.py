@@ -75,7 +75,7 @@ class FakeSlack:
                 if fake.post_error is not None:
                     raise fake.post_error
                 fake.posts.append((self.token, self.channel, thread_ts, text))
-                return Posted(self.channel, "1700000001.000000")
+                return Posted(channel=self.channel, ts="1700000001.000000")
 
         class Listener:
             def __init__(self, name, app_token, handle):
