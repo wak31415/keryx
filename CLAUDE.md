@@ -165,7 +165,9 @@ remember:
 watchdog): it holds `httpx` and `httpcore` at WARNING whatever `LOG_LEVEL` says, because at
 INFO they log every request's whole address, which for Google is a calendar's id (somebody's
 email address), the words searched for, and file ids. Never call `logging.basicConfig`
-anywhere else.
+anywhere else. The Google request layer quiets them again for itself
+(`quiet_http_loggers`, in `GoogleReader`), so the rule holds in a process that set its
+logging up some other way.
 
 ## One task kind
 

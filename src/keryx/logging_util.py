@@ -29,6 +29,16 @@ def configure_logging(level: int | str) -> None:
     made it, in words that name no one (`keryx.integrations.google_api`).
     """
     logging.basicConfig(level=level, format=LOG_FORMAT)
+    quiet_http_loggers()
+
+
+def quiet_http_loggers() -> None:
+    """Hold the HTTP clients' loggers to warnings. Safe to call any number of times.
+
+    `configure_logging` does it for every entry point. Whatever is about to send a
+    request whose address is private does it again for itself (the Google request layer),
+    so the rule does not depend on how the process around it set logging up.
+    """
     for name in HTTP_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 

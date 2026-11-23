@@ -45,6 +45,7 @@ import httpx
 from keryx.config import Settings
 from keryx.integrations import google
 from keryx.integrations.google import TOKEN_URL
+from keryx.logging_util import quiet_http_loggers
 
 GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 CALENDAR = "https://www.googleapis.com/calendar/v3"
@@ -265,6 +266,10 @@ class GoogleReader:
         self._lock = asyncio.Lock()
         self._in_flight = 0
         self._close_due = False
+        # Every address this sends is somebody's: a calendar's id, a search, a file's id.
+        # The entry points keep the HTTP client from logging them; so does this, for a
+        # process that set its logging up some other way.
+        quiet_http_loggers()
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:

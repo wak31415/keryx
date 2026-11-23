@@ -7,7 +7,7 @@ import logging
 import httpx
 import pytest
 
-from keryx.logging_util import HTTP_LOGGERS, configure_logging, mask_number
+from keryx.logging_util import HTTP_LOGGERS, configure_logging, mask_number, quiet_http_loggers
 
 
 @pytest.fixture
@@ -114,17 +114,35 @@ async def test_no_address_query_or_id_of_a_google_request_reaches_the_log(
     assert "check_calendar:" in caplog.text  # Keryx's own line, which names no one
 
 
-async def test_without_it_the_client_would_have_written_every_address_down(
-    tmp_path, caplog, http_loggers_restored
+async def test_left_alone_the_client_writes_every_address_down(
+    caplog, http_loggers_restored
 ):
-    """The test above has teeth: left at INFO, the client logs the lot."""
+    """The tests around this one have teeth: at INFO, httpx logs the whole URL."""
     for name in HTTP_LOGGERS:
         logging.getLogger(name).setLevel(logging.INFO)
     caplog.set_level(logging.INFO)
 
-    await ask_google_things(tmp_path)
+    await google().get(
+        "https://www.googleapis.com/calendar/v3/calendars/colleague%40example.org/events",
+        params={"q": "oncologist"},
+    )
 
     assert "colleague%40example.org" in caplog.text and "oncologist" in caplog.text
+
+
+async def test_the_google_request_layer_quiets_the_client_itself_however_logging_was_set_up(
+    tmp_path, caplog, http_loggers_restored
+):
+    """A script, a test or a new entry point that calls `logging.basicConfig` by itself
+    must not be able to put Google's addresses in a log."""
+    for name in HTTP_LOGGERS:
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    caplog.set_level(logging.DEBUG)
+
+    await ask_google_things(tmp_path)
+
+    for private in ("example.org", "oncologist", "divorce", "googleapis", "HTTP Request"):
+        assert private not in caplog.text
 
 
 def test_logging_is_configured_at_the_level_asked_for_with_the_clients_kept_quiet(
@@ -136,4 +154,11 @@ def test_logging_is_configured_at_the_level_asked_for_with_the_clients_kept_quie
     configure_logging(logging.DEBUG)
 
     assert configured["level"] == logging.DEBUG and "%(name)s" in configured["format"]
+    assert all(logging.getLogger(name).level == logging.WARNING for name in HTTP_LOGGERS)
+
+
+def test_quieting_the_clients_twice_is_the_same_as_once(http_loggers_restored):
+    quiet_http_loggers()
+    quiet_http_loggers()
+
     assert all(logging.getLogger(name).level == logging.WARNING for name in HTTP_LOGGERS)
