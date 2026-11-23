@@ -572,9 +572,12 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
   A place is often a meeting link and is passed through as it is: the note and the
   description say never to read one out.
   A document's text never reaches the voice model at all: like mail, it goes to the
-  summariser, which has no tools, fenced and named as material and not instructions (the
-  fence's own tags are taken out of the text first). That is a mitigation, not a wall, and
-  SECURITY.md says so.
+  summariser, which has no tools, inside a fence whose markers carry a token made for that
+  one call (`drive.fenced`), so no document written beforehand can name the marker that
+  closes it. Anything that looks like a marker is still stripped, *until a pass changes
+  nothing*: one pass over `</docu</document>ment>` leaves a closing tag behind. The
+  summariser's answer comes back clipped (`ANSWER_CHARS`). That is a mitigation, not a
+  wall, and SECURITY.md says so.
 - **A model call is the exception, and there is one.** `check_calendar` and
   `add_calendar_event` make none. `check_email` and `find_document` make exactly one,
   through `integrations/summariser.py`: the bundled `claude` CLI with no tools, no

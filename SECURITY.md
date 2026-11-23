@@ -562,11 +562,12 @@ ways:
 
 - **Mail and documents never reach the voice model.** `check_email` and `find_document`
   hand what they read to one separate model call that has no tools, no settings and no
-  MCP servers, and only that call's few spoken sentences come back. A document's text is
-  fenced and described to that model as material and never instructions, and the fence's
-  own markers are removed from the text first so it cannot close the fence it is in. Text
-  in a mail or a document can still change what those sentences say. It has nothing to act
-  with.
+  MCP servers, and only that call's few spoken sentences come back, clipped to a short
+  length. A document's text is fenced and described to that model as material and never
+  instructions. The fence's markers carry a random token made for that one call, so a
+  document cannot contain the marker that would close it, and anything in the text that
+  looks like a marker is removed, repeatedly, until nothing does. Text in a mail or a
+  document can still change what those sentences say. It has nothing to act with.
 - **Titles and names reach the voice model, cut down and labelled.** `check_calendar` has
   no model in between, so the voice model sees each event's title, place and calendar
   name, and `find_document` shows it each file's name and owner: one line each, clipped to
