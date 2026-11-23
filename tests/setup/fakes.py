@@ -262,9 +262,6 @@ class FakeWorld:
 
             return run
 
-        def post(*args, **kwargs):
-            raise AssertionError("no token exchange in this test")
-
         def gh_status():
             self.calls.append(("gh",))
             return self.gh.pop(0) if len(self.gh) > 1 else self.gh[0]
@@ -289,7 +286,6 @@ class FakeWorld:
             google_browser_signin=google_browser,
             google_finish=google_finish,
             google_discard=google_discard,
-            http_post=post,
             ssh_hosts=lambda: self.calls.append(("ssh_hosts",)) or list(self.ssh_hosts),
             ssh_master_alive=lambda alias: self.calls.append(("master", alias))
             or alias in self.masters_up,

@@ -141,7 +141,6 @@ class Probes:
     google_browser_signin: Callable[[Settings, Any, Any], Any] = _google_browser_signin
     google_finish: Callable[[Settings, str], Any] = _google_finish
     google_discard: Callable[[Settings, Any], bool] = _google_discard
-    http_post: Callable[..., Any] = httpx.post
     #: `~/.ssh/config`, read locally (`plugins.ssh_hosts`): never a connection.
     ssh_hosts: Callable[[], list] = _ssh_hosts
     ssh_master_alive: Callable[[str], bool] = _master_alive
