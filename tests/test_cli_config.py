@@ -437,6 +437,21 @@ def test_auth_logout_knows_only_google(home):
     assert run("auth", "logout", "claude").exit_code == 2
 
 
+def test_auth_logout_slack_is_refused_and_says_what_ends_it_instead(home, monkeypatch):
+    """There is no Slack grant Keryx could revoke: the token is the owner's own app's."""
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--email", "sam@example.com",
+        input="xoxb-very-secret\n")
+
+    result = run("auth", "logout", "slack")
+
+    assert result.exit_code == 2
+    assert "sign out of one of: google" in result.output
+    assert "keryx plugins remove send_to_slack" in result.output
+    assert "keryx config unset SLACK_BOT_TOKEN" in result.output
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-very-secret"}  # nothing was touched
+
+
 def test_auth_login_google_refuses_a_service_it_does_not_know(home):
     result = run("auth", "login", "google", "--services", "gmail,chat")
 
@@ -546,12 +561,63 @@ def test_slacks_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags
     ran = []
     monkeypatch.setattr("keryx.cli.run_command", lambda argv: ran.append(argv) or 0)
 
-    for name in ("gmail", "codex"):
+    for name in ("google", "gmail", "codex"):
         result = run("auth", "login", name, *flags, input="xoxb-very-secret\n")
 
         assert result.exit_code == 2
         assert "--stdin, --email and --no-test are for slack" in result.output
     assert ran == [] and home.stored() == {}
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ("--services", "gmail"),
+        ("--account", "sam@example.com"),
+        ("--client-file", "client.json"),
+        ("--callback-url", "http://localhost:1/?state=s&code=c"),
+        ("--callback-url", "-"),
+    ],
+)
+def test_googles_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags):
+    """The same rule the other way round, said the same way."""
+    ran = []
+    monkeypatch.setattr("keryx.cli.run_command", lambda argv: ran.append(argv) or 0)
+    asked = fake_slack(monkeypatch)
+
+    for name in ("slack", "codex"):
+        result = run("auth", "login", name, *flags, input="http://localhost:1/?code=c\n")
+
+        assert result.exit_code == 2
+        assert "--services, --account, --client-file and --callback-url are for google" in (
+            result.output
+        )
+    assert ran == [] and asked == [] and home.stored() == {}
+
+
+@pytest.mark.parametrize("flag", ["--headless", "--browser"])
+def test_slack_has_no_browser_step_to_choose(home, monkeypatch, flag):
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", flag, "--stdin", input="xoxb-very-secret\n")
+
+    assert result.exit_code == 2
+    assert "--headless and --browser are for claude, codex and google" in result.output
+    assert asked == [] and home.stored() == {}
+
+
+@pytest.mark.parametrize("name", ["slack", "google"])
+def test_standard_input_is_never_claimed_twice(home, monkeypatch, name):
+    """`--stdin` is Slack's token and `--callback-url -` is Google's address: one command
+    cannot ask for both, so neither can read what was meant for the other."""
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", name, "--stdin", "--callback-url", "-",
+                 input="xoxb-very-secret\n")
+
+    assert result.exit_code == 2
+    assert " are for " in result.output and "xoxb-very-secret" not in result.output
+    assert asked == [] and home.stored() == {}
 
 
 def test_auth_login_slack_at_a_terminal_asks_for_the_token_hidden(home, monkeypatch, capsys):

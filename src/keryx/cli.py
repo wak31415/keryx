@@ -1598,9 +1598,23 @@ def auth_login(
     if name not in auth_flow.LOGINS:
         typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
         raise typer.Exit(2)
-    if name != "slack" and (stdin or email is not None or not test):
-        typer.echo("--stdin, --email and --no-test are for slack", err=True)
-        raise typer.Exit(2)
+    # Each sign-in's own options are refused for any other, never ignored: a flag that did
+    # nothing reads as one that was taken. It also means standard input has one claimant,
+    # since `--stdin` is Slack's and `--callback-url -` is Google's.
+    for_google = name == "google" or name in auth_flow.GOOGLE_ALIASES
+    googles = (services, account, client_file, callback_url)
+    misplaced = (
+        (name != "slack" and (stdin or email is not None or not test),
+         "--stdin, --email and --no-test are for slack"),
+        (not for_google and any(value is not None for value in googles),
+         "--services, --account, --client-file and --callback-url are for google"),
+        (name == "slack" and headless is not None,
+         "--headless and --browser are for claude, codex and google"),
+    )
+    for wrong, why in misplaced:
+        if wrong:
+            typer.echo(why, err=True)
+            raise typer.Exit(2)
     try:
         wanted = parse_google_services(services) if services is not None else None
     except ValueError as error:
@@ -1650,6 +1664,13 @@ def auth_logout(
     """
     if name not in auth_flow.LOGOUTS:
         typer.echo(f"sign out of one of: {', '.join(auth_flow.LOGOUTS)}", err=True)
+        if name == "slack":
+            # Nothing of Keryx's to revoke: the token is the owner's own Slack app's.
+            typer.echo(
+                "Slack has no sign-out here: `keryx plugins remove send_to_slack` turns it "
+                "off, and `keryx config unset SLACK_BOT_TOKEN` forgets the token",
+                err=True,
+            )
         raise typer.Exit(2)
     _owner_only("sign out")
     auth_flow.logout(name, _configure_readonly(), echo=typer.echo)
@@ -1664,7 +1685,7 @@ def auth_status_command(
 ) -> None:
     """Every sign-in Keryx needs, and whether it is done. Exit 1 if one has failed.
 
-    Slack is listed too and never fails it: Keryx runs without a plugin.
+    Google and Slack are listed too and never fail it: Keryx runs without either.
     """
     settings = _configure_readonly()
     report = auth_flow.status(settings, ConfigStore(), smoke=smoke)
@@ -1678,7 +1699,7 @@ def auth_status_command(
             # state (and says `enabled`), so a script reading it sees no new value.
             state = "off" if entry.get("enabled") is False else entry["state"]
             typer.echo(f"{name:<{width}}  {state:<8}  {entry['detail']}")
-    # A plugin's sign-in (`optional`) is reported and never fails the command.
+    # A sign-in Keryx runs without (`optional`) is reported and never fails the command.
     if any(e["state"] == "failed" and not e.get("optional") for e in report.values()):
         raise typer.Exit(1)
 
