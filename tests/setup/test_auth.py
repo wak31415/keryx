@@ -354,11 +354,11 @@ def test_a_slack_login_with_no_token_prints_the_link_that_makes_the_app(settings
 
 def test_a_slack_login_that_cannot_go_on_is_an_auth_error(settings):
     with pytest.raises(AuthError, match="no token on standard input"):
-        login("slack", settings, token=" \n")
+        login("slack", settings, tokens=" \n")
 
 
 def test_a_token_is_never_in_what_the_options_print():
-    assert "xoxb-secret" not in repr(LoginOptions(token="xoxb-secret"))
+    assert "xoxb-secret" not in repr(LoginOptions(tokens="xoxb-secret"))
 
 
 def test_nothing_else_can_be_signed_in_to(settings):

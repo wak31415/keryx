@@ -1,38 +1,96 @@
 """Connecting Slack: what the wizard's Slack step and `keryx auth login slack` share.
 
 Each owner makes a Slack app of their own, from the manifest in `integrations.slack`, and
-pastes its bot token once. Everything after that Keryx does: `auth.test` says whose token
-it is, `users.lookupByEmail` turns the address they use in Slack into the member to send
-to (stored as the plugin's `channel_id`, so nobody copies a channel id out of Slack), and
-one test message shows it arriving.
+pastes its tokens once. **The access level comes first** (`integrations.slack.Access`),
+because it decides the manifest: what each level lets Keryx see is said in plain words
+(`MEANING`) before any link is shown. Everything after the tokens Keryx does: `auth.test`
+says whose each is, `apps.connections.open` shows the app-level one is taken,
+`users.lookupByEmail` turns the address they use in Slack into the member to send to
+(stored as `channel_id`, so nobody copies a channel id out of Slack), and one test message
+shows it arriving.
 
 The wizard asks its questions in `setup/plugins.py::run_slack`, through `Probes`. This
 module holds the wording both use and `connect`, the command-line path, which is the same
-steps with nothing to ask: the token on standard input, the address as `--email`. The
-token is never an argument, never echoed and never in an error; what Slack refused is its
-error code and nothing else it said.
+steps with nothing to ask: the tokens on standard input, one to a line and told apart by
+how each starts, the address as `--email`. A token is never an argument, never echoed and
+never in an error; what Slack refused is its error code and nothing else it said.
 
-Two rules both paths keep. **A token brings its destination with it** (`keeps`): a direct
+Four rules both paths keep. **A token brings its destination with it** (`keeps`): a direct
 message's id (`D…`) belongs to the app that opened it, so a token that is not the one on
 file is never paired with one — not the one in the plugin's file, and not a named MCP
 server's — and the owner is looked up again instead. A member's id or a channel's is the
 workspace's and is kept. **Nothing is called connected that was not shown to arrive**:
-either the test message went, or the last line says none was sent and why.
+either the test message went, or the last line says none was sent and why. **A level is
+all of its tokens or none of it**: every token the level needs is checked before anything
+is saved, one the level does not use is refused by name, and lowering the level forgets
+the tokens it no longer uses. **An app is never made twice**: raising the level of a
+workspace that is connected prints the new manifest to paste into the app there is.
+
+A second workspace is the same flow with `--workspace NAME`: its own app from the same
+manifest, its own level, tokens, member id and destination (`plugins.slack`).
 """
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from keryx import plugins
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
+from keryx.config.settings import SLACK_WORKSPACE_NAME
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
 from keryx.integrations import slack
-from keryx.integrations.slack import Member, SlackResult, Workspace
+from keryx.integrations.slack import (
+    APP,
+    BOT,
+    TOKEN_PREFIXES,
+    USER,
+    Access,
+    Connection,
+    Member,
+    SlackResult,
+    Workspace,
+    token_kinds,
+)
+from keryx.plugins.slack import DEFAULT
 
 PLUGIN = "send_to_slack"
 TOKEN_KEY = "SLACK_BOT_TOKEN"
+#: Where the first workspace's tokens are stored, by kind.
+TOKEN_KEYS = {BOT: TOKEN_KEY, APP: "SLACK_APP_TOKEN", USER: "SLACK_USER_TOKEN"}
+#: And every further workspace's, in one table.
+WORKSPACE_TOKENS_KEY = "SLACK_WORKSPACE_TOKENS"
+#: What each token is called when it is asked for or refused.
+TOKEN_NAMES = {BOT: "bot token", APP: "app-level token", USER: "user token"}
+APPS_URL = "https://api.slack.com/apps"
+
+#: What Keryx can see at each level, in plain words: said before the link is shown.
+MEANING = {
+    Access.ANNOUNCE: "Keryx posts to you on Slack and reads nothing there.",
+    Access.CONVERSE: (
+        "Keryx posts to you, and reads the direct messages you type to the Keryx app "
+        "itself: nothing else in Slack. A reply under a task's report resumes that task, "
+        "and a new message to the app starts work, both without the phone PIN."
+    ),
+    Access.READ: (
+        "Everything in converse, and Keryx can read Slack as you: the messages and the "
+        "list of every channel, private channel, direct message and group message you "
+        "are in, the member list, and search across them."
+    ),
+}
+#: The same in a few words, beside each option of the wizard's question.
+SHORT = {
+    Access.ANNOUNCE: "Keryx posts to you and reads nothing",
+    Access.CONVERSE: "also reads what you type to the Keryx app; a message there can "
+                     "resume or start work without the PIN",
+    Access.READ: "also reads Slack as you: every conversation you are in, and search",
+}
+#: Said at `read` until something reads with the token.
+READ_NOTE = (
+    "Nothing reads Slack as you yet: this release checks the user token and keeps it for "
+    "the tools that will."
+)
 
 #: The steps in Slack, after the link. Markdown; `plain` is the same without the marks.
 STEPS = (
@@ -41,6 +99,21 @@ STEPS = (
     "Click **Install to Workspace**, then **Allow**.",
     "Under **OAuth & Permissions**, copy the **Bot User OAuth Token** (`xoxb-…`).",
 )
+#: The steps that raise the level of the app there is, in place of the first two above.
+RAISE_STEPS = (
+    f"Open {APPS_URL} and pick the Keryx app you already have. Do not create a second one.",
+    "Open **App Manifest**, replace what is there with the manifest below, and click "
+    "**Save Changes**.",
+    "Open **Install App** and click **Reinstall to Workspace**, then **Allow**: the new "
+    "permissions count only after that.",
+)
+#: Where each token is found in the app's settings.
+TOKEN_STEPS = {
+    BOT: STEPS[2],
+    APP: "Under **Basic Information**, **App-Level Tokens**, click **Generate Token and "
+         "Scopes**, add the `connections:write` scope, and copy the token (`xapp-…`).",
+    USER: "Under **OAuth & Permissions**, copy the **User OAuth Token** (`xoxp-…`).",
+}
 
 #: Said with the question that asks for an id by hand, when Slack could not find them.
 MEMBER_ID_HINT = (
@@ -52,35 +125,98 @@ TEST_MESSAGE = (
     "Keryx is connected. What you ask for in writing on a call arrives here, and so does "
     "each finished task's report."
 )
+#: Added to it where a message typed back is acted on.
+CONVERSE_TEST_MESSAGE = (
+    " A reply in the thread under a report resumes that task, and a new message here "
+    "starts work."
+)
 
 BY_HAND = f"`keryx plugins install {PLUGIN} --set channel_id=ID` with a channel or member id"
 
 #: Said when a token replaces another: `plugins.secret` prefers the settings a process
 #: started with, so a running service goes on using the old one.
 RESTART_NOTE = "A Keryx that started with the old token keeps it until `keryx restart`."
+#: Said when a workspace starts being listened to, or its listening changes.
+LISTEN_NOTE = "Keryx starts listening for your messages there at its next start: `keryx restart`."
+#: Said when the destination is a channel: only the app's direct messages are heard.
+CHANNEL_NOTE = (
+    "Reports go to {channel}, which is not your direct messages with the app: a reply "
+    "typed there is not seen. Messages you send the app directly are."
+)
+
+_MEMBER = re.compile(r"[UW][A-Z0-9]{2,31}")
 
 
 class SlackSetupError(RuntimeError):
-    """Connecting Slack could not go on, in a sentence that never holds the token."""
+    """Connecting Slack could not go on, in a sentence that never holds a token."""
 
 
 @dataclass(frozen=True)
 class SlackApi:
-    """The three calls `connect` makes, replaced in the tests."""
+    """The calls `connect` makes, replaced in the tests."""
 
     auth_test: Callable[[str], Workspace] = slack.auth_test
     lookup_by_email: Callable[[str, str], Member] = slack.lookup_by_email
     post_text: Callable[[str, str, str], SlackResult] = slack.post_text
+    open_connection: Callable[[str], Connection] = slack.open_connection
 
 
-def token_problem(value: str) -> str | None:
-    """Why `value` cannot be a Slack token, before Slack is asked; None when it could be."""
-    return None if value.strip().startswith("xox") else "A Slack token starts xox."
+def token_problem(value: str, kind: str = BOT) -> str | None:
+    """Why `value` cannot be that token, before Slack is asked; None when it could be.
+
+    A bot token is held to `xox`, as it always was: an older one may not start `xoxb-`.
+    """
+    prefix = "xox" if kind == BOT else TOKEN_PREFIXES[kind]
+    if value.strip().startswith(prefix):
+        return None
+    return f"{_a(TOKEN_NAMES[kind]).capitalize()} starts {TOKEN_PREFIXES[kind]}"
 
 
-def guide() -> str:
+def is_member(value: str) -> bool:
+    """Whether `value` is a member's id, as opposed to a conversation's."""
+    return _MEMBER.fullmatch(value) is not None
+
+
+def parse_access(value: str | None) -> Access | None:
+    """`--access` as a level, or None when none was given."""
+    if value is None:
+        return None
+    try:
+        return Access(value.strip().lower())
+    except ValueError:
+        levels = ", ".join(slack.LEVELS)
+        raise SlackSetupError(f"there is no access level {value!r}: one of {levels}") from None
+
+
+def workspace_name(value: str | None) -> str:
+    """`--workspace` as the name everything is stored under; none is the first workspace."""
+    name = (value or DEFAULT).strip().lower()
+    if name != DEFAULT and not SLACK_WORKSPACE_NAME.fullmatch(name):
+        raise SlackSetupError(
+            "a workspace's name is a short word of your own (lower-case letters, digits, "
+            "_ and -), like work"
+        )
+    return name
+
+
+def steps(access: Access, *, raising: bool = False, have: tuple[str, ...] = ()) -> list[str]:
+    """What to do in Slack for `access`, as Markdown lines without their numbers.
+
+    `raising` is the app there is, changed in place; `have` is the tokens already on
+    file, which that leaves as they are and which are not asked for again.
+    """
+    lines = list(RAISE_STEPS if raising else STEPS[:2])
+    lines += [TOKEN_STEPS[kind] for kind in token_kinds(access) if kind not in have]
+    return lines
+
+
+def guide(access: Access = Access.ANNOUNCE, *, raising: bool = False,
+          have: tuple[str, ...] = ()) -> str:
     """The steps, as Markdown for the wizard, which shows the link above them."""
-    return "\n".join(f"{number}. {step}" for number, step in enumerate(STEPS, 1))
+    return "\n".join(
+        f"{number}. {step}"
+        for number, step in enumerate(steps(access, raising=raising, have=have), 1)
+    )
 
 
 def plain(text: str) -> str:
@@ -104,10 +240,46 @@ def _config(settings: Settings) -> dict[str, Any]:
         raise SlackSetupError(str(error)) from None
 
 
-def without_email(settings: Settings) -> str:
+@dataclass(frozen=True)
+class OnFile:
+    """One workspace as it is saved now: its settings, and which tokens there are."""
+
+    name: str
+    values: Mapping[str, Any]
+    tokens: Mapping[str, str]
+    #: The named MCP server, which only ever stands in for the first workspace.
+    server: str = ""
+
+    @property
+    def connected(self) -> bool:
+        return bool(self.tokens.get(BOT))
+
+    @property
+    def access(self) -> Access:
+        return Access(self.values.get("access") or Access.ANNOUNCE)
+
+    @property
+    def channel(self) -> str:
+        return str(self.values.get("channel_id") or "")
+
+
+def on_file(settings: Settings, name: str, values: Mapping[str, Any] | None = None) -> OnFile:
+    """Workspace `name` as the plugin's file and `settings` hold it."""
+    values = _config(settings) if values is None else values
+    if name == DEFAULT:
+        tokens = {kind: getattr(settings, key.lower()) or "" for kind, key in TOKEN_KEYS.items()}
+        return OnFile(name, values, tokens, server=values["mcp_server"])
+    return OnFile(
+        name,
+        values["workspaces"].get(name) or {},
+        dict(settings.slack_workspace_tokens.get(name) or {}),
+    )
+
+
+def without_email(settings: Settings, name: str = DEFAULT) -> str:
     """What `connect` does when no `--email` is given, in a sentence, as things stand."""
     try:
-        channel = _config(settings)["channel_id"]
+        channel = on_file(settings, name).channel
     except SlackSetupError:
         channel = ""
     address = settings.user_google_email
@@ -121,64 +293,253 @@ def without_email(settings: Settings) -> str:
     return f"Without --email it keeps sending to {channel}."
 
 
-def start(settings: Settings, echo: Callable[[str], None]) -> None:
-    """`keryx auth login slack` with no token: the link, the steps, and the next command."""
-    echo("Create your Slack app from this link:\n")
-    echo(slack.new_app_url())
+def _flags(name: str, access: Access, current: Access) -> str:
+    """The options that name this workspace and level again on the next command."""
+    flags = "" if name == DEFAULT else f" --workspace {name}"
+    return flags + ("" if access is current else f" --access {access}")
+
+
+def start(
+    settings: Settings,
+    echo: Callable[[str], None],
+    *,
+    workspace: str = DEFAULT,
+    access: Access | None = None,
+) -> None:
+    """`keryx auth login slack` with no token: what the level means, then the link (or
+    the manifest, for an app there already is), the steps, and the next command."""
+    try:
+        saved = on_file(settings, workspace)
+    except SlackSetupError:
+        saved = OnFile(workspace, {}, {})
+    current = saved.access
+    chosen = access is not None or saved.connected
+    access = access or current
+    raising = saved.connected and access is not current and access.reaches(current)
+    have = tuple(kind for kind in token_kinds(access) if saved.tokens.get(kind)) if raising else ()
+    if chosen:
+        echo(f"Access level {access}: {MEANING[access]}")
+    else:
+        # Nothing is connected and no level was named: say all three before the link,
+        # because the level decides the app that link creates.
+        echo("What Keryx may see in your Slack is decided now, because it decides the app:\n")
+        for level in slack.LEVELS:
+            echo(f"  {level}: {MEANING[level]}")
+        others = " or ".join(f"--access {level}" for level in slack.LEVELS if level is not access)
+        echo(f"\nWhat follows is {access}; {others} chooses another.")
+    if access is Access.READ:
+        echo(READ_NOTE)
     echo("")
-    for number, step in enumerate(STEPS, 1):
+    if raising:
+        echo(f"{saved.name} is connected at the {current} level, so the app you have is "
+             "changed, not made again:\n")
+    else:
+        echo("Create your Slack app from this link:\n")
+        echo(slack.new_app_url(access))
+        echo("")
+    for number, step in enumerate(steps(access, raising=raising, have=have), 1):
         echo(f"{number}. {plain(step)}")
+    if raising:
+        echo("\nThe manifest:\n")
+        echo(slack.manifest_json(access))
+        if BOT in have:
+            echo("\nThe bot token stays as it is.")
+    wanted = [kind for kind in token_kinds(access) if kind not in have]
+    many = len(wanted) > 1
+    what = ("the tokens" if many else f"the {TOKEN_NAMES[wanted[0]]}") if wanted else "nothing"
+    address = "" if access is Access.READ else " --email ADDRESS"
     echo(
-        "\nThen hand the token over on standard input, never on the command line, with "
-        "the address you use in Slack:"
-        "\n  keryx auth login slack --stdin --email ADDRESS"
+        f"\nThen hand {what} over on standard input, never on the command line"
+        + (", one to a line in any order" if many else "")
+        + ("" if access is Access.READ else ", with the address you use in Slack")
+        + ":"
+        f"\n  keryx auth login slack --stdin{_flags(workspace, access, current)}{address}"
     )
-    echo(without_email(settings))
+    if access is Access.READ:
+        echo("The user token says which member you are, so no address is needed.")
+    else:
+        echo(without_email(settings, workspace))
+
+
+def lower(
+    settings: Settings,
+    store: ConfigStore,
+    *,
+    workspace: str,
+    access: Access,
+    echo: Callable[[str], None],
+) -> bool:
+    """Lower a connected workspace to `access`, forgetting the tokens it no longer uses.
+
+    True when that is what was asked and it was done; False when this is not a lowering
+    (not connected, or not a lower level), and nothing was touched. Slack is not asked
+    anything: taking access away needs nothing from it.
+    """
+    values = _config(settings)
+    saved = on_file(settings, workspace, values)
+    if not saved.connected or access is saved.access or access.reaches(saved.access):
+        return False
+    kept = {kind: saved.tokens[kind] for kind in token_kinds(access) if saved.tokens.get(kind)}
+    dropped = [kind for kind in saved.tokens if saved.tokens[kind] and kind not in kept]
+    _save_tokens(store, settings, workspace, kept)
+    _write_workspace(settings, values, workspace, {"access": str(access)})
+    echo(f"{workspace} is now at the {access} level: {MEANING[access]}")
+    if dropped:
+        names = " and ".join(_stored_as(workspace, kind) for kind in dropped)
+        echo(f"{names} {'are' if len(dropped) > 1 else 'is'} forgotten.")
+    echo("A running Keryx stops acting on your messages there at once. The app in Slack "
+         "keeps the permissions it was made with: to take those away too, paste this "
+         "manifest into its App Manifest page and reinstall it:\n")
+    echo(slack.manifest_json(access))
+    return True
+
+
+def _stored_as(workspace: str, kind: str) -> str:
+    """Where one token is kept, by the name the owner would unset it under."""
+    if workspace == DEFAULT:
+        return TOKEN_KEYS[kind]
+    return f"{workspace}'s {TOKEN_NAMES[kind]}"
+
+
+def _save_tokens(
+    store: ConfigStore, settings: Settings, workspace: str, tokens: Mapping[str, str]
+) -> None:
+    """Store exactly `tokens` for `workspace`, in one write: what is not there is unset."""
+    if workspace == DEFAULT:
+        values: dict[str, Any] = {key: tokens.get(kind) for kind, key in TOKEN_KEYS.items()}
+    else:
+        table = dict(store.stored().get(WORKSPACE_TOKENS_KEY) or {})
+        table[workspace] = dict(tokens)
+        values = {WORKSPACE_TOKENS_KEY: table}
+    try:
+        store.set(values, actor=OWNER, settings=settings)
+    except ConfigError as error:
+        raise SlackSetupError(str(error)) from None
+
+
+def _write_workspace(
+    settings: Settings, values: Mapping[str, Any], workspace: str, changes: Mapping[str, Any]
+) -> None:
+    """Write `changes` into the workspace's part of the plugin's file."""
+    if workspace == DEFAULT:
+        plugins.write_config(settings, PLUGIN, changes)
+        return
+    tables = {name: dict(table) for name, table in values["workspaces"].items()}
+    tables[workspace] = {**tables.get(workspace, {}), **changes}
+    plugins.write_config(settings, PLUGIN, {"workspaces": tables})
+
+
+def wanted_tokens(
+    settings: Settings, workspace: str | None, access: str | None
+) -> list[tuple[str, bool]]:
+    """Each token the level needs, as a terminal asks for it, and whether one is saved."""
+    saved = on_file(settings, workspace_name(workspace))
+    level = parse_access(access) or saved.access
+    return [(f"{TOKEN_NAMES[kind].capitalize()} ({TOKEN_PREFIXES[kind]}…)",
+             bool(saved.tokens.get(kind)))
+            for kind in token_kinds(level)]
+
+
+def read_tokens(text: str) -> dict[str, str]:
+    """The tokens on standard input, by kind: one to a line, in any order.
+
+    Raises `SlackSetupError` for a line that is none of the three, or a kind given twice.
+    A bot token is told by `xox` alone when it is the only line, as it always was.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    found: dict[str, str] = {}
+    for line in lines:
+        kind = slack.token_kind(line)
+        if kind is None:
+            if len(lines) == 1 and line.startswith("xox"):
+                kind = BOT
+            else:
+                raise SlackSetupError(
+                    "that is not a Slack token: a bot token starts xoxb-, an app-level "
+                    "token xapp- and a user token xoxp-"
+                )
+        if kind in found:
+            raise SlackSetupError(f"two {TOKEN_NAMES[kind]}s on standard input; one of each")
+        found[kind] = line
+    return found
 
 
 def connect(
     settings: Settings,
     store: ConfigStore,
     *,
-    token: str,
+    tokens: str,
     email: str | None,
     test: bool,
     echo: Callable[[str], None],
     api: SlackApi | None = None,
+    workspace: str = DEFAULT,
+    access: Access | None = None,
 ) -> None:
-    """Check the token, find where to send, save both, turn the plugin on, and prove it.
+    """Check the tokens, find where to send, save it all, turn the plugin on, and prove it.
 
-    Raises `SlackSetupError` saying how far it got. Nothing is saved until there is a
-    token Slack takes *and* a destination that goes with it, so a token Slack refuses or
-    an address it cannot find leaves a working install exactly as it was. A token that is
-    not the one on file brings its destination with it (`keeps`): an address is looked
-    up, never a direct message's old id kept. After the save, only the test message can
-    fail, and that says so and undoes nothing.
+    `tokens` is standard input: one token to a line, told apart by how each starts. A
+    token the level needs and that is on file already need not be given again. Raises
+    `SlackSetupError` saying how far it got. Nothing is saved until every token the level
+    needs is one Slack takes *and* there is a destination that goes with the bot token, so
+    a token Slack refuses or an address it cannot find leaves a working install exactly as
+    it was. A token that is not the one on file brings its destination with it (`keeps`):
+    an address is looked up, never a direct message's old id kept. After the save, only
+    the test message can fail, and that says so and undoes nothing.
     """
     api = api or SlackApi()
-    token = token.strip()
-    if not token:
-        raise SlackSetupError("no token on standard input")
-    if token_problem(token):
-        raise SlackSetupError("that is not a Slack token: a bot token starts xoxb-")
+    given = read_tokens(tokens)
     values = _config(settings)
-    on_file, server = values["channel_id"], values["mcp_server"]
-    before = settings.slack_bot_token or ""
+    saved = on_file(settings, workspace, values)
+    if workspace != DEFAULT and (problem := plugins.plugin(PLUGIN).problem(dict(values))):
+        raise SlackSetupError(
+            f"{workspace} is added beside your first workspace, and there is none yet "
+            f"({problem}): run it without --workspace first. Nothing was saved"
+        )
+    access = access or saved.access
+    needed = token_kinds(access)
+    if extra := [kind for kind in given if kind not in needed]:
+        names = " or ".join(f"{_a(TOKEN_NAMES[kind])} ({TOKEN_PREFIXES[kind]})" for kind in extra)
+        raise SlackSetupError(
+            f"the {access} level does not use {names}: leave it out, or choose a higher "
+            "level with --access. Nothing was saved"
+        )
+    held = {kind: given.get(kind) or saved.tokens.get(kind) or "" for kind in needed}
+    if lacking := [kind for kind in needed if not held[kind]]:
+        if not given:
+            raise SlackSetupError("no token on standard input")
+        names = " and ".join(f"the {TOKEN_NAMES[kind]} ({TOKEN_PREFIXES[kind]})"
+                             for kind in lacking)
+        raise SlackSetupError(f"the {access} level also needs {names}, one to a line. "
+                              "Nothing was saved")
+    before = saved.tokens.get(BOT) or ""
+    token = held[BOT]
     # An address that was asked for replaces the destination; otherwise one is looked for
     # only when what is on file does not stand for this token.
     address = (email or "").strip()
-    kept = on_file if not address and keeps(on_file, new_token=token != before) else ""
-    if not (address or kept):
+    kept = saved.channel if not address and keeps(saved.channel, new_token=token != before) else ""
+    by_token = access is Access.READ  # the user token says who they are, and so where to send
+    if not (address or kept or by_token):
         address = settings.user_google_email or ""
-    if not (address or kept):
-        raise SlackSetupError(f"{_nowhere(on_file, server)}: add --email ADDRESS, the one "
-                              "you use in Slack. Nothing was saved")
+    if not (address or kept or by_token):
+        raise SlackSetupError(f"{_nowhere(saved.channel, saved.server)}: add --email ADDRESS, "
+                              "the one you use in Slack. Nothing was saved")
 
-    workspace = api.auth_test(token)
-    if not workspace.ok:
-        why = workspace.problem if workspace.refused else (
-            f"the token could not be checked ({workspace.problem})")
+    team = api.auth_test(token)
+    if not team.ok:
+        why = team.problem if team.refused else (
+            f"the token could not be checked ({team.problem})")
         raise SlackSetupError(f"{why}; nothing was saved")
+    owner = ""
+    if USER in needed:
+        owner = _check_user_token(api, held[USER], team)
+    if APP in needed:
+        opened = api.open_connection(held[APP])
+        if not opened.ok:
+            raise SlackSetupError(
+                f"the app-level token could not be used ({opened.problem}): it needs the "
+                "connections:write scope, and Socket Mode on in the app. Nothing was saved"
+            )
     found = None
     if address:
         found = api.lookup_by_email(token, address)
@@ -188,24 +549,41 @@ def connect(
                 f"another --email, or by hand: `keryx config set {TOKEN_KEY} --stdin`, "
                 f"then {BY_HAND}"
             )
-    channel = found.user_id if found is not None else kept
+    channel = found.user_id if found is not None else (kept or owner)
+    if not owner:
+        same_app = token == before
+        owner = (found.user_id if found is not None else "") or (
+            channel if is_member(channel) else "") or (
+            str(saved.values.get("owner_id") or "") if same_app else "")
+    if access.reaches(Access.CONVERSE) and not owner:
+        raise SlackSetupError(
+            f"at the {access} level Keryx acts only on messages from your own member id, "
+            f"and {channel} is not one: add --email ADDRESS, the one you use in Slack. "
+            "Nothing was saved"
+        )
 
-    try:
-        store.set({TOKEN_KEY: token}, actor=OWNER, settings=settings)
-    except ConfigError as error:
-        raise SlackSetupError(str(error)) from None
-    echo(f"connected to the {workspace.team or 'Slack'} workspace; {TOKEN_KEY} saved")
-    if store.source_of(TOKEN_KEY, settings) == FROM_ENV:
+    _save_tokens(store, settings, workspace, held)
+    echo(_connected_line(workspace, team, access, needed))
+    if workspace == DEFAULT and store.source_of(TOKEN_KEY, settings) == FROM_ENV:
         echo(f"note: {TOKEN_KEY} is also set in the environment, which wins")
     if before and token != before:
         echo(RESTART_NOTE)
-    settings = settings.model_copy(update={"slack_bot_token": token})
+    if workspace == DEFAULT:
+        settings = settings.model_copy(update={"slack_bot_token": token})
     if found is not None:
         echo(f"found {found.name or address} ({channel}): messages go to them")
-    else:
+    elif kept:
         echo(f"it keeps sending to {channel}")
+    else:
+        echo(f"you are {channel} there: messages go to you")
     try:
-        plugins.write_config(settings, PLUGIN, {"channel_id": channel})
+        _write_workspace(settings, values, workspace, {
+            "channel_id": channel,
+            "access": str(access),
+            "owner_id": owner,
+            "team": team.team,
+            "team_id": team.team_id,
+        })
         plugins.install(settings, PLUGIN)
     except plugins.PluginConfigError as error:
         raise SlackSetupError(f"the token is saved, but {error}") from None
@@ -213,14 +591,24 @@ def connect(
     if not status.on:
         raise SlackSetupError(f"{PLUGIN} is installed but refused: {status.refused}")
     echo(f"{PLUGIN} is on, from the next call")
-    if server:
+    if saved.server:
         echo(f"note: {PLUGIN} now posts with this token to {channel}, not with the "
-             f"{server} MCP server's token and channel; subagents still use that server")
+             f"{saved.server} MCP server's token and channel; subagents still use that server")
+    if access.reaches(Access.CONVERSE):
+        echo(LISTEN_NOTE)
+        if not (is_member(channel) or slack.is_dm(channel)):
+            echo(CHANNEL_NOTE.format(channel=channel))
+    if access is Access.READ:
+        echo(READ_NOTE)
+    for kind in saved.tokens:
+        if saved.tokens[kind] and kind not in needed:
+            echo(f"{_stored_as(workspace, kind)} is forgotten: the {access} level does not "
+                 "use it")
 
     if not test:
         echo("no test message was sent (--no-test), so nothing has shown it arrives")
         return
-    sent = api.post_text(token, channel, TEST_MESSAGE)
+    sent = api.post_text(token, channel, test_message(access))
     if not sent.ok:
         elsewhere = "" if found is not None else (
             ". To send to yourself instead, run it again with --email ADDRESS")
@@ -229,6 +617,47 @@ def connect(
             f"{sent.problem}{elsewhere}"
         )
     echo("sent a test message: it is in Slack, under Apps")
+
+
+def test_message(access: Access) -> str:
+    """The one message that shows it arriving, saying what a reply to it does."""
+    return TEST_MESSAGE + (CONVERSE_TEST_MESSAGE if access.reaches(Access.CONVERSE) else "")
+
+
+def _a(name: str) -> str:
+    return f"{'an' if name.startswith('app') else 'a'} {name}"
+
+
+def user_token_problem(checked: Workspace, team: Workspace) -> str | None:
+    """Why a user token Slack answered for cannot be this workspace's owner's; None when
+    it can. `team` is what the bot token's own check said."""
+    if not checked.ok:
+        return checked.problem if checked.refused else (
+            f"it could not be checked ({checked.problem})")
+    if not checked.user_id:
+        return "Slack did not say which member it belongs to"
+    if team.team_id and checked.team_id != team.team_id:
+        return ("it belongs to another workspace than the bot token"
+                + (f" ({checked.team})" if checked.team else ""))
+    return None
+
+
+def _check_user_token(api: SlackApi, token: str, team: Workspace) -> str:
+    """The member the user token acts as, who is the owner; refused in a sentence."""
+    checked = api.auth_test(token)
+    if problem := user_token_problem(checked, team):
+        raise SlackSetupError(f"the user token cannot be used: {problem}. Nothing was saved")
+    return checked.user_id
+
+
+def _connected_line(workspace: str, team: Workspace, access: Access, kinds: tuple) -> str:
+    where = f"connected to the {team.team or 'Slack'} workspace"
+    if workspace != DEFAULT:
+        return f"{where} as {workspace}, at the {access} level; its tokens are saved"
+    saved = [TOKEN_KEYS[kind] for kind in kinds]
+    names = saved[0] if len(saved) == 1 else ", ".join(saved[:-1]) + " and " + saved[-1]
+    level = "" if access is Access.ANNOUNCE else f" at the {access} level"
+    return f"{where}{level}; {names} saved"
 
 
 def _nowhere(on_file: str, server: str) -> str:

@@ -77,6 +77,7 @@ from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
 from keryx.setup import profile
 from keryx.setup import service as service_units
+from keryx.setup import slack as slack_setup
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
@@ -1527,6 +1528,29 @@ def config_unlock(key: Annotated[str, typer.Argument(help="The setting.")]) -> N
     typer.echo(f"{key.upper()}: the running service may change it")
 
 
+def _read_slack_tokens(settings: Settings, workspace: str | None, access: str | None) -> str:
+    """Standard input for `auth login slack --stdin`: the tokens, one to a line.
+
+    At a terminal each token the level needs is asked for by name with the typing hidden,
+    and Enter alone keeps the one that is saved. Anything else is read whole.
+    """
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    try:
+        kinds = slack_setup.wanted_tokens(settings, workspace, access)
+    except slack_setup.SlackSetupError as error:
+        typer.echo(f"slack sign-in failed: {error}", err=True)
+        raise typer.Exit(1) from None
+    lines = []
+    for name, saved in kinds:
+        if saved:
+            lines.append(typer.prompt(f"{name}, or Enter to keep the one saved",
+                                      hide_input=True, default="", show_default=False))
+        else:
+            lines.append(typer.prompt(name, hide_input=True))
+    return "\n".join(lines)
+
+
 @auth_app.command("login")
 def auth_login(
     name: Annotated[
@@ -1577,7 +1601,11 @@ def auth_login(
     ] = None,
     stdin: Annotated[
         bool,
-        typer.Option("--stdin", help="slack: read the bot token from standard input."),
+        typer.Option(
+            "--stdin",
+            help="slack: read the tokens from standard input, one to a line in any order "
+            "(xoxb-, xapp-, xoxp-); one already saved need not be given again.",
+        ),
     ] = False,
     email: Annotated[
         str | None,
@@ -1586,6 +1614,24 @@ def auth_login(
     test: Annotated[
         bool, typer.Option("--test/--no-test", help="slack: send one test message.")
     ] = True,
+    access: Annotated[
+        str | None,
+        typer.Option(
+            "--access",
+            help="slack: what Keryx may see there: announce (it posts, and reads nothing), "
+            "converse (it also reads what you type to the Keryx app, which can resume or "
+            "start work) or read (it also reads Slack as you). Default: the level the "
+            "workspace has, else announce.",
+        ),
+    ] = None,
+    workspace: Annotated[
+        str | None,
+        typer.Option(
+            "--workspace",
+            help="slack: a further workspace, by a short name of your own, with its own "
+            "app (default: your first workspace).",
+        ),
+    ] = None,
 ) -> None:
     """Sign in to one thing: a coding agent, Google, or Slack.
 
@@ -1593,8 +1639,10 @@ def auth_login(
     browser on this machine it opens the consent screen and finishes by itself; with
     --headless it prints a link for any device and asks for the address the browser lands on.
 
-    slack is two steps: once for the link that creates your Slack app, then again
-    with --stdin and its bot token, which is never taken as an argument.
+    slack is two steps: once for what the access level lets Keryx see and the link that
+    creates your Slack app, then again with --stdin and the level's tokens, which are
+    never taken as arguments. A lower --access on a workspace that is connected is applied
+    at once.
     """
     if name not in auth_flow.LOGINS:
         typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
@@ -1605,8 +1653,9 @@ def auth_login(
     for_google = name == "google" or name in auth_flow.GOOGLE_ALIASES
     googles = (services, account, client_file, callback_url)
     misplaced = (
-        (name != "slack" and (stdin or email is not None or not test),
-         "--stdin, --email and --no-test are for slack"),
+        (name != "slack" and (stdin or email is not None or not test
+                              or access is not None or workspace is not None),
+         "--stdin, --email, --no-test, --access and --workspace are for slack"),
         (not for_google and any(value is not None for value in googles),
          "--services, --account, --client-file and --callback-url are for google"),
         (name == "slack" and headless is not None,
@@ -1635,9 +1684,11 @@ def auth_login(
         callback_url=callback_url,
         services=wanted,
         account=account,
-        token=_read_secret_input("SLACK_BOT_TOKEN") if stdin else None,
+        tokens=_read_slack_tokens(settings, workspace, access) if stdin else None,
         email=email,
         test=test,
+        workspace=workspace,
+        access=access,
     )
     try:
         auth_flow.login(

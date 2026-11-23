@@ -11,9 +11,11 @@ the address they land on: at a terminal that is still one command, and without o
 coding agent relaying the link — it is two, the second with `--callback-url`. `gmail` and
 `google-workspace` are the names the two older sign-ins had, and run this one.
 
-Slack is always two steps (`setup/slack.py`): alone it prints the link that creates the
-owner's Slack app, and with the bot token on standard input it checks it, finds where to
-send and turns `send_to_slack` on.
+Slack is always two steps (`setup/slack.py`): alone it says what the chosen access level
+lets Keryx see and prints the link that creates the owner's Slack app (or, for an app there
+is, the manifest that raises its level), and with the level's tokens on standard input it
+checks each, finds where to send and turns `send_to_slack` on. Lowering a level needs no
+token and is done at once. `--workspace NAME` is a further workspace, with its own app.
 """
 
 import asyncio
@@ -122,11 +124,15 @@ class LoginOptions:
     services: tuple[str, ...] | None = None
     #: Google: the account the owner means to sign in as, when it is not the one saved.
     account: str | None = None
-    #: Slack: the bot token read from standard input (None: print the link instead), the
-    #: address to find the owner by, and whether to send one test message.
-    token: str | None = field(default=None, repr=False)
+    #: Slack: what standard input held, one token to a line (None: say what the level
+    #: means and print the link instead), the address to find the owner by, whether to
+    #: send one test message, which workspace (None: the first) and which access level
+    #: (None: the one it has).
+    tokens: str | None = field(default=None, repr=False)
     email: str | None = None
     test: bool = True
+    workspace: str | None = None
+    access: str | None = None
 
 
 def login(
@@ -216,12 +222,26 @@ def _agent_login(
 
 
 def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, echo: Echo) -> None:
-    if options.token is None:
-        slack.start(settings, echo)
-        return
     try:
+        workspace = slack.workspace_name(options.workspace)
+        access = slack.parse_access(options.access)
+        if options.tokens is None:
+            # Taking access away needs nothing from Slack, so it is done here and now.
+            lowered = access is not None and slack.lower(
+                settings, store, workspace=workspace, access=access, echo=echo
+            )
+            if not lowered:
+                slack.start(settings, echo, workspace=workspace, access=access)
+            return
         slack.connect(
-            settings, store, token=options.token, email=options.email, test=options.test, echo=echo
+            settings,
+            store,
+            tokens=options.tokens,
+            email=options.email,
+            test=options.test,
+            echo=echo,
+            workspace=workspace,
+            access=access,
         )
     except slack.SlackSetupError as exc:
         raise AuthError(str(exc)) from None
