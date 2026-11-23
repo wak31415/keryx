@@ -29,9 +29,10 @@ than filtered. A query of several terms ANDed that finds nothing is loosened to 
 terms on its own, and the model is told that only part of it matched.
 
 Either way the mail goes to a Claude model through the bundled `claude` CLI — no tools, no
-settings, no MCP servers, low effort — with their question, and comes back as a few spoken
-sentences. On the owner's inbox a busy day was 4.5–6 s end to end (measured 2026-09-27,
-Opus 5.5 at low effort; Sonnet 5 was as fast).
+settings, no MCP servers, low effort (`keryx.integrations.summariser`, which `find_document`
+shares) — with their question, and comes back as a few spoken sentences. On the owner's
+inbox a busy day was 4.5–6 s end to end (measured 2026-09-27, Opus 5.5 at low effort;
+Sonnet 5 was as fast).
 
 Read-only by construction: `GmailApi` has only `get`, whatever the token would allow. The
 credential is Keryx's Google token (`data_dir/google_token.json`, 0600, written by `keryx
@@ -46,10 +47,9 @@ import base64
 import html
 import json
 import logging
-import os
 import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.utils import getaddresses
@@ -59,10 +59,15 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
-from keryx.agents.auth import child_env, redact, resolve_auth
 from keryx.config import Settings, secure_file
 from keryx.integrations import google
 from keryx.integrations.google import TOKEN_URL
+from keryx.integrations.summariser import (
+    Summariser,
+    SummaryError,
+    build_summariser,
+    summariser_problem,
+)
 
 log = logging.getLogger("keryx.integrations.gmail")
 
@@ -678,85 +683,6 @@ async def search(api: GmailApi, query: str, *, loosen: bool = True) -> Found:
     return Found(emails, loosened)
 
 
-# ------------------------------------------------------------------------------ model
-
-
-class Summariser(Protocol):
-    """One model call: some email and a question in, a few spoken sentences out."""
-
-    async def summarise(self, system: str, prompt: str) -> str: ...
-
-
-Runner = Callable[[Sequence[str], str, dict[str, str]], Any]
-
-
-async def _run_cli(argv: Sequence[str], stdin: str, env: dict[str, str]) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, **env},
-    )
-    try:
-        out, err = await process.communicate(stdin.encode())
-    except asyncio.CancelledError:
-        process.kill()
-        await process.wait()
-        raise
-    return process.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
-
-
-class ClaudeCliSummariser(Summariser):
-    """The bundled `claude` CLI in print mode, stripped to one model call.
-
-    No tools, no settings, no MCP servers, no session written: nothing but the model. It
-    signs in the way every Claude subagent does (`CLAUDE_AUTH`: an API key, a token, or the
-    stored subscription login), handed over in the environment only.
-    """
-
-    def __init__(
-        self,
-        cli: str,
-        settings: Settings,
-        *,
-        model: str,
-        effort: str,
-        run: Callable[..., Any] = _run_cli,
-    ) -> None:
-        self._cli = cli
-        self._settings = settings
-        self._model = model
-        self._effort = effort
-        self._run = run
-
-    async def summarise(self, system: str, prompt: str) -> str:
-        from keryx.agents.claude import CLAUDE_AUTH
-
-        auth = resolve_auth(CLAUDE_AUTH, self._settings, probe=False)
-        argv = [
-            self._cli, "-p",
-            "--model", self._model,
-            "--effort", self._effort,
-            "--output-format", "json",
-            "--setting-sources", "",
-            "--strict-mcp-config",
-            "--tools", "",
-            "--no-session-persistence",
-            "--system-prompt", system,
-        ]  # fmt: skip
-        code, out, err = await self._run(argv, prompt, child_env(auth))
-        try:
-            result = json.loads(out) if out.strip() else {}
-        except ValueError:
-            result = {}
-        text = str(result.get("result") or "").strip()
-        if code != 0 or result.get("is_error") or not text:
-            why = redact((err or str(result.get("result") or ""))[-300:], [auth.secret])
-            raise EmailError("model_failed", f"claude exited {code}: {why}")
-        return text
-
-
 # ----------------------------------------------------------------------------- answer
 
 
@@ -820,7 +746,10 @@ class EmailReader:
         fetched = time.monotonic() - started
         if emails:
             prompt = asked + header + "\n\n" + "\n\n---\n\n".join(e.render() for e in emails)
-            answer = await self._summariser.summarise(system, prompt)
+            try:
+                answer = await self._summariser.summarise(system, prompt)
+            except SummaryError as exc:
+                raise EmailError("model_failed", exc.detail) from exc
         log.info(
             "check_email (%s): %d threads, %d read in full; gmail %.1fs, total %.1fs",
             "day" if day else "search",
@@ -838,11 +767,7 @@ def email_problem(settings: Settings) -> str | None:
         if google.read_token(settings) is not None:
             return "Gmail is not part of your Google sign-in: `keryx auth login google`"
         return "not signed in to Google: `keryx auth login google`"
-    from keryx.agents.registry import BACKENDS, install_command, installed
-
-    if not installed("claude") or BACKENDS["claude"].find_cli() is None:
-        return f"the claude CLI is not installed: `{install_command('claude')}`"
-    return None
+    return summariser_problem(settings)
 
 
 def build_email_reader(settings: Settings, *, model: str, effort: str) -> EmailReader:
@@ -851,11 +776,8 @@ def build_email_reader(settings: Settings, *, model: str, effort: str) -> EmailR
     It needs a Google sign-in that reads Gmail and the `claude` CLI; ask `email_problem`
     first.
     """
-    from keryx.agents.registry import BACKENDS
-
     path = credentials_path(settings)
-    cli = BACKENDS["claude"].find_cli()
-    assert path is not None and cli is not None, "email_problem says so first"
+    assert path is not None, "email_problem says so first"
     secure_file(path)
-    summariser = ClaudeCliSummariser(cli, settings, model=model, effort=effort)
+    summariser = build_summariser(settings, model=model, effort=effort)
     return EmailReader(HttpGmail(path), summariser)
