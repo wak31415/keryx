@@ -166,6 +166,10 @@ class SetupContext:
     probes: Probes = field(default_factory=Probes)
     #: Walking a section that is already done, to change it: ask again what is set.
     review: bool = False
+    #: What a section has already asked the outside world in this walk, by whatever key
+    #: it likes. For a step that saves nothing until its end (Slack's): going back and
+    #: typing the same token again must not show it to Slack a second time.
+    memo: dict = field(default_factory=dict)
     _settings: Settings | None = None
 
     @property
