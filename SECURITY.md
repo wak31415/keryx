@@ -417,7 +417,10 @@ email answers on a call. What it leaves, and what protects it:
   are switched off rather than left to fail. Signing in as a different account removes the
   previous account's copy, because those tools would still accept its address. What it is
   started with is a path and your address, and no credential: a coding agent's command
-  line is where that configuration ends up.
+  line is where that configuration ends up. Whatever that file holds is redacted from
+  every error a task returns or logs, read afresh each time, so the access token the
+  server mints while a task runs is covered once it is in the file. Lines Codex prints
+  about a server while it starts are redacted with what the file held at the start.
 - **A Google tool that cannot be served still opens a port.** When a tool finds no usable
   credential (the sign-in was revoked, say), `workspace-mcp` 2.6.0 first starts its own
   sign-in listener on `localhost:8000` and only then fails for want of a client. The

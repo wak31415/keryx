@@ -333,6 +333,43 @@ def test_the_google_server_comes_from_the_sign_in_and_its_file_is_redacted(setti
     )  # fmt: skip
 
 
+async def test_an_access_token_the_server_minted_mid_task_is_redacted_too(settings, tmp_path):
+    """The copy starts with no access token; the server refreshes and writes one back while
+    the task runs. What a session says is redacted of the file as it is then, not as it
+    was when the task began."""
+    import json
+
+    from keryx.integrations import google
+
+    settings.codex_api_key = KEY
+    token = sign_in_to_google(settings)
+    runner = ContextRunner(settings, ScriptedAdapter([RuntimeError("401 for ya29.minted-later")]))
+    session = await runner.open(make_task(cwd=str(tmp_path)))
+    path = google.mcp_credential_path(settings, token.email)
+    path.write_text(json.dumps({**json.loads(path.read_text()), "token": "ya29.minted-later"}))
+
+    outcome = await session.run("go", on_progress=lambda text: None)
+
+    assert "ya29" not in outcome.error and "[redacted]" in outcome.error
+
+
+class ContextRunner(AdapterRunner):
+    """A runner whose context is the real one, built from the settings."""
+
+    name = "scripted"
+
+    def __init__(self, settings, adapter):
+        super().__init__(settings)
+        self.adapter = adapter
+
+    def context(self, task):
+        return AgentContext.build(task, self.settings, auth=SOURCE, model="")
+
+    async def connect(self, context, resume):
+        self.adapter.secrets = list(context.secrets)  # a snapshot, as the real adapters take
+        return self.adapter
+
+
 class ScriptedRunner(AdapterRunner):
     name = "scripted"
 

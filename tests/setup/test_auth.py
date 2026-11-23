@@ -385,11 +385,37 @@ def test_a_google_sign_in_shows_under_all_three_names(settings):
 
     report = auth.status(settings, ConfigStore())
 
+    settings.google_workspace_mcp = True
+    report = auth.status(settings, ConfigStore())
     assert report["google"]["state"] == "ok" and "Calendar" in report["google"]["detail"]
     assert report["google"]["services"] == ["calendar"]
     assert report["google-workspace"] == {**report["google"], "alias_of": "google"}
     # Signed in, but not for Gmail: the old name for the email sign-in says so.
     assert report["gmail"]["state"] == "missing"
+
+
+def test_the_agents_old_name_is_ok_only_when_agents_would_get_the_tools(settings):
+    """`google-workspace` was the agents' sign-in: it says whether they have Google now."""
+    from keryx.integrations import google as account
+    from keryx.integrations.gmail import legacy_token_path
+
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    legacy_token_path(settings).write_text("{}")
+    older = auth.status(settings, ConfigStore())
+    assert older["google"]["state"] == "ok" and older["gmail"]["state"] == "ok"
+    assert older["google-workspace"]["state"] == "missing"  # email answers only
+
+    account.write_token(
+        settings, account.GoogleToken("rt", "cid", "cs", account.requested_scopes(ALL), "a@b.c")
+    )
+    switched_off = auth.status(settings, ConfigStore())
+    assert switched_off["google"]["state"] == "ok"
+    assert switched_off["google-workspace"]["state"] == "missing"
+    assert "GOOGLE_WORKSPACE_MCP" in switched_off["google-workspace"]["detail"]
+
+    settings.google_workspace_mcp = True
+    assert auth.status(settings, ConfigStore())["google-workspace"]["state"] == "ok"
+    assert not account.mcp_credentials_dir(settings).exists()  # asking writes nothing
 
 
 def test_a_sign_in_that_reads_gmail_is_ok_under_the_old_name_too(settings):

@@ -430,14 +430,26 @@ class McpServer:
     config: dict[str, Any]
     #: The services its tools cover, for the sentence that tells a subagent what it has.
     services: tuple[str, ...]
-    #: Every credential in the file it reads, to be kept out of anything logged or spoken.
-    secrets: tuple[str, ...]
+    #: The credential file it reads, and writes its refreshed access token back to.
+    credentials: Path
     #: Signed in by `workspace-mcp` itself, before Keryx had a sign-in of its own.
     older: bool = False
 
+    @property
+    def secrets(self) -> tuple[str, ...]:
+        """Every credential in that file *now*, to be kept out of anything logged or
+        spoken. Read each time it is asked for: the file starts with no access token, and
+        the server mints one and writes it back while a task is running."""
+        stored = _read_json(self.credentials) or {}
+        found = [stored.get(key) for key in ("refresh_token", "client_secret", "token")]
+        return tuple(dict.fromkeys(s for s in found if isinstance(s, str) and s))
 
-def mcp_server(settings: Settings) -> McpServer | None:
+
+def mcp_server(settings: Settings, *, export: bool = True) -> McpServer | None:
     """The `workspace-mcp` server a subagent gets, or None when it would have nothing to use.
+
+    `export=False` only asks: nothing is written, for a command that reports and does not
+    start anything.
 
     None with `GOOGLE_WORKSPACE_MCP` off, and with nothing connected: a Google server that
     can only answer "authorize first" is worse than none. With Keryx's token, the token is
@@ -451,7 +463,11 @@ def mcp_server(settings: Settings) -> McpServer | None:
         # The server refreshes through a library that cannot leave a secret out: it would
         # send an empty one, which Keryx never does. Email answers still work.
         return None
-    path = export_for_mcp(settings, token) if token is not None else None
+    path = None
+    if token is not None and export:
+        path = export_for_mcp(settings, token)
+    elif token is not None and token.email:
+        path = mcp_credential_path(settings, token.email)
     if path is None:
         found = _older_mcp_credential(settings)
         if found is None:
@@ -485,11 +501,9 @@ def mcp_server(settings: Settings) -> McpServer | None:
         "WORKSPACE_MCP_CREDENTIALS_DIR": str(path.parent),
         "USER_GOOGLE_EMAIL": token.email,
     }
-    stored = _read_json(path) or {}
-    secrets = [token.refresh_token, token.client_secret, stored.get("token")]
     return McpServer(
         config={"type": "stdio", "command": "env", "args": args, "env": env},
         services=services,
-        secrets=tuple(dict.fromkeys(s for s in secrets if isinstance(s, str) and s)),
+        credentials=path,
         older=older,
     )

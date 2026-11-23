@@ -25,7 +25,7 @@ from keryx.config.permissions import OWNER
 from keryx.config.store import ConfigStore
 from keryx.doctor import GOOGLE_CHECK, Check, run_doctor_checks
 from keryx.integrations.gmail import signed_in as gmail_signed_in
-from keryx.integrations.google import read_token
+from keryx.integrations.google import mcp_server, read_token
 from keryx.setup import agents, google
 
 Echo = Callable[[str], None]
@@ -63,8 +63,19 @@ def status(
     report["google"]["services"] = list(token.connected) if token is not None else []
     for alias in GOOGLE_ALIASES:
         report[alias] = {**report["google"], "alias_of": "google"}
+    # Each old name still answers what it used to: can email be read, and do the agents
+    # have Google. One sign-in can be fine and still not do one of those.
     if report["gmail"]["state"] == "ok" and not gmail_signed_in(settings):
         report["gmail"]["state"] = "missing"
+    if report["google-workspace"]["state"] == "ok" and (
+        mcp_server(settings, export=False) is None
+    ):
+        report["google-workspace"].update(
+            state="missing",
+            detail="agents have no Google tools: "
+            + ("GOOGLE_WORKSPACE_MCP is off" if token is not None
+               and not settings.google_workspace_mcp else "`keryx auth login google`"),
+        )
     run = smoke_test or agents.run_smoke
     for name in BACKENDS:
         entry = report[name]

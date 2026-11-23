@@ -465,7 +465,9 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   server, with nothing it could complete). The Claude SDK puts the whole server config on
   the CLI's command line, so nothing in it may ever be a secret. Its credentials are in a
   file rather than its environment, so they reach the redaction through
-  `AgentContext.mcp_secrets`. Nothing
+  `AgentContext.mcp_secrets`, which reads the file each time it is asked: the server
+  writes a fresh access token into it while the task runs, and `AdapterSession` redacts
+  with what is there then. Nothing
   is attached at all until somebody has signed in, nor for a client with no secret, which
   the server's library would send empty.
 - **The pin, the scope table and the disabled tools move together.** `WORKSPACE_MCP_VERSION`

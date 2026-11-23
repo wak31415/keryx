@@ -139,9 +139,11 @@ class AgentContext:
     model: str | None
     auth: AuthStatus
     mcp_servers: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
-    #: Credentials an MCP server reads from a file of its own rather than its environment
-    #: (the Google token): never in `mcp_servers`, and redacted like the rest.
-    mcp_secrets: tuple[str, ...] = ()
+    #: Reads the credentials an MCP server keeps in a file of its own rather than its
+    #: environment (the Google token): never in `mcp_servers`, and redacted like the rest.
+    #: A reader, not a value, because the server writes a fresh access token into that file
+    #: while the task runs.
+    mcp_secret_source: Callable[[], Sequence[str]] | None = None
 
     @classmethod
     def build(
@@ -176,8 +178,13 @@ class AgentContext:
             model=model or None,
             auth=resolve_auth(auth, settings, probe=False),
             mcp_servers=servers,
-            mcp_secrets=google.secrets if google is not None else (),
+            mcp_secret_source=(lambda: google.secrets) if google is not None else None,
         )
+
+    @property
+    def mcp_secrets(self) -> tuple[str, ...]:
+        """What an MCP server's own credential file holds, as it is now."""
+        return tuple(self.mcp_secret_source()) if self.mcp_secret_source is not None else ()
 
     @property
     def mcp_env(self) -> dict[str, str]:
@@ -229,13 +236,23 @@ def progress_line(event: ToolCall | FileEdit) -> str:
 class AdapterSession(AgentSession):
     """The `AgentSession` of every real backend: one adapter, driven event by event."""
 
-    def __init__(self, adapter: AgentAdapter, *, session_id: str | None = None) -> None:
+    def __init__(
+        self,
+        adapter: AgentAdapter,
+        *,
+        session_id: str | None = None,
+        secrets: Callable[[], Sequence[str]] | None = None,
+    ) -> None:
         self._adapter = adapter
         self._session_id = session_id
         self._closed = False
+        #: Credentials that change while the session runs (`AgentContext.secrets`), read
+        #: again whenever something is redacted. The adapter's own are what it was handed.
+        self._secrets = secrets
 
     def _redact(self, text: str) -> str:
-        return redact(text, self._adapter.secrets)
+        live = self._secrets() if self._secrets is not None else ()
+        return redact(text, [*self._adapter.secrets, *live])
 
     def _log_failure(self, what: str, exc: BaseException) -> str:
         """Log `exc` with every credential taken out, and return its redacted one-liner.
@@ -375,4 +392,4 @@ class AdapterRunner(AgentRunner):
             context.cwd,
             resume,
         )
-        return AdapterSession(adapter, session_id=resume)
+        return AdapterSession(adapter, session_id=resume, secrets=lambda: context.secrets)
