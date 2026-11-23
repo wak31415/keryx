@@ -1674,8 +1674,8 @@ def auth_login(
             "--access",
             help="slack: what Keryx may see there: announce (it posts, and reads nothing), "
             "converse (it also reads what you type to the Keryx app, which can resume or "
-            "start work) or read (it also reads Slack as you). Default: the level the "
-            "workspace has, else announce.",
+            "start work), read (it also reads Slack as you) or write (it can also send "
+            "messages as you). Default: the level the workspace has, else announce.",
         ),
     ] = None,
     workspace: Annotated[
