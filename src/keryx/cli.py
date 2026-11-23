@@ -83,7 +83,6 @@ from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
 from keryx.setup import profile
 from keryx.setup import service as service_units
-from keryx.setup import slack as slack_setup
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
@@ -1577,27 +1576,13 @@ def config_unlock(key: Annotated[str, typer.Argument(help="The setting.")]) -> N
     typer.echo(f"{key.upper()}: the running service may change it")
 
 
-def _read_slack_tokens(settings: Settings, workspace: str | None, access: str | None) -> str:
-    """Standard input for `auth login slack --stdin`: the tokens, one to a line.
-
-    At a terminal each token the level needs is asked for by name with the typing hidden,
-    and Enter alone keeps the one that is saved. Anything else is read whole.
-    """
-    if not sys.stdin.isatty():
-        return sys.stdin.read()
+def _ask_hidden(question: str) -> str:
+    """One question at the terminal with the typing hidden; Enter alone is an empty
+    answer. Ctrl-C and the end of input are `EOFError`, for the flow that asked."""
     try:
-        kinds = slack_setup.wanted_tokens(settings, workspace, access)
-    except slack_setup.SlackSetupError as error:
-        typer.echo(f"slack sign-in failed: {error}", err=True)
-        raise typer.Exit(1) from None
-    lines = []
-    for name, saved in kinds:
-        if saved:
-            lines.append(typer.prompt(f"{name}, or Enter to keep the one saved",
-                                      hide_input=True, default="", show_default=False))
-        else:
-            lines.append(typer.prompt(name, hide_input=True))
-    return "\n".join(lines)
+        return typer.prompt(question, hide_input=True, default="", show_default=False)
+    except typer.Abort:
+        raise EOFError from None
 
 
 @auth_app.command("login")
@@ -1653,7 +1638,8 @@ def auth_login(
         typer.Option(
             "--stdin",
             help="slack: read the tokens from standard input, one to a line in any order "
-            "(xoxb-, xapp-, xoxp-); one already saved need not be given again.",
+            "(xoxb-, xapp-, xoxp-); one already saved need not be given again. For a pipe "
+            "or a coding agent: at a terminal the command asks for them without it.",
         ),
     ] = False,
     test: Annotated[
@@ -1684,10 +1670,11 @@ def auth_login(
     browser on this machine it opens the consent screen and finishes by itself; with
     --headless it prints a link for any device and asks for the address the browser lands on.
 
-    slack is two steps: once for what the access level lets Keryx see and the link that
-    creates your Slack app, then again with --stdin and the level's tokens, which are
-    never taken as arguments. A lower --access on a workspace that is connected is applied
-    at once.
+    slack at a terminal is one command: it says what the access level lets Keryx see,
+    prints the link that creates your Slack app and the steps, and waits for you to
+    paste each token the level needs, hidden. Tokens are never taken as arguments.
+    Without a terminal it prints the steps and ends, and --stdin takes the tokens on
+    standard input. A lower --access on a workspace that is connected is applied at once.
     """
     if name not in auth_flow.LOGINS:
         typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
@@ -1729,7 +1716,9 @@ def auth_login(
         callback_url=callback_url,
         services=wanted,
         account=account,
-        tokens=_read_slack_tokens(settings, workspace, access) if stdin else None,
+        # Piped tokens are read whole; at a terminal each is asked for instead.
+        tokens=sys.stdin.read() if stdin and not sys.stdin.isatty() else None,
+        stdin=stdin,
         test=test,
         workspace=workspace,
         access=access,
@@ -1743,7 +1732,12 @@ def auth_login(
             echo=typer.echo,
             run_login=run_command,
             ask=typer.prompt if sys.stdin.isatty() else None,
+            ask_secret=_ask_hidden if sys.stdin.isatty() else None,
         )
+    except auth_flow.AuthStopped as error:
+        message = str(error)
+        typer.echo(message[0].upper() + message[1:] + ".", err=True)
+        raise typer.Exit(1) from None
     except auth_flow.AuthError as error:
         typer.echo(f"{name} sign-in failed: {error}", err=True)
         raise typer.Exit(1) from None

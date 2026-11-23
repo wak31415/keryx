@@ -37,13 +37,20 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   the second reading the address from standard input so its code is never on a command
   line; `--account` says which account is meant when it is not the saved one; `gmail` and
   `google-workspace` still mean it, for one release. `slack [--access
-  announce|converse|read|write] [--workspace NAME]` alone says what that access level lets Keryx
-  see and prints the link that creates the owner's Slack app (for an app there is, the
-  manifest that raises its level, or that gives an app made before user tokens the one
-  it now needs; a lower level is applied at once), and `slack --stdin [--no-test]` takes
-  the level's tokens on standard input, one to a line (never argv: the bot token and the
-  user token at every level, the app-level one from `converse`), checks each, learns who
-  the owner is from the user token, turns `slack_report` on and sends one test message;
+  announce|converse|read|write] [--workspace NAME] [--no-test]` says what that access
+  level lets Keryx see and prints the link that creates the owner's Slack app (for an app
+  there is, the manifest that raises its level, or that gives an app made before user
+  tokens the one it now needs; a lower level is applied at once). **At a terminal it is
+  one command, which waits** (the owner's ruling of 2026-11-23: no second command): it
+  then asks for each token the level takes, hidden, one on file kept with Enter (never
+  argv: the bot token and the user token at every level, the app-level one from
+  `converse`), checks them together, learns who the owner is from the user token, turns
+  `slack_report` on and sends one test message. A token that is the wrong kind, or that
+  Slack refuses, is named and asked for again, a bounded number of times; leaving a
+  question saves nothing and says the same command picks it up. Without a terminal it
+  prints the steps and ends, and `slack --stdin` takes the tokens on standard input, one
+  to a line, which is a coding agent's or a pipe's way (`--stdin` typed at a terminal
+  asks without the steps);
   nothing changes whose messages are acted on but a logout and a new login;
   see "Slack runs both ways". `uv run keryx auth logout google` revokes the grant at Google
   and removes every file a sign-in left; `auth logout slack [--workspace NAME]` forgets a

@@ -673,19 +673,129 @@ def test_auth_login_slack_at_a_terminal_asks_for_the_token_hidden(home, monkeypa
     prompts = []
     monkeypatch.setattr(
         cli.typer, "prompt",
-        lambda key, hide_input: prompts.append((key, hide_input)) or (
+        lambda key, hide_input, **more: prompts.append((key, hide_input)) or (
             " xoxb-typed-secret " if key.startswith("Bot") else " xoxp-typed-secret "),
     )
 
     cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=True,
                    test=True)
 
-    assert prompts == [("Bot token (xoxb-…)", True), ("User token (xoxp-…)", True)]
+    assert prompts == [
+        ("Bot token (xoxb-…, OAuth & Permissions, Bot User OAuth Token)", True),
+        ("User token (xoxp-…, OAuth & Permissions, User OAuth Token)", True),
+    ]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret",
                                "SLACK_USER_TOKEN": "xoxp-typed-secret"}
     said = capsys.readouterr()
-    assert "connected to the Acme workspace" in said.out
+    # `--stdin` at a terminal is the asking alone: the steps are not printed again.
+    assert said.out.startswith("connected to the Acme workspace")
     assert "xoxb-typed-secret" not in said.out + said.err
+
+
+def at_a_terminal(monkeypatch, answers):
+    """Standard input as a terminal, and the hidden prompt answering from `answers` in
+    turn (an exception class is raised, as the prompt does when it is left)."""
+    from keryx import cli
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    prompts = []
+
+    def prompt(key, **more):
+        prompts.append((key, more))
+        answer = answers.pop(0)
+        if isinstance(answer, type):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(cli.typer, "prompt", prompt)
+    return prompts
+
+
+def test_at_a_terminal_auth_login_slack_is_one_command_that_waits_for_the_tokens(
+    home, monkeypatch, capsys
+):
+    """The owner's ruling: no second command. The level, the link and the steps, then
+    each token the level needs asked for there, hidden; then what a login always said."""
+    from keryx import cli
+
+    asked = fake_slack(monkeypatch)
+    prompts = at_a_terminal(
+        monkeypatch, ["xoxb-typed-secret", "xapp-typed-secret", "xoxp-typed-secret"])
+
+    cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=False,
+                   test=True, access="converse")
+
+    hidden = {"hide_input": True, "default": "", "show_default": False}
+    assert prompts == [
+        ("Bot token (xoxb-…, OAuth & Permissions, Bot User OAuth Token)", hidden),
+        ("App-level token (xapp-…, Basic Information, App-Level Tokens)", hidden),
+        ("User token (xoxp-…, OAuth & Permissions, User OAuth Token)", hidden),
+    ]
+    said = capsys.readouterr()
+    assert "https://api.slack.com/apps?new_app=1&manifest_json=" in said.out
+    assert said.out.index("Then come back to this terminal, which is waiting") < said.out.index(
+        "connected to the Acme workspace at the converse level")
+    assert "--stdin" not in said.out and "standard input" not in said.out
+    assert "sent a test message: it is in Slack, under Apps" in said.out
+    assert "typed-secret" not in said.out + said.err
+    assert asked == ["auth", "user", "open", "U0OWNER"]
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret",
+                               "SLACK_APP_TOKEN": "xapp-typed-secret",
+                               "SLACK_USER_TOKEN": "xoxp-typed-secret"}
+
+
+def test_leaving_the_terminals_questions_saves_nothing_and_says_how_to_pick_it_up(
+    home, monkeypatch, capsys
+):
+    """Ctrl-C or Ctrl-D at a prompt: one sentence, which is not called a failure."""
+    from keryx import cli
+
+    asked = fake_slack(monkeypatch)
+    at_a_terminal(monkeypatch, ["xoxb-typed-secret", cli.typer.Abort])
+
+    with pytest.raises(cli.typer.Exit) as stopped:
+        cli.auth_login("slack", headless=None, client_file=None, callback_url=None,
+                       stdin=False, test=True, access="converse")
+
+    said = capsys.readouterr()
+    assert stopped.value.exit_code == 1
+    assert said.err.strip() == ("Nothing was saved: run `keryx auth login slack --access "
+                                "converse` again to pick this up.")
+    assert "failed" not in said.err and "typed-secret" not in said.out + said.err
+    assert asked == [] and home.stored() == {}
+
+
+def test_a_lower_level_is_applied_at_once_at_a_terminal_with_no_questions(
+    home, monkeypatch, capsys
+):
+    from keryx import cli
+
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--access", "converse", "--no-test",
+        input="xoxb-bot-secret\nxapp-app-secret\nxoxp-user-secret\n")
+    prompts = at_a_terminal(monkeypatch, [])
+
+    cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=False,
+                   test=True, access="announce")
+
+    assert prompts == []
+    assert "is now at the announce level" in capsys.readouterr().out
+    assert "SLACK_APP_TOKEN" not in home._secrets()
+
+
+def test_without_a_terminal_the_login_prints_the_steps_names_stdin_and_ends(home, monkeypatch):
+    """A coding agent or a pipe: nothing is asked, and `--stdin` is named as the way to
+    hand the tokens over. The one place that sentence is printed."""
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--access", "converse")
+
+    assert result.exit_code == 0, result.output
+    assert ("Then hand the tokens over on standard input, never on the command line, one "
+            "to a line in any order:\n  keryx auth login slack --stdin --access converse"
+            ) in result.output
+    assert "come back to this terminal" not in result.output
+    assert asked == [] and home.stored() == {}
 
 
 def test_at_a_terminal_each_token_the_level_needs_is_asked_for_and_a_saved_one_may_be_kept(
@@ -699,8 +809,8 @@ def test_at_a_terminal_each_token_the_level_needs_is_asked_for_and_a_saved_one_m
     prompts = []
 
     def prompt(key, hide_input, **more):
-        prompts.append((key, hide_input, more))
-        if "default" in more:
+        prompts.append((key, hide_input))
+        if key.startswith("Bot"):
             return ""
         return "xapp-typed-secret" if key.startswith("App") else "xoxp-typed-secret"
 
@@ -710,10 +820,10 @@ def test_at_a_terminal_each_token_the_level_needs_is_asked_for_and_a_saved_one_m
                    test=False, access="converse")
 
     assert prompts == [
-        ("Bot token (xoxb-…), or Enter to keep the one saved", True,
-         {"default": "", "show_default": False}),
-        ("App-level token (xapp-…)", True, {}),
-        ("User token (xoxp-…)", True, {}),
+        ("Bot token (xoxb-…, OAuth & Permissions, Bot User OAuth Token), or Enter to keep "
+         "the one saved", True),
+        ("App-level token (xapp-…, Basic Information, App-Level Tokens)", True),
+        ("User token (xoxp-…, OAuth & Permissions, User OAuth Token)", True),
     ]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-saved",
                                "SLACK_APP_TOKEN": "xapp-typed-secret",

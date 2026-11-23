@@ -9,10 +9,13 @@ the user token belongs to is where reports go (stored as `channel_id`, so nobody
 a channel id out of Slack), and one test message shows it arriving.
 
 The wizard asks its questions in `setup/plugins.py::run_slack`, through `Probes`. This
-module holds the wording both use and `connect`, the command-line path, which is the same
-steps with nothing to ask: the tokens on standard input, one to a line and told apart by
-how each starts. A token is never an argument, never echoed and
-never in an error; what Slack refused is its error code and nothing else it said.
+module holds the wording both use and the command-line path, which is one command at a
+terminal (`login`: the steps, then each token the level still needs asked for there,
+hidden, and checked) and two without one (`start` prints the steps and ends; `connect`
+takes the tokens on standard input, one to a line and told apart by how each starts,
+which is how a coding agent or a pipe hands them over). A token is never an argument,
+never echoed and never in an error; what Slack refused is its error code and nothing
+else it said.
 
 Four rules both paths keep. **A token brings its destination with it** (`keeps`): a direct
 message's id (`D…`) belongs to the app that opened it, so a token that is not the one on
@@ -189,6 +192,18 @@ ICON_STEP = (
 
 #: What the app posts to show it arrives. The app is the assistant in Slack, so it does
 #: not call itself Keryx: it names nothing but what the owner would type (`@{app}`).
+#: Where each token is found in the app's settings, in the few words a prompt has room
+#: for: the page, then what the token is called on it.
+TOKEN_PAGES = {
+    BOT: "OAuth & Permissions, Bot User OAuth Token",
+    APP: "Basic Information, App-Level Tokens",
+    USER: "OAuth & Permissions, User OAuth Token",
+}
+#: How many times one token is asked for again after an answer that could not be it, and
+#: how many times Slack may refuse what was typed, before the login ends unsaved.
+MAX_WRONG = 3
+MAX_REFUSALS = 3
+
 TEST_MESSAGE = (
     "Connected. What you ask for in writing on a call arrives here, and so does each "
     "finished task's report."
@@ -244,6 +259,23 @@ _MEMBER = re.compile(r"[UW][A-Z0-9]{2,31}")
 
 class SlackSetupError(RuntimeError):
     """Connecting Slack could not go on, in a sentence that never holds a token."""
+
+
+class TokenRefused(SlackSetupError):
+    """One token is not one this workspace can be connected with: Slack said no to it,
+    or it is somebody else's or another workspace's. `kind` is which token and `why` the
+    reason alone, so a terminal can say so and ask for that one again. Never raised for
+    Slack not answering, which asking again would not mend."""
+
+    def __init__(self, kind: str, why: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.why = why
+
+
+class Stopped(SlackSetupError):
+    """The questions at the terminal ended before every token was in: the owner left, or
+    an answer was wrong too many times. Nothing was saved."""
 
 
 @dataclass(frozen=True)
@@ -378,12 +410,20 @@ def start(
     *,
     workspace: str = DEFAULT,
     access: Access | None = None,
-) -> None:
+    waiting: bool = False,
+) -> Access | None:
     """`keryx auth login slack` with no token: what the level means, then the link (or
-    the manifest, for an app there already is), the steps, and the next command. A
+    the manifest, for an app there already is), the steps, and what comes next. A
     workspace that is connected at that level already, with every token a login takes,
     is told so, and never shown the link that would make a second app. One connected
-    before user tokens were asked for is shown how to update the app it has."""
+    before user tokens were asked for is shown how to update the app it has.
+
+    What comes next depends on who is there. With nobody at a terminal it is the next
+    command, `--stdin`, which is the one place that sentence is printed. `waiting` is a
+    terminal, where this same command goes on to ask for the tokens: the steps end by
+    sending the owner back to it. Returns the level whose tokens are wanted, or None when
+    there is nothing to hand over because the workspace is whole.
+    """
     try:
         values = _config(settings)
         saved = on_file(settings, workspace, values)
@@ -402,7 +442,7 @@ def start(
     if connected and access is current and lacking != [USER]:
         # Whole, or without something its level runs on, which `_already` says.
         _already(saved, echo, app=app, assistant=settings.assistant_name)
-        return
+        return None
     # The app there is, is changed and never made again: to raise its level, or (at the
     # level it has) to give it the user token an app made before them never issued.
     raising = connected and access.reaches(current)
@@ -444,9 +484,27 @@ def start(
             echo("The bot token stays as it is.")
     wanted = [kind for kind in token_kinds(access) if kind not in have]
     many = len(wanted) > 1
+    what = "the tokens" if many else f"the {TOKEN_NAMES[wanted[0]]}" if wanted else ""
+    # Where reports will go: where they go now, while the bot token stays; else to them.
+    where = (f"reports keep going to {saved.channel}" if BOT in have and saved.channel
+             else "reports go to you")
+    said = f"The user token says which member you are: {where}, and nothing else is asked."
+    if waiting:
+        # This command is still running, so the last thing said is to come back to it.
+        echo("\n" + said)
+        if wanted:
+            echo(f"Then come back to this terminal, which is waiting, and paste {what} "
+                 f"where {'each is' if many else 'it is'} asked for. What you paste is "
+                 "not shown.")
+        else:
+            echo("Every token this level needs is saved already. Once the app is "
+                 "reinstalled, come back to this terminal, which is waiting, and press "
+                 "Enter at each token to keep it"
+                 + (", or paste the User OAuth Token if Slack shows a different one "
+                    "after the reinstall." if USER in have else "."))
+        return access
     command = f"keryx auth login slack --stdin{_flags(workspace, access, current)}"
     if wanted:
-        what = "the tokens" if many else f"the {TOKEN_NAMES[wanted[0]]}"
         echo(
             f"\nThen hand {what} over on standard input, never on the command line"
             + (", one to a line in any order" if many else "")
@@ -458,10 +516,8 @@ def start(
         if USER in have:
             echo("If Slack shows a different User OAuth Token after the reinstall, hand "
                  "that one over instead of nothing.")
-    # Where reports will go: where they go now, while the bot token stays; else to them.
-    where = (f"reports keep going to {saved.channel}" if BOT in have and saved.channel
-             else "reports go to you")
-    echo(f"The user token says which member you are: {where}, and nothing else is asked.")
+    echo(said)
+    return access
 
 
 def _already(saved: SlackWorkspace, echo: Callable[[str], None], *, app: str,
@@ -482,8 +538,8 @@ def _already(saved: SlackWorkspace, echo: Callable[[str], None], *, app: str,
     echo(
         f"\nTo change what Keryx may see there: keryx auth login slack{named} --access "
         f"{' or --access '.join(others)}"
-        f"\nTo replace a token: keryx auth login slack --stdin{named}, with the new one "
-        "on standard input"
+        f"\nTo replace a token: keryx auth login slack --stdin{named}, which asks for "
+        "each at a terminal (Enter keeps one) and otherwise reads standard input"
         f"\nTo disconnect it: keryx auth logout slack{named}"
     )
     # Slack is never asked what the app is called, so the manifest is always shown: it is
@@ -658,15 +714,129 @@ def _write_workspace(
     plugins.write_config(settings, PLUGIN, {"workspaces": tables})
 
 
-def wanted_tokens(
-    settings: Settings, workspace: str | None, access: str | None
-) -> list[tuple[str, bool]]:
-    """Each token the level needs, as a terminal asks for it, and whether one is saved."""
-    saved = on_file(settings, workspace_name(workspace))
-    level = parse_access(access) or saved.access
-    return [(f"{TOKEN_NAMES[kind].capitalize()} ({TOKEN_PREFIXES[kind]}…)",
-             bool(saved.token(kind)))
-            for kind in token_kinds(level)]
+def prompt_for(kind: str, *, saved: bool) -> str:
+    """What a terminal asks for one token: which it is, where Slack shows it, and that
+    Enter keeps the one on file when there is one."""
+    asked = f"{TOKEN_NAMES[kind].capitalize()} ({TOKEN_PREFIXES[kind]}…, {TOKEN_PAGES[kind]})"
+    return asked + (", or Enter to keep the one saved" if saved else "")
+
+
+def wrong_token(value: str, kind: str) -> str | None:
+    """Why what was typed cannot be the token asked for, in a sentence that does not
+    repeat it; None when it could be. Told by how it starts, before Slack is asked."""
+    typed = slack.token_kind(value)
+    if typed == kind or (kind == BOT and typed is None and value.startswith("xox")):
+        return None
+    name, prefix = TOKEN_NAMES[kind], TOKEN_PREFIXES[kind]
+    if typed is not None:
+        return (f"That is {_a(TOKEN_NAMES[typed])}, which starts {TOKEN_PREFIXES[typed]}: "
+                f"the {name} starts {prefix}.")
+    return f"That is not a Slack token: the {name} starts {prefix}."
+
+
+class _Left(Exception):
+    """The owner left a question, or an answer could not be the token too many times."""
+
+
+def ask_token(
+    kind: str, *, saved: bool, ask: Callable[[str], str], echo: Callable[[str], None]
+) -> str:
+    """One token, asked for hidden until what is typed could be it.
+
+    Empty keeps the one on file, when there is one. With none on file an empty answer is
+    asked again once, and a second one leaves; so does Ctrl-C or the end of input, and
+    so does an answer that is the wrong kind of token `MAX_WRONG` times. What was typed
+    is never said back.
+    """
+    empties = wrongs = 0
+    while True:
+        try:
+            answer = ask(prompt_for(kind, saved=saved)).strip()
+        except (EOFError, KeyboardInterrupt):
+            raise _Left from None
+        if not answer:
+            if saved:
+                return ""
+            empties += 1
+            if empties > 1:
+                raise _Left
+            echo(f"{_a(TOKEN_NAMES[kind]).capitalize()} is needed at this level, and none "
+                 "is saved: paste it, or press Enter again to stop.")
+            continue
+        problem = wrong_token(answer, kind)
+        if problem is None:
+            return answer
+        wrongs += 1
+        echo(problem)
+        if wrongs >= MAX_WRONG:
+            raise _Left
+
+
+def login(
+    settings: Settings,
+    store: ConfigStore,
+    *,
+    ask: Callable[[str], str],
+    echo: Callable[[str], None],
+    test: bool = True,
+    steps: bool = True,
+    api: SlackApi | None = None,
+    workspace: str = DEFAULT,
+    access: Access | None = None,
+) -> None:
+    """`keryx auth login slack` at a terminal: one command, which waits.
+
+    It says what the level means and prints the link and the steps (`start`; not with
+    `steps` off, which is `--stdin` typed at a terminal), then stays and asks for each
+    token the level takes, hidden, through `ask`: one on file is kept with Enter, one
+    that is not that token is said so and asked again. Then everything `connect` does,
+    with all the tokens at once, so nothing is saved until every one is taken. A token
+    Slack refuses (`TokenRefused`) is named and asked for again, `MAX_REFUSALS` times in
+    all. Leaving at any question raises `Stopped`: nothing was saved, and the sentence
+    says the same command picks it up. A workspace that is whole is told how it stands
+    and asked nothing.
+    """
+    again = "keryx auth login slack" + ("" if steps else " --stdin") + (
+        "" if workspace == DEFAULT else f" --workspace {workspace}") + (
+        "" if access is None else f" --access {access}")
+    stopped = Stopped(f"nothing was saved: run `{again}` again to pick this up")
+    values = _config(settings)
+    if workspace != DEFAULT and (problem := plugins.plugin(PLUGIN).problem(dict(values))):
+        raise SlackSetupError(
+            f"{workspace} is added beside your first workspace, and there is none yet "
+            f"({problem}): run it without --workspace first. Nothing was saved"
+        )
+    saved = on_file(settings, workspace, values)
+    level = access or saved.access
+    if steps:
+        wanted = start(settings, echo, workspace=workspace, access=access, waiting=True)
+        if wanted is None:
+            return
+        level = wanted
+        echo("")
+    given: dict[str, str] = {}
+    try:
+        for kind in token_kinds(level):
+            if answer := ask_token(kind, saved=bool(saved.token(kind)), ask=ask, echo=echo):
+                given[kind] = answer
+        for refusals in range(1, MAX_REFUSALS + 1):
+            try:
+                connect(settings, store, tokens=given, test=test, echo=echo, api=api,
+                        workspace=workspace, access=level)
+                return
+            except TokenRefused as refused:
+                echo(f"The {TOKEN_NAMES[refused.kind]} was not taken: {refused.why}. "
+                     "Nothing was saved.")
+                if refusals == MAX_REFUSALS:
+                    break
+                # The one on file is offered again only when it is not what was refused.
+                on_hand = bool(saved.token(refused.kind)) and refused.kind in given
+                given.pop(refused.kind, None)
+                if answer := ask_token(refused.kind, saved=on_hand, ask=ask, echo=echo):
+                    given[refused.kind] = answer
+    except _Left:
+        pass
+    raise stopped
 
 
 def read_tokens(text: str) -> dict[str, str]:
@@ -729,7 +899,7 @@ def connect(
     settings: Settings,
     store: ConfigStore,
     *,
-    tokens: str,
+    tokens: str | Mapping[str, str],
     test: bool,
     echo: Callable[[str], None],
     api: SlackApi | None = None,
@@ -739,8 +909,10 @@ def connect(
     """Check the tokens, learn who the owner is, save it all, turn the plugin on, and
     prove it.
 
-    `tokens` is standard input: one token to a line, told apart by how each starts. A
-    token the level takes and that is on file already need not be given again. Raises
+    `tokens` is standard input: one token to a line, told apart by how each starts; or,
+    from a terminal that asked for each by name, the tokens by kind. A token the level
+    takes and that is on file already need not be given again. A token that is refused
+    for what it is raises `TokenRefused`, which says which. Raises
     `SlackSetupError` saying how far it got. Nothing is saved until every token is one
     Slack takes, so a token Slack refuses leaves a working install exactly as it was.
     After the save, only the test message can fail, and that says so and undoes nothing.
@@ -753,7 +925,7 @@ def connect(
     where it always did. Nothing is asked about where to send, and nothing is looked up.
     """
     api = api or SlackApi()
-    given = read_tokens(tokens)
+    given = read_tokens(tokens) if isinstance(tokens, str) else dict(tokens)
     values = _config(settings)
     saved = on_file(settings, workspace, values)
     server = values["mcp_server"] if workspace == DEFAULT else ""
@@ -782,10 +954,11 @@ def connect(
     token = held[BOT]
 
     team = api.auth_test(token)
+    if team.refused:
+        raise TokenRefused(BOT, team.problem, f"{team.problem}; nothing was saved")
     if not team.ok:
-        why = team.problem if team.refused else (
-            f"the token could not be checked ({team.problem})")
-        raise SlackSetupError(f"{why}; nothing was saved")
+        raise SlackSetupError(
+            f"the token could not be checked ({team.problem}); nothing was saved")
     if access.reaches(Access.CONVERSE) and not (team.team_id and team.user_id):
         raise SlackSetupError(
             "Slack did not say which workspace the bot token belongs to, or which member "
@@ -807,10 +980,11 @@ def connect(
     if APP in needed:
         opened = api.open_connection(held[APP])
         if not opened.ok:
-            raise SlackSetupError(
-                f"the app-level token could not be used ({opened.problem}): it needs the "
-                "connections:write scope, and Socket Mode on in the app. Nothing was saved"
-            )
+            why = (f"it could not be used ({opened.problem}): it needs the "
+                   "connections:write scope, and Socket Mode on in the app")
+            message = f"the app-level token {why.removeprefix('it ')}. Nothing was saved"
+            raise (TokenRefused(APP, why, message) if opened.refused
+                   else SlackSetupError(message))
     named = "" if workspace == DEFAULT else f" --workspace {workspace}"
     app = app_of(settings)
     acted_on = _owner(standing=standing, token_owner=token_owner, named=named)
@@ -893,11 +1067,10 @@ def _owner(*, standing: str, token_owner: str, named: str) -> str:
     changes nothing about who the owner is.
     """
     if standing and token_owner != standing:
-        raise SlackSetupError(
-            f"the user token belongs to {token_owner}, and the member whose messages Keryx "
-            f"acts on there is {standing}: paste your own user token. To connect as "
-            f"somebody else, `keryx auth logout slack{named}` first. Nothing was saved"
-        )
+        why = (f"belongs to {token_owner}, and the member whose messages Keryx acts on "
+               f"there is {standing}: paste your own user token. To connect as somebody "
+               f"else, `keryx auth logout slack{named}` first")
+        raise TokenRefused(USER, f"it {why}", f"the user token {why}. Nothing was saved")
     return token_owner
 
 
@@ -949,7 +1122,11 @@ def _check_user_token(api: SlackApi, token: str, team: Workspace,
     """The member the user token acts as, who is the owner; refused in a sentence."""
     checked = api.auth_test(token)
     if problem := user_token_problem(checked, team) or scope_problem(checked, access):
-        raise SlackSetupError(f"the user token cannot be used: {problem}. Nothing was saved")
+        message = f"the user token cannot be used: {problem}. Nothing was saved"
+        # The token's own fault when Slack answered for it (or refused it) and the bot
+        # token's workspace is known; anything else is Slack not having been asked.
+        its_own = (checked.ok or checked.refused) and bool(team.team_id)
+        raise TokenRefused(USER, problem, message) if its_own else SlackSetupError(message)
     return checked.user_id
 
 

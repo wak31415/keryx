@@ -38,7 +38,9 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    person creates and installs the Slack app it describes and copies two tokens from one
    page, the bot token and their own user token (the user token is how Slack says which
    member they are; no address is asked for). Those tokens are not yours to see: they
-   run `keryx auth login slack --stdin` themselves, and it asks for each hidden (only
+   run `keryx auth login slack --stdin` themselves, at a terminal, and it asks for each
+   hidden (run without `--stdin` there, the same command prints the steps again first
+   and then waits for the tokens; only
    with the tokens already in variables of your environment do you run it: `printenv
    BOT_VAR USER_VAR | keryx auth login slack --stdin`, one token to a line). It checks
    both, takes the member the user token belongs to as them, sends reports to that

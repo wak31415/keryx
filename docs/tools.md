@@ -172,10 +172,14 @@ Keryx checks each with Slack, tells you which workspace it connected to, and lea
 which member you are from your user token, so there is no address to give and no channel
 id to look up: reports go to you. Nothing is saved until every token has been checked.
 Then it offers to send a test message, which arrives under Apps in Slack. The app is
-yours alone. From the command line it is two steps: `keryx auth login slack --access
-LEVEL` says what the level means and prints the link, and `keryx auth login slack --stdin
---access LEVEL` takes the tokens on standard input, one to a line in any order (never as
-arguments), and does the rest.
+yours alone. From the command line it is one command: `keryx auth login slack --access
+LEVEL` says what the level means, prints the link and the steps, and waits while you do
+them. Come back to the terminal and paste each token where it asks; what you paste is
+not shown, and a token is never an argument. One it already has is kept with Enter, one
+that is the wrong kind or that Slack refuses is asked for again, and leaving with Ctrl-C
+saves nothing. Where there is no terminal (a script, a coding agent) the same command
+prints the steps and ends, and `keryx auth login slack --stdin --access LEVEL` takes the
+tokens on standard input, one to a line in any order.
 
 **If you connected Slack before Keryx asked for a user token**, nothing stops working
 and there is nothing you have to do. The next time you run `keryx auth login slack` it
@@ -221,8 +225,8 @@ again.
 
 **Changing the level later.** A higher one changes the app you have, never makes a second:
 `keryx auth login slack --access converse` on a workspace that is connected prints the
-manifest to paste into the app's App Manifest page, and you reinstall it and hand over
-the new token. A lower one needs nothing from Slack: `keryx auth login slack --access
+manifest to paste into the app's App Manifest page, waits while you reinstall it, and
+asks for the new token. A lower one needs nothing from Slack: `keryx auth login slack --access
 announce` forgets the tokens it no longer uses and a running Keryx stops acting on your
 messages at once. `keryx auth logout slack` forgets the workspace altogether; remove the
 app in Slack to end its tokens.

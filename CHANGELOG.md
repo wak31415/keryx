@@ -63,9 +63,14 @@ the version starts with 0.
   Only your own request is acted on. Everything read is wrapped, attributed to who wrote
   it, and kept apart from what you asked, as a guard against a message that tries to give
   Keryx orders. `SECURITY.md` says what that does and does not protect against.
+- **Connecting Slack is one command at a terminal.** `keryx auth login slack` prints the
+  steps and then waits: it asks for each token the level needs, hidden, keeps one it
+  already has when you press Enter, and asks again for one that is the wrong kind or
+  that Slack refuses. Ctrl-C saves nothing. `--stdin` is still how a script or a coding
+  agent hands tokens over, and without a terminal the command prints the steps and ends.
 - **`keryx auth login slack --access LEVEL`** says in plain words what the level lets
-  Keryx see before it prints the link, takes the level's tokens on standard input one to
-  a line, and checks each before saving anything. Raising the level of an app you already
+  Keryx see before it prints the link, takes the level's tokens at a hidden prompt (or
+  on standard input, one to a line), and checks each before saving anything. Raising the level of an app you already
   have prints the manifest to paste into it, never a second app. A lower level is applied
   at once and forgets the tokens it no longer uses. `keryx setup` asks the same question
   first and saves nothing until every token has been checked. Whose messages are acted

@@ -11,11 +11,14 @@ the address they land on: at a terminal that is still one command, and without o
 coding agent relaying the link — it is two, the second with `--callback-url`. `gmail` and
 `google-workspace` are the names the two older sign-ins had, and run this one.
 
-Slack is always two steps (`setup/slack.py`): alone it says what the chosen access level
-lets Keryx see and prints the link that creates the owner's Slack app (or, for an app there
-is, the manifest that raises its level), and with the level's tokens on standard input it
-checks each, finds where to send and turns `slack_report` on. Lowering a level needs no
-token and is done at once. `--workspace NAME` is a further workspace, with its own app.
+Slack is the same shape (`setup/slack.py`). It says what the chosen access level lets
+Keryx see and prints the link that creates the owner's Slack app (or, for an app there is,
+the manifest that changes it); at a terminal it then stays and asks for each token the
+level takes, hidden, checks them, finds where to send and turns `slack_report` on: one
+command. Without a terminal it is two, the second with `--stdin` and the tokens on
+standard input, which is how a coding agent or a pipe hands them over. Lowering a level
+needs no token and is done at once. `--workspace NAME` is a further workspace, with its
+own app.
 """
 
 import asyncio
@@ -62,6 +65,11 @@ OPTIONAL = ("google", "slack")
 
 class AuthError(RuntimeError):
     """A sign-in that could not go on, in one sentence."""
+
+
+class AuthStopped(AuthError):
+    """A sign-in the owner left at one of its questions: nothing was saved, and the
+    sentence says how to pick it up. Not a failure of anything, so it is not called one."""
 
 
 def status(
@@ -154,10 +162,13 @@ class LoginOptions:
     services: tuple[str, ...] | None = None
     #: Google: the account the owner means to sign in as, when it is not the one saved.
     account: str | None = None
-    #: Slack: what standard input held, one token to a line (None: say what the level
-    #: means and print the link instead), whether to send one test message, which
-    #: workspace (None: the first) and which access level (None: the one it has).
+    #: Slack: what standard input held, one token to a line (None: nothing was piped, so
+    #: say what the level means and print the link, and at a terminal go on to ask),
+    #: whether `--stdin` was given (at a terminal: ask without the steps), whether to send
+    #: one test message, which workspace (None: the first) and which access level (None:
+    #: the one it has).
     tokens: str | None = field(default=None, repr=False)
+    stdin: bool = False
     test: bool = True
     workspace: str | None = None
     access: str | None = None
@@ -173,17 +184,20 @@ def login(
     run_login: Callable[[Sequence[str]], int],
     post: Callable[..., Any] | None = None,
     ask: Callable[[str], str] | None = None,
+    ask_secret: Callable[[str], str] | None = None,
 ) -> None:
     """Do the one sign-in `name` names; raises `AuthError` with what went wrong.
 
     `ask` puts one question to the person at the terminal and is None when there is no
     terminal, which is what makes a pasted-back Google sign-in two commands instead of one.
+    `ask_secret` is the same with the typing hidden, for Slack's tokens: it raises
+    `EOFError` or `KeyboardInterrupt` when the person leaves the question.
     """
     if name in BACKENDS:
         _agent_login(name, settings, options=options, echo=echo, run_login=run_login)
         return
     if name == "slack":
-        _slack(settings, store, options=options, echo=echo)
+        _slack(settings, store, options=options, echo=echo, ask=ask_secret)
         return
     if name == "google" or name in GOOGLE_ALIASES:
         try:
@@ -262,27 +276,35 @@ def _agent_login(
         )
 
 
-def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, echo: Echo) -> None:
+def _slack(
+    settings: Settings,
+    store: ConfigStore,
+    *,
+    options: LoginOptions,
+    echo: Echo,
+    ask: Callable[[str], str] | None = None,
+) -> None:
+    """Slack's sign-in: the tokens piped in are checked and saved; with none piped, a
+    lower level is applied at once, a terminal (`ask`) is shown the steps and asked for
+    the tokens there, and anything else is shown the steps and the `--stdin` command."""
     try:
         workspace = slack.workspace_name(options.workspace)
         access = slack.parse_access(options.access)
-        if options.tokens is None:
-            # Taking access away needs nothing from Slack, so it is done here and now.
-            lowered = access is not None and slack.lower(
-                settings, store, workspace=workspace, access=access, echo=echo
-            )
-            if not lowered:
-                slack.start(settings, echo, workspace=workspace, access=access)
+        if options.tokens is not None:
+            slack.connect(settings, store, tokens=options.tokens, test=options.test,
+                          echo=echo, workspace=workspace, access=access)
             return
-        slack.connect(
-            settings,
-            store,
-            tokens=options.tokens,
-            test=options.test,
-            echo=echo,
-            workspace=workspace,
-            access=access,
-        )
+        # Taking access away needs nothing from Slack, so it is done here and now.
+        if not options.stdin and access is not None and slack.lower(
+                settings, store, workspace=workspace, access=access, echo=echo):
+            return
+        if ask is None:
+            slack.start(settings, echo, workspace=workspace, access=access)
+            return
+        slack.login(settings, store, ask=ask, echo=echo, test=options.test,
+                    steps=not options.stdin, workspace=workspace, access=access)
+    except slack.Stopped as exc:
+        raise AuthStopped(str(exc)) from None
     except slack.SlackSetupError as exc:
         raise AuthError(str(exc)) from None
 

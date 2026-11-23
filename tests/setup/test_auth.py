@@ -398,6 +398,25 @@ def test_a_slack_login_that_cannot_go_on_is_an_auth_error(settings):
         login("slack", settings, tokens=" \n")
 
 
+def test_a_slack_login_left_at_the_terminal_is_stopped_and_not_called_a_failure(settings):
+    """With somebody to ask (`ask_secret`), the login goes on to the tokens; leaving a
+    question is `AuthStopped`, whose sentence says the same command picks it up."""
+    lines, asked = [], []
+
+    def leave(question):
+        asked.append(question)
+        raise KeyboardInterrupt
+
+    with pytest.raises(auth.AuthStopped) as stopped:
+        auth.login("slack", settings, ConfigStore(), options=LoginOptions(), echo=lines.append,
+                   run_login=lambda argv: 0, ask_secret=leave)
+
+    assert new_app_url(assistant="Lyra") in lines and len(asked) == 1
+    assert str(stopped.value) == (
+        "nothing was saved: run `keryx auth login slack` again to pick this up")
+    assert ConfigStore().stored() == {}
+
+
 def test_a_token_is_never_in_what_the_options_print():
     assert "xoxb-secret" not in repr(LoginOptions(tokens="xoxb-secret"))
 

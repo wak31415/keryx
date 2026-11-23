@@ -432,7 +432,7 @@ def test_a_workspace_connected_at_that_level_is_told_so_and_never_shown_the_link
         assert "Only messages from U0OWNER are acted on there: every one typed to the" in text
         assert "and elsewhere only one that mentions it (@Lyra)" in text
         assert "keryx auth login slack --access announce or --access read" in text
-        assert "To replace a token: keryx auth login slack --stdin, with the new one" in text
+        assert "To replace a token: keryx auth login slack --stdin, which asks for each" in text
         assert "To disconnect it: keryx auth logout slack" in text
         assert "**" not in text and "`" not in text
 
@@ -1423,3 +1423,364 @@ def test_the_wizards_guide_has_the_same_optional_icon_step():
         assert f"{number}. Optional: under **Basic Information**, **Display Information**" in text
         assert f"`{slack.ICON}`" in text
         assert f"{number + 1}." not in text
+
+
+# --- at a terminal the login is one command, which waits --------------------------------------
+
+
+class Terminal:
+    """The hidden prompt, scripted: each answer in turn, and an exception where the owner
+    leaves. Running out of answers fails the test, so nothing is asked that was not meant."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.asked: list[str] = []
+
+    def __call__(self, question: str) -> str:
+        self.asked.append(question)
+        assert self.answers, f"asked {question!r} with nothing left to answer"
+        answer = self.answers.pop(0)
+        if isinstance(answer, type) and issubclass(answer, BaseException):
+            raise answer
+        return answer
+
+
+def at_a_terminal(settings, fake, terminal, **options) -> list[str]:
+    """`keryx auth login slack` typed at a terminal; what it printed."""
+    lines: list[str] = []
+    slack.login(settings, ConfigStore(), ask=terminal, echo=lines.append, api=fake.api(),
+                **options)
+    return lines
+
+
+BOT_PROMPT = "Bot token (xoxb-…, OAuth & Permissions, Bot User OAuth Token)"
+APP_PROMPT = "App-level token (xapp-…, Basic Information, App-Level Tokens)"
+USER_PROMPT = "User token (xoxp-…, OAuth & Permissions, User OAuth Token)"
+KEEP = ", or Enter to keep the one saved"
+PICK_UP = "nothing was saved: run `keryx auth login slack{flags}` again to pick this up"
+
+
+def test_at_a_terminal_the_login_prints_the_steps_and_then_asks_for_each_token_itself(
+    settings,
+):
+    """One command: the level, the link, the steps, then each token asked for there. No
+    second command and no `--stdin`, and the sentence about standard input is not said."""
+    fake, terminal = FakeSlack(), Terminal(TOKEN, APP, USER)
+
+    lines = at_a_terminal(settings, fake, terminal, access=Access.CONVERSE)
+
+    text = "\n".join(lines)
+    assert text.startswith(f"Access level converse: {meaning(Access.CONVERSE, LYRA)}")
+    assert new_app_url(Access.CONVERSE, assistant="Lyra") in lines
+    assert "1. Open the link" in text and "6. Optional:" in text
+    assert "--stdin" not in text and "standard input" not in text
+    waiting = lines.index("Then come back to this terminal, which is waiting, and paste the "
+                          "tokens where each is asked for. What you paste is not shown.")
+    assert lines[waiting - 1].endswith("reports go to you, and nothing else is asked.")
+    assert terminal.asked == [BOT_PROMPT, APP_PROMPT, USER_PROMPT]
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
+                                        "SLACK_USER_TOKEN": USER}
+    # Then what a login has always said, and the one message that shows it arriving.
+    after = lines[waiting + 1:]
+    assert after[0] == ""
+    assert after[1].startswith("connected to the Acme workspace at the converse level")
+    assert "you are U0OWNER there: reports go to you" in after
+    assert OWNER_LINE.format(who="U0OWNER", app=LYRA) in after
+    assert after[-1] == "sent a test message: it is in Slack, under Apps"
+    assert ("post", "U0OWNER", said_to_test(Access.CONVERSE, LYRA)) in fake.calls
+    assert not any(secret in text for secret in (TOKEN, APP, USER))
+
+
+def test_each_prompt_says_which_token_it_is_and_where_slack_shows_it():
+    assert slack.prompt_for("bot", saved=False) == BOT_PROMPT
+    assert slack.prompt_for("app", saved=False) == APP_PROMPT
+    assert slack.prompt_for("user", saved=True) == USER_PROMPT + KEEP
+
+
+def test_a_token_on_file_that_still_serves_is_kept_with_enter(settings):
+    """Raising a level: the bot and user tokens are on file, so Enter keeps each and only
+    the app-level token is typed."""
+    settings = connected_at(settings)
+    fake, terminal = FakeSlack(), Terminal("", APP, "")
+
+    lines = at_a_terminal(settings, fake, terminal, access=Access.CONVERSE)
+
+    assert terminal.asked == [BOT_PROMPT + KEEP, APP_PROMPT, USER_PROMPT + KEEP]
+    assert "Then come back to this terminal, which is waiting, and paste the app-level " \
+           "token where it is asked for. What you paste is not shown." in lines
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
+                                        "SLACK_USER_TOKEN": USER}
+    assert saved(settings)["access"] == "converse"
+
+
+def test_a_token_of_the_wrong_kind_is_said_so_without_quoting_it_and_asked_again(settings):
+    fake, terminal = FakeSlack(), Terminal(USER, TOKEN, "xapp-typed-here", USER)
+
+    lines = at_a_terminal(settings, fake, terminal)
+
+    assert terminal.asked == [BOT_PROMPT, BOT_PROMPT, USER_PROMPT, USER_PROMPT]
+    assert "That is a user token, which starts xoxp-: the bot token starts xoxb-." in lines
+    assert ("That is an app-level token, which starts xapp-: the user token starts "
+            "xoxp-.") in lines
+    assert not any(secret in line for line in lines for secret in (USER, TOKEN, "typed-here"))
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
+
+
+def test_something_that_is_not_a_token_at_all_is_said_so_and_asked_again(settings):
+    fake, terminal = FakeSlack(), Terminal("hunter2-my-password", TOKEN, USER)
+
+    lines = at_a_terminal(settings, fake, terminal)
+
+    assert "That is not a Slack token: the bot token starts xoxb-." in lines
+    assert not any("hunter2" in line for line in lines)
+    assert terminal.asked == [BOT_PROMPT, BOT_PROMPT, USER_PROMPT]
+
+
+def test_a_rotating_bot_token_is_taken_where_the_bot_token_is_asked_for(settings):
+    """`xoxe.xoxb-…`: told by `xox`, as a bot token always was, since it is asked by name."""
+    fake, terminal = FakeSlack(), Terminal("xoxe.xoxb-1-rotating", USER)
+
+    at_a_terminal(settings, fake, terminal)
+
+    assert ConfigStore()._secrets()["SLACK_BOT_TOKEN"] == "xoxe.xoxb-1-rotating"
+
+
+def test_an_empty_answer_with_nothing_on_file_asks_again_and_a_second_ends_it_unsaved(
+    settings,
+):
+    fake, terminal = FakeSlack(), Terminal("", TOKEN, "", "")
+
+    lines: list[str] = []
+    with pytest.raises(slack.Stopped) as stopped:
+        slack.login(settings, ConfigStore(), ask=terminal, echo=lines.append, api=fake.api())
+
+    assert terminal.asked == [BOT_PROMPT, BOT_PROMPT, USER_PROMPT, USER_PROMPT]
+    assert lines.count("A bot token is needed at this level, and none is saved: paste it, "
+                       "or press Enter again to stop.") == 1
+    assert "A user token is needed at this level, and none is saved: paste it, or press " \
+           "Enter again to stop." in lines
+    assert str(stopped.value) == PICK_UP.format(flags="")
+    assert fake.calls == [] and ConfigStore().stored() == {}
+
+
+@pytest.mark.parametrize("leaving", [KeyboardInterrupt, EOFError])
+def test_leaving_with_ctrl_c_or_ctrl_d_ends_with_nothing_saved_and_how_to_pick_it_up(
+    settings, leaving
+):
+    fake, terminal = FakeSlack(), Terminal(TOKEN, leaving)
+
+    with pytest.raises(slack.Stopped) as stopped:
+        at_a_terminal(settings, fake, terminal, access=Access.CONVERSE)
+
+    assert str(stopped.value) == PICK_UP.format(flags=" --access converse")
+    assert TOKEN not in str(stopped.value)
+    assert fake.calls == [] and ConfigStore().stored() == {}
+
+
+def test_a_token_slack_refuses_is_named_and_asked_for_again_with_nothing_saved_meanwhile(
+    settings,
+):
+    """All the tokens are checked together, as ever. The one Slack will not take is
+    named, nothing is saved, and only that one is asked for again."""
+    fake = FakeSlack()
+    real = fake.api()
+    seen: list[dict] = []
+
+    def auth_test(token):
+        seen.append(dict(ConfigStore()._secrets()))
+        if token == "xoxb-revoked":
+            return Workspace(error="invalid_auth")
+        return real.auth_test(token)
+
+    api = SlackApi(auth_test=auth_test, post_text=real.post_text,
+                   open_connection=real.open_connection)
+    terminal = Terminal("xoxb-revoked", USER, TOKEN)
+    lines: list[str] = []
+
+    slack.login(settings, ConfigStore(), ask=terminal, echo=lines.append, api=api)
+
+    assert terminal.asked == [BOT_PROMPT, USER_PROMPT, BOT_PROMPT]
+    refusal = next(line for line in lines if line.startswith("The bot token was not taken"))
+    assert "invalid_auth" in refusal and refusal.endswith("Nothing was saved.")
+    assert "xoxb-revoked" not in "\n".join(lines)
+    assert all(secrets == {} for secrets in seen), "nothing was saved until every one passed"
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
+    assert lines[-1] == "sent a test message: it is in Slack, under Apps"
+
+
+def test_a_user_token_from_another_workspace_is_named_and_asked_for_again(settings):
+    fake = FakeSlack()
+    real = fake.api()
+
+    def auth_test(token):
+        if token == "xoxp-from-the-lab":
+            return Workspace(team="Lab", team_id="T0LAB", user_id="U0LAB")
+        return real.auth_test(token)
+
+    api = SlackApi(auth_test=auth_test, post_text=real.post_text,
+                   open_connection=real.open_connection)
+    terminal = Terminal(TOKEN, "xoxp-from-the-lab", USER)
+    lines: list[str] = []
+
+    slack.login(settings, ConfigStore(), ask=terminal, echo=lines.append, api=api)
+
+    assert terminal.asked == [BOT_PROMPT, USER_PROMPT, USER_PROMPT]
+    assert ("The user token was not taken: it belongs to another workspace than the bot "
+            "token (Lab). Nothing was saved.") in lines
+    assert saved(settings)["owner_id"] == "U0OWNER"
+
+
+def test_an_app_level_token_slack_refuses_is_named_and_asked_for_again(settings):
+    fake = FakeSlack()
+    real = fake.api()
+    api = SlackApi(
+        auth_test=real.auth_test, post_text=real.post_text,
+        open_connection=lambda token: (Connection(error="not_allowed_token_type")
+                                       if token == "xapp-no-scope"
+                                       else real.open_connection(token)),
+    )
+    terminal = Terminal(TOKEN, "xapp-no-scope", USER, APP)
+    lines: list[str] = []
+
+    slack.login(settings, ConfigStore(), ask=terminal, echo=lines.append, api=api,
+                access=Access.CONVERSE)
+
+    assert terminal.asked == [BOT_PROMPT, APP_PROMPT, USER_PROMPT, APP_PROMPT]
+    refusal = next(line for line in lines if line.startswith("The app-level token was not"))
+    assert "it needs the connections:write scope, and Socket Mode on in the app" in refusal
+    assert ConfigStore()._secrets()["SLACK_APP_TOKEN"] == APP
+
+
+def test_a_saved_token_slack_refuses_is_not_offered_again_as_the_one_to_keep(settings):
+    """Enter kept the bot token on file, and Slack no longer takes it: asked again, it is
+    a token to paste, since keeping the same one would be refused the same way."""
+    settings = connected_at(settings, user=False)
+    fake = FakeSlack(workspace=Workspace(error="token_revoked"))
+    terminal = Terminal("", USER, "", "")
+
+    with pytest.raises(slack.Stopped):
+        at_a_terminal(settings, fake, terminal)
+
+    assert terminal.asked == [BOT_PROMPT + KEEP, USER_PROMPT, BOT_PROMPT, BOT_PROMPT]
+
+
+def test_slack_refusing_again_and_again_ends_the_login_with_nothing_saved(settings):
+    fake = FakeSlack(workspace=Workspace(error="invalid_auth"))
+    terminal = Terminal(TOKEN, USER, "xoxb-second-try", "xoxb-third-try")
+    lines: list[str] = []
+
+    with pytest.raises(slack.Stopped) as stopped:
+        slack.login(settings, ConfigStore(), ask=terminal, echo=lines.append, api=fake.api())
+
+    assert slack.MAX_REFUSALS == 3
+    assert len([line for line in lines if line.startswith("The bot token was not taken")]) == 3
+    assert terminal.asked == [BOT_PROMPT, USER_PROMPT, BOT_PROMPT, BOT_PROMPT]
+    assert str(stopped.value) == PICK_UP.format(flags="")
+    assert ConfigStore().stored() == {}
+
+
+def test_an_answer_that_is_not_the_token_is_asked_for_only_so_many_times(settings):
+    fake, terminal = FakeSlack(), Terminal("one", "two", "three")
+    lines: list[str] = []
+
+    with pytest.raises(slack.Stopped):
+        slack.login(settings, ConfigStore(), ask=terminal, echo=lines.append, api=fake.api())
+
+    assert slack.MAX_WRONG == 3 and len(terminal.asked) == 3
+    assert lines.count("That is not a Slack token: the bot token starts xoxb-.") == 3
+    assert fake.calls == []
+
+
+def test_slack_not_answering_ends_the_login_rather_than_asking_again(settings):
+    """A token is asked for again when Slack said no to it. Slack not being reached is
+    nothing another paste would mend."""
+    fake = FakeSlack(workspace=Workspace(error="unreachable"))
+    terminal = Terminal(TOKEN, USER)
+
+    with pytest.raises(SlackSetupError) as failed:
+        at_a_terminal(settings, fake, terminal)
+
+    assert not isinstance(failed.value, slack.Stopped | slack.TokenRefused)
+    assert "could not be checked (could not reach Slack)" in str(failed.value)
+    assert terminal.asked == [BOT_PROMPT, USER_PROMPT]
+
+
+def test_a_workspace_that_is_whole_is_told_how_it_stands_and_asked_nothing(settings):
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    fake, terminal = FakeSlack(), Terminal()
+
+    lines = at_a_terminal(settings, fake, terminal)
+
+    assert lines[0].startswith("Acme is connected at the converse level")
+    assert terminal.asked == [] and fake.calls == []
+
+
+def test_an_older_install_is_asked_at_the_terminal_for_the_user_token_alone(settings):
+    """The update steps, the manifest, then the two prompts: Enter keeps the bot token,
+    and reports keep going where they went."""
+    settings = older_install(settings, "D0OLDDM")
+    fake, terminal = FakeSlack(), Terminal("", USER)
+
+    lines = at_a_terminal(settings, fake, terminal)
+
+    text = "\n".join(lines)
+    assert "pick the app you already have for Keryx" in text and "The manifest:" in text
+    assert "Then come back to this terminal, which is waiting, and paste the user token " \
+           "where it is asked for. What you paste is not shown." in lines
+    assert terminal.asked == [BOT_PROMPT + KEEP, USER_PROMPT]
+    assert "it keeps sending to D0OLDDM" in lines
+    assert saved(settings)["owner_id"] == "U0OWNER" and channel(settings) == "D0OLDDM"
+
+
+def test_with_every_token_on_file_a_raised_level_waits_for_enter_at_each(settings):
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    fake, terminal = FakeSlack(), Terminal("", "", "")
+
+    lines = at_a_terminal(settings, fake, terminal, access=Access.READ, test=False)
+
+    assert ("Every token this level needs is saved already. Once the app is reinstalled, "
+            "come back to this terminal, which is waiting, and press Enter at each token "
+            "to keep it, or paste the User OAuth Token if Slack shows a different one "
+            "after the reinstall.") in lines
+    assert terminal.asked == [BOT_PROMPT + KEEP, APP_PROMPT + KEEP, USER_PROMPT + KEEP]
+    assert saved(settings)["access"] == "read"
+
+
+def test_stdin_typed_at_a_terminal_asks_for_the_tokens_without_the_steps(settings):
+    fake, terminal = FakeSlack(), Terminal(TOKEN, USER)
+
+    lines = at_a_terminal(settings, fake, terminal, steps=False)
+
+    assert lines[0].startswith("connected to the Acme workspace")
+    assert terminal.asked == [BOT_PROMPT, USER_PROMPT]
+    # Left half-way, it is the command they typed that picks it up.
+    with pytest.raises(slack.Stopped) as stopped:
+        at_a_terminal(settings, FakeSlack(), Terminal(EOFError), steps=False,
+                      access=Access.READ)
+    assert str(stopped.value) == PICK_UP.format(flags=" --stdin --access read")
+
+
+def test_a_further_workspace_with_no_first_one_is_refused_before_anything_is_asked(settings):
+    fake, terminal = FakeSlack(), Terminal()
+
+    with pytest.raises(SlackSetupError, match="run it without --workspace first"):
+        at_a_terminal(settings, fake, terminal, workspace="work")
+
+    assert terminal.asked == [] and fake.calls == []
+
+
+def test_the_sentence_about_standard_input_is_said_only_where_nobody_is_at_a_terminal(
+    settings,
+):
+    """`start` alone is the command with no terminal: it prints the steps, names
+    `--stdin` and ends. At a terminal the same steps end by sending the owner back to it."""
+    piped = said(settings, access=Access.CONVERSE)
+    waiting = said(settings, access=Access.CONVERSE, waiting=True)
+
+    assert ("Then hand the tokens over on standard input, never on the command line, one "
+            "to a line in any order:\n  keryx auth login slack --stdin --access converse"
+            ) in piped
+    assert "standard input" not in waiting and "--stdin" not in waiting
+    assert waiting.endswith("paste the tokens where each is asked for. What you paste is "
+                            "not shown.")
+    assert piped.split("\n\nThen hand")[0] == waiting.split("\n\nThe user token says")[0]

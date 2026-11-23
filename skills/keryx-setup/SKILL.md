@@ -108,6 +108,10 @@ keryx auth login slack          # says the four access levels, then a link and s
 keryx auth login slack --stdin  # theirs to run: it asks for each token hidden
 ```
 
+Run by you, with no terminal, the first command prints and ends. At a terminal of their
+own it is the whole sign-in in one command: it prints the same steps and then waits for
+the tokens, so someone who would rather do it all themselves runs only that.
+
 **The access level is theirs to choose, and it comes first**, because it decides the app
 the link creates. The first command prints what each level lets Keryx see and where it can
 be set to work from: `announce` (it posts, and reads nothing), `converse` (it is also sent
