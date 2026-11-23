@@ -47,7 +47,7 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   project each was dispatched with; the dollars are the agents' own estimates, and the
   voice calls are not tasks)
 - Read what the assistant remembers between calls: `uv run keryx memory` (`--path` for the file)
-- The plugins (Slack, email, the calendar, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
+- The plugins (Slack, email, the calendar, documents, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
   remove NAME [--yes]`; install and remove refuse the running service
@@ -116,8 +116,8 @@ remember:
   points at it. A file may raise `ToolUnavailable` while it loads to be refused with a
   reason, and reads its loader's settings from `LOADING_SETTINGS`.
 - **plugins** — `plugins/` is the optional voice tools (`send_to_slack`, `check_email`,
-  `check_calendar`, `add_calendar_event`, `check_billing`, `cluster_stats`), none registered
-  from the source tree. `PLUGINS` in
+  `check_calendar`, `add_calendar_event`, `find_document`, `check_billing`,
+  `cluster_stats`), none registered from the source tree. `PLUGINS` in
   `plugins/__init__.py` is the table everything reads (its `important` keys are what the
   wizard asks; `google` names the service of the one sign-in a plugin uses, `claude` that it
   answers through the bundled CLI), with the file helpers (`install`, `remove`, `write_config`, `status`). One module per service builds its
@@ -132,7 +132,7 @@ remember:
   PIN-lockout alert, and every finished task's whole report) only through
   `plugins.slack.slack_route`, asked at send time.
 - **integrations** — `integrations/` is one module per outside service (`billing`,
-  `calendar`, `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind a
+  `calendar`, `cluster`, `drive`, `gmail`, `slack`, `web_search`): the *clients*, each behind a
   voice tool — `web_search` behind a built-in, the rest behind a plugin, which is where the
   tool is built (`calendar` behind two, one that reads and one that adds). Their builders
   take explicit values, never a plugin's file. Three have no voice tool of their own:
@@ -537,8 +537,9 @@ for.
 ## Google answers on the call
 
 A dispatch takes tens of seconds to minutes, so the Google questions worth answering
-inside the call are plugins: `check_email` (`integrations/gmail.py`), and `check_calendar`
-and `add_calendar_event` (`integrations/calendar.py`). All need the PIN. Five rulings:
+inside the call are plugins: `check_email` (`integrations/gmail.py`), `check_calendar`
+and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
+(`integrations/drive.py`). All need the PIN. Six rulings:
 
 - **One request, and reading is a matter of construction.** Every one of them goes through
   `integrations/google_api.py`: a `GoogleReader` has `get` and `text` and nothing else,
@@ -548,7 +549,7 @@ and `add_calendar_event` (`integrations/calendar.py`). All need the PIN. Five ru
 - **A tool asks for the scope it uses, not for the service.** `google.holds(scopes, needs)`
   is narrower than a service being connected, which wants every scope the agents' tools
   use: reading the calendar needs `calendar.readonly`, adding to it only
-  `calendar.events`. A sign-in that lacks it refuses the plugin's file with the reason when
+  `calendar.events`, and finding or exporting any file only `drive.readonly`. A sign-in that lacks it refuses the plugin's file with the reason when
   it loads (as `check_email` does: `doctor`, `keryx tools` and `keryx plugins` say why), and
   the same thing found out mid-call is a status and a sentence.
 - **A failure is a code and a sentence that names the fix.** `GoogleApiError`:
@@ -558,18 +559,32 @@ and `add_calendar_event` (`integrations/calendar.py`). All need the PIN. Five ru
   log line carries the status, one of a short list of Google's own reasons, and the kind of
   thing asked for, never which calendar or file (an id is somebody's address).
 - **What Google returns is somebody else's text.** An invitation puts a title on the
-  calendar unasked. So the voice model gets a title and a place as one clipped line
-  (`clip`), never a description, and a note beside them that says to say it and never act
-  on it; the tool descriptions say the same. That is a mitigation, not a wall, and
+  calendar unasked, and anyone can share a file. So the voice model gets a title, a place
+  or a file's name as one clipped line (`clip`), never an event's description, and a note
+  beside them that says to say it and never act on it; the tool descriptions say the same.
+  A document's text never reaches the voice model at all: like mail, it goes to the
+  summariser, which has no tools, fenced and named as material and not instructions (the
+  fence's own tags are taken out of the text first). That is a mitigation, not a wall, and
   SECURITY.md says so.
+- **A model call is the exception, and there is one.** `check_calendar` and
+  `add_calendar_event` make none. `check_email` and `find_document` make exactly one,
+  through `integrations/summariser.py`: the bundled `claude` CLI with no tools, no
+  settings, no MCP servers and no session, the material on standard input, never argv.
+  `find_document` makes none when nothing was asked about the file. A second tool that
+  needs a model takes that module; do not grow a second way to call one.
 - **A write that got no answer is never sent again.** `add_calendar_event` invites nobody
   (no attendees, `sendUpdates=none`) and touches only the owner's own calendar. A `POST`
   that timed out or met a 5xx may have landed, so it comes back `unconfirmed` with a
   sentence saying exactly that. Two events is worse than one doubt.
 
-A day reaches these tools the way it was said (`resolve_day`: today, tomorrow, a weekday, a
-date) and is resolved in the zone of the owner's own calendar, never the machine's. Do not
-make the voice model do arithmetic on dates.
+A day reaches the calendar tools the way it was said (`resolve_day`: today, tomorrow, a
+weekday, a date) and is resolved in the zone of the owner's own calendar, never the
+machine's. Do not make the voice model do arithmetic on dates.
+
+Nothing the voice model says is spliced into a request. A Drive search term goes through
+`drive.escape` into a quoted term of a query built from constants, everything else is a
+query parameter httpx escapes, and an id is matched against a pattern before it is put in
+a path, Google's own ids included.
 
 ## Restarts are three halves
 

@@ -1,10 +1,10 @@
 """Plugins: the optional voice tools, installed into the owner's tools directory when wanted.
 
 Some tools are not Keryx's to offer on every machine — `send_to_slack`, `check_email`,
-`check_calendar`, `add_calendar_event`, `check_billing` and `cluster_stats` each need
-something only some owners have — so none is registered from the source tree. A plugin
-exists when the owner turns it on, and it is then an ordinary custom tool
-(`keryx.tools.custom`): two files in `DATA_DIR/tools`,
+`check_calendar`, `add_calendar_event`, `find_document`, `check_billing` and
+`cluster_stats` each need something only some owners have — so none is registered from the
+source tree. A plugin exists when the owner turns it on, and it is then an ordinary custom
+tool (`keryx.tools.custom`): two files in `DATA_DIR/tools`,
 
 - `<name>.py`, one line calling `keryx.plugins.<module>.<name>_tool`, so the logic stays
   here with its tests and a fix reaches every installed copy; and
@@ -163,6 +163,21 @@ PLUGINS: dict[str, Plugin] = {
         ),
         module="calendar",
         google="calendar",
+    ),
+    "find_document": Plugin(
+        name="find_document",
+        title="Document answers",
+        summary="A file found in your Drive on a call, and a question about it answered",
+        default=False,
+        important=(),
+        secrets=(),
+        keys=(
+            Key("model", "word", "claude-opus-5-5", "The model that answers"),
+            Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
+        ),
+        module="documents",
+        google="drive",
+        claude=True,
     ),
     "check_billing": Plugin(
         name="check_billing",

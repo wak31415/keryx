@@ -24,8 +24,9 @@ and the order they are called in *is* the order the tools are offered to the mod
 is the order they were registered in before the split (2026-09-02).
 
 The optional tools — `send_to_slack`, `check_email`, `check_calendar`, `add_calendar_event`,
-`check_billing`, `cluster_stats` — are not here: they are plugins (`keryx.plugins`), custom
-tools the owner turns on, loaded after these at the top of every call.
+`find_document`, `check_billing`, `cluster_stats` — are not here: they are plugins
+(`keryx.plugins`), custom tools the owner turns on, loaded after these at the top of every
+call.
 """
 
 from collections.abc import Sequence

@@ -1237,7 +1237,7 @@ def test_plugins_lists_every_one_off_on_a_fresh_machine(settings_stub):
     assert [(one["name"], one["on"]) for one in found] == [
         ("send_to_slack", False), ("check_email", False),
         ("check_calendar", False), ("add_calendar_event", False),
-        ("check_billing", False), ("cluster_stats", False),
+        ("find_document", False), ("check_billing", False), ("cluster_stats", False),
     ]
 
 

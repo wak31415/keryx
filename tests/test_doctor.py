@@ -84,6 +84,7 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
         "check_email": {},
         "check_calendar": {},
         "add_calendar_event": {"default_minutes": 45},
+        "find_document": {"effort": "medium"},
         "check_billing": {"monthly_budget": 40},
         "cluster_stats": {"clusters": {"alpha": "gpu"}},
     }.items():
@@ -645,6 +646,7 @@ def test_every_plugin_on_names_what_it_does(healthy):
     assert checks["add_calendar_event"].detail == (
         "on — one event on your own calendar, 45 minutes when no end is said, nobody invited"
     )
+    assert checks["find_document"].detail == "on — claude-opus-5-5, medium effort"
     assert checks["check_billing"].detail == "on — auto, budget $40"
     assert checks["cluster_stats"].detail == "on — alpha through the built-in guard"
     assert all(checks[name].section == "plugins" for name in plugins.PLUGINS)
@@ -731,13 +733,25 @@ def test_a_google_sign_in_does_not_nag_about_calendar_answers_being_off(healthy)
     assert check.state == "missing" and "off (optional)" in check.detail
 
 
-def test_email_signed_in_without_the_claude_cli_is_refused_with_how(healthy, monkeypatch):
+@pytest.mark.parametrize("name", ["check_email", "find_document"])
+def test_signed_in_without_the_claude_cli_is_refused_with_how(healthy, monkeypatch, name):
     with_agent(monkeypatch, "claude", cli=None)
 
-    check = by_name(run_doctor_checks(healthy))["check_email"]
+    check = by_name(run_doctor_checks(healthy))[name]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "uv sync --extra claude" in check.detail
+
+
+def test_documents_on_without_drive_in_the_sign_in_says_which(healthy):
+    sign_in(healthy, ("gmail", "calendar"))
+
+    check = by_name(run_doctor_checks(healthy))["find_document"]
+
+    assert (check.ok, check.state) == (False, "failed")
+    assert check.detail == (
+        "on but refused: Drive is not part of your Google sign-in: `keryx auth login google`"
+    )
 
 
 # --- formatting ------------------------------------------------------------

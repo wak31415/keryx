@@ -27,6 +27,12 @@ the version starts with 0.
   anything on the phone being able to write to it. One event on your own calendar, timed or
   all day, with nobody invited; the assistant says back what it created. Anything more
   (guests, repeats, changes) is still a task for a coding agent.
+- **Your documents on the call: the `find_document` plugin.** "Find the doc about the
+  offsite" searches Google Drive by name and by text. "What does my planning doc say about
+  hiring" also reads the best match and answers from it in a few seconds, with one model
+  call, the way `check_email` does for mail. Docs, Sheets, Slides and text files can be
+  read; a PDF is found and said to need a task. It needs the PIN, Drive in your Google
+  sign-in and the `claude` extra.
 - Agents get Drive, Docs, Sheets and Slides as well as Gmail and Calendar, and both Claude
   and Codex get them the same way.
 - When a release ships Keryx's own Google app, signing in needs no Google Cloud project.

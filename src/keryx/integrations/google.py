@@ -93,7 +93,8 @@ SERVICES: dict[str, Service] = {
     "drive": Service(
         "Drive",
         (DRIVE_READONLY, DRIVE_FILE),
-        "agents find and read your files, and create or change the ones Keryx made",
+        "agents find and read your files, and create or change the ones Keryx made, and "
+        "document answers on a call",
     ),
     "docs": Service("Docs", (DOCUMENTS,), "agents read and edit documents", needs=("drive",)),
     "sheets": Service(

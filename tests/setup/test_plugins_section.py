@@ -58,15 +58,28 @@ def test_a_later_walk_ticks_only_what_is_on(make_ctx):
     assert not any(c.checked for c in ctx.ui.choices["Which plugins should Keryx have?"])
 
 
-def test_email_needs_the_claude_extra(make_ctx, monkeypatch):
+def test_the_plugins_a_model_answers_need_the_claude_extra(make_ctx, monkeypatch):
     monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
     ctx = make_ctx([("Which plugins", [])])
 
     section.run_section(ctx)
 
-    email = next(c for c in ctx.ui.choices["Which plugins should Keryx have?"]
-                 if c.value == "check_email")
-    assert "uv sync --extra claude" in email.disabled and not email.checked
+    choices = {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
+    for name in ("check_email", "find_document"):
+        assert "uv sync --extra claude" in choices[name].disabled and not choices[name].checked
+    assert all(c.disabled is None for name, c in choices.items()
+               if name not in ("check_email", "find_document"))
+
+
+def test_one_that_is_on_and_cannot_be_ticked_is_not_turned_off_for_it(make_ctx, monkeypatch):
+    monkeypatch.setattr(registry, "installed", lambda agent: agent != "claude")
+    ConfigStore().mark_walked("plugins")
+    ctx = make_ctx([("Which plugins", [])])
+    plugins.install(ctx.settings, "find_document")
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and on(ctx, "find_document")
 
 
 # --- slack -------------------------------------------------------------------------------
@@ -172,13 +185,13 @@ def test_email_is_left_off_when_gmail_was_not_granted(make_ctx, world):
 # --- the calendar pair, and the sign-in they share with email ----------------------------
 
 
-def test_neither_calendar_plugin_is_ticked_unasked(make_ctx):
+def test_the_newer_google_plugins_are_never_ticked_unasked(make_ctx):
     ctx = make_ctx([("Which plugins", [])])
 
     section.run_section(ctx)
 
     choices = {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
-    for name in ("check_calendar", "add_calendar_event"):
+    for name in ("check_calendar", "add_calendar_event", "find_document"):
         assert not choices[name].checked and choices[name].disabled is None
 
 
@@ -193,6 +206,30 @@ def test_calendar_connected_turns_both_on_and_asks_nothing(make_ctx, world):
     assert on(ctx, "check_calendar") and on(ctx, "add_calendar_event")
     assert toml(ctx, "check_calendar") == {"calendars": "selected", "max_events": 25}
     assert toml(ctx, "add_calendar_event") == {"default_minutes": 60}
+
+
+def test_documents_with_drive_connected_asks_nothing(make_ctx, world):
+    ctx = make_ctx([("Which plugins", ["find_document"])])
+    google_signed_in(ctx, ("drive",))
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and world.calls == []
+    assert "Drive: connected" in ctx.ui.lines("success")
+    assert on(ctx, "find_document")
+    assert toml(ctx, "find_document") == {"model": "claude-opus-5-5", "effort": "low"}
+
+
+def test_documents_without_drive_in_the_sign_in_is_left_off(make_ctx, world):
+    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+    world.google_services = ("gmail", "calendar")
+    ctx = make_ctx([("Which plugins", ["find_document"]), ("Sign in to Google?", DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert not on(ctx, "find_document")
+    assert any("Drive is not connected, so find_document is left off" in line
+               for line in ctx.ui.lines("note"))
 
 
 def test_calendar_needs_no_claude(make_ctx, monkeypatch):

@@ -8,11 +8,11 @@ file holds now — so walking this section again is also how a plugin's settings
 Every step ends by naming the file the rest of its settings are in. A plugin that is on and
 left unticked is turned off, after a confirm.
 
-The plugins that use the Google sign-in (`Plugin.google`: email, the calendar pair) share
-one step, `run_google`. One whose service is connected is turned on and asked nothing. One
-whose service is not offers the sign-in (`setup.google.connect`), at most once in a walk
-however many of them were ticked, and is left off, with the two commands that finish it,
-when the service is still not connected afterwards.
+The plugins that use the Google sign-in (`Plugin.google`: email, the calendar pair,
+documents) share one step, `run_google`. One whose service is connected is turned on and
+asked nothing. One whose service is not offers the sign-in (`setup.google.connect`), at
+most once in a walk however many of them were ticked, and is left off, with the two
+commands that finish it, when the service is still not connected afterwards.
 
 `cluster_stats` is the one with a step of its own: it reads `~/.ssh/config`, shows the hosts
 with a ControlMaster (a host without one is never offered: Keryx rides a login the owner
@@ -30,7 +30,7 @@ from typing import Any
 from keryx import plugins
 from keryx.agents import registry
 from keryx.config import Settings
-from keryx.integrations import calendar, gmail
+from keryx.integrations import calendar, drive, gmail
 from keryx.integrations import google as account
 from keryx.setup import google
 from keryx.setup.context import SetupContext
@@ -165,6 +165,7 @@ GOOGLE_READY: dict[str, Callable[[Settings], bool]] = {
     "check_email": gmail.signed_in,
     "check_calendar": lambda settings: calendar.read_problem(settings) is None,
     "add_calendar_event": lambda settings: calendar.write_problem(settings) is None,
+    "find_document": lambda settings: drive.read_problem(settings) is None,
 }
 
 

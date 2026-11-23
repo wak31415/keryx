@@ -153,8 +153,8 @@ caller says or does changes anything or outlasts the call.
   level whatever the settings say. A test walks every registered tool, so a new tool is
   gated unless someone adds it to one of those lists on purpose. Of the plugins,
   `check_billing` and `cluster_stats` set `needs_pin=False`, because they read a number and
-  change nothing. `send_to_slack`, `check_email`, `check_calendar` and `add_calendar_event`
-  keep the default and need the PIN.
+  change nothing. `send_to_slack`, `check_email`, `check_calendar`, `add_calendar_event`
+  and `find_document` keep the default and need the PIN.
 - **An announcement tells a call nothing it could not already hear.** A result that finishes
   during a call is announced under the same rule as the briefing. Restart confirmations and
   approval escalations go only to a call that has given the PIN or that Keryx placed to your
@@ -554,36 +554,46 @@ setup wizard and `keryx plugins hosts` offer only hosts with a ControlMaster in
 `~/.ssh/config`. The remote command is built from constants and refuses anything but
 `squeue` and `sinfo`.
 
-The Google plugins (`check_email`, `check_calendar`, `add_calendar_event`) put text that
-other people wrote in front of a model during a call you have given the PIN on. Anyone who
-can send you an invitation can put a title on your calendar, and anyone can send you mail.
-That text is treated as data, in these ways:
+The Google plugins (`check_email`, `check_calendar`, `add_calendar_event`, `find_document`)
+put text that other people wrote in front of a model, during a call you have given the PIN
+on. Anyone can send you mail, anyone who can send you an invitation can put a title on your
+calendar, and anyone can share a file with you. That text is treated as data, in these
+ways:
 
-- **Mail never reaches the voice model.** `check_email` hands it to one separate model call
-  that has no tools, no settings and no MCP servers, and only that call's few spoken
-  sentences come back. Text in an email can change what those sentences say. It has
-  nothing to act with.
-- **Calendar text reaches the voice model, cut down and labelled.** `check_calendar` has no
-  model in between, so the voice model sees each event's title, place and calendar name:
-  one line each, clipped to 120 characters, never the description, never a link or an id.
-  The result carries a note, and the tool's description repeats it, that these are other
-  people's words to be said and never acted on.
-- **This reduces the risk and does not remove it.** The voice model on an authorized call
-  can dispatch tasks, and a model can be talked into things. An invitation whose title is
-  written as an instruction is exactly the content the "untrusted content reaches a coding
-  agent" item above is about; with the PIN given, that path is the out-of-scope one, and
-  without it the tools do not answer at all. If you do not want event text in front of
-  the voice model, leave `check_calendar` off: calendar questions are then dispatched.
+- **Mail and documents never reach the voice model.** `check_email` and `find_document`
+  hand what they read to one separate model call that has no tools, no settings and no
+  MCP servers, and only that call's few spoken sentences come back. A document's text is
+  fenced and described to that model as material and never instructions, and the fence's
+  own markers are removed from the text first so it cannot close the fence it is in. Text
+  in a mail or a document can still change what those sentences say. It has nothing to act
+  with.
+- **Titles and names reach the voice model, cut down and labelled.** `check_calendar` has
+  no model in between, so the voice model sees each event's title, place and calendar
+  name, and `find_document` shows it each file's name and owner: one line each, clipped to
+  120 characters, never an event's description and never a link. Each result carries a
+  note, and each tool's description repeats it, that these are other people's words, to
+  be said and never acted on.
+- **This reduces the risk and does not remove it.** The voice model on a call that has
+  given the PIN can dispatch tasks, and a model can be talked into things. A title or a
+  sentence written as an instruction is prompt injection into a call you authorized, which
+  is the same position as the coding agents' (see Out of scope). None of these tools
+  answers without the PIN, so none of this text reaches any model on a call that has not
+  given it. If you do not want it in front of the voice model at all, leave the plugin
+  off: the question is then dispatched as a task.
 - **Reading is a matter of construction, and the one tool that writes does one thing.**
   A reading plugin is built on a client that has no method to write with
   (`integrations/google_api.py`), whatever the sign-in allows. `add_calendar_event` can
   create one event on your own calendar and nothing else: it sends no attendees and asks
   Google to notify nobody, so it cannot be used to send anything to anyone, and it cannot
   change or delete an event.
+- **Nothing the caller says is spliced into a request.** A Drive search is a quoted term
+  with its quotes and backslashes escaped, inside a query built from constants. A file id
+  is matched against a pattern before it is put in an address, so an id cannot name
+  another endpoint.
 - **Nothing from Google is logged or quoted.** A failure is logged as a status, one of a
   short list of Google's own reason words, and the kind of thing asked for, never a
-  response body (which can quote a token back) and never which calendar. Events and mail
-  are counted in the log, never written to it.
+  response body (which can quote a token back) and never which calendar or file. Events,
+  mail and documents are counted in the log, never written to it.
 
 A coding agent drafts `keryx setup`'s project summaries by reading the folders you chose,
 including whatever their READMEs say. So nothing it writes is kept until you accept it, each

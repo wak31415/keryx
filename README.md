@@ -56,7 +56,8 @@ To use the package in a project of your own, install it there with `pip install 
 - **Keeps working after you hang up.** Ask for status or add instructions on a later call.
 - **Calls you back** with the result or when the agent needs an answer to proceed.
 - **Answers Claude Code prompts on your screen** with a keypress on your phone.
-- **Checks your email and calendar** by voice and sends you links and reports on Slack.
+- **Checks your email, calendar and documents** by voice and sends you links and reports
+  on Slack.
 - **Grows by voice.** Ask for a new tool, or report a bug and Keryx files the issue.
 
 <p align="center">
