@@ -903,7 +903,8 @@ second way to read. Nine rulings:
   method name, a path or a shell: a conversation is an id matched against a pattern or
   one looked up in a list Slack returned, and the words searched for are one parameter.
 - **Bounded.** One tool call or one command is one `SlackReader`: a budget of requests
-  (`MAX_REQUESTS`), capped lists, a few pages of anything, a timeout on each request,
+  (`MAX_REQUESTS`, a few of them kept for names so a message always has an author),
+  capped lists, a few pages of anything, a timeout on each request,
   small concurrency, a window held to `MAX_DAYS` here as well as in the query, 25 seconds
   for a call and a minute for a command. A `429` is the status `rate_limited`, said at
   once, never a sleep on a live call. What was left unread is `more`; a part that could
