@@ -130,7 +130,7 @@ def slack_lines(entry: dict[str, Any]) -> list[str]:
     for each in entry.get("workspaces", []):
         name = each["label"]
         state = (f"without {' or '.join(each['missing'])}" if each["missing"]
-                 else ("hears your messages to the app" if each["listens"] else "posts only"))
+                 else ("acts when you mention the app" if each["listens"] else "posts only"))
         lines.append(f"{name}: {each['access']} level, {state}")
     return lines
 

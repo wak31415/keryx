@@ -838,7 +838,7 @@ def slack_workspace_checks(settings: Settings, values: dict) -> list[Check]:
         name = f"send_to_slack: {each.name}"
         where = f"{each.team + ', ' if each.team else ''}at the {each.access} level"
         if not each.missing:
-            hears = "; hears your messages to the app" if each.listens else ""
+            hears = "; acts when you mention the app" if each.listens else ""
             checks.append(Check(name, True, f"{where}, posts to {each.channel}{hears}",
                                 severity="soft", section="plugins"))
             continue

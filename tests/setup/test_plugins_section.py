@@ -31,6 +31,7 @@ from keryx.setup.slack import (
     LISTEN_NOTE,
     MEANING,
     MEMBER_ID_HINT,
+    OWNER_LINE,
     READ_NOTE,
     TEST_MESSAGE,
 )
@@ -371,7 +372,7 @@ def test_the_level_is_asked_first_and_says_what_keryx_will_see_before_the_link(m
 def test_converse_is_two_tokens_each_checked_and_the_owner_is_who_the_address_found(
     make_ctx, world
 ):
-    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME")]
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")]
     ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
                     (WHERE, "sam@x.io"), (TEST, True)])
 
@@ -410,7 +411,7 @@ def test_above_announce_a_token_that_could_not_be_checked_is_never_saved_uncheck
     """Every message is held to the workspace Slack names, so Slack has to have named it."""
     world.slack_connections = [Connection(error="http_503"), Connection(url="wss://x/?t=1")]
     world.slack_workspaces = [Workspace(error="http_503"),
-                              Workspace(team="Acme", team_id="T0ACME")]
+                              Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")]
     ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (TOKEN, "xoxb-1"),
                     (APP_TOKEN, "xapp-1"), (APP_TOKEN, "xapp-1"), (WHERE, "sam@x.io"),
                     (TEST, False)])
@@ -463,7 +464,7 @@ def test_an_app_token_must_be_one(make_ctx):
 
 
 def test_read_is_three_tokens_and_the_user_token_says_who_and_where(make_ctx, world):
-    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME"),
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
                               Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
     ctx = make_ctx([SLACK, (LEVEL, "read"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
                     (USER_TOKEN, "xoxp-1"), (WHERE, DEFAULT), (TEST, False)])
@@ -486,7 +487,7 @@ def test_read_is_three_tokens_and_the_user_token_says_who_and_where(make_ctx, wo
 
 def test_a_user_token_from_another_workspace_is_asked_for_again_and_never_saved(make_ctx, world):
     world.slack_workspaces = [
-        Workspace(team="Acme", team_id="T0ACME"),
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
         Workspace(team="Other", team_id="T0OTHER", user_id="U0ELSE"),
         Workspace(error="http_503"),
         Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"),
@@ -570,7 +571,7 @@ def test_a_kept_bot_token_with_no_workspace_on_file_still_holds_a_user_token_to_
 ):
     """An install from before levels: its workspace is asked for, so the check has teeth."""
     world.slack_workspaces = [
-        Workspace(team="Acme", team_id="T0ACME"),
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
         Workspace(team="Other", team_id="T0OTHER", user_id="U0ELSE"),
         Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"),
     ]
@@ -614,7 +615,7 @@ def conversing(make_ctx, **more):
     ctx = already_set_up(make_ctx, channel="U0OWNER")
     plugins.write_config(ctx.settings, "send_to_slack", {
         "access": "read" if more else "converse", "owner_id": "U0OWNER", "team": "Acme",
-        "team_id": "T0ACME",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
     })
     return ctx
 
@@ -630,8 +631,7 @@ def test_sending_to_a_colleague_never_makes_them_the_owner(make_ctx, world):
     saved = toml(ctx, "send_to_slack")
     assert ctx.ui.done()
     assert (saved["channel_id"], saved["owner_id"]) == ("U0COLLEAGUE", "U0OWNER")
-    assert ("Only direct messages to the app from U0OWNER are acted on there: that member "
-            "id is taken to be you, and only --owner changes it.") in ctx.ui.lines("note")
+    assert OWNER_LINE.format(who="U0OWNER") in ctx.ui.lines("note")
 
 
 def test_the_first_owner_is_named_in_a_line_of_its_own(make_ctx, world):
@@ -640,8 +640,7 @@ def test_the_first_owner_is_named_in_a_line_of_its_own(make_ctx, world):
 
     section.run_section(ctx)
 
-    assert any(line.startswith("Only direct messages to the app from U0OWNER are acted on")
-               for line in ctx.ui.lines("note"))
+    assert OWNER_LINE.format(who="U0OWNER") in ctx.ui.lines("note")
 
 
 def test_at_announce_nobody_is_made_the_owner(make_ctx, world):
@@ -710,7 +709,7 @@ def test_a_level_already_set_up_keeps_every_token_and_asks_slack_nothing(make_ct
     ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
     ctx = already_set_up(make_ctx, channel="U0OWNER")
     plugins.write_config(ctx.settings, "send_to_slack", {
-        "access": "read", "owner_id": "U0OWNER", "team_id": "T0ACME",
+        "access": "read", "owner_id": "U0OWNER", "team_id": "T0ACME", "bot_user_id": "U0KERYX",
     })
     ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
                       (USER_TOKEN, DEFAULT), (WHERE, DEFAULT)]
@@ -726,7 +725,9 @@ def test_a_kept_user_token_with_no_member_on_file_is_asked_of_slack_once(make_ct
     world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
     ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
     ctx = already_set_up(make_ctx, channel="C0CHANNEL")
-    plugins.write_config(ctx.settings, "send_to_slack", {"access": "read", "team_id": "T0ACME"})
+    plugins.write_config(ctx.settings, "send_to_slack", {
+        "access": "read", "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
     ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
                       (USER_TOKEN, DEFAULT), (WHERE, DEFAULT), (TEST, False)]
 

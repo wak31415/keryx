@@ -15,37 +15,53 @@ from keryx.slack_inbox import (
     CAP_REACHED,
     NOT_PASSED_ON,
     NOT_STARTED,
+    NOTHING_ASKED,
     NOTHING_TO_RESUME,
     STARTING,
+    TEXT_ONLY,
+    Dropped,
     InboxApi,
+    Request,
     SlackInbox,
-    owner_message,
+    envelope_problem,
+    owner_request,
 )
 from keryx.tasks.agent_runner import FakeAgentRunner
 from keryx.tasks.manager import TaskManager
 from keryx.tasks.models import Task, TaskKind, TaskStatus
 from keryx.tasks.store import TaskStore
 
-OWNER, DM, TEAM = "U0OWNER", "D0OWNER", "T0ACME"
+OWNER, DM, TEAM, BOT = "U0OWNER", "D0OWNER", "T0ACME", "U0KERYX"
+#: How the owner mentions the app, as Slack writes it in a message's text.
+AT = f"<@{BOT}>"
+SHARED = "C0SHARED"
 NAME = "send_to_slack"
 TS = "1700000000.000100"
 LATER = "1700000000.000200"
 
 
-def payload(text="look into the flaky test", *, ts=TS, user=OWNER, **event) -> dict:
+def payload(text=f"{AT} look into the flaky test", *, ts=TS, user=OWNER, **event) -> dict:
     """A `message.im` event as Socket Mode delivers one, typed by `user`."""
     return {
         "type": "event_callback",
         "team_id": TEAM,
         "event_id": "Ev1",
-        "authorizations": [{"team_id": TEAM, "user_id": "U0BOT", "is_bot": True}],
+        "authorizations": [{"team_id": TEAM, "user_id": BOT, "is_bot": True}],
         "event": {"type": "message", "channel": DM, "user": user, "text": text, "ts": ts,
                   "channel_type": "im", **event},
     }
 
 
-def reply(text="and the other one", *, ts=LATER, under=TS, **event) -> dict:
+def reply(text=f"{AT} and the other one", *, ts=LATER, under=TS, **event) -> dict:
     return payload(text, ts=ts, thread_ts=under, **event)
+
+
+def mention(text=f"{AT} summarise this thread", *, ts=TS, user=OWNER, **event) -> dict:
+    """An `app_mention` event: the app mentioned in a conversation it was added to."""
+    made = payload(text, ts=ts, user=user, channel=SHARED, **event)
+    made["event"]["type"] = "app_mention"
+    del made["event"]["channel_type"]
+    return made
 
 
 @dataclass
@@ -129,8 +145,17 @@ def conversing(settings):
     })
     plugins.write_config(settings, NAME, {
         "channel_id": OWNER, "access": "converse", "owner_id": OWNER, "team_id": TEAM,
+        "bot_user_id": BOT, "url": "https://acme.slack.com/",
     })
     plugins.install(settings, NAME)
+    return settings
+
+
+@pytest.fixture
+def reading(conversing):
+    """The same workspace at read: the app may also be mentioned elsewhere."""
+    settings = conversing.model_copy(update={"slack_user_token": "xoxp-first"})
+    plugins.write_config(settings, NAME, {"access": "read"})
     return settings
 
 
@@ -167,94 +192,154 @@ def workspace_of(settings):
     return workspace(settings, "default")
 
 
-# --- which messages are the owner's -------------------------------------------------------
+def dropped(caplog) -> list[str]:
+    """The reason of every event that was not acted on, in order."""
+    return [record.getMessage().rsplit("(", 1)[1].rstrip(")") for record in caplog.records
+            if "was not acted on" in record.getMessage()]
 
 
-def test_a_message_the_owner_typed_to_the_app_is_one(conversing):
-    message = owner_message(payload("fix &lt;it&gt; &amp; ship"), workspace_of(conversing))
-
-    assert (message.channel, message.ts, message.thread_ts) == (DM, TS, None)
-    assert message.text == "fix <it> & ship"
+# --- what a request is: the owner's own message, mentioning the app -------------------------
 
 
-def test_a_reply_knows_the_thread_it_is_in_and_a_thread_root_is_a_message_of_its_own(conversing):
+def test_a_message_from_the_owner_that_mentions_the_app_is_a_request(conversing):
+    request = owner_request(payload(f"{AT} fix &lt;it&gt; &amp; ship"), workspace_of(conversing))
+
+    assert request == Request(text="fix <it> & ship", channel=DM, ts=TS)
+    assert (request.root, request.shared, request.files) == (TS, False, False)
+
+
+def test_the_mention_is_taken_out_of_the_request_wherever_it_is_and_however_written(conversing):
     one = workspace_of(conversing)
 
-    assert owner_message(reply(), one).thread_ts == TS
-    assert owner_message(payload(thread_ts=TS), one).thread_ts is None
+    assert owner_request(payload(f"please {AT} do it"), one).text == "please do it"
+    assert owner_request(payload(f"<@{BOT}|keryx> do it {AT}"), one).text == "do it"
 
 
 @pytest.mark.parametrize(
-    "event",
+    "text",
+    ["look into the flaky test", "@Keryx do it", f"@{BOT} do it", "<@U0SOMEONE> do it",
+     f"<@{BOT}X> do it", "", None],
+)
+def test_without_a_mention_of_the_app_nothing_is_a_request(conversing, text):
+    """The trigger, everywhere: in the direct messages with the app too."""
+    assert owner_request(payload(text), workspace_of(conversing)) == Dropped("no_mention")
+    assert owner_request(reply(text), workspace_of(conversing)) == Dropped("no_mention")
+
+
+def test_a_reply_knows_its_thread_and_a_thread_root_is_a_message_of_its_own(conversing):
+    one = workspace_of(conversing)
+
+    assert owner_request(reply(), one).thread_ts == TS and owner_request(reply(), one).root == TS
+    assert owner_request(payload(thread_ts=TS), one).thread_ts is None
+
+
+@pytest.mark.parametrize(
+    ("event", "reason"),
     [
-        {"user": "U0SOMEONE"},
-        {"user": None},
-        {"channel_type": "channel"},
-        {"channel_type": "mpim"},
-        {"subtype": "message_changed"},
-        {"subtype": "message_deleted"},
-        {"subtype": "file_share"},
-        {"subtype": "bot_message"},
-        {"subtype": "thread_broadcast"},
-        {"bot_id": "B0BOT"},
-        {"type": "reaction_added"},
-        {"ts": "yesterday"},
-        {"ts": None},
-        {"thread_ts": "1700000000.000100; drop table"},
-        {"channel": ""},
-        {"channel": 7},
-        {"text": ""},
-        {"text": "   "},
-        {"text": None},
+        ({"user": "U0SOMEONE"}, "not_the_owner"),
+        ({"user": None}, "not_the_owner"),
+        ({"channel_type": "channel"}, "not_a_direct_message"),
+        ({"channel_type": "mpim"}, "not_a_direct_message"),
+        ({"subtype": "message_changed"}, "subtype"),
+        ({"subtype": "message_deleted"}, "subtype"),
+        ({"subtype": "channel_join"}, "subtype"),
+        ({"subtype": "bot_message"}, "bot_message"),
+        ({"bot_id": "B0BOT"}, "bot_message"),
+        ({"type": "reaction_added"}, "not_a_message"),
+        ({"ts": "yesterday"}, "malformed"),
+        ({"ts": None}, "malformed"),
+        ({"thread_ts": "1700000000.000100; drop table"}, "malformed"),
+        ({"channel": ""}, "malformed"),
+        ({"channel": 7}, "malformed"),
     ],
 )
-def test_anything_else_in_the_event_is_not(conversing, event):
-    assert owner_message(payload(**event), workspace_of(conversing)) is None
+def test_anything_else_in_the_event_is_not_and_says_which_check_refused(
+    conversing, event, reason
+):
+    assert owner_request(payload(**event), workspace_of(conversing)) == Dropped(reason)
 
 
 @pytest.mark.parametrize(
-    "envelope",
+    ("envelope", "reason"),
     [
-        {"type": "url_verification"},
-        {"team_id": "T0OTHER"},
-        {"event": "message"},
-        {"event": None},
+        ({"type": "url_verification"}, "not_an_event"),
+        ({"event": "message"}, "not_a_message"),
+        ({"event": None}, "not_a_message"),
+        ({"team_id": "T0OTHER"}, "other_team"),
+        ({"team_id": None}, "other_team"),
+        # No word of whose authorization delivered it: refused, not waved through.
+        ({"authorizations": None}, "no_authorizations"),
+        ({"authorizations": []}, "no_authorizations"),
         # Delivered for the owner's own authorization: a user-level subscription, which
         # would be every direct message they have with anybody.
-        {"authorizations": [{"team_id": TEAM, "user_id": OWNER, "is_bot": False}]},
-        {"authorizations": ["not an object"]},
+        ({"authorizations": [{"team_id": TEAM, "user_id": OWNER, "is_bot": False}]},
+         "not_for_the_bot"),
+        ({"authorizations": ["not an object"]}, "not_for_the_bot"),
     ],
 )
-def test_anything_else_around_the_event_is_not(conversing, envelope):
-    assert owner_message({**payload(), **envelope}, workspace_of(conversing)) is None
-    assert owner_message("not an object", workspace_of(conversing)) is None
+def test_anything_else_around_the_event_is_not(conversing, envelope, reason):
+    assert owner_request({**payload(), **envelope}, workspace_of(conversing)) == Dropped(reason)
 
 
-def test_with_no_owner_on_file_nobody_is_the_owner(conversing):
-    plugins.write_config(conversing, NAME, {"owner_id": ""})
-    nobody = payload(user="")
-
-    assert owner_message(nobody, workspace_of(conversing)) is None
-    assert owner_message(payload(), workspace_of(conversing)) is None
+def test_what_is_not_even_an_event_is_told_apart_before_any_setting_is_read():
+    assert envelope_problem("not an object") == "not_an_event"
+    assert envelope_problem(payload(bot_id="B0KERYX")) == "bot_message"
+    assert envelope_problem(payload()) is None and envelope_problem(mention()) is None
 
 
-def test_an_event_that_does_not_say_whose_authorization_it_is_for_is_still_read(conversing):
-    quiet = payload()
-    del quiet["authorizations"]
+def test_an_authorization_that_names_the_apps_own_member_counts_whatever_else_it_says(
+    conversing,
+):
+    """Slack's own examples show `is_bot` false beside a bot event: the member id decides."""
+    event = {**payload(), "authorizations": [{"team_id": TEAM, "user_id": BOT, "is_bot": False}]}
 
-    assert owner_message(quiet, workspace_of(conversing)) is not None
+    assert isinstance(owner_request(event, workspace_of(conversing)), Request)
 
 
-# --- a message of its own starts work -----------------------------------------------------
+@pytest.mark.parametrize("gap", ["team_id", "owner_id", "bot_user_id"])
+def test_a_workspace_with_anything_a_message_is_held_to_missing_accepts_nothing(conversing, gap):
+    """Fails closed: with nothing to hold a message to, none is acted on."""
+    from dataclasses import replace
+
+    lacking = replace(workspace_of(conversing), **{gap: ""})
+    anybody = payload(user="")
+    anybody["team_id"] = ""
+
+    assert not lacking.listens
+    assert owner_request(payload(), lacking) == Dropped("not_on_file")
+    assert owner_request(anybody, lacking) == Dropped("not_on_file")
 
 
-async def test_a_new_message_is_dispatched_and_its_thread_is_the_message_itself(world):
+# --- where a request may be typed, by level --------------------------------------------------
+
+
+def test_at_read_a_mention_in_a_conversation_the_app_was_added_to_is_a_request(reading):
+    request = owner_request(mention(), workspace_of(reading))
+
+    assert request == Request(text="summarise this thread", channel=SHARED, ts=TS, shared=True)
+
+
+def test_at_converse_a_mention_anywhere_but_the_direct_messages_is_not(conversing):
+    assert owner_request(mention(), workspace_of(conversing)) == Dropped("mention_below_read")
+
+
+def test_anybody_elses_mention_of_the_app_is_nothing(reading):
+    assert owner_request(mention(user="U0COLLEAGUE"), workspace_of(reading)) == (
+        Dropped("not_the_owner")
+    )
+
+
+# --- a request starts work, with its own words and nothing else ----------------------------
+
+
+async def test_a_request_is_dispatched_as_its_text_alone_and_its_thread_is_the_message(world):
     await world.inbox.handle("default", payload())
 
     [task] = await world.tasks()
+    # The owner's words, without the mention: nothing of the conversation around them.
     assert task.description == "look into the flaky test"
     assert (task.origin_channel, task.origin_caller) == ("slack", None)
-    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts, task.slack_last_ts) == (
+    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts, task.slack_seen) == (
         "default", DM, TS, TS
     )
     assert not task.internal and not task.callback_requested
@@ -264,6 +349,16 @@ async def test_a_new_message_is_dispatched_and_its_thread_is_the_message_itself(
     await world.done(task.id)
 
 
+async def test_a_message_without_a_mention_does_nothing_at_all(world, caplog):
+    with caplog.at_level(logging.INFO, logger="keryx.slack.inbox"):
+        await world.inbox.handle("default", payload("look into the flaky test"))
+        await world.inbox.handle("default", reply("and the other one"))
+
+    assert await world.tasks() == []
+    assert world.slack.posts == [] and world.slack.reactions == []
+    assert dropped(caplog) == ["no_mention", "no_mention"]
+
+
 async def test_the_same_message_delivered_twice_starts_one_task(world):
     await world.inbox.handle("default", payload())
     await world.inbox.handle("default", payload())
@@ -271,13 +366,14 @@ async def test_the_same_message_delivered_twice_starts_one_task(world):
     assert len(await world.tasks()) == 1 and len(world.slack.reactions) == 1
 
 
-async def test_a_message_delivered_again_after_a_restart_still_starts_one_task(world):
+async def test_a_message_delivered_again_after_a_restart_still_starts_one_task(world, caplog):
     await world.inbox.handle("default", payload())
 
-    await world.again().handle("default", payload())
+    with caplog.at_level(logging.INFO, logger="keryx.slack.inbox"):
+        await world.again().handle("default", payload())
 
     assert len(await world.tasks()) == 1 and len(world.slack.reactions) == 1
-    assert world.slack.posts == []
+    assert world.slack.posts == [] and dropped(caplog) == ["already_acted_on"]
 
 
 async def test_only_so_many_messages_are_remembered_and_an_old_one_is_still_caught(
@@ -285,9 +381,9 @@ async def test_only_so_many_messages_are_remembered_and_an_old_one_is_still_caug
 ):
     monkeypatch.setattr("keryx.slack_inbox.MAX_SEEN", 2)
     for n in range(3):
-        await world.inbox.handle("default", payload(f"job {n}", ts=f"1700000000.00010{n}"))
+        await world.inbox.handle("default", payload(f"{AT} job {n}", ts=f"1700000000.00010{n}"))
 
-    await world.inbox.handle("default", payload("job 0", ts="1700000000.000100"))
+    await world.inbox.handle("default", payload(f"{AT} job 0", ts="1700000000.000100"))
 
     # Forgotten by this process, and still one task: the task remembers its own message.
     assert len(world.inbox._seen) == 2 and len(await world.tasks()) == 3
@@ -299,7 +395,7 @@ async def test_the_daily_cap_applies_and_is_said_in_one_sentence_in_the_thread(
     world = make_world(conversing.model_copy(update={"daily_task_cap": 1}))
     await world.inbox.handle("default", payload())
 
-    await world.inbox.handle("default", payload("and one more", ts=LATER))
+    await world.inbox.handle("default", payload(f"{AT} and one more", ts=LATER))
 
     assert len(await world.tasks()) == 1
     assert world.slack.posts == [
@@ -323,7 +419,28 @@ async def test_work_that_cannot_be_started_is_said_and_not_acknowledged(world, m
     assert world.slack.reactions == []
 
 
-# --- a reply in a task's thread resumes it ------------------------------------------------
+async def test_a_mention_with_nothing_after_it_is_asked_what_it_wants(world):
+    await world.inbox.handle("default", payload(f" {AT} "))
+
+    assert await world.tasks() == []
+    assert world.slack.posts == [("xoxb-first", DM, TS, NOTHING_ASKED)]
+    assert world.slack.reactions == []
+
+
+async def test_a_request_with_a_file_is_told_keryx_reads_text_only(world):
+    """Only once it has passed every check, the mention included."""
+    await world.inbox.handle("default", payload(f"{AT} read this", subtype="file_share",
+                                                files=[{"id": "F1"}]))
+    await world.inbox.handle("default", payload("read this", subtype="file_share", ts=LATER))
+    await world.inbox.handle("default", payload(f"{AT} read this", subtype="file_share",
+                                                user="U0SOMEONE", ts="1700000000.000300"))
+
+    assert await world.tasks() == []
+    assert world.slack.posts == [("xoxb-first", DM, TS, TEXT_ONLY)]
+    assert world.slack.reactions == []
+
+
+# --- a request in a task's thread resumes it ------------------------------------------------
 
 
 async def test_a_reply_under_a_task_asked_for_on_slack_is_a_follow_up_to_it(world):
@@ -336,7 +453,7 @@ async def test_a_reply_under_a_task_asked_for_on_slack_is_a_follow_up_to_it(worl
     resumed = await world.done(task.id)
     assert len(await world.tasks()) == 1
     assert world.runner.sessions[1].prompts == ["and the other one"]
-    assert resumed.slack_last_ts == LATER and resumed.slack_thread_ts == TS
+    assert resumed.slack_seen.split() == [TS, LATER] and resumed.slack_thread_ts == TS
     assert world.slack.reactions == [("xoxb-first", DM, TS), ("xoxb-first", DM, LATER)]
     assert world.slack.posts == []
 
@@ -349,11 +466,23 @@ async def test_a_reply_under_a_report_keryx_posted_resumes_the_task_it_reported(
     await world.store.update(task.id, slack_workspace="default", slack_channel=DM,
                              slack_thread_ts=TS)
 
-    await world.inbox.handle("default", reply("also check staging"))
+    await world.inbox.handle("default", reply(f"{AT} also check staging"))
 
     # The follow-up put the row back to queued before it returned, so done is the re-run.
-    assert (await world.done(task.id)).slack_last_ts == LATER
+    assert (await world.done(task.id)).slack_seen == LATER
     assert world.runner.sessions[1].prompts == ["also check staging"]
+
+
+async def test_a_thread_broadcast_from_the_owner_is_a_reply_like_any_other(world):
+    """A reply "also sent to the channel" carries a subtype, and is still theirs."""
+    await world.inbox.handle("default", payload())
+    [task] = await world.tasks()
+    await world.done(task.id)
+
+    await world.inbox.handle("default", reply(subtype="thread_broadcast"))
+
+    await world.done(task.id)
+    assert world.runner.sessions[1].prompts == ["and the other one"]
 
 
 async def test_a_reply_delivered_again_is_one_follow_up_even_after_a_restart(world):
@@ -370,12 +499,38 @@ async def test_a_reply_delivered_again_is_one_follow_up_even_after_a_restart(wor
     assert len(world.runner.opened) == 2 and len(world.slack.reactions) == 2
 
 
-async def test_a_reply_in_a_thread_that_is_no_tasks_is_told_so_in_one_sentence(world):
-    await world.inbox.handle("default", reply())
+async def test_two_replies_delivered_out_of_order_are_both_acted_on(world):
+    """Slack promises no order: an earlier reply that arrives later is still new."""
+    earlier, later = "1700000000.000200", "1700000000.000300"
+    await world.inbox.handle("default", payload())
+    [task] = await world.tasks()
+    await world.done(task.id)
 
-    assert await world.tasks() == []
-    assert world.slack.posts == [("xoxb-first", DM, TS, NOTHING_TO_RESUME)]
-    assert world.slack.reactions == []
+    await world.inbox.handle("default", reply(f"{AT} second thought", ts=later))
+    await world.done(task.id)
+    await world.again().handle("default", reply(f"{AT} first thought", ts=earlier))
+    await world.done(task.id)
+
+    assert [session.prompts for session in world.runner.sessions[1:]] == [
+        ["second thought"], ["first thought"],
+    ]
+    assert (await world.store.get(task.id)).slack_seen.split() == [TS, later, earlier]
+    assert len(world.slack.reactions) == 3
+
+
+async def test_a_request_in_a_thread_that_is_no_tasks_starts_work_there(world):
+    """No task to resume: a mention is still a request, and its thread is that thread."""
+    await world.inbox.handle("default", reply(f"{AT} what was this about"))
+
+    [task] = await world.tasks()
+    assert task.description == "what was this about"
+    assert (task.slack_channel, task.slack_thread_ts, task.slack_seen) == (DM, TS, LATER)
+    assert world.slack.reactions == [("xoxb-first", DM, LATER)] and world.slack.posts == []
+    # A second request in that thread is a follow-up to the task it now holds.
+    await world.done(task.id)
+    await world.inbox.handle("default", reply(f"{AT} and more", ts="1700000000.000300"))
+    await world.done(task.id)
+    assert len(await world.tasks()) == 1
 
 
 async def test_a_reply_under_a_cancelled_task_has_nothing_to_resume(make_world, conversing):
@@ -388,6 +543,29 @@ async def test_a_reply_under_a_cancelled_task_has_nothing_to_resume(make_world, 
 
     assert world.slack.posts == [("xoxb-first", DM, TS, CANCELLED.format(task_id=task.id))]
     assert len(world.runner.opened) <= 1
+
+
+async def test_a_reply_that_re_runs_the_agent_counts_against_the_daily_cap(
+    make_world, conversing
+):
+    """Nothing else stands between a Slack message and a run: no PIN, no keypress."""
+    world = make_world(conversing.model_copy(update={"daily_task_cap": 2}))
+    await world.inbox.handle("default", payload())
+    [task] = await world.tasks()
+    await world.done(task.id)
+
+    await world.inbox.handle("default", reply(ts="1700000000.000200"))
+    await world.done(task.id)
+    await world.inbox.handle("default", reply(f"{AT} once more", ts="1700000000.000300"))
+    await asyncio.sleep(0.02)
+
+    assert len(world.runner.opened) == 2
+    assert world.slack.posts == [
+        ("xoxb-first", DM, TS, "Keryx has reached today's task limit (2), so this was not "
+                               "started."),
+    ]
+    assert len(world.slack.reactions) == 2
+    assert (await world.store.get(task.id)).slack_seen.split() == [TS, "1700000000.000200"]
 
 
 @pytest.mark.parametrize(
@@ -413,51 +591,144 @@ async def test_a_follow_up_that_was_not_taken_is_said_and_not_acknowledged(
 
     assert world.slack.posts == [("xoxb-first", DM, TS, sentence.format(task_id=task.id))]
     assert world.slack.reactions == [("xoxb-first", DM, TS)]
-    # Not recorded as heard: the same reply sent again is tried again.
-    assert (await world.store.get(task.id)).slack_last_ts == TS
+    # Not recorded as heard, nor counted: the same reply sent again is tried again.
+    stored = await world.store.get(task.id)
+    assert stored.slack_seen == TS and stored.slack_reruns == 0
 
 
-async def test_a_reply_that_cannot_be_recorded_is_still_acknowledged(world, monkeypatch):
+async def test_a_task_cancelled_that_instant_is_not_said_to_be_starting(world, monkeypatch):
     await world.inbox.handle("default", payload())
     [task] = await world.tasks()
     await world.done(task.id)
 
-    async def refuse(task_id, ts):
-        raise RuntimeError("the database is locked")
+    async def cancelled_meanwhile(task_id, text):
+        await world.store.update(task_id, status=TaskStatus.CANCELLED)
+        raise ValueError("task is cancelled")
 
-    monkeypatch.setattr(world.manager, "heard_on_slack", refuse)
+    monkeypatch.setattr(world.manager, "followup", cancelled_meanwhile)
     await world.inbox.handle("default", reply())
 
-    assert world.slack.reactions[-1] == ("xoxb-first", DM, LATER)
+    assert world.slack.posts == [("xoxb-first", DM, TS, CANCELLED.format(task_id=task.id))]
 
 
-# --- what is never acted on ---------------------------------------------------------------
+# --- asked in a shared conversation, answered in the direct messages -------------------------
 
 
-@pytest.mark.parametrize(
-    "event",
-    [
-        payload(user="U0SOMEONE"),
-        payload(channel_type="channel"),
-        payload(subtype="message_changed"),
-        payload(bot_id="B0BOT"),
-        reply(user="U0SOMEONE"),
-        {"type": "event_callback", "event": {"type": "app_mention"}},
-    ],
-)
-async def test_what_is_not_the_owners_message_is_dropped_without_a_word(world, event):
-    await world.inbox.handle("default", event)
+async def test_a_mention_in_a_shared_conversation_is_acknowledged_there_and_nothing_more(
+    make_world, reading
+):
+    world = make_world(reading)
+
+    await world.inbox.handle("default", mention())
+
+    [task] = await world.tasks()
+    assert task.description == "summarise this thread"
+    # Where it was asked is not where it will be answered: no answering thread yet.
+    assert (task.slack_asked_channel, task.slack_asked_ts) == (SHARED, TS)
+    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts) == (
+        "default", None, None
+    )
+    assert world.slack.reactions == [("xoxb-first", SHARED, TS)]
+    assert world.slack.posts == []
+
+
+async def test_a_mention_in_a_thread_there_points_the_task_at_that_thread(make_world, reading):
+    world = make_world(reading)
+
+    await world.inbox.handle("default", mention(ts=LATER, thread_ts=TS))
+
+    [task] = await world.tasks()
+    assert (task.slack_asked_channel, task.slack_asked_ts, task.slack_seen) == (SHARED, TS, LATER)
+    assert world.slack.reactions == [("xoxb-first", SHARED, LATER)]
+
+
+async def test_a_later_mention_in_the_same_shared_thread_is_a_follow_up(make_world, reading):
+    world = make_world(reading)
+    await world.inbox.handle("default", mention())
+    [task] = await world.tasks()
+    await world.done(task.id)
+
+    await world.inbox.handle("default", mention(f"{AT} and who disagreed", ts=LATER,
+                                                thread_ts=TS))
+
+    await world.done(task.id)
+    assert len(await world.tasks()) == 1
+    assert world.runner.sessions[1].prompts == ["and who disagreed"]
+    assert world.slack.reactions[-1] == ("xoxb-first", SHARED, LATER)
+    assert world.slack.posts == []
+
+
+async def test_a_refusal_for_a_shared_request_is_said_in_the_direct_messages_never_there(
+    make_world, reading
+):
+    world = make_world(reading.model_copy(update={"daily_task_cap": 1}))
+    await world.inbox.handle("default", payload())
+
+    await world.inbox.handle("default", mention(ts=LATER))
+
+    assert world.slack.posts == [
+        ("xoxb-first", OWNER, None,
+         "Keryx has reached today's task limit (1), so this was not started. (about "
+         "https://acme.slack.com/archives/C0SHARED/p1700000000000200)"),
+    ]
+
+
+async def test_a_colleague_mentioning_the_app_does_nothing(make_world, reading, caplog):
+    world = make_world(reading)
+
+    with caplog.at_level(logging.INFO, logger="keryx.slack.inbox"):
+        await world.inbox.handle("default", mention(user="U0COLLEAGUE"))
 
     assert await world.tasks() == []
     assert world.slack.posts == [] and world.slack.reactions == []
+    assert dropped(caplog) == ["not_the_owner"]
 
 
-async def test_lowering_the_level_stops_it_acting_at_once(world):
+# --- what is never acted on, and the one line it leaves --------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("event", "reason"),
+    [
+        (payload(user="U0SOMEONE"), "not_the_owner"),
+        (payload(channel_type="channel"), "not_a_direct_message"),
+        (payload(subtype="message_changed"), "subtype"),
+        (payload(bot_id="B0BOT"), "bot_message"),
+        (reply(user="U0SOMEONE"), "not_the_owner"),
+        (mention(), "mention_below_read"),
+        ({"type": "event_callback", "event": {"type": "reaction_added"}}, "not_a_message"),
+    ],
+)
+async def test_what_is_not_the_owners_request_is_dropped_with_a_reason_and_no_word(
+    world, caplog, event, reason
+):
+    with caplog.at_level(logging.INFO, logger="keryx.slack.inbox"):
+        await world.inbox.handle("default", event)
+
+    assert await world.tasks() == []
+    assert world.slack.posts == [] and world.slack.reactions == []
+    assert dropped(caplog) == [reason]
+    # A reason, and nothing of the message: not its text, its member or its conversation.
+    [line] = [record.getMessage() for record in caplog.records]
+    assert line == f"Slack: an event in default was not acted on ({reason})"
+
+
+async def test_the_apps_own_messages_coming_back_cost_no_settings_at_all(world, monkeypatch):
+    """Every report Keryx posts returns as an event: dropped before anything is read."""
+    monkeypatch.setattr("keryx.slack_inbox.plugin.workspace",
+                        lambda *a: pytest.fail("read the settings for a bot's message"))
+
+    await world.inbox.handle("default", payload(bot_id="B0KERYX", user=BOT))
+
+
+async def test_lowering_the_level_stops_it_acting_at_once(world, caplog):
     plugins.write_config(world.settings, NAME, {"access": "announce"})
 
-    await world.inbox.handle("default", payload())
+    with caplog.at_level(logging.INFO, logger="keryx.slack.inbox"):
+        await world.inbox.handle("default", payload())
 
     assert await world.tasks() == [] and world.slack.reactions == []
+    assert dropped(caplog) == ["not_listening"]
 
 
 async def test_turning_the_plugin_off_stops_it_acting_at_once(world):
@@ -476,16 +747,17 @@ async def test_a_workspace_nobody_connected_is_never_acted_for(world):
 
 async def test_nothing_a_message_says_is_logged(world, caplog):
     with caplog.at_level(logging.DEBUG):
-        await world.inbox.handle("default", payload("the launch code is 0000"))
+        await world.inbox.handle("default", payload(f"{AT} the launch code is 0000"))
         [task] = await world.tasks()
         await world.done(task.id)
-        await world.inbox.handle("default", reply("and tell nobody"))
-        await world.inbox.handle("default", reply("stray", under="1600000000.000001",
-                                                  ts="1700000000.000900"))
+        await world.inbox.handle("default", reply(f"{AT} and tell nobody"))
+        await world.inbox.handle("default", payload("stray words with no mention",
+                                                    ts="1700000000.000900"))
 
     text = "\n".join(record.getMessage() for record in caplog.records
                      if record.name.startswith("keryx.slack"))
     assert "launch code" not in text and "tell nobody" not in text and "stray" not in text
+    assert OWNER not in text and DM not in text
     assert f"task {task.id} started from a message in default" in text
 
 
@@ -504,7 +776,7 @@ async def test_a_reaction_slack_refuses_costs_nothing(world, failure):
 async def test_a_sentence_slack_refuses_costs_nothing(world):
     world.slack.post_error = RuntimeError("down")
 
-    await world.inbox.handle("default", reply())
+    await world.inbox.handle("default", payload(f"{AT}"))
 
     assert world.slack.posts == []
 
@@ -520,7 +792,7 @@ def two(conversing):
     })
     plugins.write_config(settings, NAME, {"workspaces": {
         "work": {"access": "converse", "owner_id": "U0WORK", "channel_id": "U0WORK",
-                 "team_id": "T0WORK"},
+                 "team_id": "T0WORK", "bot_user_id": "U0WORKBOT"},
         "quiet": {"access": "announce", "channel_id": "U0QUIET"},
     }})
     return settings
@@ -550,14 +822,17 @@ async def test_a_listener_hands_its_events_to_its_own_workspace(make_world, two)
     world = make_world(two)
     world.inbox.start()
     work = world.slack.listeners[1]
-    event = payload("from work", user="U0WORK")
+    event = payload("<@U0WORKBOT> from work", user="U0WORK")
     event["team_id"] = "T0WORK"
+    event["authorizations"] = [{"team_id": "T0WORK", "user_id": "U0WORKBOT", "is_bot": True}]
     event["event"]["channel"] = "D0WORK"
 
     await work.handle(event)
 
     [task] = await world.tasks()
-    assert (task.slack_workspace, task.slack_channel) == ("work", "D0WORK")
+    assert (task.slack_workspace, task.slack_channel, task.description) == (
+        "work", "D0WORK", "from work"
+    )
     assert world.slack.reactions == [("xoxb-work", "D0WORK", TS)]
 
 
@@ -576,6 +851,15 @@ async def test_at_announce_nothing_listens(make_world, settings):
     world = make_world(settings)
 
     assert world.inbox.start() == [] and world.slack.listeners == []
+
+
+async def test_a_workspace_with_no_id_on_file_is_not_listened_to(make_world, conversing):
+    plugins.write_config(conversing, NAME, {"team_id": ""})
+    world = make_world(conversing)
+
+    assert world.inbox.start() == []
+    await world.inbox.handle("default", payload())
+    assert await world.tasks() == []
 
 
 async def test_settings_that_do_not_parse_stop_no_server(make_world, conversing, caplog):

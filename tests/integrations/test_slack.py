@@ -466,20 +466,49 @@ def test_converse_hears_its_own_direct_messages_over_a_socket_and_nothing_else()
     assert "redirect_urls" not in json.dumps(manifest)
 
 
-def test_read_asks_the_owner_for_a_user_token_and_subscribes_to_nothing_as_them():
+def test_read_is_also_sent_mentions_of_the_app_and_asks_the_owner_for_a_user_token():
     manifest = app_manifest(Access.READ)
 
-    assert manifest["oauth_config"]["scopes"]["bot"] == (
-        app_manifest(Access.CONVERSE)["oauth_config"]["scopes"]["bot"]
-    )
+    # The bot may hear a mention of itself, and still read no conversation at all.
+    assert manifest["oauth_config"]["scopes"]["bot"] == [
+        "chat:write", "users:read", "users:read.email", "im:history", "reactions:write",
+        "app_mentions:read",
+    ]
+    assert not any(scope.split(":")[0] in ("channels", "groups", "mpim")
+                   for scope in manifest["oauth_config"]["scopes"]["bot"])
     assert manifest["oauth_config"]["scopes"]["user"] == [
         "channels:history", "groups:history", "im:history", "mpim:history",
         "channels:read", "groups:read", "im:read", "mpim:read",
         "users:read", "search:read",
     ]
-    # A user-level message event would deliver every direct message they have.
-    assert manifest["settings"] == app_manifest(Access.CONVERSE)["settings"]
-    assert "user_events" not in json.dumps(manifest)
+    assert manifest["settings"] == {
+        "event_subscriptions": {"bot_events": ["message.im", "app_mention"]},
+        "socket_mode_enabled": True,
+    }
+
+
+@pytest.mark.parametrize("access", list(Access))
+def test_no_level_is_ever_sent_a_conversation_it_was_not_addressed_in(access):
+    """Never `message.channels`, `.groups` or `.mpim`, and never a user-level event, which
+    would be every direct message the owner has with anybody."""
+    text = json.dumps(app_manifest(access))
+
+    assert "user_events" not in text
+    for event in ("message.channels", "message.groups", "message.mpim"):
+        assert event not in text
+
+
+def test_a_mention_is_found_however_slack_writes_it_and_a_link_to_a_message_is_built():
+    found = slack.mention("U0KERYX")
+
+    assert found.sub("", "<@U0KERYX> do it <@U0KERYX|keryx>").strip() == "do it"
+    assert not found.search("<@U0KERYXX> hi") and not found.search("@U0KERYX hi")
+    assert not found.search("<@U0OTHER> hi")
+    assert slack.permalink("https://acme.slack.com/", "C123", "1700000000.000100") == (
+        "https://acme.slack.com/archives/C123/p1700000000000100"
+    )
+    assert slack.permalink("", "C123", "1700000000.000100") == ""
+    assert slack.permalink("http://acme.example/", "C123", "1700000000.000100") == ""
 
 
 def test_search_is_one_constant_and_not_the_api_whose_results_may_not_be_stored():

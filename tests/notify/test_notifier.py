@@ -823,7 +823,7 @@ async def test_a_task_asked_for_on_slack_answers_in_its_thread_and_the_phone_sta
 ):
     task = await harness.task(
         origin_channel="slack", slack_workspace="work", slack_channel="D0WORK",
-        slack_thread_ts="1700000000.000500", slack_last_ts="1700000000.000500",
+        slack_thread_ts="1700000000.000500", slack_seen="1700000000.000500",
     )
 
     await harness.finished(task, "found it")
@@ -934,6 +934,7 @@ class FakeSlackHttp:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str | None]] = []
+        self.texts: list[str] = []
         self.script: dict[str, list] = {}
 
     def __call__(self, request, timeout=None):
@@ -943,6 +944,7 @@ class FakeSlackHttp:
         token = request.get_header("Authorization").removeprefix("Bearer ")
         body = json.loads(request.data)
         self.calls.append((token, body["channel"], body.get("thread_ts")))
+        self.texts.append(body["blocks"][0]["text"])
         answers = self.script.get(token) or []
         answer = answers.pop(0) if answers else None
         if isinstance(answer, Exception):
@@ -1030,6 +1032,27 @@ async def test_a_personal_thread_that_is_gone_falls_back_to_the_owners_dm_there_
     after = await store.get(task.id)
     assert (after.slack_workspace, after.slack_channel) == ("personal", "D0PERSO")
     assert after.slack_thread_ts == "1700000002.000100"
+
+
+async def test_a_task_asked_for_in_a_channel_is_answered_in_the_dm_and_says_which_message(
+    two_workspaces,
+):
+    """Never in the channel: a report can hold anything from the owner's machine."""
+    store, bus, http = two_workspaces
+    task = await store.create(Task(
+        id=None, kind=TaskKind.AGENT, description="summarise this", origin_channel="slack",
+        slack_workspace="personal", slack_asked_channel="C0SHARED",
+        slack_asked_ts="1700000000.000500",
+    ))
+
+    await bus.publish(TaskCompleted(task.id, "they decided to ship"))
+
+    assert http.calls == [("xoxb-perso", "U0ME", None)]
+    assert "C0SHARED" not in [channel for _, channel, _ in http.calls]
+    after = await store.get(task.id)
+    assert (after.slack_channel, after.slack_thread_ts) == ("D0PERSO", "1700000001.000100")
+    assert (after.slack_asked_channel, after.slack_asked_ts) == ("C0SHARED", "1700000000.000500")
+    assert "Answering what you asked in another conversation (C0SHARED)." in http.texts[0]
 
 
 async def test_a_task_typed_in_a_workspace_since_disconnected_is_posted_nowhere(

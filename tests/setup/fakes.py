@@ -195,7 +195,7 @@ class FakeWorld:
     #: What Slack says of each token it is shown, in order (the last one repeats), who it
     #: finds by an address, and whether it takes a message. A token is never in `calls`.
     slack_workspaces: list = field(
-        default_factory=lambda: [Workspace(team="Acme", team_id="T0ACME")]
+        default_factory=lambda: [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")]
     )
     slack_member: Member = field(
         default_factory=lambda: Member(user_id="U0OWNER", name="Sam Doe")

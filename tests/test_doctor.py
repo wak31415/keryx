@@ -661,9 +661,9 @@ def test_each_slack_workspace_has_a_check_that_names_its_level_and_what_it_lacks
     })
     plugins.write_config(settings, "send_to_slack", {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
-        "team_id": "T0ACME",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
         "workspaces": {"work": {"access": "converse", "channel_id": "U0WORK",
-                                "owner_id": "U0WORK"}},
+                                "owner_id": "U0WORK", "bot_user_id": "U0WORKBOT"}},
     })
     plugins.install(settings, "send_to_slack")
 

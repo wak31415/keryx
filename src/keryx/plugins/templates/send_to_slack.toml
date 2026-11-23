@@ -12,20 +12,26 @@
 channel_id = {channel_id}
 
 # What Keryx may see in this workspace, which is also what your Slack app was created
-# with. announce: it posts and reads nothing. converse: it also reads the direct messages
-# you type to the Keryx app itself, where a reply under a task's report resumes that task
-# and a new message starts work, without the phone PIN. read: it also reads Slack as you.
+# with. announce: it posts and reads nothing. converse: it is also sent the direct messages
+# you type to the Keryx app itself, and acts on one that mentions the app (@Keryx): a new
+# message starts work and a reply under a task's report resumes that task, without the
+# phone PIN. read: you can also mention it in a conversation it was added to, and it reads
+# Slack as you when you ask it about messages.
 # Lowering it here takes effect at once; raising it needs the app changed in Slack and
 # more tokens, which is `keryx auth login slack --access LEVEL`.
 access = {access}
 
-# Your own member id in this workspace. At converse and above, only direct messages from
-# this member are ever acted on.
+# Your own member id in this workspace. At converse and above, only messages from this
+# member are ever acted on. `keryx auth login slack --owner` is what changes it.
 owner_id = {owner_id}
 
-# The workspace this is, as Slack named it when the token was checked.
+# The workspace this is, and the Keryx app's own member id there, as Slack gave them when
+# the token was checked. At converse and above a message is acted on only when it is
+# from the workspace with this id and mentions the app by that member id (@Keryx).
 team = {team}
 team_id = {team_id}
+bot_user_id = {bot_user_id}
+url = {url}
 
 # The user-scope MCP server in ~/.claude.json (in $CLAUDE_CONFIG_DIR, when that is set)
 # that gives subagents Slack. Named, subagents are told to use it, and a missing token or
@@ -33,7 +39,7 @@ team_id = {team_id}
 mcp_server = {mcp_server}
 {extra}
 
-# Further workspaces, one [workspace-NAME] table each with the same five settings as the
+# Further workspaces, one [workspace-NAME] table each with the same settings as the
 # top of this file, written by `keryx auth login slack --workspace NAME` and removed by
 # `keryx auth logout slack --workspace NAME`. Everything is sent to the workspace at the
 # top unless one of these is named.

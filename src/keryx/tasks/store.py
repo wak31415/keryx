@@ -17,11 +17,11 @@ from datetime import datetime
 from pathlib import Path
 
 from keryx.config import secure_file
-from keryx.tasks.models import ProjectUsage, Task, TaskStatus, to_utc_iso
+from keryx.tasks.models import SLACK_SEEN_MAX, ProjectUsage, Task, TaskStatus, to_utc_iso
 
 log = logging.getLogger("keryx.tasks.store")
 
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 
 #: How many unreported tasks a call opens with. The owner is on a phone: past a handful, the
 #: digest stops being a briefing and becomes a recital, and the rest keep until next time.
@@ -74,7 +74,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     slack_workspace TEXT,
     slack_channel TEXT,
     slack_thread_ts TEXT,
-    slack_last_ts TEXT,
+    slack_asked_channel TEXT,
+    slack_asked_ts TEXT,
+    slack_seen TEXT,
+    slack_reruns INTEGER NOT NULL DEFAULT 0,
+    slack_reruns_on TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT
@@ -130,7 +134,16 @@ _V7_COLUMNS = (
     "slack_workspace TEXT",
     "slack_channel TEXT",
     "slack_thread_ts TEXT",
-    "slack_last_ts TEXT",
+)
+
+#: v7 -> v8 (2026-11-23): where a task was asked when that is not where it is answered,
+#: the Slack messages it has acted on, and how often a Slack reply re-ran it today.
+_V8_COLUMNS = (
+    "slack_asked_channel TEXT",
+    "slack_asked_ts TEXT",
+    "slack_seen TEXT",
+    "slack_reruns INTEGER NOT NULL DEFAULT 0",
+    "slack_reruns_on TEXT",
 )
 
 
@@ -220,6 +233,9 @@ class TaskStore:
                 for column in _V7_COLUMNS:
                     conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
                 conn.execute(_CREATE_SLACK_INDEX_SQL)
+            if version < 8:
+                for column in _V8_COLUMNS:
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
             conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
             log.info(
                 "migrated tasks schema v%d -> v%d at %s", version, _SCHEMA_VERSION, self._path
@@ -397,7 +413,8 @@ class TaskStore:
     async def find_by_slack_thread(
         self, workspace: str, channel: str, thread_ts: str
     ) -> Task | None:
-        """The task whose Slack thread hangs from `thread_ts` in `channel`, if there is one.
+        """The task that lives in the thread hanging from `thread_ts` in `channel`: the one
+        answered there, or the one asked for there and answered elsewhere.
 
         The newest, should two ever share a thread. Housekeeping never has one.
         """
@@ -410,11 +427,52 @@ class TaskStore:
     ) -> Task | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM tasks WHERE slack_channel = ? AND slack_thread_ts = ? "
-                "AND slack_workspace = ? AND internal = 0 ORDER BY id DESC LIMIT 1",
-                (channel, thread_ts, workspace),
+                "SELECT * FROM tasks WHERE slack_workspace = ? AND internal = 0 AND ("
+                "(slack_channel = ? AND slack_thread_ts = ?) OR "
+                "(slack_asked_channel = ? AND slack_asked_ts = ?)) ORDER BY id DESC LIMIT 1",
+                (workspace, channel, thread_ts, channel, thread_ts),
             ).fetchone()
         return Task.from_row(row) if row is not None else None
+
+    async def heard_on_slack(self, task_id: int, ts: str, *, rerun_on: str | None = None) -> None:
+        """Remember that `task_id` acted on the Slack message at `ts`.
+
+        The last `SLACK_SEEN_MAX` are kept. `rerun_on` is the UTC date when the message
+        re-ran the task: the day's count goes up by one, starting again on a new day. One
+        statement's worth of reading and writing under the lock, and only these columns.
+        """
+        await asyncio.to_thread(self._heard_on_slack_sync, task_id, ts, rerun_on)
+
+    def _heard_on_slack_sync(self, task_id: int, ts: str, rerun_on: str | None) -> None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT slack_seen, slack_reruns, slack_reruns_on FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            seen = [each for each in (row["slack_seen"] or "").split() if each != ts] + [ts]
+            reruns, day = row["slack_reruns"], row["slack_reruns_on"]
+            if rerun_on is not None:
+                reruns, day = (reruns + 1 if day == rerun_on else 1), rerun_on
+            self._conn.execute(
+                "UPDATE tasks SET slack_seen = ?, slack_reruns = ?, slack_reruns_on = ? "
+                "WHERE id = ?",
+                (" ".join(seen[-SLACK_SEEN_MAX:]), reruns, day, task_id),
+            )
+
+    async def count_slack_reruns_on(self, day: str) -> int:
+        """How many times a Slack reply re-ran a task on `day` (a UTC date)."""
+        return await asyncio.to_thread(self._count_slack_reruns_on_sync, day)
+
+    def _count_slack_reruns_on_sync(self, day: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(slack_reruns), 0) AS n FROM tasks "
+                "WHERE slack_reruns_on = ? AND internal = 0",
+                (day,),
+            ).fetchone()
+        return row["n"]
 
     async def list_for_session(self, session_id: str, *, limit: int = 20) -> list[Task]:
         """The tasks one voice session dispatched, oldest first. Housekeeping excluded."""

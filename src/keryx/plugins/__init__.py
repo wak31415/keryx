@@ -132,6 +132,9 @@ _SLACK_WORKSPACE = (
         "Your own member id: only direct messages from it are ever acted on"),
     Key("team", "line", "", "The workspace's name, as Slack gave it"),
     Key("team_id", "word", "", "The workspace's id, as Slack gave it"),
+    Key("bot_user_id", "word", "",
+        "The app's own member id there: a message is acted on only when it mentions it"),
+    Key("url", "line", "", "The workspace's address, as Slack gave it"),
 )
 
 PLUGINS: dict[str, Plugin] = {

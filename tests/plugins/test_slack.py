@@ -273,7 +273,8 @@ def test_every_template_loads_nothing_it_should_not(slack_settings):
 
 
 WORK = {"access": "converse", "owner_id": "U0WORK", "team": "Acme", "team_id": "T0WORK",
-        "channel_id": "U0WORK"}
+        "channel_id": "U0WORK", "bot_user_id": "U0WORKBOT",
+        "url": "https://acme.slack.com/"}
 FIRST = {"channel_id": "U0ME", "team": "Home", "team_id": "T0HOME"}
 
 
@@ -322,25 +323,28 @@ def test_a_workspaces_tokens_are_never_in_its_repr(two_workspaces):
 
 
 @pytest.mark.parametrize(
-    ("access", "tokens", "owner", "team", "missing", "listens"),
+    ("access", "tokens", "owner", "team", "bot", "missing", "listens"),
     [
-        ("announce", {"bot": "b"}, "", "", (), False),
-        ("converse", {"bot": "b"}, "U1", "T1", ("its app token",), False),
-        ("converse", {"bot": "b", "app": "a"}, "", "T1", ("your member id",), False),
-        ("converse", {"bot": "b", "app": "a"}, "U1", "", ("the workspace's id",), False),
-        ("converse", {"bot": "b", "app": "a"}, "U1", "T1", (), True),
-        ("read", {"bot": "b", "app": "a"}, "U1", "T1", ("its user token",), True),
-        ("read", {"bot": "b", "app": "a", "user": "u"}, "U1", "T1", (), True),
-        ("announce", {}, "", "", ("its bot token",), False),
+        ("announce", {"bot": "b"}, "", "", "", (), False),
+        ("converse", {"bot": "b"}, "U1", "T1", "B1", ("its app token",), False),
+        ("converse", {"bot": "b", "app": "a"}, "", "T1", "B1", ("your member id",), False),
+        ("converse", {"bot": "b", "app": "a"}, "U1", "", "B1", ("the workspace's id",), False),
+        ("converse", {"bot": "b", "app": "a"}, "U1", "T1", "",
+         ("the app's own member id",), False),
+        ("converse", {"bot": "b", "app": "a"}, "U1", "T1", "B1", (), True),
+        ("read", {"bot": "b", "app": "a"}, "U1", "T1", "B1", ("its user token",), True),
+        ("read", {"bot": "b", "app": "a", "user": "u"}, "U1", "T1", "B1", (), True),
+        ("announce", {}, "", "", "", ("its bot token",), False),
     ],
 )
 def test_a_workspace_says_what_its_level_needs_and_lacks(
-    access, tokens, owner, team, missing, listens
+    access, tokens, owner, team, bot, missing, listens
 ):
-    """Above announce a message is held to the owner's id and the workspace's: with
-    either missing there is nothing to hold it to, and nothing is heard."""
+    """Above announce a message is held to the owner's id, the workspace's, and a mention
+    of the app's own: with any missing there is nothing to hold it to, and nothing is
+    heard."""
     one = SlackWorkspace("w", Access(access), channel="U1", owner_id=owner, team_id=team,
-                         tokens=tokens)
+                         bot_user_id=bot, tokens=tokens)
 
     assert one.missing == missing and one.listens is listens
     assert one.reads is (access == "read" and "user" in tokens)
@@ -377,7 +381,8 @@ def test_the_first_workspaces_other_tokens_are_the_plain_settings(slack_settings
         "slack_app_token": "xapp-1", "slack_user_token": "xoxp-1",
     })
     plugins.write_config(settings, NAME, {"channel_id": "U0ME", "access": "read",
-                                          "owner_id": "U0ME", "team_id": "T0HOME"})
+                                          "owner_id": "U0ME", "team_id": "T0HOME",
+                                          "bot_user_id": "U0KERYX"})
 
     [first] = workspaces(settings)
 
@@ -522,3 +527,51 @@ def test_what_is_on_file_is_keryxs_own_and_never_the_mcp_servers(settings, monke
 
     assert (own.token("bot"), own.channel) == (None, "")
     assert (sending.token("bot"), sending.channel) == ("xoxb-the-servers", "D0SERVER")
+
+
+# --- asked in one place, answered in another ------------------------------------------------
+
+
+def test_a_task_asked_for_in_a_shared_conversation_is_answered_in_the_owners_dm(two_workspaces):
+    """A report can hold anything from their machine: it never goes where it was asked."""
+    task = slack_task(origin_channel="slack", slack_workspace="work",
+                      slack_asked_channel="C0SHARED", slack_asked_ts="1700000000.000100")
+
+    route = report_route(two_workspaces, task)
+
+    assert (route.workspace, route.thread_ts, route.broadcast) == ("work", None, False)
+    assert (route.poster._channel, route.poster._token) == ("U0WORK", "xoxb-work")
+    assert route.preface == (
+        "Answering what you asked here: "
+        "https://acme.slack.com/archives/C0SHARED/p1700000000000100"
+    )
+
+
+def test_once_answered_its_later_reports_are_replies_under_that_answer(two_workspaces):
+    task = slack_task(origin_channel="slack", slack_workspace="work",
+                      slack_asked_channel="C0SHARED", slack_asked_ts="1700000000.000100",
+                      slack_channel="D0WORK", slack_thread_ts="1700000000.000900")
+
+    route = report_route(two_workspaces, task)
+
+    assert (route.poster._channel, route.thread_ts, route.preface) == (
+        "D0WORK", "1700000000.000900", ""
+    )
+    assert route.poster._channel != "C0SHARED" and route.usual._channel == "U0WORK"
+
+
+def test_with_no_address_for_the_workspace_the_conversation_is_named_instead(two_workspaces):
+    plugins.write_config(two_workspaces, NAME, {"workspaces": {"work": {**WORK, "url": ""}}})
+    task = slack_task(origin_channel="slack", slack_workspace="work",
+                      slack_asked_channel="C0SHARED", slack_asked_ts="1700000000.000100")
+
+    assert report_route(two_workspaces, task).preface == (
+        "Answering what you asked in another conversation (C0SHARED)."
+    )
+
+
+def test_a_slack_task_with_neither_a_thread_nor_an_asking_place_is_posted_nowhere(
+    two_workspaces,
+):
+    assert report_route(two_workspaces, slack_task(origin_channel="slack",
+                                                   slack_workspace="work")) is None

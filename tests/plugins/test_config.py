@@ -230,7 +230,8 @@ def test_each_further_slack_workspace_is_a_table_of_the_same_settings(settings):
 
     data = tomllib.loads(path.read_text())
     # In the file each is a table of its own, one level deep.
-    assert data["workspace-work"] == {**work, "team_id": ""} and "workspaces" not in data
+    assert data["workspace-work"] == {**work, "team_id": "", "bot_user_id": "", "url": ""}
+    assert "workspaces" not in data
     assert (data["channel_id"], data["access"], data["owner_id"]) == ("U0ME", "announce", "")
     assert "# Further workspaces, one [workspace-NAME] table each" in path.read_text()
     assert plugins.read_config(settings, "send_to_slack")["workspaces"]["work"]["team"] == (
@@ -250,7 +251,7 @@ def test_a_workspace_table_survives_a_rewrite_with_what_was_added_by_hand(settin
     assert data["access"] == "converse"
     assert data["workspace-work"] == {
         "channel_id": "", "access": "announce", "owner_id": "", "team": "", "team_id": "",
-        "note": "mine",
+        "bot_user_id": "", "url": "", "note": "mine",
     }
 
 
@@ -264,7 +265,8 @@ def test_a_slack_file_from_before_workspaces_reads_as_one_at_announce(settings):
     values = plugins.read_config(settings, "send_to_slack")
 
     assert values == {"channel_id": "D123", "access": "announce", "owner_id": "", "team": "",
-                      "team_id": "", "mcp_server": "", "workspaces": {}}
+                      "team_id": "", "bot_user_id": "", "url": "", "mcp_server": "",
+                      "workspaces": {}}
     assert plugins.install_problem(settings, "send_to_slack") is None
 
 
@@ -309,7 +311,7 @@ def test_an_older_build_rewriting_the_slack_file_keeps_every_workspace(settings)
     workspaces rewrites the file when its own setup saves a channel: the level, the owner
     and every further workspace have to come through, in shapes the newer build reads."""
     work = {"channel_id": "U0W", "access": "converse", "owner_id": "U0W", "team": "Acme Inc",
-            "team_id": "T0W"}
+            "team_id": "T0W", "bot_user_id": "U0WBOT", "url": "https://acme.slack.com/"}
     path = plugins.write_config(settings, "send_to_slack", {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team_id": "T0A",
         "workspaces": {"work": work},

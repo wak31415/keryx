@@ -633,8 +633,8 @@ async def test_a_v5_database_gains_tokens_and_cost_and_keeps_its_rows(tmp_path):
         await store.close()
 
 
-async def test_a_v6_database_gains_the_slack_thread_and_keeps_its_rows(tmp_path):
-    """v7 adds where a task lives on Slack. Rows from before live nowhere: NULL."""
+async def test_a_v6_database_gains_the_slack_columns_and_keeps_its_rows(tmp_path):
+    """v7 and v8 add where a task lives on Slack. Rows from before live nowhere: NULL."""
     path = tmp_path / "tasks.db"
     _v2_database(path)
     conn = sqlite3.connect(path, isolation_level=None)
@@ -647,14 +647,68 @@ async def test_a_v6_database_gains_the_slack_thread_and_keeps_its_rows(tmp_path)
     try:
         tasks = await store.list()
         assert {task.description for task in tasks} == {"old finished work", "old queued work"}
-        assert {(t.slack_workspace, t.slack_channel, t.slack_thread_ts, t.slack_last_ts)
-                for t in tasks} == {(None, None, None, None)}
+        assert {(t.slack_workspace, t.slack_channel, t.slack_thread_ts, t.slack_asked_ts,
+                 t.slack_seen, t.slack_reruns, t.slack_reruns_on) for t in tasks} == {
+            (None, None, None, None, None, 0, None)
+        }
         await store.update(tasks[0].id, slack_workspace="default", slack_channel="D1",
                            slack_thread_ts="17.000100")
         found = await store.find_by_slack_thread("default", "D1", "17.000100")
         assert found is not None and found.id == tasks[0].id
     finally:
         await store.close()
+
+
+async def test_a_v7_database_from_this_branchs_first_cut_gains_the_rest(tmp_path):
+    """A database that met the first v7 has a column nothing reads any more, and is
+    upgraded past it like any other."""
+    path = tmp_path / "tasks.db"
+    _v2_database(path)
+    conn = sqlite3.connect(path, isolation_level=None)
+    for column in (*_V3_COLUMNS, *_V4_COLUMNS, *_V5_COLUMNS, *store_module._V6_COLUMNS,
+                   *store_module._V7_COLUMNS, "slack_last_ts TEXT"):
+        conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+    conn.execute("UPDATE schema_version SET version = 7")
+    conn.close()
+
+    store = TaskStore(path)
+    try:
+        [task, _] = await store.list()
+        await store.heard_on_slack(task.id, "17.000100", rerun_on="2026-11-23")
+        assert (await store.get(task.id)).slack_seen == "17.000100"
+        assert await store.count_slack_reruns_on("2026-11-23") == 1
+    finally:
+        await store.close()
+
+
+async def test_a_task_remembers_the_last_few_slack_messages_it_acted_on(store):
+    task = await store.create(Task(id=None, kind=TaskKind.AGENT, description="x"))
+
+    for n in range(25):
+        await store.heard_on_slack(task.id, f"1700000000.{n:06d}")
+    await store.heard_on_slack(task.id, "1700000000.000010")  # again: once, and now newest
+
+    seen = (await store.get(task.id)).slack_seen.split()
+    assert len(seen) == 20 and seen[-1] == "1700000000.000010"
+    assert seen[0] == "1700000000.000005" and seen.count("1700000000.000010") == 1
+    with pytest.raises(KeyError):
+        await store.heard_on_slack(999, "1700000000.000001")
+
+
+async def test_slack_reruns_are_counted_by_the_day_and_start_again_on_a_new_one(store):
+    task = await store.create(Task(id=None, kind=TaskKind.AGENT, description="x"))
+    other = await store.create(Task(id=None, kind=TaskKind.AGENT, description="y"))
+
+    await store.heard_on_slack(task.id, "1.000001", rerun_on="2026-11-23")
+    await store.heard_on_slack(task.id, "1.000002", rerun_on="2026-11-23")
+    await store.heard_on_slack(other.id, "1.000003", rerun_on="2026-11-23")
+    await store.heard_on_slack(other.id, "1.000004")  # heard, and no run of it
+
+    assert await store.count_slack_reruns_on("2026-11-23") == 3
+    await store.heard_on_slack(task.id, "2.000001", rerun_on="2026-11-24")
+    assert await store.count_slack_reruns_on("2026-11-24") == 1
+    assert await store.count_slack_reruns_on("2026-11-23") == 1
+    assert (await store.get(task.id)).slack_reruns == 1
 
 
 async def test_a_task_is_found_by_the_slack_thread_it_lives_in(store):
@@ -670,6 +724,18 @@ async def test_a_task_is_found_by_the_slack_thread_it_lives_in(store):
     assert await store.find_by_slack_thread("work", "D2", "17.000100") is None
     assert await store.find_by_slack_thread("default", "D1", "17.000100") is None
     assert await store.find_by_slack_thread("work", "D1", "17.000200") is None
+
+
+async def test_a_task_is_also_found_by_the_thread_it_was_asked_in(store):
+    asked = await store.create(Task(id=None, kind=TaskKind.AGENT, description="asked elsewhere",
+                                    slack_workspace="work", slack_asked_channel="C1",
+                                    slack_asked_ts="17.000100", slack_channel="D1",
+                                    slack_thread_ts="18.000100"))
+
+    assert (await store.find_by_slack_thread("work", "C1", "17.000100")).id == asked.id
+    assert (await store.find_by_slack_thread("work", "D1", "18.000100")).id == asked.id
+    # Not a mix of the two: the asking conversation with the answering thread's timestamp.
+    assert await store.find_by_slack_thread("work", "C1", "18.000100") is None
 
 
 # --- a database that has run ahead of us -----------------------------------

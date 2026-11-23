@@ -26,6 +26,11 @@ is saved, one the level does not use is refused by name, and lowering the level 
 the tokens it no longer uses. **An app is never made twice**: raising the level of a
 workspace that is connected prints the new manifest to paste into the app there is.
 
+**What sets Keryx to work is a mention, from the owner.** The app's own member id
+(`bot_user_id`, what `auth.test` says of the bot token) is stored at connect, because a
+message is acted on only when it mentions it; a workspace above `announce` without it
+hears nothing.
+
 **Where reports go is never whose messages are acted on.** The destination (`--email`,
 the wizard's "where to send") and the owner (`owner_id`: the one member whose direct
 messages may start work with no PIN) are separate settings. An owner on file for the same
@@ -76,26 +81,31 @@ WORKSPACE_TOKENS_KEY = "SLACK_WORKSPACE_TOKENS"
 TOKEN_NAMES = {BOT: "bot token", APP: "app-level token", USER: "user token"}
 APPS_URL = "https://api.slack.com/apps"
 
-#: What Keryx can see at each level, in plain words: said before the link is shown.
+#: What Keryx can see at each level, and where it can be set to work from, in plain
+#: words: said before the link is shown.
 MEANING = {
     Access.ANNOUNCE: "Keryx posts to you on Slack and reads nothing there.",
     Access.CONVERSE: (
-        "Keryx posts to you, and reads the direct messages you type to the Keryx app "
-        "itself: nothing else in Slack. A reply under a task's report resumes that task, "
-        "and a new message to the app starts work, both without the phone PIN."
+        "Keryx posts to you, and is sent the direct messages you type to the Keryx app "
+        "itself: nothing else in Slack. It acts on one only when it is yours and mentions "
+        "the app (@Keryx): a new message starts work, and a reply under a task's report "
+        "resumes that task, both without the phone PIN."
     ),
     Access.READ: (
-        "Everything in converse, and Keryx can read Slack as you: the messages and the "
-        "list of every channel, private channel, direct message and group message you "
-        "are in, the member list, and search across them."
+        "Everything in converse. You can also mention the app (@Keryx) in any conversation "
+        "it has been added to: it is sent that one message, acts only when it is yours, "
+        "and answers in your direct messages, never there. And Keryx can read Slack as "
+        "you, only when you ask it about messages: every channel, private channel, direct "
+        "message and group message you are in, their lists, the member list, and search."
     ),
 }
 #: The same in a few words, beside each option of the wizard's question.
 SHORT = {
     Access.ANNOUNCE: "Keryx posts to you and reads nothing",
-    Access.CONVERSE: "also reads what you type to the Keryx app; a message there can "
-                     "resume or start work without the PIN",
-    Access.READ: "also reads Slack as you: every conversation you are in, and search",
+    Access.CONVERSE: "also acts on a message you send the Keryx app that mentions it "
+                     "(@Keryx): it can resume or start work without the PIN",
+    Access.READ: "also answers a mention in a conversation it was added to, and reads "
+                 "Slack as you when you ask it about messages",
 }
 #: Said at `read` until something reads with the token.
 READ_NOTE = (
@@ -138,8 +148,8 @@ TEST_MESSAGE = (
 )
 #: Added to it where a message typed back is acted on.
 CONVERSE_TEST_MESSAGE = (
-    " A reply in the thread under a report resumes that task, and a new message here "
-    "starts work."
+    " Mention the app (@Keryx) to set it to work: in a reply under a report to resume "
+    "that task, or in a new message here to start one."
 )
 
 BY_HAND = f"`keryx plugins install {PLUGIN} --set channel_id=ID` with a channel or member id"
@@ -151,8 +161,8 @@ RESTART_NOTE = "A Keryx that started with the old token keeps it until `keryx re
 LISTEN_NOTE = "Keryx starts listening for your messages there at its next start: `keryx restart`."
 #: Said at `converse` and above, every time: whose messages may start work with no PIN.
 OWNER_LINE = (
-    "Only direct messages to the app from {who} are acted on there: that member id is "
-    "taken to be you, and only --owner changes it."
+    "Only messages from {who} that mention the app (@Keryx) are acted on there: that "
+    "member id is taken to be you, and only --owner changes it."
 )
 #: Said when the destination is a channel: only the app's direct messages are heard.
 CHANNEL_NOTE = (
@@ -651,10 +661,11 @@ def connect(
         why = team.problem if team.refused else (
             f"the token could not be checked ({team.problem})")
         raise SlackSetupError(f"{why}; nothing was saved")
-    if access.reaches(Access.CONVERSE) and not team.team_id:
+    if access.reaches(Access.CONVERSE) and not (team.team_id and team.user_id):
         raise SlackSetupError(
-            "Slack did not say which workspace the bot token belongs to, and above "
-            "announce every message is held to it. Nothing was saved"
+            "Slack did not say which workspace the bot token belongs to, or which member "
+            "the app is there, and above announce every message is held to both. Nothing "
+            "was saved"
         )
     token_owner = ""
     if USER in needed:
@@ -707,6 +718,8 @@ def connect(
             "owner_id": acted_on,
             "team": team.team,
             "team_id": team.team_id,
+            "bot_user_id": team.user_id,
+            "url": team.url,
         })
         plugins.install(settings, PLUGIN)
     except plugins.PluginConfigError as error:

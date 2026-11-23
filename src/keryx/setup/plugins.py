@@ -226,16 +226,18 @@ def run_slack(ctx: SetupContext) -> None:
     token, team = _slack_token(ctx, before, server, access)
     if team is None:
         # A token that was kept, or one saved unchecked: the workspace is the one on file.
-        team = Workspace(team=values["team"], team_id=values["team_id"])
-        if token and not team.team_id and above:
-            # An install from before levels never wrote down which workspace it is, and
-            # above announce that is what a user token and every message are held to.
+        team = Workspace(team=values["team"], team_id=values["team_id"],
+                         user_id=values["bot_user_id"], url=values["url"])
+        if token and above and not (team.team_id and team.user_id):
+            # An install from before levels never wrote down which workspace it is or
+            # which member the app is, and above announce every message is held to both.
             with ui.spinner("Asking Slack which workspace this is…"):
                 asked = ctx.probes.slack_auth_test(token)
             team = asked if asked.ok else team
-    if above and not team.team_id:
-        ui.error("Slack did not say which workspace this is, and above announce every "
-                 "message is held to it. Nothing was saved: try again when Slack answers.")
+    if above and not (team.team_id and team.user_id):
+        ui.error("Slack did not say which workspace this is, or which member the app is "
+                 "there, and above announce every message is held to both. Nothing was "
+                 "saved: try again when Slack answers.")
         return
     standing = slack.standing_owner(
         slack.on_file(ctx.settings, slack.DEFAULT, values), team, same_app=token == before
@@ -265,7 +267,8 @@ def run_slack(ctx: SetupContext) -> None:
     if not _save_slack_tokens(ctx, tokens, keys, access):
         return
     saved = {"channel_id": channel, "access": str(access), "owner_id": owner,
-             "team": team.team, "team_id": team.team_id}
+             "team": team.team, "team_id": team.team_id, "bot_user_id": team.user_id,
+             "url": team.url}
     if not _finish(ctx, slack.PLUGIN, saved):
         return
     # It is on now. From here it either sends a test or says why it did not.

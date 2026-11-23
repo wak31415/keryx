@@ -314,7 +314,8 @@ class Notifier:
                 header, body = FAILED_TEXT.format(task_id=task.id, detail=detail), report
             else:
                 header, body = f"Task {task.id} finished", report or detail
-            text = f"**{header}**\n\n{body}".strip()
+            # Asked in one conversation and answered in another: say which message this is.
+            text = "\n\n".join(part for part in (f"**{header}**", route.preface, body) if part)
             posted = await route.poster.post(
                 text, fallback=header, thread_ts=route.thread_ts, broadcast=route.broadcast
             )

@@ -359,9 +359,9 @@ def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
     })
     plugins.write_config(settings, "send_to_slack", {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
-        "team_id": "T0ACME",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
         "workspaces": {"work": {"access": "read", "channel_id": "U0WORK", "owner_id": "U0WORK",
-                                "team_id": "T0WORK"}},
+                                "team_id": "T0WORK", "bot_user_id": "U0WORKBOT"}},
     })
     plugins.install(settings, "send_to_slack")
 
@@ -374,7 +374,7 @@ def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
         "`keryx auth login slack --workspace work --access read`"
     )
     assert auth.slack_lines(entry) == [
-        "Acme: converse level, hears your messages to the app",
+        "Acme: converse level, acts when you mention the app",
         "work: read level, without its app token or its user token",
     ]
     assert "xoxb" not in str(entry) and "xapp" not in str(entry)

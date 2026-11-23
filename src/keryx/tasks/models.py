@@ -178,17 +178,31 @@ class Task:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
-    #: The Slack thread this task lives in (schema v7): the workspace by the owner's name
-    #: for it, the conversation, and the timestamp of the message the thread hangs from.
-    #: That message is the owner's own when the task was asked for on Slack, and otherwise
-    #: the first report Keryx posted for it. Set once: every later report is a reply there,
-    #: and a reply the owner types there is a follow-up to this task.
+    #: The Slack thread this task is *answered* in (schema v7): the workspace by the
+    #: owner's name for it, the conversation, and the timestamp of the message the thread
+    #: hangs from. That message is the owner's own when the task was asked for in their
+    #: direct messages with the app, and otherwise the first report Keryx posted for it.
+    #: Set once: every later report is a reply there, and a reply the owner types there
+    #: (mentioning the app) is a follow-up to this task.
     slack_workspace: str | None = None
     slack_channel: str | None = None
     slack_thread_ts: str | None = None
-    #: The latest message in that thread Keryx has acted on. Slack delivers an event again
-    #: when its acknowledgement was lost, and a message at or before this one is that.
-    slack_last_ts: str | None = None
+    #: Where it was *asked*, when that is somewhere else (schema v8): a conversation the
+    #: app was mentioned in, and the message that thread hangs from. Asked in one place
+    #: and answered in another: a report can hold anything from the owner's machine, so
+    #: it never goes into a shared conversation, only to their direct messages. A later
+    #: mention in the asking thread is still a follow-up to this task.
+    slack_asked_channel: str | None = None
+    slack_asked_ts: str | None = None
+    #: The last few Slack messages this task has acted on, space-separated (schema v8).
+    #: Slack delivers an event again when its acknowledgement was lost, and promises no
+    #: order: a message is a repeat when it is in here, never because it is older.
+    slack_seen: str | None = None
+    #: How many times a Slack reply re-ran this task on `slack_reruns_on`, a UTC date
+    #: (schema v8). Counted against the daily cap, because nothing else stands between a
+    #: Slack message and a run: no PIN, no keypress.
+    slack_reruns: int = 0
+    slack_reruns_on: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -233,13 +247,25 @@ class Task:
         return f"task {self.id} ({self.status}): {description}"
 
 
+#: How many acted-on Slack messages a task remembers (`Task.slack_seen`).
+SLACK_SEEN_MAX = 20
+
+
 @dataclass(frozen=True)
 class SlackThread:
-    """A thread on Slack: which workspace, which conversation, and the message it hangs from."""
+    """A thread on Slack: which workspace, which conversation, and the message it hangs from.
+
+    `shared` says the conversation is one the app was mentioned in rather than the owner's
+    direct messages with it: a task asked for there is answered somewhere else. `asked_at`
+    is the message that asked, when it is a reply in the thread and not the message the
+    thread hangs from.
+    """
 
     workspace: str
     channel: str
     ts: str
+    shared: bool = False
+    asked_at: str | None = None
 
 
 @dataclass(frozen=True)

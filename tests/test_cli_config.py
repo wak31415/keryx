@@ -14,7 +14,7 @@ from keryx.cli import app
 from keryx.config.files import read_toml
 from keryx.config.store import ConfigStore
 from keryx.integrations.slack import Connection, Member, SlackResult, Workspace
-from keryx.setup.slack import SlackApi
+from keryx.setup.slack import OWNER_LINE, SlackApi
 
 runner = CliRunner()
 
@@ -486,7 +486,7 @@ def test_auth_login_slack_owner_changes_whose_messages_are_acted_on_and_nothing_
     result = run("auth", "login", "slack", "--owner", "U0NEWME", "--no-test")
 
     assert result.exit_code == 0, result.output
-    assert "Only direct messages to the app from U0NEWME are acted on there" in result.output
+    assert OWNER_LINE.format(who="U0NEWME") in result.output
     text = (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
     assert 'owner_id = "U0NEWME"' in text and 'channel_id = "U0OWNER"' in text
     assert asked == ["auth", "open"]
@@ -530,7 +530,7 @@ def fake_slack(monkeypatch, *, workspace=None):
     asked = []
     api = SlackApi(
         auth_test=lambda token: asked.append("auth") or workspace
-        or Workspace(team="Acme", team_id="T0ACME"),
+        or Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
         lookup_by_email=lambda token, email: asked.append(email) or Member(user_id="U0OWNER"),
         post_text=lambda token, channel, text: asked.append(channel) or SlackResult(),
         open_connection=lambda token: asked.append("open") or Connection(url="wss://x/?t=1"),
@@ -748,7 +748,7 @@ def test_auth_login_slack_takes_a_level_and_its_tokens_one_to_a_line(home, tmp_p
     text = (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
     assert 'access = "converse"' in text and 'owner_id = "U0OWNER"' in text
     status = run("auth", "status").output
-    assert "Acme: converse level, hears your messages to the app" in status
+    assert "Acme: converse level, acts when you mention the app" in status
     assert "secret" not in status
 
 

@@ -64,9 +64,11 @@ class Access(StrEnum):
 
     #: Keryx posts, and reads nothing.
     ANNOUNCE = "announce"
-    #: And hears the direct messages typed to the app itself, which may resume or start work.
+    #: And is sent the direct messages typed to the app itself; one from the owner that
+    #: mentions the app may resume or start work.
     CONVERSE = "converse"
-    #: And reads Slack as the owner, with a user token.
+    #: And is sent the mentions of the app in conversations it was added to, and reads
+    #: Slack as the owner, with a user token, when the owner asks about messages.
     READ = "read"
 
     def reaches(self, level: "Access") -> bool:
@@ -86,9 +88,17 @@ BOT_SCOPES = ("chat:write", "users:read", "users:read.email")
 #: messages, as a bot scope), and `reactions:write` is the acknowledgement, a reaction,
 #: because a reaction notifies nobody and a "got it" message does.
 CONVERSE_BOT_SCOPES = ("im:history", "reactions:write")
-#: The one event the app subscribes to, as the bot. Never a user-level event: that would
-#: deliver every direct message the owner has with anybody.
+#: Added at `read`: `app_mentions:read` is the `app_mention` event, a mention of the app
+#: in a conversation it has been added to. Nothing else of those conversations is sent
+#: to Keryx, and the bot is given no scope that could read them: what is read there is
+#: read as the owner, with the user token, and only when they ask.
+READ_BOT_SCOPES = ("app_mentions:read",)
+#: The events the app subscribes to, as the bot: its own direct messages at `converse`,
+#: and at `read` the mentions of it elsewhere. Never `message.channels`, `.groups` or
+#: `.mpim`, and never a user-level event: Keryx must not be sent a conversation it was
+#: not addressed in, and a user-level event is every direct message the owner has.
 BOT_EVENTS = ("message.im",)
+READ_BOT_EVENTS = ("app_mention",)
 #: Search, as the owner, at `read`. The one constant phase two changes if it changes.
 #: `search:read` is the scope `search.messages` takes. Slack calls it legacy and points
 #: at the Real-time Search API (`assistant.search.context`, the granular
@@ -199,6 +209,20 @@ def ts_key(ts: str) -> tuple[int, int]:
 _ENTITIES = (("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&"))
 #: A link as Slack writes one in a message's text: `<https://x>` or `<https://x|shown>`.
 _LINK = re.compile(r"<((?:https?://|mailto:)[^<>|]{1,2000})(?:\|[^<>]{0,2000})?>")
+
+
+def mention(member_id: str) -> re.Pattern[str]:
+    """What a mention of `member_id` looks like in a message's text: `<@U…>`, or with the
+    name Slack sometimes writes after a bar."""
+    return re.compile(rf"<@{re.escape(member_id)}(?:\|[^<>]{{0,200}})?>")
+
+
+def permalink(url: str, channel: str, ts: str) -> str:
+    """The address of the message at `ts` in `channel`, in the workspace at `url`; "" when
+    the workspace's address is not known. Built, not asked for: it needs no call."""
+    if not (url.startswith("https://") and channel and is_ts(ts)):
+        return ""
+    return f"{url.rstrip('/')}/archives/{channel}/p{ts.replace('.', '')}"
 
 
 def plain_text(text: str) -> str:
@@ -312,7 +336,18 @@ def _get(url: str, params: dict, token: str) -> dict:
 
 def bot_scopes(access: Access) -> tuple[str, ...]:
     """What the app's bot may do at `access`."""
-    return BOT_SCOPES + (CONVERSE_BOT_SCOPES if access.reaches(Access.CONVERSE) else ())
+    return (
+        BOT_SCOPES
+        + (CONVERSE_BOT_SCOPES if access.reaches(Access.CONVERSE) else ())
+        + (READ_BOT_SCOPES if access.reaches(Access.READ) else ())
+    )
+
+
+def bot_events(access: Access) -> tuple[str, ...]:
+    """What the app is sent at `access`; nothing at all below `converse`."""
+    if not access.reaches(Access.CONVERSE):
+        return ()
+    return BOT_EVENTS + (READ_BOT_EVENTS if access.reaches(Access.READ) else ())
 
 
 def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
@@ -323,8 +358,9 @@ def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
     mode — and the Messages tab is on, read-only, because that tab is where a message to
     a member arrives and there is nothing to answer one typed there. At `converse` the
     tab takes messages, the bot subscribes to `message.im` and nothing else, and Socket
-    Mode is on, so no address of Keryx's is ever given to Slack. At `read` the install
-    also asks the owner for a user token, with `USER_SCOPES`.
+    Mode is on, so no address of Keryx's is ever given to Slack. At `read` the bot is
+    also sent the mentions of it (`app_mention`), and the install asks the owner for a
+    user token, with `USER_SCOPES`.
     """
     converse = access.reaches(Access.CONVERSE)
     manifest: dict = {
@@ -346,7 +382,7 @@ def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
         manifest["oauth_config"]["scopes"]["user"] = list(USER_SCOPES)
     if converse:
         manifest["settings"] = {
-            "event_subscriptions": {"bot_events": list(BOT_EVENTS)},
+            "event_subscriptions": {"bot_events": list(bot_events(access))},
             "socket_mode_enabled": True,
         }
     return manifest
