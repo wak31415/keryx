@@ -169,9 +169,10 @@ def read_toml(path: Path) -> dict[str, Any]:
 def dump_toml(data: dict[str, Any], header: str = "") -> str:
     """`data` as TOML: scalars and arrays first, then one table per nested dict.
 
-    Only the shapes settings take — strings, numbers, booleans, arrays of those, and tables
-    one or two deep (`[SLACK_WORKSPACE_TOKENS.work]`) — which is why this is thirty lines
-    rather than a dependency.
+    Only the shapes settings take — strings, numbers, booleans, arrays of those, and one
+    level of tables — which is why this is twenty lines rather than a dependency. Anything
+    deeper is refused rather than written as the text of a dict: a file every build of
+    Keryx on the machine rewrites has to hold only what every one of them writes back.
     """
     lines = [f"# {line}".rstrip() for line in header.splitlines()]
     if lines:
@@ -181,15 +182,8 @@ def dump_toml(data: dict[str, Any], header: str = "") -> str:
         if key not in tables:
             lines.append(f"{toml_key(key)} = {toml_value(value)}")
     for name, table in tables.items():
-        inner = {key: value for key, value in table.items() if isinstance(value, dict)}
-        plain = [f"{toml_key(key)} = {toml_value(value)}" for key, value in table.items()
-                 if key not in inner]
-        # A table that only holds tables needs no header of its own, unless it is empty.
-        if plain or not inner:
-            lines += ["", f"[{toml_key(name)}]", *plain]
-        for key, value in inner.items():
-            lines += ["", f"[{toml_key(name)}.{toml_key(key)}]"]
-            lines += [f"{toml_key(k)} = {toml_value(v)}" for k, v in value.items()]
+        lines += ["", f"[{toml_key(name)}]"]
+        lines += [f"{toml_key(key)} = {toml_value(value)}" for key, value in table.items()]
     return "\n".join(lines).strip("\n") + "\n"
 
 
@@ -216,4 +210,6 @@ def toml_value(value: Any) -> str:
         return repr(value)
     if isinstance(value, list | tuple):
         return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        raise TypeError("a table inside a table is deeper than Keryx writes")
     return _toml_string(str(value))

@@ -33,7 +33,8 @@ team_id = {team_id}
 mcp_server = {mcp_server}
 {extra}
 
-# Further workspaces, one [workspaces.NAME] table each with the same five settings as the
-# top of this file, written by `keryx auth login slack --workspace NAME`. Everything is
-# sent to the workspace at the top unless one of these is named.
+# Further workspaces, one [workspace-NAME] table each with the same five settings as the
+# top of this file, written by `keryx auth login slack --workspace NAME` and removed by
+# `keryx auth logout slack --workspace NAME`. Everything is sent to the workspace at the
+# top unless one of these is named.
 {workspaces}

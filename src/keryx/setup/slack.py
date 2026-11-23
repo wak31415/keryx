@@ -26,10 +26,20 @@ is saved, one the level does not use is refused by name, and lowering the level 
 the tokens it no longer uses. **An app is never made twice**: raising the level of a
 workspace that is connected prints the new manifest to paste into the app there is.
 
+**Where reports go is never whose messages are acted on.** The destination (`--email`,
+the wizard's "where to send") and the owner (`owner_id`: the one member whose direct
+messages may start work with no PIN) are separate settings. An owner on file for the same
+workspace stands whatever is looked up or typed as a destination (`standing_owner`); one
+is derived only when there is none, and then it is said in a line of its own
+(`OWNER_LINE`), as it is on every connect at `converse` or above. Changing it is one
+explicit act: `keryx auth login slack --owner MEMBER_ID_OR_ADDRESS`.
+
 A second workspace is the same flow with `--workspace NAME`: its own app from the same
-manifest, its own level, tokens, member id and destination (`plugins.slack`).
+manifest, its own level, tokens, member id and destination (`plugins.slack`), and
+`keryx auth logout slack [--workspace NAME]` (`logout`) forgets one.
 """
 
+import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -53,7 +63,8 @@ from keryx.integrations.slack import (
     Workspace,
     token_kinds,
 )
-from keryx.plugins.slack import DEFAULT
+from keryx.plugins import slack as plugin
+from keryx.plugins.slack import DEFAULT, SlackWorkspace
 
 PLUGIN = "send_to_slack"
 TOKEN_KEY = "SLACK_BOT_TOKEN"
@@ -138,6 +149,11 @@ BY_HAND = f"`keryx plugins install {PLUGIN} --set channel_id=ID` with a channel 
 RESTART_NOTE = "A Keryx that started with the old token keeps it until `keryx restart`."
 #: Said when a workspace starts being listened to, or its listening changes.
 LISTEN_NOTE = "Keryx starts listening for your messages there at its next start: `keryx restart`."
+#: Said at `converse` and above, every time: whose messages may start work with no PIN.
+OWNER_LINE = (
+    "Only direct messages to the app from {who} are acted on there: that member id is "
+    "taken to be you, and only --owner changes it."
+)
 #: Said when the destination is a channel: only the app's direct messages are heard.
 CHANNEL_NOTE = (
     "Reports go to {channel}, which is not your direct messages with the app: a reply "
@@ -240,40 +256,12 @@ def _config(settings: Settings) -> dict[str, Any]:
         raise SlackSetupError(str(error)) from None
 
 
-@dataclass(frozen=True)
-class OnFile:
-    """One workspace as it is saved now: its settings, and which tokens there are."""
-
-    name: str
-    values: Mapping[str, Any]
-    tokens: Mapping[str, str]
-    #: The named MCP server, which only ever stands in for the first workspace.
-    server: str = ""
-
-    @property
-    def connected(self) -> bool:
-        return bool(self.tokens.get(BOT))
-
-    @property
-    def access(self) -> Access:
-        return Access(self.values.get("access") or Access.ANNOUNCE)
-
-    @property
-    def channel(self) -> str:
-        return str(self.values.get("channel_id") or "")
-
-
-def on_file(settings: Settings, name: str, values: Mapping[str, Any] | None = None) -> OnFile:
-    """Workspace `name` as the plugin's file and `settings` hold it."""
-    values = _config(settings) if values is None else values
-    if name == DEFAULT:
-        tokens = {kind: getattr(settings, key.lower()) or "" for kind, key in TOKEN_KEYS.items()}
-        return OnFile(name, values, tokens, server=values["mcp_server"])
-    return OnFile(
-        name,
-        values["workspaces"].get(name) or {},
-        dict(settings.slack_workspace_tokens.get(name) or {}),
-    )
+def on_file(
+    settings: Settings, name: str, values: Mapping[str, Any] | None = None
+) -> SlackWorkspace:
+    """Workspace `name` as it is saved now: `plugins.slack.on_file`, which is where a
+    workspace's settings and its tokens are joined, refused in a sentence here."""
+    return plugin.on_file(settings, name, _config(settings) if values is None else values)
 
 
 def without_email(settings: Settings, name: str = DEFAULT) -> str:
@@ -307,21 +295,27 @@ def start(
     access: Access | None = None,
 ) -> None:
     """`keryx auth login slack` with no token: what the level means, then the link (or
-    the manifest, for an app there already is), the steps, and the next command."""
+    the manifest, for an app there already is), the steps, and the next command. A
+    workspace that is connected at that level already is told so, and never shown the
+    link that would make a second app."""
     try:
         values = _config(settings)
         saved = on_file(settings, workspace, values)
         first_missing = plugins.plugin(PLUGIN).problem(dict(values)) is not None
     except SlackSetupError:
-        saved, first_missing = OnFile(workspace, {}, {}), True
+        saved, first_missing = SlackWorkspace(workspace), True
+    connected = bool(saved.token(BOT))
     if workspace != DEFAULT and first_missing:
         echo(f"{workspace} would be added beside your first workspace, and there is none "
              "yet: run this without --workspace first.\n")
     current = saved.access
-    chosen = access is not None or saved.connected
+    chosen = access is not None or connected
     access = access or current
-    raising = saved.connected and access is not current and access.reaches(current)
-    have = tuple(kind for kind in token_kinds(access) if saved.tokens.get(kind)) if raising else ()
+    if connected and access is current:
+        _already(saved, echo)
+        return
+    raising = connected and access.reaches(current)
+    have = tuple(kind for kind in token_kinds(access) if saved.token(kind)) if raising else ()
     if chosen:
         echo(f"Access level {access}: {MEANING[access]}")
     else:
@@ -336,7 +330,7 @@ def start(
         echo(READ_NOTE)
     echo("")
     if raising:
-        echo(f"{saved.name} is connected at the {current} level, so the app you have is "
+        echo(f"{saved.label} is connected at the {current} level, so the app you have is "
              "changed, not made again:\n")
     else:
         echo("Create your Slack app from this link:\n")
@@ -351,19 +345,42 @@ def start(
             echo("\nThe bot token stays as it is.")
     wanted = [kind for kind in token_kinds(access) if kind not in have]
     many = len(wanted) > 1
-    what = ("the tokens" if many else f"the {TOKEN_NAMES[wanted[0]]}") if wanted else "nothing"
     address = "" if access is Access.READ else " --email ADDRESS"
-    echo(
-        f"\nThen hand {what} over on standard input, never on the command line"
-        + (", one to a line in any order" if many else "")
-        + ("" if access is Access.READ else ", with the address you use in Slack")
-        + ":"
-        f"\n  keryx auth login slack --stdin{_flags(workspace, access, current)}{address}"
-    )
+    command = f"keryx auth login slack --stdin{_flags(workspace, access, current)}{address}"
+    if wanted:
+        what = "the tokens" if many else f"the {TOKEN_NAMES[wanted[0]]}"
+        echo(
+            f"\nThen hand {what} over on standard input, never on the command line"
+            + (", one to a line in any order" if many else "")
+            + ("" if access is Access.READ else ", with the address you use in Slack")
+            + f":\n  {command}"
+        )
+    else:
+        echo("\nEvery token this level needs is saved already, so there is nothing to "
+             f"hand over. Once the app is reinstalled:\n  {command} < /dev/null")
     if access is Access.READ:
         echo("The user token says which member you are, so no address is needed.")
     else:
         echo(without_email(settings, workspace))
+
+
+def _already(saved: SlackWorkspace, echo: Callable[[str], None]) -> None:
+    """What a workspace that is connected at the level asked for is told: how it stands,
+    and the three things that change it. Never the link that makes a second app."""
+    named = "" if saved.name == DEFAULT else f" --workspace {saved.name}"
+    echo(f"{saved.label} is connected at the {saved.access} level: {MEANING[saved.access]}")
+    if saved.missing:
+        echo(f"It is without {' or '.join(saved.missing)}.")
+    if saved.access.reaches(Access.CONVERSE) and saved.owner_id:
+        echo(OWNER_LINE.format(who=saved.owner_id))
+    others = [level for level in slack.LEVELS if level is not saved.access]
+    echo(
+        f"\nTo change what Keryx may see there: keryx auth login slack{named} --access "
+        f"{' or --access '.join(others)}"
+        f"\nTo replace a token: keryx auth login slack --stdin{named}, with the new one "
+        "on standard input"
+        f"\nTo disconnect it: keryx auth logout slack{named}"
+    )
 
 
 def lower(
@@ -382,21 +399,83 @@ def lower(
     """
     values = _config(settings)
     saved = on_file(settings, workspace, values)
-    if not saved.connected or access is saved.access or access.reaches(saved.access):
+    if not saved.token(BOT) or access is saved.access or access.reaches(saved.access):
         return False
-    kept = {kind: saved.tokens[kind] for kind in token_kinds(access) if saved.tokens.get(kind)}
-    dropped = [kind for kind in saved.tokens if saved.tokens[kind] and kind not in kept]
+    kept = {kind: saved.tokens[kind] for kind in token_kinds(access) if saved.token(kind)}
+    dropped = [kind for kind in saved.tokens if kind not in kept]
     _save_tokens(store, settings, workspace, kept)
     _write_workspace(settings, values, workspace, {"access": str(access)})
-    echo(f"{workspace} is now at the {access} level: {MEANING[access]}")
+    echo(f"{saved.label} is now at the {access} level: {MEANING[access]}")
     if dropped:
         names = " and ".join(_stored_as(workspace, kind) for kind in dropped)
         echo(f"{names} {'are' if len(dropped) > 1 else 'is'} forgotten.")
-    echo("A running Keryx stops acting on your messages there at once. The app in Slack "
-         "keeps the permissions it was made with: to take those away too, paste this "
-         "manifest into its App Manifest page and reinstall it:\n")
+    # Said of what really stops: at converse Keryx goes on acting on their messages.
+    stops = ("A running Keryx stops acting on your messages there at once."
+             if access is Access.ANNOUNCE else
+             "Keryx no longer holds your user token, so nothing reads Slack as you; it "
+             "still acts on the messages you type to the app.")
+    echo(f"{stops} The app in Slack keeps the permissions it was made with: to take those "
+         "away too, paste this manifest into its App Manifest page and reinstall it:\n")
     echo(slack.manifest_json(access))
     return True
+
+
+def logout(
+    settings: Settings, store: ConfigStore, *, workspace: str, echo: Callable[[str], None]
+) -> None:
+    """Disconnect a workspace: forget its tokens and its settings. Slack is not asked.
+
+    A further workspace loses its table and its entry among the tokens. The first loses
+    its three tokens and everything Slack said of it, and `send_to_slack` is turned off
+    unless a named MCP server still carries it. Nothing is revoked at Slack: the app and
+    its tokens are the owner's own, and removing the app there is what ends them.
+    """
+    values = _config(settings)
+    saved = on_file(settings, workspace, values)
+    others = [name for name in values["workspaces"] if name != DEFAULT]
+    held = bool(saved.tokens) or (workspace in others)
+    if workspace != DEFAULT:
+        if not held:
+            raise SlackSetupError(
+                f"there is no workspace called {workspace}"
+                + (f" (there is {', '.join(others)})" if others else "")
+            )
+        _save_tokens(store, settings, workspace, None)
+        tables = {name: table for name, table in values["workspaces"].items()
+                  if name != workspace}
+        try:
+            plugins.write_config(settings, PLUGIN, {"workspaces": tables})
+        except plugins.PluginConfigError as error:
+            raise SlackSetupError(f"its tokens are removed, but {error}") from None
+        echo(f"{saved.label} is disconnected: its tokens and its settings are removed.")
+    else:
+        if others:
+            raise SlackSetupError(
+                "your first workspace is the one everything is sent to, and "
+                f"{', '.join(others)} would be left with none: disconnect "
+                f"{'them' if len(others) > 1 else 'it'} first, with --workspace NAME"
+            )
+        if not (held or saved.channel):
+            echo("Slack is not connected: there is nothing to remove.")
+            return
+        _save_tokens(store, settings, workspace, {})
+        server = values["mcp_server"]
+        try:
+            plugins.write_config(settings, PLUGIN, {
+                "channel_id": "", "access": str(Access.ANNOUNCE), "owner_id": "", "team": "",
+                "team_id": "",
+            })
+        except plugins.PluginConfigError as error:
+            raise SlackSetupError(f"its tokens are removed, but {error}") from None
+        echo(f"{saved.label} is disconnected: {', '.join(TOKEN_KEYS.values())} and what "
+             "Slack said of it are removed.")
+        if server:
+            echo(f"{PLUGIN} stays on with the {server} MCP server's token and channel.")
+        else:
+            plugins.remove(settings, PLUGIN)
+            echo(f"{PLUGIN} is off.")
+    echo("A running Keryx stops using it at once. The app itself is still installed in "
+         f"Slack, and its tokens work until you remove it there: {APPS_URL}")
 
 
 def _stored_as(workspace: str, kind: str) -> str:
@@ -406,15 +485,33 @@ def _stored_as(workspace: str, kind: str) -> str:
     return f"{workspace}'s {TOKEN_NAMES[kind]}"
 
 
+def _stored_table(store: ConfigStore) -> dict[str, dict[str, str]]:
+    """Every further workspace's tokens as the store holds them: one line of JSON."""
+    held = store.stored().get(WORKSPACE_TOKENS_KEY) or {}
+    if isinstance(held, str):
+        try:
+            held = json.loads(held)
+        except ValueError:
+            held = {}
+    return {str(name): dict(tokens) for name, tokens in held.items()} if isinstance(
+        held, dict) else {}
+
+
 def _save_tokens(
-    store: ConfigStore, settings: Settings, workspace: str, tokens: Mapping[str, str]
+    store: ConfigStore, settings: Settings, workspace: str, tokens: Mapping[str, str] | None
 ) -> None:
-    """Store exactly `tokens` for `workspace`, in one write: what is not there is unset."""
+    """Store exactly `tokens` for `workspace`, in one write: what is not there is unset.
+
+    None removes a further workspace's entry altogether.
+    """
     if workspace == DEFAULT:
+        tokens = tokens or {}
         values: dict[str, Any] = {key: tokens.get(kind) for kind, key in TOKEN_KEYS.items()}
     else:
-        table = dict(store.stored().get(WORKSPACE_TOKENS_KEY) or {})
-        table[workspace] = dict(tokens)
+        table = _stored_table(store)
+        table.pop(workspace, None)
+        if tokens is not None:
+            table[workspace] = dict(tokens)
         values = {WORKSPACE_TOKENS_KEY: table}
     try:
         store.set(values, actor=OWNER, settings=settings)
@@ -441,7 +538,7 @@ def wanted_tokens(
     saved = on_file(settings, workspace_name(workspace))
     level = parse_access(access) or saved.access
     return [(f"{TOKEN_NAMES[kind].capitalize()} ({TOKEN_PREFIXES[kind]}…)",
-             bool(saved.tokens.get(kind)))
+             bool(saved.token(kind)))
             for kind in token_kinds(level)]
 
 
@@ -469,6 +566,19 @@ def read_tokens(text: str) -> dict[str, str]:
     return found
 
 
+def standing_owner(saved: SlackWorkspace, team: Workspace, *, same_app: bool) -> str:
+    """The owner on file, when it is this workspace's: it stands, whatever is looked up.
+
+    Whose messages may start work with no PIN is never changed by changing where reports
+    go. An owner on file for the same team (or, where the file never learned the team,
+    for the same app) is the owner until `--owner` says otherwise.
+    """
+    if not saved.owner_id:
+        return ""
+    same_team = bool(team.team_id) and saved.team_id == team.team_id
+    return saved.owner_id if same_team or (not saved.team_id and same_app) else ""
+
+
 def connect(
     settings: Settings,
     store: ConfigStore,
@@ -480,6 +590,7 @@ def connect(
     api: SlackApi | None = None,
     workspace: str = DEFAULT,
     access: Access | None = None,
+    owner: str | None = None,
 ) -> None:
     """Check the tokens, find where to send, save it all, turn the plugin on, and prove it.
 
@@ -491,11 +602,16 @@ def connect(
     it was. A token that is not the one on file brings its destination with it (`keeps`):
     an address is looked up, never a direct message's old id kept. After the save, only
     the test message can fail, and that says so and undoes nothing.
+
+    **Where reports go and whose messages are acted on are two things.** `email` is the
+    first and never the second once there is an owner on file (`standing_owner`); `owner`
+    (a member id, or the address they use there) is the one way to change the second.
     """
     api = api or SlackApi()
     given = read_tokens(tokens)
     values = _config(settings)
     saved = on_file(settings, workspace, values)
+    server = values["mcp_server"] if workspace == DEFAULT else ""
     if workspace != DEFAULT and (problem := plugins.plugin(PLUGIN).problem(dict(values))):
         raise SlackSetupError(
             f"{workspace} is added beside your first workspace, and there is none yet "
@@ -509,7 +625,7 @@ def connect(
             f"the {access} level does not use {names}: leave it out, or choose a higher "
             "level with --access. Nothing was saved"
         )
-    held = {kind: given.get(kind) or saved.tokens.get(kind) or "" for kind in needed}
+    held = {kind: given.get(kind) or saved.token(kind) or "" for kind in needed}
     if lacking := [kind for kind in needed if not held[kind]]:
         if not given:
             raise SlackSetupError("no token on standard input")
@@ -517,7 +633,7 @@ def connect(
                              for kind in lacking)
         raise SlackSetupError(f"the {access} level also needs {names}, one to a line. "
                               "Nothing was saved")
-    before = saved.tokens.get(BOT) or ""
+    before = saved.token(BOT) or ""
     token = held[BOT]
     # An address that was asked for replaces the destination; otherwise one is looked for
     # only when what is on file does not stand for this token.
@@ -527,7 +643,7 @@ def connect(
     if not (address or kept or by_token):
         address = settings.user_google_email or ""
     if not (address or kept or by_token):
-        raise SlackSetupError(f"{_nowhere(saved.channel, saved.server)}: add --email ADDRESS, "
+        raise SlackSetupError(f"{_nowhere(saved.channel, server)}: add --email ADDRESS, "
                               "the one you use in Slack. Nothing was saved")
 
     team = api.auth_test(token)
@@ -535,9 +651,14 @@ def connect(
         why = team.problem if team.refused else (
             f"the token could not be checked ({team.problem})")
         raise SlackSetupError(f"{why}; nothing was saved")
-    owner = ""
+    if access.reaches(Access.CONVERSE) and not team.team_id:
+        raise SlackSetupError(
+            "Slack did not say which workspace the bot token belongs to, and above "
+            "announce every message is held to it. Nothing was saved"
+        )
+    token_owner = ""
     if USER in needed:
-        owner = _check_user_token(api, held[USER], team)
+        token_owner = _check_user_token(api, held[USER], team)
     if APP in needed:
         opened = api.open_connection(held[APP])
         if not opened.ok:
@@ -554,24 +675,20 @@ def connect(
                 f"another --email, or by hand: `keryx config set {TOKEN_KEY} --stdin`, "
                 f"then {BY_HAND}"
             )
-    channel = found.user_id if found is not None else (kept or owner)
-    if not owner:
-        same_app = token == before
-        owner = (found.user_id if found is not None else "") or (
-            channel if is_member(channel) else "") or (
-            str(saved.values.get("owner_id") or "") if same_app else "")
-    if access.reaches(Access.CONVERSE) and not owner:
-        raise SlackSetupError(
-            f"at the {access} level Keryx acts only on messages from your own member id, "
-            f"and {channel} is not one: add --email ADDRESS, the one you use in Slack. "
-            "Nothing was saved"
-        )
+    channel = found.user_id if found is not None else (kept or token_owner)
+    acted_on, who = _owner(
+        api, token, access=access, explicit=(owner or "").strip(),
+        standing=standing_owner(saved, team, same_app=token == before),
+        token_owner=token_owner, found=found, channel=channel,
+    )
 
     _save_tokens(store, settings, workspace, held)
     echo(_connected_line(workspace, team, access, needed))
     if workspace == DEFAULT and store.source_of(TOKEN_KEY, settings) == FROM_ENV:
         echo(f"note: {TOKEN_KEY} is also set in the environment, which wins")
-    if before and token != before:
+    if workspace == DEFAULT and before and token != before:
+        # Only the first workspace's: a further one's tokens are read from the store
+        # every time they are asked for.
         echo(RESTART_NOTE)
     if workspace == DEFAULT:
         settings = settings.model_copy(update={"slack_bot_token": token})
@@ -581,11 +698,13 @@ def connect(
         echo(f"it keeps sending to {channel}")
     else:
         echo(f"you are {channel} there: messages go to you")
+    if access.reaches(Access.CONVERSE):
+        echo(OWNER_LINE.format(who=who))
     try:
         _write_workspace(settings, values, workspace, {
             "channel_id": channel,
             "access": str(access),
-            "owner_id": owner,
+            "owner_id": acted_on,
             "team": team.team,
             "team_id": team.team_id,
         })
@@ -596,9 +715,9 @@ def connect(
     if not status.on:
         raise SlackSetupError(f"{PLUGIN} is installed but refused: {status.refused}")
     echo(f"{PLUGIN} is on, from the next call")
-    if saved.server:
+    if server:
         echo(f"note: {PLUGIN} now posts with this token to {channel}, not with the "
-             f"{saved.server} MCP server's token and channel; subagents still use that server")
+             f"{server} MCP server's token and channel; subagents still use that server")
     if access.reaches(Access.CONVERSE):
         echo(LISTEN_NOTE)
         if not (is_member(channel) or slack.is_dm(channel)):
@@ -606,7 +725,7 @@ def connect(
     if access is Access.READ:
         echo(READ_NOTE)
     for kind in saved.tokens:
-        if saved.tokens[kind] and kind not in needed:
+        if kind not in needed:
             echo(f"{_stored_as(workspace, kind)} is forgotten: the {access} level does not "
                  "use it")
 
@@ -622,6 +741,66 @@ def connect(
             f"{sent.problem}{elsewhere}"
         )
     echo("sent a test message: it is in Slack, under Apps")
+
+
+def _owner(
+    api: SlackApi,
+    token: str,
+    *,
+    access: Access,
+    explicit: str,
+    standing: str,
+    token_owner: str,
+    found: Member | None,
+    channel: str,
+) -> tuple[str, str]:
+    """The member whose messages are acted on, and how to name them in a line.
+
+    In order: the one `--owner` named, which is the only thing that replaces an owner on
+    file; the owner on file; and only when there is neither, the first one that can be
+    derived: whom the user token belongs to, the member the address found, or a
+    destination that is a member's id. Below `converse` nobody's messages are acted on,
+    so nothing is derived: an owner on file is kept for the day the level is raised.
+    """
+    name = ""
+    if explicit:
+        if "@" in explicit:
+            member = api.lookup_by_email(token, explicit)
+            if not member.ok:
+                raise SlackSetupError(
+                    f"Slack could not find {explicit} to act on messages from: "
+                    f"{member.problem}. Nothing was saved"
+                )
+            acted_on, name = member.user_id, member.name
+        elif is_member(explicit):
+            acted_on = explicit
+        else:
+            raise SlackSetupError(
+                "--owner takes a member id (U…) or the address they use in Slack. "
+                "Nothing was saved"
+            )
+    elif standing:
+        acted_on = standing
+    elif not access.reaches(Access.CONVERSE):
+        return "", ""
+    else:
+        acted_on = token_owner or (found.user_id if found is not None else "") or (
+            channel if is_member(channel) else "")
+    if access is Access.READ and acted_on != token_owner:
+        raise SlackSetupError(
+            f"the user token belongs to {token_owner}, and the member whose messages Keryx "
+            f"acts on there is {acted_on}: paste your own user token, or change the "
+            f"member with --owner {token_owner}. Nothing was saved"
+        )
+    if access.reaches(Access.CONVERSE) and not acted_on:
+        raise SlackSetupError(
+            f"at the {access} level Keryx acts only on messages from your own member id, "
+            f"and {channel} is not one: add --email ADDRESS, the one you use in Slack. "
+            "Nothing was saved"
+        )
+    if not name and found is not None and found.user_id == acted_on:
+        name = found.name
+    return acted_on, f"{name} ({acted_on})" if name else acted_on
 
 
 def test_message(access: Access) -> str:

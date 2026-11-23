@@ -274,6 +274,7 @@ def test_every_template_loads_nothing_it_should_not(slack_settings):
 
 WORK = {"access": "converse", "owner_id": "U0WORK", "team": "Acme", "team_id": "T0WORK",
         "channel_id": "U0WORK"}
+FIRST = {"channel_id": "U0ME", "team": "Home", "team_id": "T0HOME"}
 
 
 @pytest.fixture
@@ -282,7 +283,7 @@ def two_workspaces(slack_settings):
     settings = slack_settings.model_copy(update={
         "slack_workspace_tokens": {"work": {"bot": "xoxb-work", "app": "xapp-work"}},
     })
-    plugins.write_config(settings, NAME, {"channel_id": "U0ME", "workspaces": {"work": WORK}})
+    plugins.write_config(settings, NAME, {**FIRST, "workspaces": {"work": WORK}})
     plugins.install(settings, NAME)
     return settings
 
@@ -307,7 +308,8 @@ def test_each_workspace_has_its_own_level_tokens_owner_and_destination(two_works
     assert (first.name, work.name) == ("default", "work")
     assert (work.access, work.owner_id, work.channel) == (Access.CONVERSE, "U0WORK", "U0WORK")
     assert (work.token("bot"), work.token("app")) == ("xoxb-work", "xapp-work")
-    assert work.label == "work (Acme)" and first.label == "default"
+    # What the owner reads: Slack's own name for the first, their word for a further one.
+    assert work.label == "work (Acme)" and first.label == "Home"
     assert work.listens and not first.listens
     assert workspace(two_workspaces, "work") == work
     assert workspace(two_workspaces, "nowhere") is None
@@ -320,21 +322,33 @@ def test_a_workspaces_tokens_are_never_in_its_repr(two_workspaces):
 
 
 @pytest.mark.parametrize(
-    ("access", "tokens", "owner", "missing", "listens"),
+    ("access", "tokens", "owner", "team", "missing", "listens"),
     [
-        ("announce", {"bot": "b"}, "", (), False),
-        ("converse", {"bot": "b"}, "U1", ("its app token",), False),
-        ("converse", {"bot": "b", "app": "a"}, "", ("your member id",), False),
-        ("converse", {"bot": "b", "app": "a"}, "U1", (), True),
-        ("read", {"bot": "b", "app": "a"}, "U1", ("its user token",), True),
-        ("read", {"bot": "b", "app": "a", "user": "u"}, "U1", (), True),
-        ("announce", {}, "", ("its bot token",), False),
+        ("announce", {"bot": "b"}, "", "", (), False),
+        ("converse", {"bot": "b"}, "U1", "T1", ("its app token",), False),
+        ("converse", {"bot": "b", "app": "a"}, "", "T1", ("your member id",), False),
+        ("converse", {"bot": "b", "app": "a"}, "U1", "", ("the workspace's id",), False),
+        ("converse", {"bot": "b", "app": "a"}, "U1", "T1", (), True),
+        ("read", {"bot": "b", "app": "a"}, "U1", "T1", ("its user token",), True),
+        ("read", {"bot": "b", "app": "a", "user": "u"}, "U1", "T1", (), True),
+        ("announce", {}, "", "", ("its bot token",), False),
     ],
 )
-def test_a_workspace_says_what_its_level_needs_and_lacks(access, tokens, owner, missing, listens):
-    one = SlackWorkspace("w", Access(access), channel="U1", owner_id=owner, tokens=tokens)
+def test_a_workspace_says_what_its_level_needs_and_lacks(
+    access, tokens, owner, team, missing, listens
+):
+    """Above announce a message is held to the owner's id and the workspace's: with
+    either missing there is nothing to hold it to, and nothing is heard."""
+    one = SlackWorkspace("w", Access(access), channel="U1", owner_id=owner, team_id=team,
+                         tokens=tokens)
 
     assert one.missing == missing and one.listens is listens
+    assert one.reads is (access == "read" and "user" in tokens)
+
+
+def test_the_first_workspace_with_no_name_from_slack_is_called_what_it_is():
+    assert SlackWorkspace("default").label == "your first workspace"
+    assert SlackWorkspace("work").label == "work"
 
 
 def test_a_workspace_with_nowhere_to_post_says_so_and_sends_nothing():
@@ -363,7 +377,7 @@ def test_the_first_workspaces_other_tokens_are_the_plain_settings(slack_settings
         "slack_app_token": "xapp-1", "slack_user_token": "xoxp-1",
     })
     plugins.write_config(settings, NAME, {"channel_id": "U0ME", "access": "read",
-                                          "owner_id": "U0ME"})
+                                          "owner_id": "U0ME", "team_id": "T0HOME"})
 
     [first] = workspaces(settings)
 
@@ -447,3 +461,38 @@ def test_the_word_for_a_task_typed_on_slack_is_one_word_everywhere():
     from keryx.plugins.slack import SLACK_CHANNEL
 
     assert SLACK_ORIGIN == SLACK_CHANNEL == "slack"
+
+
+def test_a_workspace_connected_since_startup_is_found_in_the_store(two_workspaces):
+    """As the billing keys are: the running service posts to it with no restart."""
+    from keryx.config.store import ConfigStore
+
+    ConfigStore().set({"SLACK_WORKSPACE_TOKENS": {
+        "work": {"bot": "xoxb-work-replaced"}, "play": {"bot": "xoxb-play"},
+    }})
+    plugins.write_config(two_workspaces, NAME, {"workspaces": {
+        "work": WORK, "play": {"channel_id": "U0PLAY"},
+    }})
+
+    found = {each.name: each for each in connected(two_workspaces)}
+
+    assert set(found) == {"default", "work", "play"}
+    assert found["play"].token("bot") == "xoxb-play"
+    # What the store holds now wins over what this process started with.
+    assert found["work"].token("bot") == "xoxb-work-replaced"
+
+
+def test_what_is_on_file_is_keryxs_own_and_never_the_mcp_servers(settings, monkeypatch, tmp_path):
+    from keryx.plugins.slack import on_file
+
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    env = {"SLACK_BOT_TOKEN": "xoxb-the-servers", "SLACK_CHANNEL_ID": "D0SERVER"}
+    (tmp_path / ".claude.json").write_text(json.dumps({"mcpServers": {"chat": {"env": env}}}))
+    monkeypatch.setattr(plugins, "current_settings", lambda: settings)
+    plugins.write_config(settings, NAME, {"mcp_server": "chat"})
+
+    own = on_file(settings, "default")
+    [sending] = workspaces(settings)
+
+    assert (own.token("bot"), own.channel) == (None, "")
+    assert (sending.token("bot"), sending.channel) == ("xoxb-the-servers", "D0SERVER")

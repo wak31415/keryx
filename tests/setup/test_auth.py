@@ -346,10 +346,10 @@ def test_slack_that_is_on_is_ok_and_says_where_it_posts(settings):
 
     assert entry == {
         "state": "ok", "detail": "on — posts to U0OWNER", "optional": True,
-        "workspaces": [{"name": "default", "team": "", "access": "announce",
-                        "listens": False, "missing": []}],
+        "workspaces": [{"name": "default", "team": "", "label": "your first workspace",
+                        "access": "announce", "listens": False, "missing": []}],
     }
-    assert auth.slack_lines(entry) == ["default: announce level, posts only"]
+    assert auth.slack_lines(entry) == ["your first workspace: announce level, posts only"]
 
 
 def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
@@ -359,7 +359,9 @@ def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
     })
     plugins.write_config(settings, "send_to_slack", {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
-        "workspaces": {"work": {"access": "read", "channel_id": "U0WORK", "owner_id": "U0WORK"}},
+        "team_id": "T0ACME",
+        "workspaces": {"work": {"access": "read", "channel_id": "U0WORK", "owner_id": "U0WORK",
+                                "team_id": "T0WORK"}},
     })
     plugins.install(settings, "send_to_slack")
 
@@ -372,7 +374,7 @@ def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
         "`keryx auth login slack --workspace work --access read`"
     )
     assert auth.slack_lines(entry) == [
-        "default (Acme): converse level, hears your messages to the app",
+        "Acme: converse level, hears your messages to the app",
         "work: read level, without its app token or its user token",
     ]
     assert "xoxb" not in str(entry) and "xapp" not in str(entry)

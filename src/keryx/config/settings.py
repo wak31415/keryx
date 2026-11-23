@@ -145,6 +145,11 @@ SLACK_TOKEN_KINDS = ("bot", "app", "user")
 SLACK_DEFAULT_WORKSPACE = "default"
 #: A further workspace's name: a short lower-case word of the owner's own.
 SLACK_WORKSPACE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+#: Settings that are a table of tables, kept in their file as one line of JSON. A build
+#: of Keryx from before the setting rewrites that line as it found it, where a TOML table
+#: two deep would come back as the text of a dict (`store.validate` writes the line, and
+#: `_parse_json_map` reads it).
+STORED_AS_JSON = frozenset({"SLACK_WORKSPACE_TOKENS"})
 #: An assistant's name: a letter, then up to 31 letters, spaces, apostrophes or hyphens.
 ASSISTANT_NAME_PATTERN = re.compile(r"[^\W\d_](?:[^\W\d_]|[ '’-]){0,31}")
 ASSISTANT_NAME_RULE = (
@@ -591,10 +596,10 @@ class Settings(BaseSettings):
         repr=False,
     )
     slack_workspace_tokens: dict[str, dict[str, str]] = setting(
-        description="The tokens of each further Slack workspace, by the name you gave it: "
-        '`{"work": {"bot": "xoxb-…", "app": "xapp-…", "user": "xoxp-…"}}`. `keryx auth '
-        "login slack --workspace NAME` writes it; the three settings above are the first "
-        "workspace's.",
+        description="The tokens of each further Slack workspace, by the name you gave it, as "
+        'one line of JSON: `{"work": {"bot": "xoxb-…", "app": "xapp-…", "user": '
+        '"xoxp-…"}}`. `keryx auth login slack --workspace NAME` writes it; the three '
+        "settings above are the first workspace's.",
         group="plugins",
         repr=False,
         default_factory=dict,

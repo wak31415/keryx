@@ -661,6 +661,7 @@ def test_each_slack_workspace_has_a_check_that_names_its_level_and_what_it_lacks
     })
     plugins.write_config(settings, "send_to_slack", {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
+        "team_id": "T0ACME",
         "workspaces": {"work": {"access": "converse", "channel_id": "U0WORK",
                                 "owner_id": "U0WORK"}},
     })
@@ -674,8 +675,10 @@ def test_each_slack_workspace_has_a_check_that_names_its_level_and_what_it_lacks
         "Acme, at the converse level, but without its app token — "
         "`keryx auth login slack --access converse`"
     )
-    assert work.ok and work.detail == (
-        "at the converse level, posts to U0WORK; hears your messages to the app"
+    # Nothing says which workspace it is, so no message could be held to it: not heard.
+    assert not work.ok and work.detail == (
+        "at the converse level, but without the workspace's id — "
+        "`keryx auth login slack --workspace work --access converse`"
     )
     assert not any("secret" in check.detail for check in checks.values())
 

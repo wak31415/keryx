@@ -1667,6 +1667,15 @@ def auth_login(
             "app (default: your first workspace).",
         ),
     ] = None,
+    owner: Annotated[
+        str | None,
+        typer.Option(
+            "--owner",
+            help="slack: change the one member whose direct messages to the app are acted "
+            "on, by member id (U…) or the address they use there. It is you, and is set "
+            "the first time; --email only ever changes where reports go.",
+        ),
+    ] = None,
 ) -> None:
     """Sign in to one thing: a coding agent, Google, or Slack.
 
@@ -1688,9 +1697,9 @@ def auth_login(
     for_google = name == "google" or name in auth_flow.GOOGLE_ALIASES
     googles = (services, account, client_file, callback_url)
     misplaced = (
-        (name != "slack" and (stdin or email is not None or not test
-                              or access is not None or workspace is not None),
-         "--stdin, --email, --no-test, --access and --workspace are for slack"),
+        (name != "slack" and (stdin or email is not None or not test or access is not None
+                              or workspace is not None or owner is not None),
+         "--stdin, --email, --no-test, --access, --workspace and --owner are for slack"),
         (not for_google and any(value is not None for value in googles),
          "--services, --account, --client-file and --callback-url are for google"),
         (name == "slack" and headless is not None,
@@ -1724,6 +1733,7 @@ def auth_login(
         test=test,
         workspace=workspace,
         access=access,
+        owner=owner,
     )
     try:
         auth_flow.login(
@@ -1742,27 +1752,39 @@ def auth_login(
 
 @auth_app.command("logout")
 def auth_logout(
-    name: Annotated[str, typer.Argument(help="google.")],
+    name: Annotated[str, typer.Argument(help="google or slack.")],
+    workspace: Annotated[
+        str | None,
+        typer.Option(
+            "--workspace",
+            help="slack: the further workspace to disconnect, by the name you gave it "
+            "(default: your first workspace).",
+        ),
+    ] = None,
 ) -> None:
-    """Sign out of Google: revoke Keryx's access at Google and delete the sign-in here.
+    """Sign out of Google, or disconnect a Slack workspace.
 
-    The token, its copy for the agents' tools, and anything an older sign-in left are all
-    removed, whether or not Google answers. `keryx auth login google` signs in again.
+    google: revokes Keryx's access at Google and deletes the sign-in here. The token, its
+    copy for the agents' tools, and anything an older sign-in left are all removed, whether
+    or not Google answers. `keryx auth login google` signs in again.
+
+    slack: forgets that workspace's tokens and settings. Nothing is revoked, because the
+    app is your own: remove it in Slack to end its tokens. `keryx auth login slack
+    --access announce` is the smaller step, which only stops Keryx reading there.
     """
     if name not in auth_flow.LOGOUTS:
         typer.echo(f"sign out of one of: {', '.join(auth_flow.LOGOUTS)}", err=True)
-        if name == "slack":
-            # Nothing of Keryx's to revoke: the token is the owner's own Slack app's.
-            typer.echo(
-                "Slack has no sign-out here: `keryx auth login slack --access announce` "
-                "stops Keryx reading anything there, `keryx plugins remove send_to_slack` "
-                "turns it off, and `keryx config unset SLACK_BOT_TOKEN SLACK_APP_TOKEN "
-                "SLACK_USER_TOKEN` forgets the tokens",
-                err=True,
-            )
+        raise typer.Exit(2)
+    if workspace is not None and name != "slack":
+        typer.echo("--workspace is for slack", err=True)
         raise typer.Exit(2)
     _owner_only("sign out")
-    auth_flow.logout(name, _configure_readonly(), echo=typer.echo)
+    try:
+        auth_flow.logout(name, _configure_readonly(), echo=typer.echo, store=ConfigStore(),
+                         workspace=workspace)
+    except auth_flow.AuthError as error:
+        typer.echo(f"{name} sign-out failed: {error}", err=True)
+        raise typer.Exit(1) from None
 
 
 @auth_app.command("status")

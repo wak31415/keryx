@@ -19,6 +19,7 @@ token and is done at once. `--workspace NAME` is a further workspace, with its o
 """
 
 import asyncio
+import dataclasses
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,7 +52,7 @@ SIGN_INS = {
 GOOGLE_ALIASES = ("gmail", "google-workspace")
 LOGINS = ("claude", "codex", "google", *GOOGLE_ALIASES, "slack")
 #: What `logout` can end: a grant Keryx holds, and the files a sign-in left.
-LOGOUTS = ("google",)
+LOGOUTS = ("google", "slack")
 #: Sign-ins Keryx runs without: `doctor` calls each optional, with a soft check that is
 #: `missing` until somebody signs in. One that has failed (a Google sign-in that connected
 #: nothing, a Slack token with its plugin off) is reported as failed, and marked, so
@@ -117,8 +118,8 @@ def _slack_workspaces(settings: Settings) -> list[dict[str, Any]]:
     except Exception:  # settings that do not parse are `doctor`'s to report
         return []
     return [
-        {"name": each.name, "team": each.team, "access": str(each.access),
-         "listens": each.listens, "missing": list(each.missing)}
+        {"name": each.name, "team": each.team, "label": each.label,
+         "access": str(each.access), "listens": each.listens, "missing": list(each.missing)}
         for each in found
     ]
 
@@ -127,7 +128,7 @@ def slack_lines(entry: dict[str, Any]) -> list[str]:
     """What `auth status` prints under Slack: one line per workspace, its level first."""
     lines = []
     for each in entry.get("workspaces", []):
-        name = f"{each['name']} ({each['team']})" if each["team"] else each["name"]
+        name = each["label"]
         state = (f"without {' or '.join(each['missing'])}" if each["missing"]
                  else ("hears your messages to the app" if each["listens"] else "posts only"))
         lines.append(f"{name}: {each['access']} level, {state}")
@@ -160,6 +161,9 @@ class LoginOptions:
     test: bool = True
     workspace: str | None = None
     access: str | None = None
+    #: Slack: the member whose messages to the app are acted on, by id or by address.
+    #: The one way that is ever changed; None leaves it as it is.
+    owner: str | None = None
 
 
 def login(
@@ -199,11 +203,24 @@ def logout(
     *,
     echo: Echo,
     sign_out: Callable[[Settings], Any] | None = None,
+    store: ConfigStore | None = None,
+    workspace: str | None = None,
 ) -> None:
     """End the sign-in `name` names: revoke it where it was granted, and remove what it
-    left on this machine. `sign_out` is `google.sign_out`, looked up when called."""
+    left on this machine. `sign_out` is `google.sign_out`, looked up when called.
+
+    Slack is one workspace at a time (`workspace`; none is the first): its tokens and its
+    settings are forgotten, and nothing is revoked, because the app is the owner's own.
+    """
     if name not in LOGOUTS:
         raise AuthError(f"nothing called {name!r} to sign out of; one of: {', '.join(LOGOUTS)}")
+    if name == "slack":
+        try:
+            slack.logout(settings, store or ConfigStore(),
+                         workspace=slack.workspace_name(workspace), echo=echo)
+        except slack.SlackSetupError as exc:
+            raise AuthError(str(exc)) from None
+        return
     out = (sign_out or google.sign_out)(settings)
     if not out.removed:
         echo("Not signed in to Google: there is nothing to remove.")
@@ -252,6 +269,10 @@ def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, ech
     try:
         workspace = slack.workspace_name(options.workspace)
         access = slack.parse_access(options.access)
+        if options.tokens is None and options.owner:
+            # Changing whose messages are acted on is an act of its own: the tokens on
+            # file are checked again, and nothing need be typed.
+            options = dataclasses.replace(options, tokens="")
         if options.tokens is None:
             # Taking access away needs nothing from Slack, so it is done here and now.
             lowered = access is not None and slack.lower(
@@ -269,6 +290,7 @@ def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, ech
             echo=echo,
             workspace=workspace,
             access=access,
+            owner=options.owner,
         )
     except slack.SlackSetupError as exc:
         raise AuthError(str(exc)) from None

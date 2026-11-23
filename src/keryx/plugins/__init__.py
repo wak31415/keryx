@@ -71,8 +71,12 @@ class Key:
     positive: bool = False
     #: For a number: the most it may be, when there is a most.
     maximum: float | None = None
-    #: For `tables` (a table of named tables, `[workspaces.work]`): what each one holds.
+    #: For `tables` (named tables of the same settings): what each one holds, and what
+    #: its table is called in the file before its name (`[workspace-work]`). Each is a
+    #: table of its own at the top of the file, one level deep, because that is a shape a
+    #: build of Keryx from before the key carries through a rewrite untouched.
     fields: tuple["Key", ...] = ()
+    prefix: str = ""
 
 
 @dataclass(frozen=True)
@@ -120,7 +124,7 @@ def _cluster_problem(values: dict[str, Any]) -> str | None:
 #: The access levels of a Slack app (`integrations.slack.Access`), lowest first.
 SLACK_ACCESS = ("announce", "converse", "read")
 #: What a Slack workspace is, beside its tokens: the first one at the top of the file, and
-#: each further one in a `[workspaces.NAME]` table of the same keys.
+#: each further one in a `[workspace-NAME]` table of the same keys.
 _SLACK_WORKSPACE = (
     Key("channel_id", "word", "", "Where it posts: your member id, or a channel's id"),
     Key("access", "choice", "announce", "What Keryx may see there", choices=SLACK_ACCESS),
@@ -144,7 +148,7 @@ PLUGINS: dict[str, Plugin] = {
             Key("mcp_server", "word", "",
                 "The user-scope MCP server in ~/.claude.json that gives subagents Slack"),
             Key("workspaces", "tables", {}, "Each further workspace, by the name you gave it",
-                fields=_SLACK_WORKSPACE),
+                fields=_SLACK_WORKSPACE, prefix="workspace-"),
         ),
         module="slack",
         problem=_slack_problem,
@@ -296,11 +300,32 @@ def clean(name: str, values: Mapping[str, Any]) -> dict[str, Any]:
     """
     spec = plugin(name)
     known = {key.name: key for key in spec.keys}
-    merged = defaults(name) | dict(values)
+    merged = defaults(name) | _gathered(spec, values)
     cleaned: dict[str, Any] = {}
     for key, value in merged.items():
         cleaned[key] = _clean(name, known[key], value) if key in known else value
     return cleaned
+
+
+def _gathered(spec: Plugin, values: Mapping[str, Any]) -> dict[str, Any]:
+    """`values` with each `[<prefix>NAME]` table of a file moved under its `tables` key.
+
+    In the file every named table is at the top level (`[workspace-work]`); in memory they
+    are one dict under the key (`values["workspaces"]["work"]`), which is also how a
+    caller hands them over. Both are taken, the top-level one winning.
+    """
+    gathered = dict(values)
+    for key in spec.keys:
+        if key.kind != "tables" or not key.prefix:
+            continue
+        nested = gathered.get(key.name)
+        tables = dict(nested) if isinstance(nested, Mapping) else nested
+        for item in [item for item in gathered if str(item).startswith(key.prefix)]:
+            if isinstance(gathered[item], Mapping) and isinstance(tables, dict | None):
+                tables = {**(tables or {}), str(item).removeprefix(key.prefix): gathered.pop(item)}
+        if tables is not None:
+            gathered[key.name] = tables
+    return gathered
 
 
 def _clean(name: str, key: Key, value: Any) -> Any:
@@ -354,14 +379,14 @@ def _clean_tables(name: str, key: Key, value: Any) -> dict[str, dict[str, Any]]:
     plain value somebody added by hand is carried through."""
     where = f"{name}: {key.name}"
     if not isinstance(value, Mapping):
-        raise PluginConfigError(f"{where} must be [{key.name}.NAME] tables")
+        raise PluginConfigError(f"{where} must be [{key.prefix}NAME] tables")
     known = {field.name: field for field in key.fields}
     tables: dict[str, dict[str, Any]] = {}
     for alias, table in value.items():
         alias = str(alias).strip().lower()
         if not WORD.fullmatch(alias) or not isinstance(table, Mapping):
             raise PluginConfigError(
-                f"{where}: each one is a [{key.name}.NAME] table, NAME a bare word"
+                f"{where}: each one is a [{key.prefix}NAME] table, NAME a bare word"
             )
         merged = {field.name: _copy(field.default) for field in key.fields} | dict(table)
         tables[alias] = {
@@ -429,7 +454,7 @@ def render_config(name: str, values: Mapping[str, Any]) -> str:
             )
         elif key.kind == "tables":
             filled[key.name] = "\n\n".join(
-                f"[{toml_key(key.name)}.{toml_key(alias)}]\n" + "\n".join(
+                f"[{toml_key(key.prefix + alias)}]\n" + "\n".join(
                     f"{toml_key(item)} = {toml_value(each)}" for item, each in table.items()
                 )
                 for alias, table in value.items()

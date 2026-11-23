@@ -437,19 +437,59 @@ def test_auth_logout_knows_only_google(home):
     assert run("auth", "logout", "claude").exit_code == 2
 
 
-def test_auth_logout_slack_is_refused_and_says_what_ends_it_instead(home, monkeypatch):
-    """There is no Slack grant Keryx could revoke: the token is the owner's own app's."""
+def test_auth_logout_slack_forgets_the_workspace_and_turns_the_plugin_off(home, monkeypatch):
+    """Nothing is revoked at Slack: the app is the owner's own, and the command says so."""
     fake_slack(monkeypatch)
     run("auth", "login", "slack", "--stdin", "--email", "sam@example.com",
         input="xoxb-very-secret\n")
 
     result = run("auth", "logout", "slack")
 
-    assert result.exit_code == 2
-    assert "sign out of one of: google" in result.output
-    assert "keryx plugins remove send_to_slack" in result.output
-    assert "keryx config unset SLACK_BOT_TOKEN" in result.output
-    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-very-secret"}  # nothing was touched
+    assert result.exit_code == 0, result.output
+    assert "Acme is disconnected" in result.output and "send_to_slack is off." in result.output
+    assert "api.slack.com/apps" in result.output
+    assert home._secrets() == {}
+    assert json.loads(run("auth", "status", "--json").output)["slack"]["state"] == "missing"
+
+
+def test_auth_logout_slack_takes_a_further_workspace_by_name(home, monkeypatch):
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--email", "sam@example.com", "--no-test",
+        input="xoxb-first-secret\n")
+    run("auth", "login", "slack", "--stdin", "--workspace", "work", "--email",
+        "sam@example.com", "--no-test", input="xoxb-work-secret\n")
+
+    refused = run("auth", "logout", "slack")
+    result = run("auth", "logout", "slack", "--workspace", "Work")
+
+    assert refused.exit_code == 1 and "work would be left with none" in refused.output
+    assert result.exit_code == 0, result.output
+    assert "work (Acme) is disconnected" in result.output
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-first-secret"}
+    assert run("auth", "logout", "slack", "--workspace", "work").exit_code == 1
+
+
+def test_auth_logout_workspace_is_slacks_alone_and_the_service_may_not(home, monkeypatch):
+    assert run("auth", "logout", "google", "--workspace", "work").exit_code == 2
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+    assert run("auth", "logout", "slack").exit_code == 1
+
+
+def test_auth_login_slack_owner_changes_whose_messages_are_acted_on_and_nothing_else(
+    home, tmp_path, monkeypatch
+):
+    asked = fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--access", "converse", "--email",
+        "sam@example.com", "--no-test", input="xapp-app-secret\nxoxb-bot-secret\n")
+    asked.clear()
+
+    result = run("auth", "login", "slack", "--owner", "U0NEWME", "--no-test")
+
+    assert result.exit_code == 0, result.output
+    assert "Only direct messages to the app from U0NEWME are acted on there" in result.output
+    text = (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
+    assert 'owner_id = "U0NEWME"' in text and 'channel_id = "U0OWNER"' in text
+    assert asked == ["auth", "open"]
 
 
 def test_auth_login_google_refuses_a_service_it_does_not_know(home):
@@ -489,7 +529,8 @@ def fake_slack(monkeypatch, *, workspace=None):
     """Slack as `keryx auth login slack` reaches it, answering without a network."""
     asked = []
     api = SlackApi(
-        auth_test=lambda token: asked.append("auth") or workspace or Workspace(team="Acme"),
+        auth_test=lambda token: asked.append("auth") or workspace
+        or Workspace(team="Acme", team_id="T0ACME"),
         lookup_by_email=lambda token, email: asked.append(email) or Member(user_id="U0OWNER"),
         post_text=lambda token, channel, text: asked.append(channel) or SlackResult(),
         open_connection=lambda token: asked.append("open") or Connection(url="wss://x/?t=1"),
@@ -557,7 +598,7 @@ def test_auth_login_slack_with_a_refused_token_says_slacks_code_and_saves_nothin
 @pytest.mark.parametrize(
     "flags",
     [("--stdin",), ("--email", "sam@example.com"), ("--no-test",), ("--access", "converse"),
-     ("--workspace", "work")],
+     ("--workspace", "work"), ("--owner", "U0OWNER")],
 )
 def test_slacks_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags):
     """Not ignored: `gmail --email …` silently doing nothing reads as having been taken."""
@@ -568,9 +609,8 @@ def test_slacks_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags
         result = run("auth", "login", name, *flags, input="xoxb-very-secret\n")
 
         assert result.exit_code == 2
-        assert "--stdin, --email, --no-test, --access and --workspace are for slack" in (
-            result.output
-        )
+        assert ("--stdin, --email, --no-test, --access, --workspace and --owner are for "
+                "slack") in result.output
     assert ran == [] and home.stored() == {}
 
 
@@ -708,7 +748,7 @@ def test_auth_login_slack_takes_a_level_and_its_tokens_one_to_a_line(home, tmp_p
     text = (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
     assert 'access = "converse"' in text and 'owner_id = "U0OWNER"' in text
     status = run("auth", "status").output
-    assert "default (Acme): converse level, hears your messages to the app" in status
+    assert "Acme: converse level, hears your messages to the app" in status
     assert "secret" not in status
 
 
@@ -723,7 +763,7 @@ def test_auth_login_slack_with_a_lower_level_is_done_at_once_and_asks_slack_noth
     result = run("auth", "login", "slack", "--access", "announce")
 
     assert result.exit_code == 0, result.output
-    assert "default is now at the announce level" in result.output
+    assert "Acme is now at the announce level" in result.output
     assert "SLACK_APP_TOKEN is forgotten" in result.output
     assert asked == [] and home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-bot-secret"}
 
@@ -742,9 +782,9 @@ def test_auth_login_slack_for_a_further_workspace_stores_it_under_its_name(
     assert "connected to the Acme workspace as work" in result.output
     assert home._secrets() == {
         "SLACK_BOT_TOKEN": "xoxb-first-secret",
-        "SLACK_WORKSPACE_TOKENS": {"work": {"bot": "xoxb-work-secret"}},
+        "SLACK_WORKSPACE_TOKENS": '{"work": {"bot": "xoxb-work-secret"}}',
     }
-    assert "[workspaces.work]" in (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
+    assert "[workspace-work]" in (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
 
 
 def test_slack_turned_off_with_its_token_kept_is_said_and_does_not_fail_auth_status(

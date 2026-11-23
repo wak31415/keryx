@@ -18,11 +18,13 @@ and none of them reaches Slack.
 level, the owner's member id there, where to post, and its tokens. The first is `default`:
 the top of the TOML and the three plain `SLACK_*_TOKEN` settings, which is exactly what a
 single-workspace install has always been, so it needs no migration. Each further one is a
-`[workspaces.NAME]` table and an entry of `SLACK_WORKSPACE_TOKENS`. Everything is sent to
+`[workspace-NAME]` table and an entry of `SLACK_WORKSPACE_TOKENS`. Everything is sent to
 `default` unless a workspace is named, and `workspaces(settings)` is the one place the two
-halves are joined.
+halves are joined (`on_file` under it, for Keryx's own half alone).
 """
 
+import contextlib
+import dataclasses
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -116,7 +118,11 @@ class SlackWorkspace:
 
     @property
     def label(self) -> str:
-        """The name to print: the owner's word for it, and Slack's when they differ."""
+        """The name the owner reads: Slack's own for the first workspace, and their word
+        for a further one with Slack's beside it. `name` stays the key everything is
+        stored under and the value `--workspace` takes."""
+        if self.name == DEFAULT:
+            return self.team or "your first workspace"
         return f"{self.name} ({self.team})" if self.team else self.name
 
     @property
@@ -126,8 +132,11 @@ class SlackWorkspace:
                 if not self.token(kind)]
         if not self.channel:
             gaps.append("somewhere to post")
-        if self.access.reaches(Access.CONVERSE) and not self.owner_id:
-            gaps.append("your member id")
+        if self.access.reaches(Access.CONVERSE):
+            if not self.owner_id:
+                gaps.append("your member id")
+            if not self.team_id:
+                gaps.append("the workspace's id")
         return tuple(gaps)
 
     @property
@@ -136,11 +145,20 @@ class SlackWorkspace:
 
     @property
     def listens(self) -> bool:
-        """Whether Keryx may hear the owner's direct messages to this app, and can."""
+        """Whether Keryx may hear the owner's direct messages to this app, and can.
+
+        Everything a message is held to has to be on file: without the owner's member id
+        or the workspace's id there is nothing to hold one to, so nothing is heard.
+        """
         return bool(
             self.access.reaches(Access.CONVERSE)
-            and self.token(BOT) and self.token(APP) and self.owner_id
+            and self.token(BOT) and self.token(APP) and self.owner_id and self.team_id
         )
+
+    @property
+    def reads(self) -> bool:
+        """Whether Keryx may read Slack as the owner here, and holds the token to."""
+        return bool(self.access.reaches(Access.READ) and self.token(USER))
 
     def poster(self, channel: str | None = None) -> SlackWebApi | None:
         """What posts as this workspace's bot, to `channel` or where it usually posts."""
@@ -160,31 +178,59 @@ def _workspace(name: str, values: Mapping[str, Any], tokens: Mapping[str, str]) 
     )
 
 
+def workspace_tokens(settings: Settings) -> dict[str, dict[str, str]]:
+    """Every further workspace's tokens: what `settings` started with, under what the
+    store holds now.
+
+    Read from the store each time it is asked, as the billing admin keys are, so a
+    workspace connected while the service runs can be posted to with no restart.
+    """
+    held = dict(settings.slack_workspace_tokens)
+    with contextlib.suppress(Exception):
+        held.update(plugins.current_settings().slack_workspace_tokens)
+    return held
+
+
+def on_file(
+    settings: Settings, name: str, values: Mapping[str, Any] | None = None
+) -> SlackWorkspace:
+    """Workspace `name` as it is saved: its part of the plugin's file, and Keryx's own
+    tokens for it. Never a named MCP server's token or channel, which `workspaces` lays
+    over the first workspace for sending and which connecting must not mistake for its own.
+    """
+    if values is None:
+        values = plugins.read_config(settings, TOOL)
+    if name == DEFAULT:
+        return _workspace(name, values, {
+            BOT: plugins.secret(settings, "slack_bot_token") or "",
+            APP: plugins.secret(settings, "slack_app_token") or "",
+            USER: plugins.secret(settings, "slack_user_token") or "",
+        })
+    return _workspace(
+        name, values["workspaces"].get(name) or {}, workspace_tokens(settings).get(name) or {}
+    )
+
+
 def workspaces(settings: Settings, values: Mapping[str, Any] | None = None) -> list[SlackWorkspace]:
     """Every workspace the plugin's settings name, `default` first, on or off.
 
-    `values` is the plugin's settings when the caller has read them already. The first
-    workspace's bot token and channel are the route's, so a named MCP server still fills
-    in for either; its other two tokens, and every token of a further workspace, are
-    Keryx's own.
+    `values` is the plugin's settings when the caller has read them already. This and
+    `on_file` under it are the only places a workspace's settings and its tokens are
+    joined. The first workspace's bot token and channel are the route's, so a named MCP
+    server still fills in for either; its other two tokens, and every token of a further
+    workspace, are Keryx's own.
     """
     if values is None:
         values = plugins.read_config(settings, TOOL)
     route = _route(settings, values)
-    first = _workspace(
-        DEFAULT,
-        {**values, "channel_id": route.channel},
-        {
-            BOT: route.token or "",
-            APP: plugins.secret(settings, "slack_app_token") or "",
-            USER: plugins.secret(settings, "slack_user_token") or "",
-        },
+    own = on_file(settings, DEFAULT, values)
+    first = dataclasses.replace(
+        own,
+        channel=route.channel or "",
+        tokens={**own.tokens, **({BOT: route.token} if route.token else {})},
     )
-    others = plugins.secret(settings, "slack_workspace_tokens") or {}
     return [first] + [
-        _workspace(name, table, others.get(name) or {})
-        for name, table in values["workspaces"].items()
-        if name != DEFAULT
+        on_file(settings, name, values) for name in values["workspaces"] if name != DEFAULT
     ]
 
 

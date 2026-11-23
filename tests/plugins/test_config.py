@@ -229,9 +229,10 @@ def test_each_further_slack_workspace_is_a_table_of_the_same_settings(settings):
     )
 
     data = tomllib.loads(path.read_text())
-    assert data["workspaces"] == {"work": {**work, "team_id": ""}}
+    # In the file each is a table of its own, one level deep.
+    assert data["workspace-work"] == {**work, "team_id": ""} and "workspaces" not in data
     assert (data["channel_id"], data["access"], data["owner_id"]) == ("U0ME", "announce", "")
-    assert "# Further workspaces, one [workspaces.NAME] table each" in path.read_text()
+    assert "# Further workspaces, one [workspace-NAME] table each" in path.read_text()
     assert plugins.read_config(settings, "send_to_slack")["workspaces"]["work"]["team"] == (
         "Acme Inc"
     )
@@ -247,7 +248,7 @@ def test_a_workspace_table_survives_a_rewrite_with_what_was_added_by_hand(settin
 
     data = tomllib.loads(path.read_text())
     assert data["access"] == "converse"
-    assert data["workspaces"]["work"] == {
+    assert data["workspace-work"] == {
         "channel_id": "", "access": "announce", "owner_id": "", "team": "", "team_id": "",
         "note": "mine",
     }
@@ -272,4 +273,68 @@ def test_a_table_is_never_set_from_a_command_line():
         plugins.command_line_values("send_to_slack", ["workspaces=work"])
     assert plugins.command_line_values("send_to_slack", ["access=converse"]) == {
         "access": "converse"
+    }
+
+
+# --- an older build rewriting the same file -------------------------------------------------
+
+
+def _older_write(path, **changes) -> None:
+    """What the build before workspaces does to `send_to_slack.toml` when it saves: its
+    two keys into its own template, every plain key it does not know under them, and every
+    table it does not know one level deep, each value as that build wrote a value."""
+    from keryx.config.files import _toml_string, toml_key, write_private
+
+    def value(item):
+        if isinstance(item, bool):
+            return "true" if item else "false"
+        if isinstance(item, int | float):
+            return repr(item)
+        return _toml_string(str(item))  # a table here is where the older build lost data
+
+    data = tomllib.loads(path.read_text()) | changes
+    known = ("channel_id", "mcp_server")
+    lines = [f"{key} = {value(data.get(key, ''))}" for key in known]
+    lines += [f"{toml_key(key)} = {value(item)}" for key, item in data.items()
+              if key not in known and not isinstance(item, dict)]
+    for table, items in data.items():
+        if isinstance(items, dict):
+            lines += ["", f"[{toml_key(table)}]"]
+            lines += [f"{toml_key(key)} = {value(item)}" for key, item in items.items()]
+    write_private(path, "\n".join(lines) + "\n")
+
+
+def test_an_older_build_rewriting_the_slack_file_keeps_every_workspace(settings):
+    """Several worktrees share one tools directory on this machine. A build from before
+    workspaces rewrites the file when its own setup saves a channel: the level, the owner
+    and every further workspace have to come through, in shapes the newer build reads."""
+    work = {"channel_id": "U0W", "access": "converse", "owner_id": "U0W", "team": "Acme Inc",
+            "team_id": "T0W"}
+    path = plugins.write_config(settings, "send_to_slack", {
+        "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team_id": "T0A",
+        "workspaces": {"work": work},
+    })
+    plugins.install(settings, "send_to_slack")
+
+    _older_write(path, channel_id="D0NEW")
+
+    assert plugins.is_on(settings, "send_to_slack")
+    values = plugins.read_config(settings, "send_to_slack")
+    assert values["workspaces"] == {"work": work}
+    assert (values["channel_id"], values["access"], values["owner_id"], values["team_id"]) == (
+        "D0NEW", "converse", "U0OWNER", "T0A"
+    )
+
+
+def test_a_file_with_workspaces_nested_under_one_table_is_still_read(settings):
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "send_to_slack").write_text(
+        'channel_id = "U0ME"\n\n[workspaces.work]\naccess = "converse"\n'
+        '\n[workspace-lab]\naccess = "read"\n'
+    )
+
+    values = plugins.read_config(settings, "send_to_slack")
+
+    assert {name: each["access"] for name, each in values["workspaces"].items()} == {
+        "work": "converse", "lab": "read",
     }

@@ -108,20 +108,10 @@ def test_the_header_is_a_comment():
     assert dump_toml({}, header="hello").startswith("# hello\n")
 
 
-def test_a_table_of_tables_is_one_header_each_and_reads_back_the_same():
-    """`SLACK_WORKSPACE_TOKENS` is the shape: a table per workspace under one key."""
-    data = {"A": 1, "T": {"work": {"bot": "b", "app": "a"}, "lab": {"bot": "c"}}, "E": {},
-            "M": {"plain": True, "sub": {"k": "v"}}}
-
-    text = dump_toml(data)
-
-    assert tomllib.loads(text) == data
-    assert "[T.work]" in text and "[T.lab]" in text and "\n[T]\n" not in text
-    assert text.index("[M]") < text.index("plain = true") < text.index("[M.sub]")
-    assert "[E]" in text
-
-
-def test_a_value_in_a_nested_table_cannot_end_its_line():
-    text = dump_toml({"T": {"w": {"bot": 'x"\n[evil]\nk = "v'}}})
-
-    assert tomllib.loads(text) == {"T": {"w": {"bot": 'x"\n[evil]\nk = "v'}}}
+def test_a_table_inside_a_table_is_refused_rather_than_written_as_text():
+    """Every build of Keryx on a machine rewrites these files, and one from before a
+    deeper shape would write it back as the text of a dict. So nothing deeper is written."""
+    with pytest.raises(TypeError, match="deeper than Keryx writes"):
+        dump_toml({"T": {"work": {"bot": "b"}}})
+    with pytest.raises(TypeError):
+        dump_toml({"T": {"a": {"b": {"c": "three deep"}}}})
