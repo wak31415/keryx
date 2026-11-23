@@ -456,11 +456,16 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   when it is missing or is a different sign-in, so the access token the server refreshes
   into that file is not thrown away. A sign-in also removes every other account's file
   from that directory, because the server's tools take an address as an argument. The
-  server is started with that directory and the address and **no OAuth client** (the
-  variables it would read one from are handed over empty, since it inherits Keryx's
-  environment): it can use the sign-in and can never start a consent flow of its own, so a
-  tool the token cannot serve is a plain error. Its credentials are in a file rather than
-  its environment, so they reach the redaction through `AgentContext.mcp_secrets`. Nothing
+  server is started with that directory and the address and **no OAuth client**: through
+  `env -u`, which takes the variables it would read one from out of its environment, since
+  it inherits Keryx's. Not by handing them over empty, which depends on what an agent's
+  CLI does with an empty value. So it can use the sign-in and can never start a consent
+  flow of its own, and a tool the token cannot serve is an error (on the way to which
+  2.6.0 starts its own callback listener on `localhost:8000` for the life of that task's
+  server, with nothing it could complete). The Claude SDK puts the whole server config on
+  the CLI's command line, so nothing in it may ever be a secret. Its credentials are in a
+  file rather than its environment, so they reach the redaction through
+  `AgentContext.mcp_secrets`. Nothing
   is attached at all until somebody has signed in, nor for a client with no secret, which
   the server's library would send empty.
 - **The pin, the scope table and the disabled tools move together.** `WORKSPACE_MCP_VERSION`

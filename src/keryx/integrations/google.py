@@ -120,9 +120,11 @@ MCP_SCOPED_TOOLS: dict[str, tuple[str, str]] = {
 }
 #: The server's own consent flow. Keryx signs in; the server only ever uses the result.
 MCP_NEVER_TOOLS = ("start_google_auth",)
-#: Where that release looks for an OAuth client of its own. Each is handed over empty,
-#: which it reads as unset, so one in Keryx's own environment never reaches it.
-MCP_BLANKED_ENV = (
+#: Where that release looks for an OAuth client of its own. The server is started through
+#: `env -u NAME …`, which takes each out of its environment whatever the parent's holds:
+#: it inherits Keryx's, where the owner may keep a client. Not left to an empty value in
+#: the server's `env`, which an agent's CLI is free to drop on the way.
+MCP_UNSET_ENV = (
     "GOOGLE_OAUTH_CLIENT_ID",
     "GOOGLE_OAUTH_CLIENT_SECRET",
     "GOOGLE_CLIENT_SECRET_PATH",
@@ -466,24 +468,27 @@ def mcp_server(settings: Settings) -> McpServer | None:
         if service in services and scope not in held
     ]
     args = [
-        "--from", f"workspace-mcp=={WORKSPACE_MCP_VERSION}", "workspace-mcp",
+        *(part for name in MCP_UNSET_ENV for part in ("-u", name)),
+        "uvx", "--from", f"workspace-mcp=={WORKSPACE_MCP_VERSION}", "workspace-mcp",
         "--tools", *services,
         "--transport", "stdio",
         "--single-user",
         "--disabled-tools", *MCP_NEVER_TOOLS, *disabled,
     ]  # fmt: skip
     # No OAuth client and no redirect address: with neither, a tool the token cannot serve
-    # is a plain error, never a consent flow started behind a task nobody is watching. The
-    # server inherits Keryx's environment, so a client the owner keeps there is blanked.
+    # is an error, never a consent flow started behind a task nobody is watching. (On the
+    # way to that error this release starts its own callback listener on localhost:8000,
+    # for as long as the task's server lives; with no client it can complete nothing.)
+    # Nothing here is a secret, and must not be: an agent's CLI is handed this whole
+    # config on its command line.
     env = {
         "WORKSPACE_MCP_CREDENTIALS_DIR": str(path.parent),
         "USER_GOOGLE_EMAIL": token.email,
-        **dict.fromkeys(MCP_BLANKED_ENV, ""),
     }
     stored = _read_json(path) or {}
     secrets = [token.refresh_token, token.client_secret, stored.get("token")]
     return McpServer(
-        config={"type": "stdio", "command": "uvx", "args": args, "env": env},
+        config={"type": "stdio", "command": "env", "args": args, "env": env},
         services=services,
         secrets=tuple(dict.fromkeys(s for s in secrets if isinstance(s, str) and s)),
         older=older,

@@ -411,11 +411,20 @@ email answers on a call. What it leaves, and what protects it:
   time. A sign-in that Keryx refuses (nothing granted, an unexpected account) is revoked
   the same way rather than left at Google with nobody holding it.
 - **The agents' tools cannot sign in.** The server is started with the token's location
-  and no OAuth client (one set in Keryx's own environment is blanked on the way), so it
-  can refresh and use what you granted and can never open a consent screen of its own
-  behind a task nobody is watching. Tools that would need a wider scope are switched off
-  rather than left to fail. Signing in as a different account removes the previous
-  account's copy, because those tools would still accept its address.
+  and no OAuth client (one set in Keryx's own environment is taken out on the way, by
+  `env -u`), so it can refresh and use what you granted and can never open a consent
+  screen of its own behind a task nobody is watching. Tools that would need a wider scope
+  are switched off rather than left to fail. Signing in as a different account removes the
+  previous account's copy, because those tools would still accept its address. What it is
+  started with is a path and your address, and no credential: a coding agent's command
+  line is where that configuration ends up.
+- **A Google tool that cannot be served still opens a port.** When a tool finds no usable
+  credential (the sign-in was revoked, say), `workspace-mcp` 2.6.0 first starts its own
+  sign-in listener on `localhost:8000` and only then fails for want of a client. The
+  agent gets an error and is told to send you to `keryx auth login google`. The listener
+  stays until that task's server exits. With no client it has no sign-in to complete, but
+  it is a port another user of the machine can reach for that long, and Keryx cannot
+  switch it off in that release.
 - **Keryx's own Google client, when a release ships one, is not a secret.** It is a
   "Desktop app" client, and its client secret is a file inside the package that anyone
   can read. Google says so of this kind of client in its own words: "In this context, the

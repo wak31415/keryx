@@ -469,14 +469,10 @@ async def test_google_is_handed_over_from_the_sign_in_with_no_credential_in_sigh
     await open_session(settings, codex)
 
     google = codex.started[0]["config"]["mcp_servers"]["google"]
-    assert google["command"] == "uvx" and "workspace-mcp==2.6.0" in google["args"]
-    assert google["env_vars"] == [
-        "GOOGLE_CLIENT_SECRETS", "GOOGLE_CLIENT_SECRET_PATH", "GOOGLE_OAUTH_CLIENT_ID",
-        "GOOGLE_OAUTH_CLIENT_SECRET", "USER_GOOGLE_EMAIL", "WORKSPACE_MCP_CREDENTIALS_DIR",
-    ]  # fmt: skip
+    assert google["command"] == "env" and "workspace-mcp==2.6.0" in google["args"]
+    assert google["args"][:2] == ["-u", "GOOGLE_OAUTH_CLIENT_ID"]
+    assert google["env_vars"] == ["USER_GOOGLE_EMAIL", "WORKSPACE_MCP_CREDENTIALS_DIR"]
     assert codex.env["WORKSPACE_MCP_CREDENTIALS_DIR"] == str(settings.data_dir / "google")
-    # Every place the server looks for an OAuth client of its own is handed over empty.
-    assert codex.env["GOOGLE_OAUTH_CLIENT_ID"] == codex.env["GOOGLE_OAUTH_CLIENT_SECRET"] == ""
     # The credential is in a file the server reads: not the config, and not the environment.
     handed = json.dumps(codex.started[0]) + json.dumps(codex.env)
     assert token.refresh_token not in handed and token.client_secret not in handed

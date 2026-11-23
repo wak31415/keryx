@@ -336,9 +336,14 @@ def test_the_server_is_pinned_and_started_on_what_is_connected_with_no_client(se
 
     assert server.config == {
         "type": "stdio",
-        "command": "uvx",
+        # Started through `env -u`, which takes an OAuth client out of the server's
+        # environment whatever its parent's holds, and whatever a client does with an
+        # empty value in a server's `env`.
+        "command": "env",
         "args": [
-            "--from", "workspace-mcp==2.6.0", "workspace-mcp",
+            "-u", "GOOGLE_OAUTH_CLIENT_ID", "-u", "GOOGLE_OAUTH_CLIENT_SECRET",
+            "-u", "GOOGLE_CLIENT_SECRET_PATH", "-u", "GOOGLE_CLIENT_SECRETS",
+            "uvx", "--from", "workspace-mcp==2.6.0", "workspace-mcp",
             "--tools", "gmail", "calendar", "drive", "docs", "sheets", "slides",
             "--transport", "stdio",
             "--single-user",
@@ -350,12 +355,6 @@ def test_the_server_is_pinned_and_started_on_what_is_connected_with_no_client(se
         "env": {
             "WORKSPACE_MCP_CREDENTIALS_DIR": str(settings.data_dir / "google"),
             "USER_GOOGLE_EMAIL": "ada@example.com",
-            # Blanked, not absent: the server inherits Keryx's environment, and a client
-            # the owner keeps there must not reach it.
-            "GOOGLE_OAUTH_CLIENT_ID": "",
-            "GOOGLE_OAUTH_CLIENT_SECRET": "",
-            "GOOGLE_CLIENT_SECRET_PATH": "",
-            "GOOGLE_CLIENT_SECRETS": "",
         },
     }  # fmt: skip
     assert server.services == ALL and not server.older
@@ -383,13 +382,20 @@ def test_the_servers_credentials_are_what_gets_redacted(settings):
 
 
 def test_the_server_is_never_handed_an_oauth_client_even_from_keryxs_environment(settings):
+    """Every variable that release reads a client from is unset on the way in, in the
+    command itself: nothing here relies on how an agent's CLI passes an empty value on."""
     signed_in(settings)
 
-    env = google.mcp_server(settings).config["env"]
+    config = google.mcp_server(settings).config
 
-    assert {name: env[name] for name in google.MCP_BLANKED_ENV} == dict.fromkeys(
-        ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET_PATH",
-         "GOOGLE_CLIENT_SECRETS"], "")  # fmt: skip
+    unset = config["args"][: config["args"].index("uvx")]
+    assert config["command"] == "env"
+    assert unset == [part for name in google.MCP_UNSET_ENV for part in ("-u", name)]
+    assert set(google.MCP_UNSET_ENV) == {
+        "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET_PATH",
+        "GOOGLE_CLIENT_SECRETS",
+    }  # fmt: skip
+    assert not set(config["env"]) & set(google.MCP_UNSET_ENV)
 
 
 def test_a_client_with_no_secret_gets_no_server(settings):
@@ -442,8 +448,10 @@ def test_an_older_install_keeps_its_tools_and_its_file_untouched(settings):
     assert args[args.index("--tools") + 1 : args.index("--transport")] == ["gmail", "calendar"]
     # Its scopes cover filters and whole calendars, so those tools stay.
     assert args[args.index("--disabled-tools") + 1 :] == ["start_google_auth"]
-    assert server.config["env"]["WORKSPACE_MCP_CREDENTIALS_DIR"] == str(path.parent)
-    assert server.config["env"]["USER_GOOGLE_EMAIL"] == "ada@example.com"
+    assert server.config["env"] == {
+        "WORKSPACE_MCP_CREDENTIALS_DIR": str(path.parent),
+        "USER_GOOGLE_EMAIL": "ada@example.com",
+    }
     assert server.secrets == ("1//old-refresh", "GOCSPX-mine", "ya29.old")
     assert path.read_text() == before and google.read_token(settings) is None
 

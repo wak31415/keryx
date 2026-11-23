@@ -32,7 +32,7 @@ def test_the_google_server_config_is_none_until_somebody_signs_in(settings):
     sign_in_to_google(settings)
 
     config = google_mcp_server_config(settings)
-    assert config["command"] == "uvx" and "workspace-mcp==2.6.0" in config["args"]
+    assert config["command"] == "env" and "workspace-mcp==2.6.0" in config["args"]
 
 
 def make_task(**overrides) -> Task:
