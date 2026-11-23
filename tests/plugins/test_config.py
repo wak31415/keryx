@@ -62,6 +62,14 @@ def test_keys_added_by_hand_are_carried_through(settings):
         ("cluster_stats", {"timeout_s": 0}),
         ("cluster_stats", {"guard": "/bin/x\n[clusters]"}),
         ("cluster_stats", {"clusters": ["alpha"]}),
+        ("send_to_slack", {"access": "everything"}),
+        ("send_to_slack", {"owner_id": "U1 or U2"}),
+        ("send_to_slack", {"team": "Acme\n[workspaces.evil]"}),
+        ("send_to_slack", {"workspaces": ["work"]}),
+        ("send_to_slack", {"workspaces": {"work": "U1"}}),
+        ("send_to_slack", {"workspaces": {"my work": {}}}),
+        ("send_to_slack", {"workspaces": {"work": {"access": "all"}}}),
+        ("send_to_slack", {"workspaces": {"work": {"channel_id": 'U1"\nx = "y'}}}),
     ],
 )
 def test_a_value_that_is_not_its_kind_is_refused_before_anything_is_written(
@@ -209,3 +217,59 @@ def test_a_secret_or_a_stranger_is_refused_with_what_to_do(name, assignment, say
         plugins.command_line_values(name, [assignment])
 
     assert says in str(raised.value)
+
+
+# --- a table of named tables: the Slack workspaces ----------------------------------------
+
+
+def test_each_further_slack_workspace_is_a_table_of_the_same_settings(settings):
+    work = {"access": "converse", "owner_id": "U0WORK", "team": "Acme Inc", "channel_id": "U0WORK"}
+    path = plugins.write_config(
+        settings, "send_to_slack", {"channel_id": "U0ME", "workspaces": {"Work": work}}
+    )
+
+    data = tomllib.loads(path.read_text())
+    assert data["workspaces"] == {"work": {**work, "team_id": ""}}
+    assert (data["channel_id"], data["access"], data["owner_id"]) == ("U0ME", "announce", "")
+    assert "# Further workspaces, one [workspaces.NAME] table each" in path.read_text()
+    assert plugins.read_config(settings, "send_to_slack")["workspaces"]["work"]["team"] == (
+        "Acme Inc"
+    )
+
+
+def test_a_workspace_table_survives_a_rewrite_with_what_was_added_by_hand(settings):
+    path = plugins.write_config(
+        settings, "send_to_slack", {"channel_id": "U0ME", "workspaces": {"work": {}}}
+    )
+    path.write_text(path.read_text() + 'note = "mine"\n')
+
+    plugins.write_config(settings, "send_to_slack", {"access": "converse"})
+
+    data = tomllib.loads(path.read_text())
+    assert data["access"] == "converse"
+    assert data["workspaces"]["work"] == {
+        "channel_id": "", "access": "announce", "owner_id": "", "team": "", "team_id": "",
+        "note": "mine",
+    }
+
+
+def test_a_slack_file_from_before_workspaces_reads_as_one_at_announce(settings):
+    """What every existing install has: two keys, and nothing to migrate."""
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "send_to_slack").write_text(
+        'channel_id = "D123"\nmcp_server = ""\n'
+    )
+
+    values = plugins.read_config(settings, "send_to_slack")
+
+    assert values == {"channel_id": "D123", "access": "announce", "owner_id": "", "team": "",
+                      "team_id": "", "mcp_server": "", "workspaces": {}}
+    assert plugins.install_problem(settings, "send_to_slack") is None
+
+
+def test_a_table_is_never_set_from_a_command_line():
+    with pytest.raises(plugins.PluginConfigError, match="has no setting 'workspaces'"):
+        plugins.command_line_values("send_to_slack", ["workspaces=work"])
+    assert plugins.command_line_values("send_to_slack", ["access=converse"]) == {
+        "access": "converse"
+    }

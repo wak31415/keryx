@@ -169,8 +169,9 @@ def read_toml(path: Path) -> dict[str, Any]:
 def dump_toml(data: dict[str, Any], header: str = "") -> str:
     """`data` as TOML: scalars and arrays first, then one table per nested dict.
 
-    Only the shapes settings take — strings, numbers, booleans, arrays of those, and one
-    level of tables — which is why this is twenty lines rather than a dependency.
+    Only the shapes settings take — strings, numbers, booleans, arrays of those, and tables
+    one or two deep (`[SLACK_WORKSPACE_TOKENS.work]`) — which is why this is thirty lines
+    rather than a dependency.
     """
     lines = [f"# {line}".rstrip() for line in header.splitlines()]
     if lines:
@@ -180,8 +181,15 @@ def dump_toml(data: dict[str, Any], header: str = "") -> str:
         if key not in tables:
             lines.append(f"{toml_key(key)} = {toml_value(value)}")
     for name, table in tables.items():
-        lines += ["", f"[{toml_key(name)}]"]
-        lines += [f"{toml_key(key)} = {toml_value(value)}" for key, value in table.items()]
+        inner = {key: value for key, value in table.items() if isinstance(value, dict)}
+        plain = [f"{toml_key(key)} = {toml_value(value)}" for key, value in table.items()
+                 if key not in inner]
+        # A table that only holds tables needs no header of its own, unless it is empty.
+        if plain or not inner:
+            lines += ["", f"[{toml_key(name)}]", *plain]
+        for key, value in inner.items():
+            lines += ["", f"[{toml_key(name)}.{toml_key(key)}]"]
+            lines += [f"{toml_key(k)} = {toml_value(v)}" for k, v in value.items()]
     return "\n".join(lines).strip("\n") + "\n"
 
 

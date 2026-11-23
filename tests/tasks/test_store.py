@@ -633,6 +633,45 @@ async def test_a_v5_database_gains_tokens_and_cost_and_keeps_its_rows(tmp_path):
         await store.close()
 
 
+async def test_a_v6_database_gains_the_slack_thread_and_keeps_its_rows(tmp_path):
+    """v7 adds where a task lives on Slack. Rows from before live nowhere: NULL."""
+    path = tmp_path / "tasks.db"
+    _v2_database(path)
+    conn = sqlite3.connect(path, isolation_level=None)
+    for column in (*_V3_COLUMNS, *_V4_COLUMNS, *_V5_COLUMNS, *store_module._V6_COLUMNS):
+        conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+    conn.execute("UPDATE schema_version SET version = 6")
+    conn.close()
+
+    store = TaskStore(path)
+    try:
+        tasks = await store.list()
+        assert {task.description for task in tasks} == {"old finished work", "old queued work"}
+        assert {(t.slack_workspace, t.slack_channel, t.slack_thread_ts, t.slack_last_ts)
+                for t in tasks} == {(None, None, None, None)}
+        await store.update(tasks[0].id, slack_workspace="default", slack_channel="D1",
+                           slack_thread_ts="17.000100")
+        found = await store.find_by_slack_thread("default", "D1", "17.000100")
+        assert found is not None and found.id == tasks[0].id
+    finally:
+        await store.close()
+
+
+async def test_a_task_is_found_by_the_slack_thread_it_lives_in(store):
+    kept = await store.create(Task(id=None, kind=TaskKind.AGENT, description="in a thread",
+                                   slack_workspace="work", slack_channel="D1",
+                                   slack_thread_ts="17.000100"))
+    await store.create(Task(id=None, kind=TaskKind.AGENT, description="housekeeping",
+                            internal=True, slack_workspace="work", slack_channel="D1",
+                            slack_thread_ts="17.000100"))
+
+    assert (await store.find_by_slack_thread("work", "D1", "17.000100")).id == kept.id
+    # The same timestamp in another conversation, or another workspace, is another thread.
+    assert await store.find_by_slack_thread("work", "D2", "17.000100") is None
+    assert await store.find_by_slack_thread("default", "D1", "17.000100") is None
+    assert await store.find_by_slack_thread("work", "D1", "17.000200") is None
+
+
 # --- a database that has run ahead of us -----------------------------------
 
 

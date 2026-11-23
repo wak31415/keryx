@@ -44,7 +44,7 @@ from keryx.agents.registry import resolve_model
 from keryx.config import Settings, secure_file
 from keryx.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
 from keryx.projects import discover_projects
-from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.models import SlackThread, Task, TaskKind, TaskStatus
 from keryx.tasks.store import MAX_UNREPORTED, TaskStore
 
 log = logging.getLogger("keryx.tasks.manager")
@@ -309,6 +309,7 @@ class TaskManager:
         cwd: str | None = None,
         internal: bool = False,
         agent: str | None = None,
+        slack: SlackThread | None = None,
     ) -> Task:
         """Create a `queued` task and schedule it.
 
@@ -326,6 +327,10 @@ class TaskManager:
 
         `agent` is the coding agent to run it on; None is `AGENT_BACKEND`. It is fixed for
         the life of the task, and one that is not enabled raises `AgentUnavailableError`.
+
+        `slack` is the thread the request was typed in, when it was typed to the app on
+        Slack: the row is born knowing it, so the report is posted there and the same
+        message delivered twice finds the task it already started.
         """
         agent = agent or self._settings.agent_backend
         if agent not in self._settings.enabled_agents:
@@ -357,6 +362,10 @@ class TaskManager:
                 origin_caller=origin_caller,
                 origin_session_id=origin_session_id,
                 internal=internal,
+                slack_workspace=slack.workspace if slack else None,
+                slack_channel=slack.channel if slack else None,
+                slack_thread_ts=slack.ts if slack else None,
+                slack_last_ts=slack.ts if slack else None,
             )
         )
         self._done_events[created.id] = asyncio.Event()
@@ -649,6 +658,14 @@ class TaskManager:
     async def search(self, terms: Sequence[str], *, limit: int = 5) -> list[Task]:
         """Tasks whose description or summary contains every term, newest first."""
         return await self._store.search(terms, limit=limit)
+
+    async def task_in_slack_thread(self, thread: SlackThread) -> Task | None:
+        """The task that lives in `thread`, if one does."""
+        return await self._store.find_by_slack_thread(thread.workspace, thread.channel, thread.ts)
+
+    async def heard_on_slack(self, task_id: int, ts: str) -> None:
+        """Record the latest message in a task's Slack thread that was acted on."""
+        await self._store.update(task_id, slack_last_ts=ts)
 
     async def tasks_for_session(self, session_id: str) -> list[Task]:
         """The tasks one voice session dispatched, oldest first."""

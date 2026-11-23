@@ -9,20 +9,48 @@ from their address, and Slack delivers that to their messages from the app.
 
 Four things besides the tool want Slack, and each asks `slack_route(settings)` rather than
 reading a setting: the PIN-lockout alert (`notify.pin_alert`, at alert time, so turning
-Slack on needs no restart), every finished task's report (`notify.notifier`, the same way),
-the subagent's Slack paragraph (`agents.base`), and the MCP
+Slack on needs no restart), every finished task's report (`notify.notifier`, the same way,
+through `report_route`), the subagent's Slack paragraph (`agents.base`), and the MCP
 server a Codex subagent is handed (`agents.codex`). With the plugin off there is no route,
 and none of them reaches Slack.
+
+**Workspaces.** One Slack app per workspace, each a `SlackWorkspace`: a name, an access
+level, the owner's member id there, where to post, and its tokens. The first is `default`:
+the top of the TOML and the three plain `SLACK_*_TOKEN` settings, which is exactly what a
+single-workspace install has always been, so it needs no migration. Each further one is a
+`[workspaces.NAME]` table and an entry of `SLACK_WORKSPACE_TOKENS`. Everything is sent to
+`default` unless a workspace is named, and `workspaces(settings)` is the one place the two
+halves are joined.
 """
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from keryx import plugins
 from keryx.config import Settings
-from keryx.integrations.slack import SlackSender, SlackWebApi, slack_credentials
+from keryx.config.settings import SLACK_DEFAULT_WORKSPACE
+from keryx.integrations.slack import (
+    APP,
+    BOT,
+    USER,
+    Access,
+    SlackPoster,
+    SlackSender,
+    SlackWebApi,
+    slack_credentials,
+    token_kinds,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from keryx.tasks.models import Task
 
 TOOL = "send_to_slack"
+#: The first workspace's name: the one the top of the TOML describes.
+DEFAULT = SLACK_DEFAULT_WORKSPACE
+#: Where a task's request came from when it was typed to the app on Slack.
+SLACK_CHANNEL = "slack"
 
 FAILED_MESSAGE = "Slack would not take the message; tell them it did not go through"
 
@@ -63,6 +91,152 @@ def slack_sender(settings: Settings) -> SlackSender | None:
     """What the notifiers post with: None while the plugin is off or has no token."""
     route = slack_route(settings)
     return route.sender() if route is not None else None
+
+
+# --- workspaces --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SlackWorkspace:
+    """One workspace's Slack app as Keryx holds it: its settings and its tokens."""
+
+    name: str
+    access: Access = Access.ANNOUNCE
+    #: Where it posts: the owner's member id, or a channel's id.
+    channel: str = ""
+    #: The owner's member id there: the only member whose messages are acted on.
+    owner_id: str = ""
+    team: str = ""
+    team_id: str = ""
+    #: The tokens there are, by kind (`bot`, `app`, `user`).
+    tokens: Mapping[str, str] = field(default_factory=dict, repr=False)
+
+    def token(self, kind: str) -> str | None:
+        return self.tokens.get(kind) or None
+
+    @property
+    def label(self) -> str:
+        """The name to print: the owner's word for it, and Slack's when they differ."""
+        return f"{self.name} ({self.team})" if self.team else self.name
+
+    @property
+    def missing(self) -> tuple[str, ...]:
+        """What its level needs that is not there, in words to print; empty when whole."""
+        gaps = [f"its {kind} token" for kind in token_kinds(self.access)
+                if not self.token(kind)]
+        if not self.channel:
+            gaps.append("somewhere to post")
+        if self.access.reaches(Access.CONVERSE) and not self.owner_id:
+            gaps.append("your member id")
+        return tuple(gaps)
+
+    @property
+    def sends(self) -> bool:
+        return bool(self.token(BOT) and self.channel)
+
+    @property
+    def listens(self) -> bool:
+        """Whether Keryx may hear the owner's direct messages to this app, and can."""
+        return bool(
+            self.access.reaches(Access.CONVERSE)
+            and self.token(BOT) and self.token(APP) and self.owner_id
+        )
+
+    def poster(self, channel: str | None = None) -> SlackWebApi | None:
+        """What posts as this workspace's bot, to `channel` or where it usually posts."""
+        token, where = self.token(BOT), channel or self.channel
+        return SlackWebApi(token, where) if token and where else None
+
+
+def _workspace(name: str, values: Mapping[str, Any], tokens: Mapping[str, str]) -> SlackWorkspace:
+    return SlackWorkspace(
+        name=name,
+        access=Access(values.get("access") or Access.ANNOUNCE),
+        channel=str(values.get("channel_id") or ""),
+        owner_id=str(values.get("owner_id") or ""),
+        team=str(values.get("team") or ""),
+        team_id=str(values.get("team_id") or ""),
+        tokens={kind: token for kind, token in tokens.items() if token},
+    )
+
+
+def workspaces(settings: Settings, values: Mapping[str, Any] | None = None) -> list[SlackWorkspace]:
+    """Every workspace the plugin's settings name, `default` first, on or off.
+
+    `values` is the plugin's settings when the caller has read them already. The first
+    workspace's bot token and channel are the route's, so a named MCP server still fills
+    in for either; its other two tokens, and every token of a further workspace, are
+    Keryx's own.
+    """
+    if values is None:
+        values = plugins.read_config(settings, TOOL)
+    route = _route(settings, values)
+    first = _workspace(
+        DEFAULT,
+        {**values, "channel_id": route.channel},
+        {
+            BOT: route.token or "",
+            APP: plugins.secret(settings, "slack_app_token") or "",
+            USER: plugins.secret(settings, "slack_user_token") or "",
+        },
+    )
+    others = plugins.secret(settings, "slack_workspace_tokens") or {}
+    return [first] + [
+        _workspace(name, table, others.get(name) or {})
+        for name, table in values["workspaces"].items()
+        if name != DEFAULT
+    ]
+
+
+def connected(settings: Settings) -> list[SlackWorkspace]:
+    """The workspaces Keryx can post to now: none while the plugin is off."""
+    if not plugins.is_on(settings, TOOL):
+        return []
+    return [each for each in workspaces(settings) if each.sends]
+
+
+def workspace(settings: Settings, name: str) -> SlackWorkspace | None:
+    """The connected workspace called `name`, as its settings stand now."""
+    return next((each for each in connected(settings) if each.name == name), None)
+
+
+@dataclass(frozen=True)
+class ReportRoute:
+    """Where one task's report goes on Slack, and how."""
+
+    workspace: str
+    poster: SlackPoster
+    #: The thread it is a reply in. None is a message of its own, whose timestamp then
+    #: becomes the task's thread.
+    thread_ts: str | None = None
+    #: Whether a reply is also shown in the conversation itself.
+    broadcast: bool = False
+
+
+def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
+    """Where `task`'s report goes: its own thread once it has one, else the first
+    workspace's usual destination. None while the plugin is off or has no token.
+
+    A task has a thread from the moment it is asked for on Slack, or from its first report.
+    Every later report is a reply there, so one task stays one thread and a reply in it
+    always finds the task. A reply under a report Keryx posted is also shown in the
+    conversation, as each report always was; one under the owner's own message is not,
+    since they are in that thread already.
+    """
+    found = connected(settings)
+    if task.slack_channel and task.slack_thread_ts:
+        home = next((each for each in found if each.name == task.slack_workspace), None)
+        poster = home.poster(task.slack_channel) if home is not None else None
+        if poster is not None:
+            return ReportRoute(
+                workspace=home.name,
+                poster=poster,
+                thread_ts=task.slack_thread_ts,
+                broadcast=task.origin_channel != SLACK_CHANNEL,
+            )
+    first = next((each for each in found if each.name == DEFAULT), None)
+    poster = first.poster() if first is not None else None
+    return ReportRoute(workspace=DEFAULT, poster=poster) if poster is not None else None
 
 
 def description(owner: str) -> str:

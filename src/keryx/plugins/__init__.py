@@ -49,7 +49,9 @@ OFF_SUFFIX = ".toml.off"
 #: can always tell that there were more. `integrations.calendar` holds the same number.
 MAX_EVENTS_SETTING = 100
 
-Kind = Literal["word", "choice", "number", "path", "table"]
+Kind = Literal["word", "choice", "number", "path", "line", "table", "tables"]
+#: The kinds that are a TOML table rather than one line: never set with `--set KEY=VALUE`.
+TABLE_KINDS = ("table", "tables")
 
 
 class PluginConfigError(ValueError):
@@ -69,6 +71,8 @@ class Key:
     positive: bool = False
     #: For a number: the most it may be, when there is a most.
     maximum: float | None = None
+    #: For `tables` (a table of named tables, `[workspaces.work]`): what each one holds.
+    fields: tuple["Key", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,19 @@ def _cluster_problem(values: dict[str, Any]) -> str | None:
     return None if values["clusters"] else "[clusters] names no host"
 
 
+#: The access levels of a Slack app (`integrations.slack.Access`), lowest first.
+SLACK_ACCESS = ("announce", "converse", "read")
+#: What a Slack workspace is, beside its tokens: the first one at the top of the file, and
+#: each further one in a `[workspaces.NAME]` table of the same keys.
+_SLACK_WORKSPACE = (
+    Key("channel_id", "word", "", "Where it posts: your member id, or a channel's id"),
+    Key("access", "choice", "announce", "What Keryx may see there", choices=SLACK_ACCESS),
+    Key("owner_id", "word", "",
+        "Your own member id: only direct messages from it are ever acted on"),
+    Key("team", "line", "", "The workspace's name, as Slack gave it"),
+    Key("team_id", "word", "", "The workspace's id, as Slack gave it"),
+)
+
 PLUGINS: dict[str, Plugin] = {
     "send_to_slack": Plugin(
         name="send_to_slack",
@@ -120,11 +137,14 @@ PLUGINS: dict[str, Plugin] = {
         summary='"Send me that on Slack" posts to your DM; PIN lockouts are posted there too',
         default=True,
         important=("channel_id",),
-        secrets=("SLACK_BOT_TOKEN",),
+        secrets=("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_USER_TOKEN",
+                 "SLACK_WORKSPACE_TOKENS"),
         keys=(
-            Key("channel_id", "word", "", "Where it posts: your member id, or a channel's id"),
+            *_SLACK_WORKSPACE,
             Key("mcp_server", "word", "",
                 "The user-scope MCP server in ~/.claude.json that gives subagents Slack"),
+            Key("workspaces", "tables", {}, "Each further workspace, by the name you gave it",
+                fields=_SLACK_WORKSPACE),
         ),
         module="slack",
         problem=_slack_problem,
@@ -308,11 +328,13 @@ def _clean(name: str, key: Key, value: Any) -> Any:
         if key.maximum is not None and number > key.maximum:
             raise PluginConfigError(f"{where} must be {key.maximum:g} or less")
         return int(number) if number.is_integer() and isinstance(key.default, int) else number
-    if key.kind == "path":
+    if key.kind in ("path", "line"):
         text = "" if value is None else str(value).strip()
         if any(char in text for char in "\n\r\0"):
             raise PluginConfigError(f"{where} must be one line")
         return text
+    if key.kind == "tables":
+        return _clean_tables(name, key, value)
     # A table: `{alias: partition}`, both bare words, the alias lower-cased because it is
     # matched against speech.
     if not isinstance(value, Mapping):
@@ -324,6 +346,31 @@ def _clean(name: str, key: Key, value: Any) -> Any:
             raise PluginConfigError(f"{where}: each name and value must be a bare word")
         table[alias] = partition
     return table
+
+
+def _clean_tables(name: str, key: Key, value: Any) -> dict[str, dict[str, Any]]:
+    """`{name: {field: value}}`: each name a bare word, lower-cased because it may be
+    matched against speech, and each table its fields over their defaults, validated. A
+    plain value somebody added by hand is carried through."""
+    where = f"{name}: {key.name}"
+    if not isinstance(value, Mapping):
+        raise PluginConfigError(f"{where} must be [{key.name}.NAME] tables")
+    known = {field.name: field for field in key.fields}
+    tables: dict[str, dict[str, Any]] = {}
+    for alias, table in value.items():
+        alias = str(alias).strip().lower()
+        if not WORD.fullmatch(alias) or not isinstance(table, Mapping):
+            raise PluginConfigError(
+                f"{where}: each one is a [{key.name}.NAME] table, NAME a bare word"
+            )
+        merged = {field.name: _copy(field.default) for field in key.fields} | dict(table)
+        tables[alias] = {
+            item: _clean(f"{name}: {key.name}.{alias}", known[item], each)
+            if item in known else each
+            for item, each in merged.items()
+            if item in known or not isinstance(each, Mapping)
+        }
+    return tables
 
 
 def read_config_file(name: str, path: Path) -> dict[str, Any]:
@@ -379,6 +426,13 @@ def render_config(name: str, values: Mapping[str, Any]) -> str:
         if key.kind == "table":
             filled[key.name] = "\n".join(
                 f"{toml_key(alias)} = {toml_value(partition)}" for alias, partition in value.items()
+            )
+        elif key.kind == "tables":
+            filled[key.name] = "\n\n".join(
+                f"[{toml_key(key.name)}.{toml_key(alias)}]\n" + "\n".join(
+                    f"{toml_key(item)} = {toml_value(each)}" for item, each in table.items()
+                )
+                for alias, table in value.items()
             )
         else:
             filled[key.name] = toml_value(value)
@@ -580,8 +634,9 @@ def command_line_values(name: str, assignments: list[str]) -> dict[str, Any]:
                 f"{key.upper()} is a secret and is never taken on a command line: "
                 f"`keryx config set {key.upper()} --stdin`"
             )
-        if key not in keys or keys[key].kind == "table":
-            known = ", ".join(k for k, spec_key in keys.items() if spec_key.kind != "table")
+        if key not in keys or keys[key].kind in TABLE_KINDS:
+            known = ", ".join(k for k, spec_key in keys.items()
+                              if spec_key.kind not in TABLE_KINDS)
             hint = "; its secrets: " + ", ".join(spec.secrets) if spec.secrets else ""
             if spec.google:
                 hint = "; its sign-in is `keryx auth login google`"

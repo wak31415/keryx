@@ -311,3 +311,59 @@ def test_the_service_names_an_agent_in_any_case(store, settings):
     assert store.stored()["AGENT_BACKEND"] == "codex"
 
 
+
+
+# --- the Slack tokens -----------------------------------------------------------------
+
+
+def test_every_slack_token_is_a_secret_in_the_secrets_file(store):
+    tokens = {"work": {"bot": "xoxb-w", "app": "xapp-w"}, "lab": {"bot": "xoxb-l"}}
+
+    store.set({"SLACK_APP_TOKEN": "xapp-1", "SLACK_USER_TOKEN": "xoxp-1",
+               "SLACK_WORKSPACE_TOKENS": tokens})
+
+    assert read_toml(store.secrets_path) == {
+        "SLACK_APP_TOKEN": "xapp-1", "SLACK_USER_TOKEN": "xoxp-1",
+        "SLACK_WORKSPACE_TOKENS": tokens,
+    }
+    assert "SLACK" not in store.config_path.read_text() if store.config_path.exists() else True
+    settings = load()
+    assert settings.slack_workspace_tokens == tokens
+    assert (settings.slack_app_token, settings.slack_user_token) == ("xapp-1", "xoxp-1")
+    assert "xoxb-w" not in repr(settings) and "xapp-1" not in repr(settings)
+    rows = {row["key"]: row for row in store.describe(settings)}
+    for key in ("SLACK_APP_TOKEN", "SLACK_USER_TOKEN", "SLACK_WORKSPACE_TOKENS"):
+        assert rows[key]["secret"] and rows[key]["protected"] and rows[key]["value"] is None
+
+
+def test_the_service_may_never_write_a_slack_token(store):
+    for values in ({"SLACK_APP_TOKEN": "xapp-1"}, {"SLACK_USER_TOKEN": "xoxp-1"},
+                   {"SLACK_WORKSPACE_TOKENS": {"work": {"bot": "xoxb-w"}}}):
+        with pytest.raises(ConfigError, match="it is protected"):
+            store.set(values, actor="service")
+    with pytest.raises(ConfigError, match="protected"):
+        store.unlock("SLACK_WORKSPACE_TOKENS")
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        {"default": {"app": "xapp-1"}},
+        {"Work Space": {"bot": "xoxb-1"}},
+        {"work": {"robot": "xoxb-1"}},
+        {"work": {"bot": "  "}},
+    ],
+)
+def test_workspace_tokens_of_the_wrong_shape_are_refused_without_repeating_one(store, tokens):
+    with pytest.raises(ConfigError) as refused:
+        store.set({"SLACK_WORKSPACE_TOKENS": tokens})
+
+    assert "SLACK_WORKSPACE_TOKENS" in str(refused.value)
+    assert "xoxb-1" not in str(refused.value) and "xapp-1" not in str(refused.value)
+    assert not store.secrets_path.exists()
+
+
+def test_workspace_tokens_may_come_from_the_environment_as_json(monkeypatch):
+    monkeypatch.setenv("SLACK_WORKSPACE_TOKENS", '{"work": {"bot": "xoxb-env"}}')
+
+    assert load().slack_workspace_tokens == {"work": {"bot": "xoxb-env"}}

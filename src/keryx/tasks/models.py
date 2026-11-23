@@ -178,6 +178,17 @@ class Task:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
+    #: The Slack thread this task lives in (schema v7): the workspace by the owner's name
+    #: for it, the conversation, and the timestamp of the message the thread hangs from.
+    #: That message is the owner's own when the task was asked for on Slack, and otherwise
+    #: the first report Keryx posted for it. Set once: every later report is a reply there,
+    #: and a reply the owner types there is a follow-up to this task.
+    slack_workspace: str | None = None
+    slack_channel: str | None = None
+    slack_thread_ts: str | None = None
+    #: The latest message in that thread Keryx has acted on. Slack delivers an event again
+    #: when its acknowledgement was lost, and a message at or before this one is that.
+    slack_last_ts: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -220,6 +231,15 @@ class Task:
         if len(description) > 80:
             description = description[:80] + "…"
         return f"task {self.id} ({self.status}): {description}"
+
+
+@dataclass(frozen=True)
+class SlackThread:
+    """A thread on Slack: which workspace, which conversation, and the message it hangs from."""
+
+    workspace: str
+    channel: str
+    ts: str
 
 
 @dataclass(frozen=True)

@@ -1211,3 +1211,30 @@ async def test_with_every_stream_blocked_a_cancel_and_the_database_still_run(set
 
     assert created.id is not None
     assert (interrupted, closed) == ("interrupt sent", "closed")
+
+
+# --- a task asked for on Slack -------------------------------------------------------------
+
+
+async def test_a_task_dispatched_from_slack_is_born_knowing_its_thread(make_harness):
+    from keryx.tasks.models import SlackThread
+
+    harness = make_harness()
+    thread = SlackThread("work", "D0WORK", "1700000000.000100")
+
+    task = await dispatch(harness.manager, origin_channel="slack", slack=thread)
+
+    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts, task.slack_last_ts) == (
+        "work", "D0WORK", "1700000000.000100", "1700000000.000100"
+    )
+    assert (await harness.manager.task_in_slack_thread(thread)).id == task.id
+    await harness.manager.heard_on_slack(task.id, "1700000000.000200")
+    assert (await harness.manager.get(task.id)).slack_last_ts == "1700000000.000200"
+
+
+async def test_a_task_dispatched_anywhere_else_has_no_thread(make_harness):
+    harness = make_harness()
+
+    task = await dispatch(harness.manager)
+
+    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts) == (None, None, None)

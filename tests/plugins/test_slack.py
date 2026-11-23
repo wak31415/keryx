@@ -8,13 +8,18 @@ from keryx import plugins
 from keryx.agents.base import render_subagent_suffix
 from keryx.agents.claude import CLAUDE_AUTH
 from keryx.agents.session import AgentContext
-from keryx.integrations.slack import SlackWebApi
+from keryx.integrations.slack import Access, SlackWebApi
 from keryx.issues import IssueReporting
 from keryx.plugins.slack import (
     FAILED_MESSAGE,
+    SlackWorkspace,
+    connected,
+    report_route,
     send_to_slack_tool,
     slack_route,
     slack_sender,
+    workspace,
+    workspaces,
 )
 from keryx.tasks.models import Task, TaskKind
 from keryx.tools.builtin_common import PIN_REQUIRED_MESSAGE
@@ -233,3 +238,162 @@ def test_the_subagent_hears_about_slack_only_through_the_route(slack_settings):
 def test_every_template_loads_nothing_it_should_not(slack_settings):
     """Only the plugins that are on are in the directory a call loads."""
     assert loaded(slack_settings).tools == []
+
+
+# --- workspaces ---------------------------------------------------------------------------
+
+
+WORK = {"access": "converse", "owner_id": "U0WORK", "team": "Acme", "team_id": "T0WORK",
+        "channel_id": "U0WORK"}
+
+
+@pytest.fixture
+def two_workspaces(slack_settings):
+    """The first workspace at announce, and `work` at converse with both its tokens."""
+    settings = slack_settings.model_copy(update={
+        "slack_workspace_tokens": {"work": {"bot": "xoxb-work", "app": "xapp-work"}},
+    })
+    plugins.write_config(settings, NAME, {"channel_id": "U0ME", "workspaces": {"work": WORK}})
+    plugins.install(settings, NAME)
+    return settings
+
+
+def test_an_install_from_before_workspaces_is_the_default_one_at_announce(slack_settings):
+    """One token and one destination, as every install has had: nothing to migrate."""
+    slack_settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(slack_settings, NAME).write_text('channel_id = "D123"\n')
+    plugins.install(slack_settings, NAME)
+
+    [only] = connected(slack_settings)
+
+    assert (only.name, only.access, only.channel) == ("default", Access.ANNOUNCE, "D123")
+    assert only.token("bot") == "xoxb-test-token" and only.token("app") is None
+    assert only.sends and not only.listens and only.missing == ()
+    assert slack_route(slack_settings).channel == "D123"
+
+
+def test_each_workspace_has_its_own_level_tokens_owner_and_destination(two_workspaces):
+    first, work = workspaces(two_workspaces)
+
+    assert (first.name, work.name) == ("default", "work")
+    assert (work.access, work.owner_id, work.channel) == (Access.CONVERSE, "U0WORK", "U0WORK")
+    assert (work.token("bot"), work.token("app")) == ("xoxb-work", "xapp-work")
+    assert work.label == "work (Acme)" and first.label == "default"
+    assert work.listens and not first.listens
+    assert workspace(two_workspaces, "work") == work
+    assert workspace(two_workspaces, "nowhere") is None
+
+
+def test_a_workspaces_tokens_are_never_in_its_repr(two_workspaces):
+    assert "xoxb" not in repr(workspaces(two_workspaces)) and "xapp" not in repr(
+        workspaces(two_workspaces)
+    )
+
+
+@pytest.mark.parametrize(
+    ("access", "tokens", "owner", "missing", "listens"),
+    [
+        ("announce", {"bot": "b"}, "", (), False),
+        ("converse", {"bot": "b"}, "U1", ("its app token",), False),
+        ("converse", {"bot": "b", "app": "a"}, "", ("your member id",), False),
+        ("converse", {"bot": "b", "app": "a"}, "U1", (), True),
+        ("read", {"bot": "b", "app": "a"}, "U1", ("its user token",), True),
+        ("read", {"bot": "b", "app": "a", "user": "u"}, "U1", (), True),
+        ("announce", {}, "", ("its bot token",), False),
+    ],
+)
+def test_a_workspace_says_what_its_level_needs_and_lacks(access, tokens, owner, missing, listens):
+    one = SlackWorkspace("w", Access(access), channel="U1", owner_id=owner, tokens=tokens)
+
+    assert one.missing == missing and one.listens is listens
+
+
+def test_a_workspace_with_nowhere_to_post_says_so_and_sends_nothing():
+    one = SlackWorkspace("w", tokens={"bot": "b"})
+
+    assert one.missing == ("somewhere to post",) and not one.sends and one.poster() is None
+
+
+def test_with_the_plugin_off_no_workspace_is_connected(two_workspaces):
+    plugins.remove(two_workspaces, NAME)
+
+    assert connected(two_workspaces) == []
+    assert workspace(two_workspaces, "work") is None
+    # Their settings are still read, for `doctor` to describe.
+    assert [each.name for each in workspaces(two_workspaces)] == ["default", "work"]
+
+
+def test_a_workspace_without_a_bot_token_is_not_connected(two_workspaces):
+    settings = two_workspaces.model_copy(update={"slack_workspace_tokens": {}})
+
+    assert [each.name for each in connected(settings)] == ["default"]
+
+
+def test_the_first_workspaces_other_tokens_are_the_plain_settings(slack_settings):
+    settings = slack_settings.model_copy(update={
+        "slack_app_token": "xapp-1", "slack_user_token": "xoxp-1",
+    })
+    plugins.write_config(settings, NAME, {"channel_id": "U0ME", "access": "read",
+                                          "owner_id": "U0ME"})
+
+    [first] = workspaces(settings)
+
+    assert (first.token("app"), first.token("user")) == ("xapp-1", "xoxp-1")
+    assert first.missing == () and first.listens
+
+
+# --- where a task's report goes -----------------------------------------------------------
+
+
+def slack_task(**fields) -> Task:
+    return Task(id=7, kind=TaskKind.AGENT, description="x", **fields)
+
+
+def test_a_first_report_is_a_message_of_its_own_in_the_first_workspace(two_workspaces):
+    route = report_route(two_workspaces, slack_task())
+
+    assert (route.workspace, route.thread_ts, route.broadcast) == ("default", None, False)
+    assert route.poster._channel == "U0ME" and route.poster._token == "xoxb-test-token"
+
+
+def test_a_task_asked_for_on_slack_reports_in_its_own_thread_in_its_own_workspace(
+    two_workspaces,
+):
+    task = slack_task(origin_channel="slack", slack_workspace="work", slack_channel="D0WORK",
+                      slack_thread_ts="1700000000.000100")
+
+    route = report_route(two_workspaces, task)
+
+    assert (route.workspace, route.thread_ts, route.broadcast) == (
+        "work", "1700000000.000100", False
+    )
+    assert route.poster._channel == "D0WORK" and route.poster._token == "xoxb-work"
+
+
+def test_a_later_report_of_a_phone_task_is_a_reply_under_its_first_shown_in_the_dm(
+    two_workspaces,
+):
+    task = slack_task(origin_channel="phone", slack_workspace="default", slack_channel="D0ME",
+                      slack_thread_ts="1700000000.000100")
+
+    route = report_route(two_workspaces, task)
+
+    assert (route.workspace, route.thread_ts, route.broadcast) == (
+        "default", "1700000000.000100", True
+    )
+    assert route.poster._channel == "D0ME"
+
+
+def test_a_thread_in_a_workspace_that_is_gone_falls_back_to_a_new_message(two_workspaces):
+    task = slack_task(origin_channel="slack", slack_workspace="left", slack_channel="D0GONE",
+                      slack_thread_ts="1700000000.000100")
+
+    route = report_route(two_workspaces, task)
+
+    assert (route.workspace, route.thread_ts) == ("default", None)
+
+
+def test_with_the_plugin_off_a_report_goes_nowhere(two_workspaces):
+    plugins.remove(two_workspaces, NAME)
+
+    assert report_route(two_workspaces, slack_task()) is None
