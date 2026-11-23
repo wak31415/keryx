@@ -215,6 +215,12 @@ def run_slack(ctx: SetupContext) -> None:
     if team is None:
         # A token that was kept, or one saved unchecked: the workspace is the one on file.
         team = Workspace(team=values["team"], team_id=values["team_id"])
+        if token and not team.team_id and access.reaches(Access.CONVERSE):
+            # An install from before levels never wrote down which workspace it is, and
+            # above announce that is what a user token and every message are held to.
+            with ui.spinner("Asking Slack which workspace this is…"):
+                asked = ctx.probes.slack_auth_test(token)
+            team = asked if asked.ok else team
     changed = token != before or access is not was
     owner = ""
     if APP in needed:

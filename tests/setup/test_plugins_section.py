@@ -515,10 +515,50 @@ def test_raising_the_level_shows_the_manifest_for_the_app_there_is_and_no_new_ap
     assert "Bot User OAuth Token" not in steps and "App-Level Tokens" in steps
     title, _, body = ctx.ui.lines("panel")[0].partition("\n")
     assert title == "The manifest" and json.loads(body) == app_manifest(Access.CONVERSE)
-    assert slack_calls(world) == [("slack_open",)]
+    # The install is from before levels, so Slack is asked once which workspace it is.
+    assert slack_calls(world) == [("slack_auth",), ("slack_open",)]
     saved = toml(ctx, "send_to_slack")
     assert (saved["access"], saved["owner_id"]) == ("converse", "U0OWNER")
+    assert saved["team"] == "Acme"
     assert LISTEN_NOTE in ctx.ui.lines("note")
+
+
+def test_a_kept_bot_token_with_no_workspace_on_file_still_holds_a_user_token_to_its_own(
+    make_ctx, world
+):
+    """An install from before levels: its workspace is asked for, so the check has teeth."""
+    world.slack_workspaces = [
+        Workspace(team="Acme", team_id="T0ACME"),
+        Workspace(team="Other", team_id="T0OTHER", user_id="U0ELSE"),
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"),
+    ]
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    ctx.ui.answers = [SLACK, (LEVEL, "read"), (TOKEN, DEFAULT), (APP_TOKEN, "xapp-1"),
+                      (USER_TOKEN, "xoxp-other"), (USER_TOKEN, "xoxp-mine"), (WHERE, DEFAULT),
+                      (TEST, False)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert ctx.ui.lines("error") == [
+        "That user token cannot be used: it belongs to another workspace than the bot "
+        "token (Other)",
+    ]
+    saved = toml(ctx, "send_to_slack")
+    assert (saved["team_id"], saved["owner_id"]) == ("T0ACME", "U0SAM")
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-mine"
+
+
+def test_a_workspace_slack_cannot_name_right_now_is_left_as_it_was(make_ctx, world):
+    world.slack_workspaces = [Workspace(error="http_503")]
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    ctx.ui.answers = [SLACK, (LEVEL, "converse"), (TOKEN, DEFAULT), (APP_TOKEN, "xapp-1"),
+                      (WHERE, DEFAULT), (TEST, False)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and toml(ctx, "send_to_slack")["team_id"] == ""
+    assert toml(ctx, "send_to_slack")["access"] == "converse"
 
 
 def test_a_lower_level_forgets_the_tokens_it_no_longer_uses_and_asks_slack_nothing(
@@ -543,7 +583,9 @@ def test_a_lower_level_forgets_the_tokens_it_no_longer_uses_and_asks_slack_nothi
 def test_a_level_already_set_up_keeps_every_token_and_asks_slack_nothing(make_ctx, world):
     ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
     ctx = already_set_up(make_ctx, channel="U0OWNER")
-    plugins.write_config(ctx.settings, "send_to_slack", {"access": "read", "owner_id": "U0OWNER"})
+    plugins.write_config(ctx.settings, "send_to_slack", {
+        "access": "read", "owner_id": "U0OWNER", "team_id": "T0ACME",
+    })
     ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
                       (USER_TOKEN, DEFAULT), (WHERE, DEFAULT)]
 
@@ -555,10 +597,10 @@ def test_a_level_already_set_up_keeps_every_token_and_asks_slack_nothing(make_ct
 
 
 def test_a_kept_user_token_with_no_member_on_file_is_asked_of_slack_once(make_ctx, world):
-    world.slack_workspaces = [Workspace(team="Acme", user_id="U0SAM")]
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
     ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
     ctx = already_set_up(make_ctx, channel="C0CHANNEL")
-    plugins.write_config(ctx.settings, "send_to_slack", {"access": "read"})
+    plugins.write_config(ctx.settings, "send_to_slack", {"access": "read", "team_id": "T0ACME"})
     ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
                       (USER_TOKEN, DEFAULT), (WHERE, DEFAULT), (TEST, False)]
 

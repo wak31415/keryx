@@ -641,7 +641,10 @@ def user_token_problem(checked: Workspace, team: Workspace) -> str | None:
             f"it could not be checked ({checked.problem})")
     if not checked.user_id:
         return "Slack did not say which member it belongs to"
-    if team.team_id and checked.team_id != team.team_id:
+    if not team.team_id:
+        # The same workspace has to be shown, never assumed.
+        return "which workspace the bot token belongs to is not known, so it cannot be matched"
+    if checked.team_id != team.team_id:
         return ("it belongs to another workspace than the bot token"
                 + (f" ({checked.team})" if checked.team else ""))
     return None

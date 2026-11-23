@@ -662,6 +662,8 @@ def test_read_knows_the_owner_from_the_user_token_and_needs_no_address(settings)
         (Workspace(team="Acme", team_id="T0ACME"), "Slack did not say which member it belongs to"),
         (Workspace(team="Other", team_id="T0OTHER", user_id="U0SAM"),
          "it belongs to another workspace than the bot token (Other)"),
+        (Workspace(team="Acme", user_id="U0SAM"),
+         "it belongs to another workspace than the bot token (Acme)"),
     ],
 )
 def test_a_user_token_that_is_not_this_workspaces_owner_saves_nothing(settings, user, why):
@@ -677,7 +679,8 @@ def test_a_user_token_that_is_not_this_workspaces_owner_saves_nothing(settings, 
 def test_at_read_a_destination_on_file_is_kept_and_the_token_still_says_who(settings):
     settings = connected_at(settings)
     plugins.write_config(settings, "send_to_slack", {"channel_id": "C0CHANNEL", "owner_id": ""})
-    fake = FakeSlack(user=Workspace(team="Acme", user_id="U0SAM"))
+    fake = FakeSlack(workspace=Workspace(team="Acme", team_id="T0ACME"),
+                     user=Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"))
 
     lines = connect(settings, fake, token=f"{USER}\n{APP}", email=None, access=Access.READ,
                     test=False)
@@ -872,3 +875,14 @@ def test_the_link_for_a_further_workspace_says_when_the_first_is_not_there_yet(s
         "without --workspace first."
     )
     assert "would be added beside" not in said(connected_at(settings), workspace="lab")
+
+
+def test_a_user_token_is_never_assumed_to_be_the_bot_tokens_workspace(settings):
+    """A bot token Slack named no workspace for cannot vouch for a user token."""
+    fake = FakeSlack(workspace=Workspace(team="Acme"),
+                     user=Workspace(team="Acme", user_id="U0SAM"))
+
+    with pytest.raises(SlackSetupError, match="is not known, so it cannot be matched"):
+        connect(settings, fake, token=f"{USER}\n{TOKEN}\n{APP}", access=Access.READ)
+
+    assert ConfigStore()._secrets() == {}
