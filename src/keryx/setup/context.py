@@ -147,11 +147,13 @@ class Probes:
     cluster_partitions: Callable[[str], list[str]] = _partitions
     #: `gh auth status`, for the issue reports section (`keryx.issues.gh_status`).
     gh_status: Callable[[], GhStatus] = gh_status
-    #: The Slack step's three calls (`integrations.slack`): is this a token and whose, the
-    #: member an address belongs to, and one message to a member or channel.
+    #: The Slack step's calls (`integrations.slack`): is this a token and whose (a bot
+    #: token's workspace, a user token's member), the member an address belongs to, one
+    #: message to a member or channel, and whether an app-level token opens a connection.
     slack_auth_test: Callable[[str], slack.Workspace] = slack.auth_test
     slack_member: Callable[[str, str], slack.Member] = slack.lookup_by_email
     slack_post: Callable[[str, str, str], slack.SlackResult] = slack.post_text
+    slack_connection: Callable[[str], slack.Connection] = slack.open_connection
 
 
 @dataclass
