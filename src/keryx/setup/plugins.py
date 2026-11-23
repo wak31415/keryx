@@ -77,7 +77,7 @@ def run_section(ctx: SetupContext) -> None:
         wanted = spec.default or (
             spec.default_when_connected and GOOGLE_READY[name](ctx.settings)
         )
-        hint = spec.summary + (" · recommended" if wanted and not on[name] else "")
+        hint = spec.summary + (" (recommended)" if wanted and not on[name] else "")
         checked = on[name] or (first and wanted and disabled is None)
         choices.append(Choice(name, f"{spec.title} ({name})", hint=hint, checked=checked,
                               disabled=disabled))

@@ -45,7 +45,8 @@ def test_a_first_walk_ticks_slack_and_email(make_ctx):
 
     choices = {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
     assert [name for name, c in choices.items() if c.checked] == ["send_to_slack", "check_email"]
-    assert "recommended" in choices["send_to_slack"].hint
+    assert choices["send_to_slack"].hint.endswith(" (recommended)")
+    assert "·" not in "".join(choice.hint for choice in choices.values())
     assert "recommended" not in choices["cluster_stats"].hint
 
 
