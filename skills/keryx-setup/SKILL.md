@@ -77,10 +77,11 @@ runs its own login, which opens a browser or prints a code — theirs to finish,
 
 ## 3. The plugins they want
 
-Seven voice tools are plugins, off until they are turned on: `send_to_slack` and
-`check_email` (most people want both), `check_calendar`, `add_calendar_event` (it writes to
-their calendar, so it is its own yes), `find_document`, `check_billing` and
-`cluster_stats`. Ask which they want; do not turn one on unasked.
+Eight voice tools are plugins, off until they are turned on: `send_to_slack` and
+`check_email` (most people want both), `check_slack` (it reads their Slack as them, and
+loads only once a workspace is at the `read` level), `check_calendar`,
+`add_calendar_event` (it writes to their calendar, so it is its own yes), `find_document`,
+`check_billing` and `cluster_stats`. Ask which they want; do not turn one on unasked.
 
 ```bash
 keryx plugins --json            # each one: on or off, its files, why one is refused
@@ -105,14 +106,17 @@ keryx auth login slack --stdin --email ADDRESS    # theirs to run: it asks for t
 ```
 
 **The access level is theirs to choose, and it comes first**, because it decides the app
-the link creates. The first command prints what each level lets Keryx see: `announce`
-(it posts, and reads nothing), `converse` (it also reads what they type to the Keryx app,
-and such a message can resume or start work *without the phone PIN*) and `read` (it also
-reads Slack as them). Read them those sentences and ask. Never choose `converse` or
-`read` for them, and never suggest one to save a step: `announce` is the default and is
-what the two commands above set up. For a higher level, both commands take `--access
-LEVEL`, and the level's extra tokens go on standard input with the bot token, one to a
-line.
+the link creates. The first command prints what each level lets Keryx see and where it can
+be set to work from: `announce` (it posts, and reads nothing), `converse` (it is also sent
+what they type to the Keryx app, and a message of theirs that mentions it, `@Keryx`, can
+resume or start work *without the phone PIN*) and `read` (they can also mention it in a
+conversation it was added to, and it reads Slack as them when they ask about messages).
+Read them those sentences and ask. Never choose `converse` or `read` for them, and never
+suggest one to save a step: `announce` is the default and is what the two commands above
+set up. For a higher level, both commands take `--access LEVEL`, and the level's extra
+tokens go on standard input with the bot token, one to a line. At `converse` and above the
+command names the member whose messages will be acted on: read them that line. It is
+never changed by `--email`, only by `--owner`, which is theirs to ask for.
 
 The link opens Slack's own page for a new app with Keryx's already filled in; they create
 it, install it and copy its bot token. Do not ask them to paste the token to you: they run
@@ -120,7 +124,8 @@ the second command themselves, with the address they use in Slack. It checks eac
 with Slack, finds them by that address (so there is no channel id to look up), and sends
 one test message — ask them whether it arrived. If Slack could not find the address, the
 command says what to run instead; an app they made by hand before keeps working. A second
-workspace is the same two commands with `--workspace NAME`.
+workspace is the same two commands with `--workspace NAME`, and `keryx auth logout slack
+[--workspace NAME]` disconnects one.
 
 Offer `cluster_stats` only a host whose `control_master` is true — Keryx never opens a
 connection of its own — and ask them which partition its GPUs are in rather than guessing.

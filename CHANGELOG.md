@@ -9,28 +9,46 @@ the version starts with 0.
 
 ### Added
 
-- **Write back on Slack.** Your Slack app now has an access level, chosen before the app is
-  created: `announce` (as before: Keryx posts and reads nothing), `converse`, or `read`. At
-  `converse`, a reply in the thread under a task's report continues that task, and a new
-  message to the Keryx app starts one and gets its report in that thread. Keryx marks a
-  message it has acted on with 👀. Neither needs the phone PIN: only your own messages in
-  your direct messages with the app are acted on, and `SECURITY.md` describes the trade.
-  It listens over Socket Mode, so nothing new is exposed to the internet. At `read` the app
-  also asks for a user token that can read Slack as you; this release checks and stores
-  it, and the tools that use it follow.
+- **Write back on Slack, by mentioning Keryx.** Your Slack app now has an access level,
+  chosen before the app is created: `announce` (as before: Keryx posts and reads nothing),
+  `converse`, or `read`. At `converse`, a message you send the Keryx app that mentions it
+  (`@Keryx …`) starts a task, and a reply under a task's report that mentions it continues
+  that task. Without the mention nothing happens, and nobody else's mention does anything.
+  Keryx marks a message it has acted on with 👀. None of this needs the phone PIN, and
+  `SECURITY.md` describes the trade; a reply that re-runs a task counts against the daily
+  task cap. It listens over Socket Mode, so nothing new is exposed to the internet.
+- **Ask from any conversation, at `read`.** Add the app to a channel and mention it there.
+  It reacts to your message and answers in your direct messages, never in the channel,
+  with a link back to what you asked.
+- **Your Slack on a call: the `check_slack` plugin.** "Anything waiting for me on Slack?"
+  is answered in a few seconds: direct and group messages whose last word is somebody
+  else's, and mentions you have not written after (a best effort, since Slack has no such
+  list), who mentioned you, or a search, with an optional question about what it found.
+  It needs the PIN and a workspace at `read`, only ever reads, and only when you ask.
+- **`keryx slack unanswered|mentions|search|history|thread`** reads Slack as you from the
+  command line. These are how a coding agent reads Slack when your request asks about
+  messages: they only read, and your user token is never handed to the agent.
+- **What is read from Slack is treated as other people's words, never as instructions.**
+  Only your own request is acted on. Everything read is wrapped, attributed to who wrote
+  it, and kept apart from what you asked, as a guard against a message that tries to give
+  Keryx orders. `SECURITY.md` says what that does and does not protect against.
 - **`keryx auth login slack --access LEVEL`** says in plain words what the level lets
   Keryx see before it prints the link, takes the level's tokens on standard input one to
   a line, and checks each before saving anything. Raising the level of an app you already
   have prints the manifest to paste into it, never a second app. A lower level is applied
   at once and forgets the tokens it no longer uses. `keryx setup` asks the same question
-  first.
+  first and saves nothing until every token has been checked. `--owner` is the one thing
+  that changes whose messages are acted on; where reports are sent never does.
+- **`keryx auth logout slack [--workspace NAME]`** forgets a Slack workspace's tokens and
+  settings.
 - **More than one Slack workspace.** `keryx auth login slack --workspace NAME` connects
   another, with its own app, level and tokens. Reports and alerts keep going to your first
-  workspace, and `send_to_slack` can be told which one to use. `keryx doctor` and
-  `keryx auth status` list each workspace with its level and anything that level still
-  lacks.
+  workspace, `send_to_slack` can be told which one to use, and a task asked for in one
+  workspace is answered there and nowhere else. `keryx doctor` and `keryx auth status`
+  list each workspace with its level and anything that level still lacks.
 - **A task's reports stay in one Slack thread.** The first report is a message of its own;
-  later reports of the same task are replies under it, also shown in the conversation.
+  later reports of the same task are replies under it, also shown in the conversation,
+  and a long report is one thread.
 
 - **One Google sign-in for everything: `keryx auth login google`.** It connects Gmail,
   Calendar, Drive, Docs, Sheets and Slides at once, for the coding agents and for email

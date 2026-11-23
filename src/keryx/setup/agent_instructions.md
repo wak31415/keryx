@@ -27,9 +27,10 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    says there is no Google OAuth client does the person have to make one (the steps:
    `{google_guide}`), which you then pass once with `--client-file PATH`.
    For Slack, `keryx auth login slack` first says the three access levels (what Keryx
-   may see there) and then prints a link and its steps. The level is the person's to
-   choose: read them what it printed and ask. Never choose `converse` or `read` for
-   them, since at those a Slack message can start work without the phone PIN; with no
+   may see there, and where it can be set to work from) and then prints a link and its
+   steps. The level is the person's to choose: read them what it printed and ask. Never
+   choose `converse` or `read` for them, since at those a Slack message of theirs that
+   mentions the app can start work without the phone PIN; with no
    answer it is `announce`, which the commands here set up (a higher one adds `--access
    LEVEL` to both, and its extra tokens to standard input, one to a line). Relay the link
    and the steps; the
@@ -42,7 +43,8 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    message; ask whether it arrived. If it could not find them, it says what to run
    instead.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
-   Slack, email, reading the calendar, adding to it, documents, billing, cluster stats —
+   Slack, Slack answers (which need a workspace at the `read` level), email, reading the
+   calendar, adding to it, documents, billing, cluster stats —
    each on or off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a

@@ -1,7 +1,7 @@
 # The tools the voice model can call
 
 Seventeen tools are built in. They're Keryx's own machinery for a call: dispatching work,
-following it, and getting off the phone. Seven more are [plugins](#plugins) that you turn on
+following it, and getting off the phone. Eight more are [plugins](#plugins) that you turn on
 if you want them, and anything else is [a tool of your own](#your-own-tools).
 
 <!-- tools:start -->
@@ -49,6 +49,7 @@ connected. `add_calendar_event` writes, so it is never ticked for you.
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|
 | `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too. With more than one workspace connected it takes a `workspace`, and sends to your first one unless you name another | yes | your Slack app's tokens (`keryx auth login slack`), or the MCP server's |
+| `check_slack` | what is waiting for you on Slack, read as you: direct and group messages whose last word is somebody else's and mentions you have not written after (a best effort), who mentioned you, or a search; with a question, one model call over what it found | yes | a Slack workspace at the `read` level (`keryx auth login slack --access read`) |
 | `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | your Google sign-in (`keryx auth login google`) and the `claude` extra |
 | `check_calendar` | what is on your Google Calendar in a second or two: a day, a week, your next meeting, or a search ("when is the dentist"), across every calendar you have ticked there | yes | your Google sign-in |
 | `add_calendar_event` | put one event on your own calendar and say back what it created; it invites nobody | yes | your Google sign-in |
@@ -147,45 +148,62 @@ an expired login, open the master again at your desk, for example with `ssh -fN 
 If you already run a guard script of your own, name it as `guard` in `cluster_stats.toml`.
 
 **Connecting Slack is a choice, a link and a paste.** The choice comes first, because it
-decides the app: what Keryx may see in your Slack.
+decides the app: what Keryx may see in your Slack, and where you can set it to work from.
 
-| Level | What Keryx can see | What you paste |
-|---|---|---|
-| `announce` (the default) | nothing: it posts to you | the bot token (`xoxb-`) |
-| `converse` | the direct messages you type to the Keryx app itself, and nothing else | and the app-level token (`xapp-`) |
-| `read` | Slack as you: every conversation you are in, their lists, the member list and search | and your user token (`xoxp-`) |
+| Level | Where you can ask Keryx for something | What Keryx can see | What you paste |
+|---|---|---|---|
+| `announce` (the default) | nowhere on Slack: it only posts to you | nothing | the bot token (`xoxb-`) |
+| `converse` | your direct messages with the Keryx app | the messages you type to the app itself, and nothing else | and the app-level token (`xapp-`) |
+| `read` | also any conversation you have added the app to | also the one message that mentions it there; and Slack as you (every conversation you are in, their lists, the member list, search), only when you ask about messages | and your user token (`xoxp-`) |
 
 `keryx setup` → Plugins asks the level, then shows a link that opens Slack's own page for
 a new app, with Keryx's already filled in for that level: pick your workspace, create it,
 install it, and copy the tokens the level needs. Paste each once, at a hidden prompt.
 Keryx checks each with Slack, tells you which workspace it connected to, and finds you by
-the email address you use there, so there is no channel id to look up. Then it offers to
-send a test message, which arrives under Apps in Slack. The app is yours alone. From the
-command line it is two steps: `keryx auth login slack --access LEVEL` says what the level
-means and prints the link, and
+the email address you use there, so there is no channel id to look up. Nothing is saved
+until every token has been checked. Then it offers to send a test message, which arrives
+under Apps in Slack. The app is yours alone. From the command line it is two steps:
+`keryx auth login slack --access LEVEL` says what the level means and prints the link, and
 `keryx auth login slack --stdin --access LEVEL --email you@example.com` takes the tokens on
 standard input, one to a line in any order (never as arguments), and does the rest.
 
-**At `converse` you can write back.** A reply in the thread under a task's report continues
-that task. A new message to the Keryx app starts one, and its report arrives in that
-thread. Keryx puts an 👀 on a message it has acted on and says nothing else until the work
-is done. Neither needs the phone PIN: only messages from your own member id, in your
-direct messages with the app, are acted on, and [SECURITY.md](../SECURITY.md) says what
-that trade is. Keryx starts listening when it starts, so run `keryx restart` after
-choosing the level. At `read`, this release checks your user token and keeps it; the tools
-that read Slack with it come next.
+**Keryx acts only when you mention it.** At `converse` and above, a message is acted on
+only when it is yours and mentions the app: `@Keryx look into the flaky test`. A new
+message starts a task; a reply under a task's report that mentions it continues that
+task. Without the mention nothing happens, and nobody else's mention does anything.
+Keryx puts an 👀 on a message it has acted on and says nothing else until the work is
+done. None of this needs the phone PIN, and [SECURITY.md](../SECURITY.md) says what that
+trade is; each reply that sets a task going again counts against the daily task cap.
+Keryx starts listening when it starts, so run `keryx restart` after choosing the level.
+
+**At `read` you can ask from anywhere, and about anything you can see.** Add the app to
+a channel and mention it there: `@Keryx summarise this thread`. It reacts to your message
+in the channel and **answers in your direct messages**, with a link back to what you
+asked, because a report can hold anything from your machine. On a call, the `check_slack`
+plugin answers "anything waiting for me on Slack?" in a few seconds (`keryx plugins
+install check_slack`; the wizard offers it when you choose `read`). Slack is read only
+when you ask: there is no background digest. What is read is other people's words, and
+Keryx treats it as material to answer from, never as instructions.
+
+**Whose messages are acted on is set once.** The first time you connect at `converse` or
+above, Keryx says which member it takes to be you. Sending reports somewhere else later
+(`--email`) never changes that; `keryx auth login slack --owner MEMBER_ID_OR_ADDRESS` is
+the one thing that does.
 
 **Changing the level later.** A higher one changes the app you have, never makes a second:
 `keryx auth login slack --access converse` on a workspace that is connected prints the
 manifest to paste into the app's App Manifest page, and you reinstall it and hand over
 the new token. A lower one needs nothing from Slack: `keryx auth login slack --access
 announce` forgets the tokens it no longer uses and a running Keryx stops acting on your
-messages at once.
+messages at once. `keryx auth logout slack` forgets the workspace altogether; remove the
+app in Slack to end its tokens.
 
 **More than one workspace.** `keryx auth login slack --workspace work` connects another,
-with an app of its own from the same link, its own level and its own tokens. Reports and
-alerts keep going to your first workspace; "send that to my work Slack" goes to the one
-you name. `keryx auth status` lists each with its level.
+with an app of its own from the same link, its own level and its own tokens
+(`keryx auth logout slack --workspace work` removes it). Reports and alerts keep going to
+your first workspace; "send that to my work Slack" goes to the one you name, and a task
+you asked for in one workspace is answered there and nowhere else. `keryx auth status`
+lists each with its level.
 
 The question that takes your address takes a channel or member id as well, and that is
 what to give it if Slack cannot find you: your member id is in Slack under your profile,

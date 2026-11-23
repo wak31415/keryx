@@ -20,7 +20,7 @@ data, not Keryx's code:
   git checkout and should not become one.
 - **No restart.** Every call reads the directory afresh when it starts, so a new or edited
   tool is offered from the next call. Do not write a `RESTART_REQUIRED:` line for it.
-- **Plugin files are custom tools too.** `send_to_slack.py`, `check_email.py`,
+- **Plugin files are custom tools too.** `send_to_slack.py`, `check_slack.py`, `check_email.py`,
   `check_calendar.py`, `add_calendar_event.py`, `find_document.py`, `check_billing.py` and
   `cluster_stats.py` there are Keryx's plugins, each a line calling
   into Keryx with its settings in the `.toml` beside it: change a setting in the TOML (its
