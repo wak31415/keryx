@@ -73,6 +73,11 @@ class FakeSlack:
     listeners: list = field(default_factory=list)
     react_result: SlackResult = field(default_factory=SlackResult)
     post_error: Exception | None = None
+    #: Every time the bot was asked whether a conversation is its own, and what Slack
+    #: says: by conversation, a list of answers taken in turn (the last one stays), an
+    #: error code or an exception among them. A conversation not named is the app's own.
+    asked: list = field(default_factory=list)
+    party: dict = field(default_factory=dict)
 
     def api(self) -> InboxApi:
         fake = self
@@ -82,6 +87,14 @@ class FakeSlack:
             if isinstance(fake.react_result, Exception):
                 raise fake.react_result
             return fake.react_result
+
+        def party(token, channel):
+            fake.asked.append((token, channel))
+            answers = fake.party.get(channel) or [""]
+            answer = answers.pop(0) if len(answers) > 1 else answers[0]
+            if isinstance(answer, Exception):
+                raise answer
+            return SlackResult(error=answer)
 
         class Poster:
             def __init__(self, token, channel):
@@ -106,7 +119,7 @@ class FakeSlack:
                 finally:
                     self.running = False
 
-        return InboxApi(react=react, poster=Poster, listener=Listener)
+        return InboxApi(react=react, party=party, poster=Poster, listener=Listener)
 
 
 @dataclass
@@ -246,7 +259,7 @@ def test_in_the_apps_direct_messages_every_message_of_the_owners_is_a_request(
     """The owner's ruling: a message there can only be for the app. A mention that is
     there is still taken out."""
     assert owner_request(payload(text), workspace_of(conversing)) == Request(
-        text=asked, channel=DM, ts=TS)
+        text=asked, channel=DM, ts=TS, unmentioned=AT not in text)
 
 
 def test_a_reply_in_a_thread_there_needs_no_mention_either(conversing):
@@ -1261,3 +1274,159 @@ async def test_a_listener_we_stopped_is_not_reported_as_having_ended(
     await world.inbox.stop()
 
     assert "ended" not in caplog.text
+
+
+# --- a direct message with no mention is acted on only in a conversation shown to be the app's --
+
+OTHER_DM = "D0COLLEAGUE"
+
+
+async def test_the_apps_own_direct_message_is_acted_on_after_one_call_and_none_after(world):
+    """Before the first message with no mention is acted on, the bot is asked for that
+    conversation's latest message: Slack answers it only for one it is a party to. The
+    answer is remembered, so no later message there costs a request."""
+    await world.inbox.handle("default", payload("look into the flaky test"))
+    [task] = await world.tasks()
+    await world.done(task.id)
+    assert world.slack.asked == [("xoxb-first", DM)]
+
+    await world.inbox.handle("default", payload("and the lint", ts=LATER))
+    await world.inbox.handle("default", payload("and the docs", ts="1700000000.000300"))
+
+    assert len(await world.tasks()) == 3
+    assert world.slack.asked == [("xoxb-first", DM)], "asked once for the life of the process"
+
+
+@pytest.mark.parametrize("answer", ["channel_not_found", "not_in_channel"])
+async def test_another_direct_message_is_never_acted_on_and_is_warned_about_once(
+    world, caplog, answer
+):
+    """A user-level `message.im` subscription would send the app every direct message the
+    owner has, each looking like one typed to it. The bot is not in those, Slack says so,
+    and nothing typed there without a mention is ever a request."""
+    world.slack.party[OTHER_DM] = [answer]
+    with caplog.at_level(logging.INFO):
+        for n, text in enumerate(("see you at lunch?", "the offer is 120k", "ok")):
+            await world.inbox.handle(
+                "default", payload(text, channel=OTHER_DM, ts=f"1700000000.000{n + 1}00"))
+
+    assert await world.tasks() == []
+    assert world.slack.reactions == [] and world.slack.posts == []
+    assert world.slack.asked == [("xoxb-first", OTHER_DM)], "and asked about once"
+    assert dropped(caplog) == ["not_the_apps_dm"] * 3
+    warnings = [record for record in caplog.records
+                if record.levelno == logging.WARNING and "not its own" in record.getMessage()]
+    assert len(warnings) == 1
+    said = warnings[0].getMessage()
+    assert f"(conversation {OTHER_DM})" in said
+    assert "Only a user-level `message.im` event subscription does that" in said
+    assert "remove it in the Slack console" in said
+    for private in ("see you at lunch", "120k", OWNER, "xoxb"):
+        assert private not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "failure", ["ratelimited", "unreachable", "http_503", "missing_scope", TimeoutError("slow")]
+)
+async def test_a_transient_failure_drops_one_message_and_the_next_one_is_tried_again(
+    world, caplog, failure
+):
+    """Fail closed: when it cannot be told, that message is not acted on, nothing is
+    remembered either way, and the next message asks again."""
+    world.slack.party[DM] = [failure, ""]
+    with caplog.at_level(logging.INFO):
+        await world.inbox.handle("default", payload("look into the flaky test"))
+        assert await world.tasks() == []
+
+        await world.inbox.handle("default", payload("look into the flaky test", ts=LATER))
+
+    [task] = await world.tasks()
+    assert task.slack_thread_ts == LATER
+    assert world.slack.asked == [("xoxb-first", DM), ("xoxb-first", DM)]
+    assert dropped(caplog) == ["dm_not_shown"]
+    told = [record.getMessage() for record in caplog.records
+            if "could not show that" in record.getMessage()]
+    assert len(told) == 1 and "the next one is tried again" in told[0]
+    assert "look into the flaky test" not in caplog.text
+
+
+async def test_a_message_that_mentions_the_app_needs_no_such_call(make_world, reading):
+    world = make_world(reading)
+
+    await world.inbox.handle("default", payload())            # a direct message, mentioned
+    await world.inbox.handle("default", mention(ts=LATER))    # and one in a channel
+
+    assert len(await world.tasks()) == 2 and world.slack.asked == []
+
+
+async def test_a_reply_that_resumes_a_task_already_in_that_conversation_needs_no_call(
+    make_world, conversing
+):
+    """The row ties the task to the conversation: Keryx posted its report there, or was
+    asked there. After a restart nothing is remembered, and the reply still costs
+    nothing."""
+    world = make_world(conversing)
+    task = await world.manager.dispatch("from a call", origin_channel="phone",
+                                        origin_caller="+15550001111")
+    await world.done(task.id)
+    await world.store.update(task.id, slack_workspace="default", slack_team_id=TEAM,
+                             slack_channel=DM, slack_thread_ts=TS)
+
+    await world.again().handle("default", reply("and the other one"))
+
+    await world.done(task.id)
+    assert world.runner.sessions[1].prompts == ["and the other one"]
+    assert world.slack.asked == []
+
+
+async def test_a_reply_in_a_thread_that_is_no_tasks_is_checked_like_a_new_message(world):
+    world.slack.party[OTHER_DM] = ["channel_not_found"]
+
+    await world.inbox.handle("default", reply("what was this about", channel=OTHER_DM))
+
+    assert await world.tasks() == [] and world.slack.asked == [("xoxb-first", OTHER_DM)]
+
+
+async def test_the_sentence_replies_wait_on_the_same_check(world):
+    """A file, or nothing to do: answered only where the conversation is the app's own."""
+    world.slack.party[OTHER_DM] = ["channel_not_found"]
+
+    await world.inbox.handle("default", payload("&gt; only a quote", channel=OTHER_DM))
+    await world.inbox.handle("default", payload("read this", channel=OTHER_DM, ts=LATER,
+                                                subtype="file_share"))
+
+    assert world.slack.posts == []
+
+
+async def test_what_was_shown_is_remembered_by_the_workspaces_own_id(world):
+    """Not by the name it is connected under, which can come to mean another team."""
+    await world.inbox.handle("default", payload("first"))
+
+    assert list(world.inbox._own) == [(TEAM, DM)] and world.inbox._own[(TEAM, DM)] is True
+
+
+def test_the_check_is_one_read_of_one_message_with_the_bots_token():
+    from keryx.integrations import slack as client
+
+    calls = []
+
+    def get(url, params, token):
+        calls.append((url, params, token))
+        return {"ok": True, "messages": [{"text": "something private"}]}
+
+    assert client.in_conversation("xoxb-1", "D0OWNER", get=get).ok
+    assert calls == [("https://slack.com/api/conversations.history",
+                      {"channel": "D0OWNER", "limit": 1}, "xoxb-1")]
+    refused = client.in_conversation(
+        "xoxb-1", "D0X", get=lambda *a: {"ok": False, "error": "channel_not_found"})
+    assert refused.error in client.NOT_A_PARTY == {"channel_not_found", "not_in_channel"}
+    assert "im:history" in client.bot_scopes(client.Access.CONVERSE)
+
+
+def test_owner_request_stays_a_function_of_the_payload_and_says_what_rests_on_the_place(
+    conversing,
+):
+    one = workspace_of(conversing)
+
+    assert owner_request(payload("no mention"), one).unmentioned is True
+    assert owner_request(payload(), one).unmentioned is False

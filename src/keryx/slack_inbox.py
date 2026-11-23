@@ -57,11 +57,20 @@ is the app's direct message or mentions the app, and once only. A mention only c
 where the owner wrote it: not on a quoted line (`>` at its start) and not inside a code
 block, and quoted lines are left out of the request in either place. Whose authorization
 delivered the event is *not* a check: Slack's own examples disagree about its shape.
-**So the direct-message rule rests on what the app is subscribed to**: Keryx's manifest
-subscribes it to `message.im` as a *bot* event only, which is the app's own direct
-messages and no others. A user-level `message.im` would deliver every direct message the
-owner has with anybody, each indistinguishable here from one typed to the app: never add
-one (SECURITY.md says so to the owner). Because the real payload has only ever been
+**So the direct-message rule does not rest on the event alone.** Keryx's manifest
+subscribes the app to `message.im` as a *bot* event only, which is the app's own direct
+messages and no others; but a user-level `message.im`, added by hand, would deliver
+every direct message the owner has with anybody, each indistinguishable in its payload
+from one typed to the app. `owner_request` stays a pure function of the payload and the
+workspace, and beside it `SlackInbox._apps_own` shows the conversation to be the app's:
+before the first message with no mention is acted on in a `D…` conversation, the bot is
+asked for that conversation's latest message (`integrations.slack.in_conversation`,
+which needs the `im:history` the app has at `converse`), and Slack answers a bot only
+for a conversation it is a party to. Yes or no is remembered for the life of the
+process, so it is one request per conversation; anything else is remembered as nothing,
+that message is left alone, and the next one asks again. A message that mentions the
+app, an `app_mention`, and a reply that resumes a task whose row already ties it to
+that conversation need no such call. Because the real payload has only ever been
 read in Slack's documentation, every event that is not acted on writes one log line with a
 reason and nothing else — never the text, the member or the conversation — so a live test
 shows at once which check refused. The settings are read again for every message, so
@@ -131,6 +140,9 @@ class Request:
     ts: str
     #: The message its thread hangs from, when it is a reply; None for one of its own.
     thread_ts: str | None = None
+    #: It is a request only because it was typed in the app's own direct messages: it
+    #: mentions nothing, so that it *is* the app's conversation is all that makes it one.
+    unmentioned: bool = False
     #: It came with a file, which Keryx does not read.
     files: bool = False
 
@@ -214,6 +226,7 @@ def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
         channel=channel,
         ts=ts,
         thread_ts=thread_ts if thread_ts and thread_ts != ts else None,
+        unmentioned=direct and not addressed,
         files=event.get("subtype") == "file_share" or bool(event.get("files")),
     )
 
@@ -277,6 +290,8 @@ class InboxApi:
     """What the inbox does on Slack beside listening, replaced in the tests."""
 
     react: Callable[[str, str, str], SlackResult] = slack.add_reaction
+    #: Whether the app is a party to a conversation, asked with its bot token.
+    party: Callable[[str, str], SlackResult] = slack.in_conversation
     poster: Callable[[str, str], SlackPoster] = SlackWebApi
     listener: Callable[..., Any] = SocketModeListener
 
@@ -292,6 +307,9 @@ class SlackInbox:
         self._api = api or InboxApi()
         self._listeners: dict[str, asyncio.Task] = {}
         self._seen: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+        #: Direct-message conversations that were shown to be the app's own (True) or
+        #: somebody else's (False), by the workspace's id: asked of Slack once each.
+        self._own: OrderedDict[tuple[str, str], bool] = OrderedDict()
 
     def start(self) -> list[str]:
         """Start one listener for each workspace at `converse` or above; their names.
@@ -359,6 +377,12 @@ class SlackInbox:
         task = await self._manager.task_in_slack_thread(thread)
         if task is not None and seen_on_slack(task.slack_seen, request.ts):
             return _dropped(name, "already_acted_on")
+        if request.unmentioned and task is None:
+            # Nothing but where it was typed makes this a request, and nothing on file
+            # ties a task to that conversation: it is shown to be the app's own first.
+            own = await self._apps_own(workspace, request.channel)
+            if own is not True:
+                return _dropped(name, "not_the_apps_dm" if own is False else "dm_not_shown")
         if request.files:
             await self._say(workspace, request, TEXT_ONLY)
         elif not request.text:
@@ -369,6 +393,53 @@ class SlackInbox:
             await self._start(workspace, request, thread)
         else:
             await self._resume(workspace, request, task)
+
+    async def _apps_own(self, workspace: SlackWorkspace, channel: str) -> bool | None:
+        """Whether `channel` is the app's own direct-message conversation: True, False,
+        or None when it could not be told this time.
+
+        A direct message with no mention is a request only because of where it was typed,
+        and the event alone cannot say whose conversation that is: with a user-level
+        `message.im` subscription the app would be sent every direct message the owner
+        has, each looking just like one typed to it. So before the first such message in
+        a conversation is acted on, the bot is asked for that conversation's latest
+        message. Slack answers a bot only for a conversation it is a party to.
+
+        Asked once: the answer is remembered for the life of the process, yes or no, by
+        the workspace's own id. Anything else (a timeout, a rate limit) is remembered as
+        nothing: that message is not acted on, and the next one asks again.
+        """
+        key = (workspace.team_id, channel)
+        if key in self._own:
+            return self._own[key]
+        try:
+            asked = await asyncio.to_thread(self._api.party, workspace.token(slack.BOT), channel)
+        except Exception as exc:
+            log.warning("Slack: could not show that %s is the app's own conversation in %s "
+                        "(%s): that message is left alone, and the next one is tried again",
+                        channel, workspace.name, type(exc).__name__)
+            return None
+        if asked.ok:
+            verdict = True
+        elif asked.error in slack.NOT_A_PARTY:
+            verdict = False
+            log.warning(
+                "Slack: the app in %s is being sent direct messages that are not its own "
+                "(conversation %s). Only a user-level `message.im` event subscription "
+                "does that: remove it in the Slack console, under the app's Event "
+                "Subscriptions, 'Subscribe to events on behalf of users'. Nothing typed "
+                "in that conversation without a mention of the app is acted on.",
+                workspace.name, channel,
+            )
+        else:
+            log.warning("Slack: could not show that %s is the app's own conversation in %s "
+                        "(%s): that message is left alone, and the next one is tried again",
+                        channel, workspace.name, asked.problem)
+            return None
+        self._own[key] = verdict
+        while len(self._own) > MAX_SEEN:
+            self._own.popitem(last=False)
+        return verdict
 
     def _first_time(self, name: str, request: Request) -> bool:
         key = (name, request.channel, request.ts)

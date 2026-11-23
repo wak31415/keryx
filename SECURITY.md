@@ -310,11 +310,19 @@ direct messages typed to your Keryx app.
   be a request from nobody. This is the tool's and the command's refusal: a coding agent
   with a shell and the token file can still post there as you, and the daily task cap is
   what bounds the loop that could start.
-- **This depends on how the app is set up.** Keryx's app is sent only the direct messages
-  typed to the app itself. If you edit the app in Slack to subscribe to your own direct
-  messages as a user (a user-level `message.im` event), every direct message you write to
-  anyone would reach Keryx looking exactly like one typed to the app, and would start
-  work. Do not add user events to the app.
+- **Keryx checks that the conversation is the app's own before acting on it.** Keryx's
+  app is sent only the direct messages typed to the app itself. If the app were edited in
+  Slack to subscribe to your own direct messages as a user (a user-level `message.im`
+  event), every direct message you write to anyone would reach Keryx looking exactly
+  like one typed to the app. So before the first message with no mention is acted on in
+  a conversation, Keryx asks Slack, as the app, for that conversation's latest message:
+  Slack answers only for a conversation the app is in. That is one request per
+  conversation after each start; the message it reads is not kept. A conversation that
+  is not the app's is never acted on without a mention, and the log says once that the
+  app is receiving direct messages that are not its own and which subscription to
+  remove. If Slack cannot be asked, the message is not acted on and the next one tries
+  again. Do not add user events to the app all the same: a message there that mentions
+  the app would still be taken as a request, as a mention is anywhere.
 - **Everything else is dropped silently.** An edit (a mention you add by editing a
   message does nothing: send a new one), a deletion, a message from a bot, a message
   from anyone else, or a message from another workspace. A mention counts only where

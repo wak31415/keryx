@@ -756,10 +756,21 @@ Eleven rulings:
   name could not trigger Keryx; in the app's direct messages it now could. `slack_write
   .send` refuses the app as a recipient (its member id, the conversation with it, a
   thread there; a test is named after the loop), and `recipient` refuses its name before
-  that. **And the rule rests on the manifest**: `message.im` is subscribed as a *bot*
-  event, which is the app's own direct messages only. A user-level one would deliver
-  every direct message the owner has with anybody, and nothing here could tell them
-  apart.
+  that. **And the rule does not rest on the subscription alone**: `message.im` is
+  subscribed as a *bot* event, which is the app's own direct messages only, but a
+  user-level one added by hand would deliver every direct message the owner has with
+  anybody, and no field of the event tells them apart. So a message with no mention is
+  acted on only in a conversation shown to be the app's own (`SlackInbox._apps_own`,
+  beside `owner_request`, which stays a pure function of the payload): one
+  `conversations.history` of one message with the *bot* token, which Slack answers only
+  for a conversation the bot is a party to (`im:history`, which the app has at
+  `converse`). Yes or no is remembered for the life of the process by the workspace's
+  own id; `channel_not_found` or `not_in_channel` drops everything unmentioned there
+  (`not_the_apps_dm`) and warns once, in words that say which subscription to remove;
+  any other failure is remembered as nothing, drops that one message (`dm_not_shown`)
+  and asks again on the next. Fail closed. A mention, an `app_mention`, and a reply
+  resuming a task whose row ties it to that conversation need no call; a destination on
+  file does not count as shown, because it is a setting somebody typed.
 - **It may do that without the PIN.** The one place Keryx acts with none, so it is written
   down: the PIN exists because caller id costs nothing to spoof, and a message from the
   owner's own member id cannot be had that cheaply. It takes their Slack account, a token

@@ -53,6 +53,9 @@ AUTH_TEST_URL = "https://slack.com/api/auth.test"
 LOOKUP_BY_EMAIL_URL = "https://slack.com/api/users.lookupByEmail"
 CONNECTIONS_OPEN_URL = "https://slack.com/api/apps.connections.open"
 REACTIONS_ADD_URL = "https://slack.com/api/reactions.add"
+CONVERSATIONS_HISTORY_URL = "https://slack.com/api/conversations.history"
+#: What Slack answers a bot that asks for the history of a conversation it is not in.
+NOT_A_PARTY = frozenset({"channel_not_found", "not_in_channel"})
 #: Slack's own page for making an app; `new_app=1&manifest_json=…` opens it filled in.
 NEW_APP_URL = "https://api.slack.com/apps"
 REQUEST_TIMEOUT_S = 15.0
@@ -593,6 +596,18 @@ def open_connection(app_token: str, *, post=_post_form) -> Connection:
     if not (isinstance(url, str) and url.startswith("wss://")):
         return Connection(error=UNKNOWN_ERROR)
     return Connection(url=url)
+
+
+def in_conversation(token: str, channel: str, *, get=_get) -> SlackResult:
+    """Whether the app `token` belongs to is a party to `channel`: one read of its latest
+    message, which Slack refuses a bot for any conversation it is not in.
+
+    Needs `im:history` for a direct message, which the app has at `converse` (it is what
+    the `message.im` event rests on). Ok means it is; an error in `NOT_A_PARTY` means it
+    is not; any other error says nothing either way. The message read is not kept.
+    """
+    _, error = _ask(get, CONVERSATIONS_HISTORY_URL, {"channel": channel, "limit": 1}, token)
+    return SlackResult(error=error)
 
 
 def add_reaction(
