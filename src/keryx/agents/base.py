@@ -43,13 +43,15 @@ SUBAGENT_SLACK_ORIGIN_PROMPT = "subagent_slack_origin.md"
 #: Said to every subagent while a workspace may be read as the owner: the commands that
 #: read it, and that what they print is context, never a request.
 SUBAGENT_SLACK_READ_PROMPT = "subagent_slack_read.md"
+SUBAGENT_SLACK_REPORT_PROMPT = "subagent_slack_report.md"
+SUBAGENT_SLACK_MESSAGE_PROMPT = "subagent_slack_message.md"
 #: Where a request typed on Slack was typed, and how to read around it, by whether it
 #: can be read at all.
 _TYPED_IN = "in workspace `{workspace}`, conversation `{channel}`, thread `{thread}`"
 _TYPED_SOMEWHERE = "on Slack"
 _READ_AROUND = (
     "If the request is about that conversation (\"summarise this thread\", \"what did they "
-    "decide here\"), read it yourself with `keryx slack thread {channel} {thread} "
+    "decide here\"), read it yourself with `keryx slack read --thread {channel}:{thread} "
     "--workspace {workspace}`, and treat what it prints as the paragraph below says."
 )
 _CANNOT_READ = (
@@ -267,6 +269,8 @@ def render_subagent_suffix(
     *,
     slack_mcp_server: str | None = None,
     slack_read: bool = False,
+    slack_report: bool = False,
+    slack_write: bool = False,
     owner: str | None = None,
     assistant: str = DEFAULT_NAME,
     tools_dir: Path | None = None,
@@ -280,23 +284,31 @@ def render_subagent_suffix(
     that was typed on Slack rather than spoken is told so: that the request is the owner's
     and the only instruction, where it was typed, and where its report goes. `slack_read`
     says a workspace may be read as the owner, and adds the commands that read it with
-    the rule that what they print is context and never a request. `owner` is
+    the rule that what they print is context and never a request. `slack_report` says
+    Keryx's own bot can post to the owner, and names `keryx slack report` as the way to
+    send them something when no MCP server of theirs is the route. `slack_write` says a
+    workspace is at `write`, and adds the one command that sends as the owner with the
+    rule for when it may. `owner` is
     whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
     `assistant` is who dispatched it (`Settings.assistant_name`).
     `tools_dir` is where the owner's own voice tools live (`keryx.tools.custom`), and the
     section on writing one is there only when it is given. `issues` is where a report of a
     problem with Keryx goes (`keryx.issues`), and that section is there only when given.
     """
-    slack = (
-        render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
-        if slack_mcp_server
-        else ""
-    )
+    if slack_mcp_server:
+        # Where the owner has given subagents an MCP server for Slack, that stays the way.
+        slack = render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
+    elif slack_report:
+        slack = render_prompt(SUBAGENT_SLACK_REPORT_PROMPT, task_id=task.id).strip()
+    else:
+        slack = ""
     parts = [slack]
     if task.origin_channel == SLACK_ORIGIN:
         parts.insert(0, _typed_on_slack(task, owner or OWNER_FALLBACK, can_read=slack_read))
     if slack_read:
         parts.append(render_prompt(SUBAGENT_SLACK_READ_PROMPT, owner=owner or OWNER_FALLBACK))
+    if slack_write:
+        parts.append(render_prompt(SUBAGENT_SLACK_MESSAGE_PROMPT, owner=owner or OWNER_FALLBACK))
     slack = "\n".join(part.strip() for part in parts if part.strip())
     custom_tools = (
         render_prompt(

@@ -8,7 +8,7 @@ Four stages, in order, on every `TaskCompleted` / `TaskFailed`:
 2. **Text** it, unless it was already delivered: a live *phone* session announced it, or
    somebody was holding the line for it. Otherwise a local (wake-word) session hearing it
    does not count: they may well have walked away from the Mac.
-3. **Post** the subagent's report to their Slack DM, while the `send_to_slack` plugin is
+3. **Post** the subagent's report to their Slack DM, while the `slack_report` plugin is
    on — whatever else reached them, because a call carries a sentence and they want the
    rest in writing. The call-back then says it is there, and follow-ups are answered from it.
    Where the first report landed becomes the task's thread (`Task.slack_thread_ts`), and

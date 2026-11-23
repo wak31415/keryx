@@ -14,7 +14,7 @@ coding agent relaying the link — it is two, the second with `--callback-url`. 
 Slack is always two steps (`setup/slack.py`): alone it says what the chosen access level
 lets Keryx see and prints the link that creates the owner's Slack app (or, for an app there
 is, the manifest that raises its level), and with the level's tokens on standard input it
-checks each, finds where to send and turns `send_to_slack` on. Lowering a level needs no
+checks each, finds where to send and turns `slack_report` on. Lowering a level needs no
 token and is done at once. `--workspace NAME` is a further workspace, with its own app.
 """
 
@@ -44,7 +44,7 @@ SIGN_INS = {
     "google": (GOOGLE_CHECK,),
     "twilio": ("Twilio credentials",),
     #: The plugin's own check: on, off, or a token with the plugin off.
-    "slack": ("send_to_slack",),
+    "slack": ("slack_report",),
 }
 #: The names the two older Google sign-ins had: still accepted by `login`, and still
 #: reported by `status`, for one release.

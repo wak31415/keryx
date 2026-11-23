@@ -574,7 +574,7 @@ class Settings(BaseSettings):
     # `DATA_DIR/tools` (`keryx.plugins`). These stay here so they live in `secrets.toml`.
     slack_bot_token: str | None = setting(
         None,
-        "The bot token (`xoxb-`) of your Slack app: what the `send_to_slack` plugin, each "
+        "The bot token (`xoxb-`) of your Slack app: what the `slack_report` plugin, each "
         "finished task's report and the PIN-lockout alert post with. `keryx auth login "
         "slack` sets it.",
         group="plugins",

@@ -1,9 +1,9 @@
-# send_to_slack: "send me that on Slack" posts to your DM, and a PIN lockout is posted there
+# slack_report: "send me that on Slack" posts to your DM, and a PIN lockout is posted there
 # too. Changes here count from the next call; no restart.
 #
 # The tokens are secrets, so they are not in this file: they are in secrets.toml, set by
 # `keryx auth login slack` (the bot token alone can also come from the MCP server below).
-# `keryx plugins remove send_to_slack` turns all of this off.
+# `keryx plugins remove slack_report` turns all of this off.
 
 # Where it posts. Your member id (U…) reaches you in your messages from the app, and
 # `keryx auth login slack` finds it from your address; a channel's id (in the
@@ -15,14 +15,17 @@ channel_id = {channel_id}
 # with. announce: it posts and reads nothing. converse: it is also sent the direct messages
 # you type to the Keryx app itself, and acts on one that mentions the app (@Keryx): a new
 # message starts work and a reply under a task's report resumes that task, without the
-# phone PIN. read: you can also mention it in a conversation it was added to, and it reads
-# Slack as you when you ask it about messages.
+# phone PIN. read: you can also mention it in a conversation it was added to, where it
+# answers in that thread, and it reads Slack as you when you ask it about messages.
+# write: it can also send a message as you, to a person or a channel, when you ask.
 # Lowering it here takes effect at once; raising it needs the app changed in Slack and
 # more tokens, which is `keryx auth login slack --access LEVEL`.
 access = {access}
 
 # Your own member id in this workspace. At converse and above, only messages from this
-# member are ever acted on. `keryx auth login slack --owner` is what changes it.
+# member are ever acted on. It is settled when the workspace is connected and nothing
+# changes it afterwards: `keryx auth logout slack` and a new login connects as somebody
+# else.
 owner_id = {owner_id}
 
 # The workspace this is, and the Keryx app's own member id there, as Slack gave them when

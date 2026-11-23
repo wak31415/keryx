@@ -74,7 +74,7 @@ from keryx.integrations.slack import (
 from keryx.plugins import slack as plugin
 from keryx.plugins.slack import DEFAULT, SlackWorkspace
 
-PLUGIN = "send_to_slack"
+PLUGIN = "slack_report"
 TOKEN_KEY = "SLACK_BOT_TOKEN"
 #: Where the first workspace's tokens are stored, by kind.
 TOKEN_KEYS = {BOT: TOKEN_KEY, APP: "SLACK_APP_TOKEN", USER: "SLACK_USER_TOKEN"}
@@ -102,6 +102,13 @@ MEANING = {
         "only when you ask it about messages: every channel, private channel, direct "
         "message and group message you are in, their lists, the member list, and search."
     ),
+    Access.WRITE: (
+        "Everything in read. Keryx can also send messages as you, in your name, to other "
+        "people and to channels you are in: a new message or a reply in a thread, only "
+        "when you ask for that message, and on a call only after it has said who it goes "
+        "to and the words, and you have said yes. A coding agent working on a request of "
+        "yours can send one too."
+    ),
 }
 #: The same in a few words, beside each option of the wizard's question.
 SHORT = {
@@ -110,12 +117,22 @@ SHORT = {
                      "(@Keryx): it can resume or start work without the PIN",
     Access.READ: "also answers your mention in a conversation it was added to, there, "
                  "and reads Slack as you when you ask it about messages",
+    Access.WRITE: "also sends a message as you, to a person or a channel, when you ask "
+                  "for that message",
 }
 #: Said at `read`: when Slack is read as the owner, and what turns that on.
 READ_NOTE = (
     "Keryx reads Slack as you only when you ask about messages: on a call once "
-    "`keryx plugins install check_slack` has turned that on, and in a task through "
+    "`keryx plugins install slack_read` has turned that on, and in a task through "
     "`keryx slack`, which a coding agent runs when your request is about Slack."
+)
+
+#: Said at `write`: what sending as the owner is, and what turns it on.
+WRITE_NOTE = (
+    "A message Keryx sends at this level is yours: other people read it as written by "
+    "you. On a call that is `keryx plugins install slack_message`, which always asks "
+    "before it sends; in a task it is `keryx slack message`, which a coding agent runs "
+    "only when your request asks for that message to that person or channel."
 )
 
 #: The steps in Slack, after the link. Markdown; `plain` is the same without the marks.
@@ -341,8 +358,10 @@ def start(
             echo(f"  {level}: {MEANING[level]}")
         others = " or ".join(f"--access {level}" for level in slack.LEVELS if level is not access)
         echo(f"\nWhat follows is {access}; {others} chooses another.")
-    if access is Access.READ:
+    if access.reaches(Access.READ):
         echo(READ_NOTE)
+    if access.reaches(Access.WRITE):
+        echo(WRITE_NOTE)
     echo("")
     if raising:
         echo(f"{saved.label} is connected at the {current} level, so the app you have is "
@@ -360,20 +379,23 @@ def start(
             echo("\nThe bot token stays as it is.")
     wanted = [kind for kind in token_kinds(access) if kind not in have]
     many = len(wanted) > 1
-    address = "" if access is Access.READ else " --email ADDRESS"
+    address = "" if access.reaches(Access.READ) else " --email ADDRESS"
     command = f"keryx auth login slack --stdin{_flags(workspace, access, current)}{address}"
     if wanted:
         what = "the tokens" if many else f"the {TOKEN_NAMES[wanted[0]]}"
         echo(
             f"\nThen hand {what} over on standard input, never on the command line"
             + (", one to a line in any order" if many else "")
-            + ("" if access is Access.READ else ", with the address you use in Slack")
+            + ("" if access.reaches(Access.READ) else ", with the address you use in Slack")
             + f":\n  {command}"
         )
     else:
         echo("\nEvery token this level needs is saved already, so there is nothing to "
              f"hand over. Once the app is reinstalled:\n  {command} < /dev/null")
-    if access is Access.READ:
+        if USER in have:
+            echo("If Slack shows a different User OAuth Token after the reinstall, hand "
+                 "that one over instead of nothing.")
+    if access.reaches(Access.READ):
         echo("The user token says which member you are, so no address is needed.")
     else:
         echo(without_email(settings, workspace))
@@ -443,7 +465,7 @@ def logout(
     """Disconnect a workspace: forget its tokens and its settings. Slack is not asked.
 
     A further workspace loses its table and its entry among the tokens. The first loses
-    its three tokens and everything Slack said of it, and `send_to_slack` is turned off
+    its three tokens and everything Slack said of it, and `slack_report` is turned off
     unless a named MCP server still carries it. Nothing is revoked at Slack: the app and
     its tokens are the owner's own, and removing the app there is what ends them.
     """
@@ -655,7 +677,7 @@ def connect(
     # only when what is on file does not stand for this token.
     address = (email or "").strip()
     kept = saved.channel if not address and keeps(saved.channel, new_token=token != before) else ""
-    by_token = access is Access.READ  # the user token says who they are, and so where to send
+    by_token = access.reaches(Access.READ)  # the user token says who they are, and so where to send
     if not (address or kept or by_token):
         address = settings.user_google_email or ""
     if not (address or kept or by_token):
@@ -684,7 +706,7 @@ def connect(
         )
     token_owner = ""
     if USER in needed:
-        token_owner = _check_user_token(api, held[USER], team)
+        token_owner = _check_user_token(api, held[USER], team, access)
     if APP in needed:
         opened = api.open_connection(held[APP])
         if not opened.ok:
@@ -749,8 +771,10 @@ def connect(
         echo(LISTEN_NOTE)
         if not (is_member(channel) or slack.is_dm(channel)):
             echo(CHANNEL_NOTE.format(channel=channel))
-    if access is Access.READ:
+    if access.reaches(Access.READ):
         echo(READ_NOTE)
+    if access.reaches(Access.WRITE):
+        echo(WRITE_NOTE)
     for kind in saved.tokens:
         if kind not in needed:
             echo(f"{_stored_as(workspace, kind)} is forgotten: the {access} level does not "
@@ -836,10 +860,24 @@ def user_token_problem(checked: Workspace, team: Workspace) -> str | None:
     return None
 
 
-def _check_user_token(api: SlackApi, token: str, team: Workspace) -> str:
+def scope_problem(checked: Workspace, access: Access) -> str | None:
+    """What a user token Slack answered for may not yet do that `access` needs; None when
+    it may, and when Slack did not say what it may do (which is then found out in use)."""
+    if checked.scopes is None:
+        return None
+    lacking = [scope for scope in slack.user_scopes(access) if scope not in checked.scopes]
+    if not lacking:
+        return None
+    return (f"it may not yet do what the {access} level needs (it lacks "
+            f"{', '.join(lacking)}): save the manifest in the app, reinstall it to the "
+            "workspace, and hand over the User OAuth Token shown after that")
+
+
+def _check_user_token(api: SlackApi, token: str, team: Workspace,
+                      access: Access = Access.READ) -> str:
     """The member the user token acts as, who is the owner; refused in a sentence."""
     checked = api.auth_test(token)
-    if problem := user_token_problem(checked, team):
+    if problem := user_token_problem(checked, team) or scope_problem(checked, access):
         raise SlackSetupError(f"the user token cannot be used: {problem}. Nothing was saved")
     return checked.user_id
 

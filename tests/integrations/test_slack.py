@@ -258,7 +258,7 @@ def test_auth_test_names_the_workspace_the_token_belongs_to():
     workspace = auth_test("xoxb-test", post=post)
 
     assert workspace.ok and workspace.team == "Acme"
-    assert workspace.url == "https://acme.slack.com/"
+    assert not hasattr(workspace, "url"), "nothing reads the workspace's address any more"
     assert calls == [("https://slack.com/api/auth.test", {}, "xoxb-test")]
 
 
@@ -437,8 +437,9 @@ def test_the_lookup_is_one_get_with_the_token_in_a_header_and_never_in_the_addre
 
 
 def test_the_levels_are_a_ladder():
-    assert slack.LEVELS == (Access.ANNOUNCE, Access.CONVERSE, Access.READ)
+    assert slack.LEVELS == (Access.ANNOUNCE, Access.CONVERSE, Access.READ, Access.WRITE)
     assert Access.READ.reaches(Access.CONVERSE) and Access.CONVERSE.reaches(Access.CONVERSE)
+    assert Access.WRITE.reaches(Access.READ) and not Access.READ.reaches(Access.WRITE)
     assert not Access.ANNOUNCE.reaches(Access.CONVERSE)
     assert not Access.CONVERSE.reaches(Access.READ)
 
@@ -496,14 +497,6 @@ def test_no_level_is_ever_sent_a_conversation_it_was_not_addressed_in(access):
     assert "user_events" not in text
     for event in ("message.channels", "message.groups", "message.mpim"):
         assert event not in text
-
-
-def test_a_mention_is_found_however_slack_writes_it():
-    found = slack.mention("U0KERYX")
-
-    assert found.sub("", "<@U0KERYX> do it <@U0KERYX|keryx>").strip() == "do it"
-    assert not found.search("<@U0KERYXX> hi") and not found.search("@U0KERYX hi")
-    assert not found.search("<@U0OTHER> hi") and not found.search("<@u0keryx> hi")
 
 
 def test_a_conversations_id_is_held_to_its_shape():
@@ -742,3 +735,26 @@ def test_a_messages_text_is_read_back_as_it_was_typed():
     )
     assert plain_text("mail <mailto:sam@x.io|sam@x.io>") == "mail mailto:sam@x.io"
     assert plain_text("<@U0OWNER> hi") == "<@U0OWNER> hi"
+
+
+def test_write_is_read_and_the_two_user_scopes_that_send_as_the_owner():
+    """Nothing the bot may do changes, and nothing is added that edits, deletes or joins."""
+    read, write = app_manifest(Access.READ), app_manifest(Access.WRITE)
+
+    assert set(write["oauth_config"]["scopes"]["user"]) - set(
+        read["oauth_config"]["scopes"]["user"]) == {"chat:write", "im:write"}
+    assert write["oauth_config"]["scopes"]["bot"] == read["oauth_config"]["scopes"]["bot"]
+    assert write["settings"] == read["settings"]
+    assert slack.token_kinds(Access.WRITE) == slack.token_kinds(Access.READ)
+    assert slack.user_scopes(Access.CONVERSE) == ()
+
+
+def test_checking_a_token_also_says_what_it_may_do_when_slack_says():
+    said = slack.auth_test("xoxp-1", post=lambda *a: {
+        "ok": True, "team": "Acme", "team_id": "T0ACME", "user_id": "U0OWNER",
+        slack.SCOPES: "search:read, chat:write,im:write"})
+    silent = slack.auth_test("xoxp-1", post=lambda *a: {
+        "ok": True, "team": "Acme", "team_id": "T0ACME", "user_id": "U0OWNER"})
+
+    assert said.scopes == ("search:read", "chat:write", "im:write")
+    assert silent.scopes is None, "not said is never taken to mean nothing"

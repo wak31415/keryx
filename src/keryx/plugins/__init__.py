@@ -1,10 +1,10 @@
 """Plugins: the optional voice tools, installed into the owner's tools directory when wanted.
 
-Some tools are not Keryx's to offer on every machine — `send_to_slack`, `check_slack`,
-`check_email`, `check_calendar`, `add_calendar_event`, `find_document`, `check_billing` and
-`cluster_stats` each need something only some owners have — so none is registered from the
-source tree. A plugin exists when the owner turns it on, and it is then an ordinary custom
-tool (`keryx.tools.custom`): two files in `DATA_DIR/tools`,
+Some tools are not Keryx's to offer on every machine — `slack_report`, `slack_read`,
+`slack_message`, `check_email`, `check_calendar`, `add_calendar_event`, `find_document`,
+`check_billing` and `cluster_stats` each need something only some owners have — so none is
+registered from the source tree. A plugin exists when the owner turns it on, and it is then
+an ordinary custom tool (`keryx.tools.custom`): two files in `DATA_DIR/tools`,
 
 - `<name>.py`, one line calling `keryx.plugins.<module>.<name>_tool`, so the logic stays
   here with its tests and a fix reaches every installed copy; and
@@ -18,6 +18,16 @@ the store (`keryx config set KEY --stdin`), and the Google sign-in in its own to
 what each is called, what the wizard asks (`important`; the rest stay in the file, with
 their comments) and which secrets it uses. `keryx plugins` and the Plugins section of
 `keryx setup` are the two ways in.
+
+**A renamed plugin's old files are read, and never moved unasked.** `slack_report` was
+`send_to_slack` until 2026-11-23 (`Plugin.formerly`), and a machine that installed it then
+has `send_to_slack.py` and `send_to_slack.toml`. Those keep working with nothing asked of
+the owner: every path here goes by the name the files have on that machine (`files_name`),
+so what reads the settings reads them, what writes them writes them where they are, and
+the tool they define is offered under its new name. Only `keryx plugins install
+slack_report`, typed by the owner, renames the pair in place (`adopt`): several builds may
+run against one tools directory, and an older one finds its plugin only under the name it
+knows. The old name is still taken on a command line, and is never given to a new file.
 
 Every file is written through `config.files.write_private`, 0600, because the loader refuses
 a file anyone else could write. A value is validated before it is written (bare words,
@@ -105,6 +115,8 @@ class Plugin:
     #: Ticked on a first walk as well, but only once its Google service is connected:
     #: wanted by most, and not worth a sign-in of its own to somebody who has none.
     default_when_connected: bool = False
+    #: The name it had before it was renamed, whose files are still read (`files_name`).
+    formerly: str = ""
 
     def key(self, name: str) -> Key:
         return next(key for key in self.keys if key.name == name)
@@ -122,7 +134,7 @@ def _cluster_problem(values: dict[str, Any]) -> str | None:
 
 
 #: The access levels of a Slack app (`integrations.slack.Access`), lowest first.
-SLACK_ACCESS = ("announce", "converse", "read")
+SLACK_ACCESS = ("announce", "converse", "read", "write")
 #: What a Slack workspace is, beside its tokens: the first one at the top of the file, and
 #: each further one in a `[workspace-NAME]` table of the same keys.
 _SLACK_WORKSPACE = (
@@ -137,10 +149,11 @@ _SLACK_WORKSPACE = (
 )
 
 PLUGINS: dict[str, Plugin] = {
-    "send_to_slack": Plugin(
-        name="send_to_slack",
+    "slack_report": Plugin(
+        name="slack_report",
         title="Slack",
         summary='"Send me that on Slack" posts to your DM; PIN lockouts are posted there too',
+        formerly="send_to_slack",
         default=True,
         important=("channel_id",),
         secrets=("SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_USER_TOKEN",
@@ -155,9 +168,9 @@ PLUGINS: dict[str, Plugin] = {
         module="slack",
         problem=_slack_problem,
     ),
-    "check_slack": Plugin(
-        name="check_slack",
-        title="Slack answers",
+    "slack_read": Plugin(
+        name="slack_read",
+        title="Slack reading",
         summary='"Anything waiting for me on Slack?" read as you, on a call, when you ask',
         default=False,
         important=(),
@@ -166,7 +179,17 @@ PLUGINS: dict[str, Plugin] = {
             Key("model", "word", "claude-opus-5-5", "The model that answers a question"),
             Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
         ),
-        module="slack_check",
+        module="slack_read",
+    ),
+    "slack_message": Plugin(
+        name="slack_message",
+        title="Slack messages as you",
+        summary='"Tell Sam I am running late": one message sent as you, after you say yes',
+        default=False,
+        important=(),
+        secrets=(),
+        keys=(),
+        module="slack_message",
     ),
     "check_email": Plugin(
         name="check_email",
@@ -266,10 +289,15 @@ PLUGINS: dict[str, Plugin] = {
 }
 
 
+def canonical(name: str) -> str:
+    """`name` as the plugin is called now: a name it had before a rename is still taken."""
+    return next((spec.name for spec in PLUGINS.values() if spec.formerly == name), name)
+
+
 def plugin(name: str) -> Plugin:
     """The plugin called `name`, or a `PluginConfigError` naming the ones there are."""
     try:
-        return PLUGINS[name]
+        return PLUGINS[canonical(name)]
     except KeyError:
         raise PluginConfigError(
             f"there is no plugin called {name!r} ({', '.join(PLUGINS)})"
@@ -279,21 +307,69 @@ def plugin(name: str) -> Plugin:
 # --- where the files are -----------------------------------------------------------------
 
 
+#: What a plugin's files end in: its tool, its settings, and the settings set aside while
+#: it is off. (A draft of the tool is the fourth: `_<name>.py`.)
+_SUFFIXES = (".py", ".toml", OFF_SUFFIX)
+
+
+def _has_files(settings: "Settings", stem: str) -> bool:
+    tools = settings.custom_tools_dir
+    return any((tools / f"{stem}{suffix}").exists() for suffix in _SUFFIXES) or (
+        tools / f"_{stem}.py").exists()
+
+
+def files_name(settings: "Settings", name: str) -> str:
+    """The name the plugin's files go by on this machine: its own, or the one it had
+    before a rename while those files are what is there. Never both: once a file of the
+    new name exists, that is the name."""
+    spec = PLUGINS.get(canonical(name))
+    if spec is None:
+        return name
+    if spec.formerly and not _has_files(settings, spec.name) and _has_files(
+            settings, spec.formerly):
+        return spec.formerly
+    return spec.name
+
+
 def tool_path(settings: "Settings", name: str) -> Path:
-    return settings.custom_tools_dir / f"{name}.py"
+    return settings.custom_tools_dir / f"{files_name(settings, name)}.py"
 
 
 def config_path(settings: "Settings", name: str) -> Path:
-    return settings.custom_tools_dir / f"{name}.toml"
+    return settings.custom_tools_dir / f"{files_name(settings, name)}.toml"
 
 
 def draft_path(settings: "Settings", name: str) -> Path:
     """The `.py` written by `--template`, which the loader skips until it is renamed."""
-    return settings.custom_tools_dir / f"_{name}.py"
+    return settings.custom_tools_dir / f"_{files_name(settings, name)}.py"
 
 
 def off_path(settings: "Settings", name: str) -> Path:
-    return settings.custom_tools_dir / f"{name}{OFF_SUFFIX}"
+    return settings.custom_tools_dir / f"{files_name(settings, name)}{OFF_SUFFIX}"
+
+
+def adopt(settings: "Settings", name: str) -> bool:
+    """Rename a plugin's files from the name it had to the one it has now, in place.
+
+    Only ever on the owner's explicit `keryx plugins install`: an older build that shares
+    this tools directory finds its plugin under the old name alone. A `.py` that is still
+    the stock one line is replaced by today's; one edited by hand is moved as it is, and
+    goes on working, because the entry point it calls is kept. False when there was
+    nothing to rename.
+    """
+    spec = plugin(name)
+    if not spec.formerly or files_name(settings, name) != spec.formerly:
+        return False
+    tools = settings.custom_tools_dir
+    for old, new in [(f"{spec.formerly}{suffix}", f"{spec.name}{suffix}")
+                     for suffix in _SUFFIXES] + [(f"_{spec.formerly}.py", f"_{spec.name}.py")]:
+        if (tools / old).exists():
+            os.replace(tools / old, tools / new)
+    for path in (tools / f"{spec.name}.py", tools / f"_{spec.name}.py"):
+        if path.exists() and path.read_text(encoding="utf-8") == _template(
+                f"{spec.formerly}.py"):
+            write_private(path, _template(f"{spec.name}.py"))
+    return True
 
 
 # --- reading -----------------------------------------------------------------------------
@@ -459,6 +535,7 @@ def render_config(name: str, values: Mapping[str, Any]) -> str:
     """
     cleaned = clean(name, values)
     spec = plugin(name)
+    name = spec.name
     known = {key.name for key in spec.keys}
     filled: dict[str, str] = {}
     for key in spec.keys:
@@ -500,17 +577,23 @@ def write_config(settings: "Settings", name: str, values: Mapping[str, Any]) -> 
     return path
 
 
-def tool_source(name: str) -> str:
-    return _template(f"{name}.py")
+def tool_source(name: str, settings: "Settings | None" = None) -> str:
+    """The one line that is the plugin's `.py`: today's, or the one that goes with the
+    name its files have on this machine, which an older build can still load."""
+    spec = plugin(name)
+    return _template(f"{files_name(settings, name) if settings else spec.name}.py")
 
 
-def install(settings: "Settings", name: str) -> Path:
+def install(settings: "Settings", name: str, *, rename: bool = False) -> Path:
     """Turn the plugin on: settings validated, then its `.py` in place. Returns the `.py`.
 
     A draft (`--template`) is renamed into place, so what the owner edited is what runs; a
     `.py` already there is left as it is. The TOML is written from the aside copy or the
-    defaults when there is none yet.
+    defaults when there is none yet. `rename` is the owner's explicit install: files
+    still under a name the plugin had before are renamed first (`adopt`).
     """
+    if rename:
+        adopt(settings, name)
     if problem := install_problem(settings, name):
         raise PluginConfigError(f"{name} was not turned on: {problem}")
     if not config_path(settings, name).exists():
@@ -520,7 +603,7 @@ def install(settings: "Settings", name: str) -> Path:
         os.replace(draft, target)
         write_private(target, target.read_text(encoding="utf-8"))
     elif not target.exists():
-        write_private(target, tool_source(name))
+        write_private(target, tool_source(name, settings))
     return target
 
 
@@ -528,7 +611,7 @@ def write_template(settings: "Settings", name: str, values: Mapping[str, Any]) -
     """The TOML and a draft `.py`, for the owner to finish by hand. Returns the TOML."""
     path = write_config(settings, name, values)
     if not tool_path(settings, name).exists():
-        write_private(draft_path(settings, name), tool_source(name))
+        write_private(draft_path(settings, name), tool_source(name, settings))
     return path
 
 
@@ -591,7 +674,7 @@ def status(settings: "Settings") -> list[Status]:
     found = []
     for name in PLUGINS:
         values: dict[str, Any] | None = None
-        refused = refusals.get(f"{name}.py")
+        refused = refusals.get(tool_path(settings, name).name)
         try:
             values = read_config(settings, name)
         except PluginConfigError as error:

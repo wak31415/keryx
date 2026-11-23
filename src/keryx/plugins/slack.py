@@ -1,7 +1,7 @@
-"""The `send_to_slack` plugin, and the one question everything else asks about Slack.
+"""The `slack_report` plugin, and the one question everything else asks about Slack.
 
 The tool posts to the owner's DM, as their own bot, once they have asked for something in
-writing — so it needs the PIN. Its settings are `send_to_slack.toml` (`channel_id`,
+writing — so it needs the PIN. Its settings are `slack_report.toml` (`channel_id`,
 `mcp_server`); the bot token is `SLACK_BOT_TOKEN` in `secrets.toml`, or the named MCP
 server's own `env` in `~/.claude.json` (`integrations.slack.slack_credentials`).
 `channel_id` is a channel's id or a member's: setup stores the owner's member id, found
@@ -48,7 +48,7 @@ from keryx.integrations.slack import (
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from keryx.tasks.models import Task
 
-TOOL = "send_to_slack"
+TOOL = "slack_report"
 #: The first workspace's name: the one the top of the TOML describes.
 DEFAULT = SLACK_DEFAULT_WORKSPACE
 #: Where a task's request came from when it was typed to the app on Slack.
@@ -166,6 +166,12 @@ class SlackWorkspace:
         """Whether Keryx may read Slack as the owner here, and holds the token to."""
         return bool(self.access.reaches(Access.READ) and self.token(USER))
 
+    @property
+    def writes(self) -> bool:
+        """Whether a message may be sent there as the owner: `write`, the user token it
+        is sent with, and the member that token belongs to."""
+        return bool(self.access.reaches(Access.WRITE) and self.token(USER) and self.owner_id)
+
     def poster(self, channel: str | None = None) -> SlackWebApi | None:
         """What posts as this workspace's bot, to `channel` or where it usually posts."""
         token, where = self.token(BOT), channel or self.channel
@@ -255,6 +261,58 @@ def can_read(settings: Settings) -> bool:
         return any(each.reads and each.owner_id for each in connected(settings))
     except Exception:
         return False
+
+
+def can_write(settings: Settings) -> bool:
+    """Whether a message may be sent as the owner in any workspace now. Never raises."""
+    try:
+        return any(each.writes for each in connected(settings))
+    except Exception:
+        return False
+
+
+def can_report(settings: Settings) -> bool:
+    """Whether Keryx's own bot can post to the owner now. Never raises."""
+    try:
+        return any(each.name == DEFAULT and each.sends for each in connected(settings))
+    except Exception:
+        return False
+
+
+class ReportRefused(RuntimeError):
+    """`keryx slack report` could not post, in a sentence that holds no token."""
+
+
+async def report(settings: Settings, text: str, *, task: "Task | None" = None,
+                 workspace_name: str | None = None) -> str:
+    """Post `text` to the owner, as Keryx, for `keryx slack report`; where it went.
+
+    To where that workspace's reports go, or, for a task that was typed on Slack, into
+    the thread it was asked in (`report_route`, so never another workspace). Those are
+    the only two places: there is no argument that names a conversation.
+    """
+    text = text.strip()
+    if not text:
+        raise ReportRefused("there is nothing on standard input to post")
+    if task is not None and task.origin_channel == SLACK_CHANNEL:
+        route = report_route(settings, task)
+        if route is None:
+            raise ReportRefused("the workspace that task was asked in is not connected, "
+                                "and a report never leaves its workspace")
+        posted = await route.poster.post(text, thread_ts=route.thread_ts)
+        if not posted.ok:
+            raise ReportRefused(f"Slack did not take it ({posted.error})")
+        return "the thread the task was asked in"
+    name = (workspace_name or DEFAULT).strip().lower()
+    found = workspace(settings, name)
+    poster = found.poster() if found is not None and found.sends else None
+    if poster is None:
+        raise ReportRefused(f"no Slack workspace called {name[:40]} can be posted to: "
+                            "`keryx auth login slack` connects one")
+    posted = await poster.post(text)
+    if not posted.ok:
+        raise ReportRefused(f"Slack did not take it ({posted.error})")
+    return f"{found.label}, where their reports go"
 
 
 def workspace(settings: Settings, name: str) -> SlackWorkspace | None:
@@ -377,13 +435,17 @@ def parameters(names: list[str]) -> dict:
     }
 
 
-def send_to_slack_tool(
+def slack_report_tool(
     config_path: Path,
     *,
     sender: SlackSender | None = None,
     senders: Mapping[str, SlackSender] | None = None,
 ):
-    """The tool `send_to_slack.py` defines, configured by the TOML at `config_path`.
+    """The tool `slack_report.py` defines, configured by the TOML at `config_path`: Keryx
+    sends something to the owner, as Keryx.
+
+    `to` and `thread` are not arguments, on purpose: this tool only ever posts where the
+    owner's reports go. Sending as the owner, to somebody else, is `slack_message`.
 
     `sender` stands in for the first workspace's, and `senders` for every workspace's by
     name, in the tests.
@@ -408,7 +470,7 @@ def send_to_slack_tool(
         )
     names = list(senders)
 
-    async def send_to_slack(ctx, arguments: dict) -> dict:
+    async def slack_report(ctx, arguments: dict) -> dict:
         message = str(arguments.get("message") or "").strip()
         if not message:
             return {"error": "message is required: say what to send"}
@@ -424,6 +486,13 @@ def send_to_slack_tool(
         name=TOOL,
         description=description(settings.owner_label) + (SEVERAL if len(names) > 1 else ""),
         parameters=parameters(names),
-        handler=send_to_slack,
+        handler=slack_report,
         needs_pin=True,
     )
+
+
+#: What the tool and its plugin were called until 2026-11-23. A machine that installed it
+#: then still has `send_to_slack.py`, whose one line calls this name: it stays an entry
+#: point for as long as such a file may be on a machine, and what it builds is the same
+#: tool, offered as `slack_report`.
+send_to_slack_tool = slack_report_tool

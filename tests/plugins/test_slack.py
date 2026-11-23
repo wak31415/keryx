@@ -1,4 +1,4 @@
-"""The `send_to_slack` plugin, and `slack_route`, which everything else asks about Slack."""
+"""The `slack_report` plugin, and `slack_route`, which everything else asks about Slack."""
 
 import json
 
@@ -15,7 +15,7 @@ from keryx.plugins.slack import (
     SlackWorkspace,
     connected,
     report_route,
-    send_to_slack_tool,
+    slack_report_tool,
     slack_route,
     slack_sender,
     workspace,
@@ -27,7 +27,7 @@ from keryx.tools.custom import ToolUnavailable
 from keryx.trust import TrustLevel
 from plugins.helpers import call, loaded, loading, names, offered, refusal
 
-NAME = "send_to_slack"
+NAME = "slack_report"
 
 
 class FakeSlack:
@@ -50,7 +50,7 @@ def slack_settings(settings):
 def tool(settings, sender=None, **values):
     path = plugins.write_config(settings, NAME, {"channel_id": "D123", **values})
     with loading(settings):
-        return send_to_slack_tool(path, sender=sender)
+        return slack_report_tool(path, sender=sender)
 
 
 def description(settings) -> str:
@@ -60,7 +60,7 @@ def description(settings) -> str:
 # --- the tool ---------------------------------------------------------------------------
 
 
-async def test_send_to_slack_sends_the_message(settings):
+async def test_slack_report_sends_the_message(settings):
     slack = FakeSlack()
     registry = offered(tool(settings, slack), settings)
 
@@ -68,7 +68,7 @@ async def test_send_to_slack_sends_the_message(settings):
     assert slack.sent == ["task 3 is done"]
 
 
-async def test_send_to_slack_needs_a_message(settings):
+async def test_slack_report_needs_a_message(settings):
     registry = offered(tool(settings, FakeSlack()), settings)
 
     assert "message is required" in (await call(registry, NAME, {}))["error"]
@@ -129,7 +129,7 @@ async def test_with_several_workspaces_one_may_be_named_and_the_usual_one_is_the
     first, work = FakeSlack(), FakeSlack()
     path = plugins.write_config(settings, NAME, {"channel_id": "D123"})
     with loading(settings):
-        several = send_to_slack_tool(path, senders={"default": first, "work": work})
+        several = slack_report_tool(path, senders={"default": first, "work": work})
     registry = offered(several, settings)
 
     assert several.parameters["properties"]["workspace"]["enum"] == ["default", "work"]
@@ -206,11 +206,11 @@ def test_a_toml_that_does_not_parse_is_refused_with_why(slack_settings):
 
 
 def test_the_tool_itself_refuses_a_file_it_cannot_read(settings, tmp_path):
-    bad = tmp_path / "send_to_slack.toml"
+    bad = tmp_path / "slack_report.toml"
     bad.write_text("channel_id = [\n")
 
     with pytest.raises(ToolUnavailable, match="does not parse"):
-        send_to_slack_tool(bad, sender=FakeSlack())
+        slack_report_tool(bad, sender=FakeSlack())
 
 
 # --- the route: what the alert, the subagent and Codex ask ------------------------------

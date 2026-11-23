@@ -41,10 +41,10 @@ def test_the_comments_survive_every_rewrite(settings):
 
 
 def test_keys_added_by_hand_are_carried_through(settings):
-    path = plugins.write_config(settings, "send_to_slack", {"channel_id": "D1"})
+    path = plugins.write_config(settings, "slack_report", {"channel_id": "D1"})
     path.write_text(path.read_text() + 'note = "mine"\n\n[extra]\nkept = 1\n')
 
-    plugins.write_config(settings, "send_to_slack", {"channel_id": "D2"})
+    plugins.write_config(settings, "slack_report", {"channel_id": "D2"})
 
     data = tomllib.loads(path.read_text())
     assert data["channel_id"] == "D2"
@@ -54,22 +54,22 @@ def test_keys_added_by_hand_are_carried_through(settings):
 @pytest.mark.parametrize(
     ("name", "values"),
     [
-        ("send_to_slack", {"channel_id": 'D1"\nmcp_server = "evil'}),
-        ("send_to_slack", {"mcp_server": "a b"}),
+        ("slack_report", {"channel_id": 'D1"\nmcp_server = "evil'}),
+        ("slack_report", {"mcp_server": "a b"}),
         ("check_email", {"effort": "extreme"}),
         ("check_billing", {"monthly_budget": -1}),
         ("check_billing", {"monthly_budget": True}),
         ("cluster_stats", {"timeout_s": 0}),
         ("cluster_stats", {"guard": "/bin/x\n[clusters]"}),
         ("cluster_stats", {"clusters": ["alpha"]}),
-        ("send_to_slack", {"access": "everything"}),
-        ("send_to_slack", {"owner_id": "U1 or U2"}),
-        ("send_to_slack", {"team": "Acme\n[workspaces.evil]"}),
-        ("send_to_slack", {"workspaces": ["work"]}),
-        ("send_to_slack", {"workspaces": {"work": "U1"}}),
-        ("send_to_slack", {"workspaces": {"my work": {}}}),
-        ("send_to_slack", {"workspaces": {"work": {"access": "all"}}}),
-        ("send_to_slack", {"workspaces": {"work": {"channel_id": 'U1"\nx = "y'}}}),
+        ("slack_report", {"access": "everything"}),
+        ("slack_report", {"owner_id": "U1 or U2"}),
+        ("slack_report", {"team": "Acme\n[workspaces.evil]"}),
+        ("slack_report", {"workspaces": ["work"]}),
+        ("slack_report", {"workspaces": {"work": "U1"}}),
+        ("slack_report", {"workspaces": {"my work": {}}}),
+        ("slack_report", {"workspaces": {"work": {"access": "all"}}}),
+        ("slack_report", {"workspaces": {"work": {"channel_id": 'U1"\nx = "y'}}}),
     ],
 )
 def test_a_value_that_is_not_its_kind_is_refused_before_anything_is_written(
@@ -115,7 +115,7 @@ def test_removing_sets_the_settings_aside_and_turning_it_on_again_keeps_them(set
     plugins.install(settings, "check_billing")
     assert plugins.read_config(settings, "check_billing")["monthly_budget"] == 75
     assert not plugins.off_path(settings, "check_billing").exists()
-    assert plugins.remove(settings, "send_to_slack") is False
+    assert plugins.remove(settings, "slack_report") is False
 
 
 def test_a_template_is_written_off_and_turned_on_as_it_was_edited(settings):
@@ -151,14 +151,14 @@ def test_an_edited_py_is_left_as_it_is_on_a_second_install(settings):
 def test_status_goes_through_the_loader_a_call_uses(settings):
     turn_on(settings, "check_billing")
     turn_on(settings, "check_email")  # not signed in: refused
-    plugins.write_config(settings, "send_to_slack", {"channel_id": "D1"})  # off
+    plugins.write_config(settings, "slack_report", {"channel_id": "D1"})  # off
 
     found = {status.name: status for status in plugins.status(settings)}
 
     assert found["check_billing"].on and found["check_billing"].refused is None
     assert not found["check_email"].on and "keryx auth login google" in found["check_email"].refused
-    assert not found["send_to_slack"].installed and found["send_to_slack"].refused is None
-    assert found["send_to_slack"].values["channel_id"] == "D1"
+    assert not found["slack_report"].installed and found["slack_report"].refused is None
+    assert found["slack_report"].values["channel_id"] == "D1"
     assert found["cluster_stats"].as_dict()["on"] is False
 
 
@@ -204,9 +204,9 @@ def test_command_line_values_are_its_own_keys_cleaned():
 @pytest.mark.parametrize(
     ("name", "assignment", "says"),
     [
-        ("send_to_slack", "SLACK_BOT_TOKEN=xoxb-1", "keryx config set SLACK_BOT_TOKEN --stdin"),
+        ("slack_report", "SLACK_BOT_TOKEN=xoxb-1", "keryx config set SLACK_BOT_TOKEN --stdin"),
         ("check_billing", "openai_admin_key=sk", "keryx config set OPENAI_ADMIN_KEY --stdin"),
-        ("send_to_slack", "bot_token=xoxb-1", "its secrets: SLACK_BOT_TOKEN"),
+        ("slack_report", "bot_token=xoxb-1", "its secrets: SLACK_BOT_TOKEN"),
         ("check_email", "token=x", "keryx auth login google"),
         ("cluster_stats", "clusters=alpha", "has no setting"),
         ("check_billing", "budget", "is not KEY=VALUE"),
@@ -225,7 +225,7 @@ def test_a_secret_or_a_stranger_is_refused_with_what_to_do(name, assignment, say
 def test_each_further_slack_workspace_is_a_table_of_the_same_settings(settings):
     work = {"access": "converse", "owner_id": "U0WORK", "team": "Acme Inc", "channel_id": "U0WORK"}
     path = plugins.write_config(
-        settings, "send_to_slack", {"channel_id": "U0ME", "workspaces": {"Work": work}}
+        settings, "slack_report", {"channel_id": "U0ME", "workspaces": {"Work": work}}
     )
 
     data = tomllib.loads(path.read_text())
@@ -234,18 +234,18 @@ def test_each_further_slack_workspace_is_a_table_of_the_same_settings(settings):
     assert "workspaces" not in data
     assert (data["channel_id"], data["access"], data["owner_id"]) == ("U0ME", "announce", "")
     assert "# Further workspaces, one [workspace-NAME] table each" in path.read_text()
-    assert plugins.read_config(settings, "send_to_slack")["workspaces"]["work"]["team"] == (
+    assert plugins.read_config(settings, "slack_report")["workspaces"]["work"]["team"] == (
         "Acme Inc"
     )
 
 
 def test_a_workspace_table_survives_a_rewrite_with_what_was_added_by_hand(settings):
     path = plugins.write_config(
-        settings, "send_to_slack", {"channel_id": "U0ME", "workspaces": {"work": {}}}
+        settings, "slack_report", {"channel_id": "U0ME", "workspaces": {"work": {}}}
     )
     path.write_text(path.read_text() + 'note = "mine"\n')
 
-    plugins.write_config(settings, "send_to_slack", {"access": "converse"})
+    plugins.write_config(settings, "slack_report", {"access": "converse"})
 
     data = tomllib.loads(path.read_text())
     assert data["access"] == "converse"
@@ -258,22 +258,22 @@ def test_a_workspace_table_survives_a_rewrite_with_what_was_added_by_hand(settin
 def test_a_slack_file_from_before_workspaces_reads_as_one_at_announce(settings):
     """What every existing install has: two keys, and nothing to migrate."""
     settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
-    plugins.config_path(settings, "send_to_slack").write_text(
+    plugins.config_path(settings, "slack_report").write_text(
         'channel_id = "D123"\nmcp_server = ""\n'
     )
 
-    values = plugins.read_config(settings, "send_to_slack")
+    values = plugins.read_config(settings, "slack_report")
 
     assert values == {"channel_id": "D123", "access": "announce", "owner_id": "", "team": "",
                       "team_id": "", "bot_user_id": "", "mcp_server": "",
                       "workspaces": {}}
-    assert plugins.install_problem(settings, "send_to_slack") is None
+    assert plugins.install_problem(settings, "slack_report") is None
 
 
 def test_a_table_is_never_set_from_a_command_line():
     with pytest.raises(plugins.PluginConfigError, match="has no setting 'workspaces'"):
-        plugins.command_line_values("send_to_slack", ["workspaces=work"])
-    assert plugins.command_line_values("send_to_slack", ["access=converse"]) == {
+        plugins.command_line_values("slack_report", ["workspaces=work"])
+    assert plugins.command_line_values("slack_report", ["access=converse"]) == {
         "access": "converse"
     }
 
@@ -282,7 +282,7 @@ def test_a_table_is_never_set_from_a_command_line():
 
 
 def _older_write(path, **changes) -> None:
-    """What the build before workspaces does to `send_to_slack.toml` when it saves: its
+    """What the build before workspaces does to `slack_report.toml` when it saves: its
     two keys into its own template, every plain key it does not know under them, and every
     table it does not know one level deep, each value as that build wrote a value."""
     from keryx.config.files import _toml_string, toml_key, write_private
@@ -312,16 +312,16 @@ def test_an_older_build_rewriting_the_slack_file_keeps_every_workspace(settings)
     and every further workspace have to come through, in shapes the newer build reads."""
     work = {"channel_id": "U0W", "access": "converse", "owner_id": "U0W", "team": "Acme Inc",
             "team_id": "T0W", "bot_user_id": "U0WBOT"}
-    path = plugins.write_config(settings, "send_to_slack", {
+    path = plugins.write_config(settings, "slack_report", {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team_id": "T0A",
         "workspaces": {"work": work},
     })
-    plugins.install(settings, "send_to_slack")
+    plugins.install(settings, "slack_report")
 
     _older_write(path, channel_id="D0NEW")
 
-    assert plugins.is_on(settings, "send_to_slack")
-    values = plugins.read_config(settings, "send_to_slack")
+    assert plugins.is_on(settings, "slack_report")
+    values = plugins.read_config(settings, "slack_report")
     assert values["workspaces"] == {"work": work}
     assert (values["channel_id"], values["access"], values["owner_id"], values["team_id"]) == (
         "D0NEW", "converse", "U0OWNER", "T0A"
@@ -330,12 +330,12 @@ def test_an_older_build_rewriting_the_slack_file_keeps_every_workspace(settings)
 
 def test_a_file_with_workspaces_nested_under_one_table_is_still_read(settings):
     settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
-    plugins.config_path(settings, "send_to_slack").write_text(
+    plugins.config_path(settings, "slack_report").write_text(
         'channel_id = "U0ME"\n\n[workspaces.work]\naccess = "converse"\n'
         '\n[workspace-lab]\naccess = "read"\n'
     )
 
-    values = plugins.read_config(settings, "send_to_slack")
+    values = plugins.read_config(settings, "slack_report")
 
     assert {name: each["access"] for name, each in values["workspaces"].items()} == {
         "work": "converse", "lab": "read",
@@ -345,9 +345,9 @@ def test_a_file_with_workspaces_nested_under_one_table_is_still_read(settings):
 def test_a_key_an_earlier_cut_wrote_and_nothing_reads_now_is_carried_and_harmless(settings):
     """`url` was stored for a while on this branch: a file that has it still loads."""
     settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
-    plugins.config_path(settings, "send_to_slack").write_text(
+    plugins.config_path(settings, "slack_report").write_text(
         'channel_id = "U0ME"\nurl = "https://acme.slack.com/"\n'
     )
 
-    assert plugins.install_problem(settings, "send_to_slack") is None
-    assert plugins.read_config(settings, "send_to_slack")["channel_id"] == "U0ME"
+    assert plugins.install_problem(settings, "slack_report") is None
+    assert plugins.read_config(settings, "slack_report")["channel_id"] == "U0ME"

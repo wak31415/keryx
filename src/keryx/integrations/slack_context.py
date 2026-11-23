@@ -57,6 +57,11 @@ def clip(text: Any, limit: int = MESSAGE_CHARS) -> str:
     return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
 
 
+#: What names a message's thread to a later call: a conversation's id, and the timestamp
+#: of the message the thread hangs from. Slack's own ids, held to their shapes.
+REF = re.compile(r"([CDG][A-Z0-9]{2,31})(?::(\d{1,12}\.\d{1,9}))?")
+
+
 @dataclass(frozen=True)
 class ContextMessage:
     """One message read from Slack, attributed: who wrote it, when, where, and its text.
@@ -70,15 +75,19 @@ class ContextMessage:
     text: str
     #: A link to it, for the owner to open. Never read aloud.
     link: str = ""
+    #: What names its thread to a later call (`REF`). An id: never read aloud either.
+    ref: str = ""
 
-    def as_dict(self) -> dict[str, str]:
+    def as_dict(self, chars: int = MESSAGE_CHARS) -> dict[str, str]:
         return {"who": clip(self.who, NAME_CHARS), "when": self.when,
-                "where": clip(self.where, NAME_CHARS), "text": clip(self.text)}
+                "where": clip(self.where, NAME_CHARS), "text": clip(self.text, chars),
+                "ref": self.ref if REF.fullmatch(self.ref) else ""}
 
-    def line(self) -> str:
+    def line(self, chars: int = MESSAGE_CHARS) -> str:
         """The message as one line: nothing in it can start a line of its own."""
-        said = self.as_dict()
-        return f"- {said['when']}, {said['who']}, in {said['where']}: {said['text']}"
+        said = self.as_dict(chars)
+        ref = f"[{said['ref']}] " if said["ref"] else ""
+        return f"- {ref}{said['when']}, {said['who']}, in {said['where']}: {said['text']}"
 
 
 def _marker(token: str) -> re.Pattern[str]:
@@ -113,6 +122,10 @@ def fence(material: str, token: str) -> str:
     )
 
 
+MORE_LINE = "(there were more messages than these)"
+INCOMPLETE_LINE = "(part of Slack could not be read, so this is not all there is)"
+
+
 @dataclass(frozen=True)
 class Context:
     """What one question read from Slack: messages, attributed, and whether there were
@@ -121,26 +134,42 @@ class Context:
     messages: tuple[ContextMessage, ...] = ()
     #: There was more than was read: the bounds were reached before the end.
     more: bool = False
+    #: Part of what was asked could not be read at all (a refusal, a failure): what is
+    #: here is not the whole answer, and nothing may be concluded from what is missing.
+    incomplete: bool = False
+    #: Where a further read would go on from, when there was more: a timestamp.
+    before: str = ""
     #: The fence's token, made when the context is: one per call, never reused.
     token: str = field(default_factory=new_fence)
 
-    def fenced(self) -> str:
-        """Every message, one to a line, inside this context's fence. The only way
-        context is ever handed to a model or printed for one to read."""
-        lines = [message.line() for message in self.messages] or ["(no messages)"]
+    def fenced(self, chars: int = MESSAGE_CHARS) -> str:
+        """Every message, one to a line of at most `chars` of its text, inside this
+        context's fence. The only way context is ever handed to a model, printed for one
+        to read, or put into JSON."""
+        lines = [message.line(chars) for message in self.messages] or ["(no messages)"]
         if self.more:
-            lines.append("(there were more messages than these)")
+            lines.append(MORE_LINE)
+        if self.incomplete:
+            lines.append(INCOMPLETE_LINE)
         return fence("\n".join(lines), self.token)
 
     def as_dict(self) -> dict[str, Any]:
-        """The same for a program: every message under `context`, and the header beside
-        it, so what reads the JSON is told what it is reading."""
+        """The same for a program: the counts beside the fenced text, and never a
+        message's words outside it, so nothing that reads the JSON meets them bare."""
         return {
-            "what_this_is": HEADER.format(token=self.token),
-            "fence": self.token,
-            "context": [message.as_dict() for message in self.messages],
+            "count": len(self.messages),
             "more": self.more,
+            "incomplete": self.incomplete,
+            "before": self.before or None,
+            "fence": self.token,
+            "context": self.fenced(),
         }
+
+
+def fenced_lines(lines: list[str]) -> str:
+    """A few lines of somebody else's naming (what a name could have meant) inside a
+    fence of their own: names are other people's words too."""
+    return fence("\n".join(lines) or "(none)", new_fence())
 
 
 def say_when(ts: str) -> str:

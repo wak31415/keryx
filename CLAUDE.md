@@ -37,13 +37,13 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   the second reading the address from standard input so its code is never on a command
   line; `--account` says which account is meant when it is not the saved one; `gmail` and
   `google-workspace` still mean it, for one release. `slack [--access
-  announce|converse|read] [--workspace NAME]` alone says what that access level lets Keryx
+  announce|converse|read|write] [--workspace NAME]` alone says what that access level lets Keryx
   see and prints the link that creates the owner's Slack app (for an app there is, the
   manifest that raises its level; a lower level is applied at once), and `slack --stdin
   [--email ADDRESS] [--no-test]` takes the level's tokens on standard input, one to a line
-  (never argv), checks each, finds where to send, turns `send_to_slack` on and sends one
-  test message; `--owner` is the one thing that changes whose messages are acted on; see
-  "Slack runs both ways". `uv run keryx auth logout google` revokes the grant at Google
+  (never argv), checks each, finds where to send, turns `slack_report` on and sends one
+  test message; nothing changes whose messages are acted on but a logout and a new login;
+  see "Slack runs both ways". `uv run keryx auth logout google` revokes the grant at Google
   and removes every file a sign-in left; `auth logout slack [--workspace NAME]` forgets a
   Slack workspace's tokens and settings (the app is the owner's own, so nothing is
   revoked).
@@ -59,14 +59,21 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   project each was dispatched with; the dollars are the agents' own estimates, and the
   voice calls are not tasks)
 - Read what the assistant remembers between calls: `uv run keryx memory` (`--path` for the file)
-- The plugins (Slack, Slack answers, email, the calendar, documents, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
+- The plugins (Slack reports, reading and messages, email, the calendar, documents,
+  billing, cluster stats): `uv run keryx plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
-  remove NAME [--yes]`; install and remove refuse the running service
-- Read Slack as the owner, at the `read` level: `uv run keryx slack unanswered|mentions|search
-  TEXT|history CONVERSATION|thread CONVERSATION TS [--workspace NAME] [--days N] [--json]`
-  (read-only, so a task may run them; they print fenced context and never a token; see
-  "Slack reads, and only reads")
+  remove NAME [--yes]`; install and remove refuse the running service, and an install is
+  the one thing that renames a plugin's files from a name it had before
+- Slack, for a coding agent (each allowed inside a task; see "Slack reads with one tool
+  and sends with two"): `uv run keryx slack read [--conversation NAME_OR_REF] [--thread
+  REF] [--text WORDS] [--from PERSON] [--only waiting|mentions] [--days N] [--question Q]
+  [--limit N] [--before REF|TS] [--workspace NAME] [--json]` (the `slack_read` tool's
+  filters and planner; fenced context, never a token), `slack conversations [WORDS]` and
+  `slack members [WORDS]` (names and ids), `slack report [--task ID] [--workspace NAME]`
+  (standard input, to the owner as Keryx, or into the thread a Slack-typed task was asked
+  in), and at `write` `slack message --to RECIPIENT [--confirm] [--workspace NAME]`
+  (standard input, as the owner; without `--confirm` it only prints who it would go to)
 - The owner's own voice tools: `uv run keryx tools [--json]` (what `DATA_DIR/tools` holds
   and what the next call would refuse; exits 1 while anything is)
 - Start that memory before any call has: `uv run keryx memory seed --file FILE|- [--force]
@@ -131,8 +138,8 @@ remember:
   `skills/keryx-custom-tools` is how a subagent writes one, and every subagent's prompt
   points at it. A file may raise `ToolUnavailable` while it loads to be refused with a
   reason, and reads its loader's settings from `LOADING_SETTINGS`.
-- **plugins** — `plugins/` is the optional voice tools (`send_to_slack`, `check_slack`,
-  `check_email`, `check_calendar`, `add_calendar_event`, `find_document`, `check_billing`,
+- **plugins** — `plugins/` is the optional voice tools (`slack_report`, `slack_read`,
+  `slack_message`, `check_email`, `check_calendar`, `add_calendar_event`, `find_document`, `check_billing`,
   `cluster_stats`), none registered from the source tree. `PLUGINS` in
   `plugins/__init__.py` is the table everything reads (its `important` keys are what the
   wizard asks; `google` names the service of the one sign-in a plugin uses, `claude` that it
@@ -143,7 +150,17 @@ remember:
   `DATA_DIR/tools`, never imported from there. So a plugin *is* a custom tool: loaded per
   call, gated by `needs_pin`, no restart. The logic stays here with its tests so a fix
   reaches installed copies. The wizard's section is `setup/plugins.py`; `keryx plugins`
-  is the command line.
+  is the command line. **A renamed plugin's old name is read, never moved unasked, for
+  one release**, in the spirit of a renamed setting's: `slack_report` was `send_to_slack`
+  until 2026-11-23 (`Plugin.formerly`), and a machine that installed it then has
+  `send_to_slack.py`/`.toml`. Every path goes by the name the files have on that machine
+  (`plugins.files_name`), so they load, are read and are written where they are, and the
+  tool they define is offered under the new name (`send_to_slack_tool` stays an entry
+  point for the installed one line). Only the owner's `keryx plugins install` renames
+  the pair (`plugins.adopt`), because several builds share one tools directory here and
+  an older one finds its plugin only under the name it knows; there is a test named
+  after that. `keryx plugins` shows one plugin, and the old name is still taken on a
+  command line.
 - **notify** — `notify/deliver.py` holds `announce_to_live_sessions` and `safe_send_sms`.
   The `can_text` gate is asserted there and nowhere else. Slack reaches the notifiers only
   through `plugins.slack`, asked at send time: the PIN-lockout alert through `slack_route`,
@@ -158,8 +175,10 @@ remember:
   `google` is the Google account itself (see "Google is one sign-in"), `google_api` is the
   one authorized request every Google tool makes, and `summariser` is the one bare model
   call a tool makes over what it read (see "Google answers on the call").
-  `slack_read` is the bounded, read-only client behind `check_slack` and `keryx slack`,
-  and `slack_context` is where everything read from Slack is fenced as context.
+  `slack_read` is the bounded, read-only client behind the `slack_read` plugin and `keryx
+  slack read`, `slack_query` the filters and the one planner both go through,
+  `slack_write` the separate two-method client that sends as the owner, and
+  `slack_context` is where everything read from Slack is fenced as context.
   `slack` is also where connecting Slack lives. Each owner has a Slack app of their own,
   because an app Keryx published could not hand a command line a bot token without a
   server holding its client secret: `app_manifest(access)` is that app at each access
@@ -342,7 +361,7 @@ Four rulings, and `SECURITY.md` is the threat model:
 - **Possession is who is holding the phone, not that they meant to spend the machine.** It
   buys `send_followup` and `request_callback` (the answer to the question Claude came back
   with — the point of the tier), the two approval tools, and `mark_reported` on anything.
-  Dispatch, `recall`, `send_to_slack` and `restart_service` still need the PIN.
+  Dispatch, `recall`, `slack_report` and `restart_service` still need the PIN.
   `possession_gate` is the gate; `pin_gate` is unchanged and still means `FULL`. All of
   this is the *phone*. A message the owner types to their own Slack app is another
   channel with a rule of its own, and no trust level: see "Slack runs both ways".
@@ -696,7 +715,7 @@ which is an address and may hold a `#`, is percent-encoded whole.
 
 ## Slack runs both ways
 
-Until 2026-11-23 Slack only carried things out. The owner's app now comes at one of three
+Until 2026-11-23 Slack only carried things out. The owner's app now comes at one of four
 **access levels** (`integrations.slack.Access`), a ladder, each holding the one below:
 
 - **`announce`** — exactly the app there was. Keryx posts; nothing listens, nothing is read.
@@ -708,7 +727,10 @@ Until 2026-11-23 Slack only carried things out. The owner's app now comes at one
   (`app_mentions:read`, the `app_mention` bot event: anyone's mention arrives, and only
   the owner's is acted on, and answered there), and holds a user token (`xoxp-`)
   that reads Slack as the owner: the four `*:history` scopes, the four `*:read` listings,
-  `users:read` and search (see "Slack reads, and only reads").
+  `users:read` and search (see "Slack reads with one tool and sends with two").
+- **`write`** — and that user token may also post as the owner (`chat:write`, and
+  `im:write` to open a direct conversation they have not had before): one message to a
+  person or a channel, or one reply in a thread, when they ask for exactly that.
 
 Eleven rulings:
 
@@ -749,7 +771,7 @@ Eleven rulings:
   The listener never reads context: a Slack-started task is dispatched with the request's
   text and a pointer to where it was typed (`SlackThread`), nothing else. Anything read
   from Slack afterwards is context, fenced as other people's words, and the request is
-  never inside that fence (see "Slack reads, and only reads").
+  never inside that fence (see "Slack reads with one tool and sends with two").
 - **Answered where it was asked.** The owner's ruling (2026-11-23), which withdrew "never
   into a shared conversation". The reaction, the report, every later report of that task
   and any one-sentence refusal go in the thread the request was typed in: under the
@@ -790,7 +812,7 @@ Eleven rulings:
   must say who they are. `keryx auth logout slack` and a new login is the one way to
   connect as somebody else. Do not add an option for it.
 - **One app per workspace, in shapes every build on the machine writes back.** The first
-  workspace is the top of `send_to_slack.toml` and the three plain settings
+  workspace is the top of `slack_report.toml` and the three plain settings
   (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_USER_TOKEN`); a file from before reads as
   that workspace at `announce`, with nothing to migrate. Each further one
   (`--workspace NAME`) is a `[workspace-NAME]` table, one level deep, and an entry of
@@ -801,7 +823,7 @@ Eleven rulings:
   `plugins.slack.workspaces` (with `on_file` under it) is the only place a workspace's
   settings and tokens are joined; a further workspace's tokens are read from the store
   whenever they are asked for, so one connected under a running service posts with no
-  restart. Everything is sent to the first unless a workspace is named, `send_to_slack`
+  restart. Everything is sent to the first unless a workspace is named, `slack_report`
   grows a `workspace` argument only when there is more than one, and the first is shown
   to the owner by Slack's name for it (`default` is the key and the CLI's word).
 - **A task is one thread, and a thread is given up only when it is gone.**
@@ -842,59 +864,110 @@ Search at `read` is one constant, `integrations.slack.SEARCH_SCOPES`: the legacy
 `search:read`, not the Real-time Search API's granular scopes, because that API's terms
 forbid storing its results and Keryx keeps transcripts and reports. Change it there.
 
-## Slack reads, and only reads
+## Slack reads with one tool and sends with two
 
-At `read` a workspace holds the owner's user token, and two things read with it: the
-`check_slack` plugin on a call (`plugins/slack_check.py`) and the `keryx slack` commands a
-subagent runs. Both go through `integrations/slack_read.py` and hand back a
-`slack_context.Context`. Six rulings:
+The owner named the tool set (2026-11-23), and it is the whole of it:
 
-- **Read-only by construction.** `HttpSlackApi.get` is the one request there is: a `GET`
-  with no body, of a method in `READ_METHODS`, refused before anything is sent otherwise.
-  There is a test named after each half. Nothing built on it can post, react, join or mark
-  anything read, whatever the token's scopes allow, so the `keryx slack` commands are
-  allowed under `KERYX_ACTOR=service`.
+| Tool | Level | What it is |
+|---|---|---|
+| `slack_report` | `announce` | Keryx sends something to the owner, as Keryx. It was `send_to_slack`. |
+| `slack_read` | `read` | The one read tool: every argument a filter, and they combine. |
+| `slack_message` | `write` | One message to somebody else, a channel or a thread, **as the owner**. |
+
+A coding agent has the same three as commands (`keryx slack report | read | message`,
+with `conversations` and `members` for names), and where the owner has given subagents an
+MCP server for Slack that stays their way to send. Do not add a fourth tool, a mode, or a
+second way to read. Nine rulings:
+
+- **One read tool, and one place a read is planned.** `slack_read` takes
+  `conversation`, `thread`, `text`, `from`, `only` (`waiting` or `mentions`), `days`,
+  `question`, and `workspace` when there are several. `integrations/slack_query.py` is
+  where they are validated (`parse`, into one `Filters`) and where they become a few
+  bounded reads (`answer`), for the voice tool and `keryx slack read` alike; the command
+  adds only `--limit` and `--before`. No filter at all is `only=waiting`. There are five
+  reads (what is waiting, mentions, a thread, a conversation, a search) and the filters
+  given pick one; nothing else has modes.
+- **Nothing is guessed.** A name is matched against the owner's own conversations and
+  the member list (`slack_query.find`). One match is used; several are `unclear` with
+  the candidates and a `ref` for each; none says so (`no_match`); filters that
+  contradict each other are `unclear` in one sentence. A person's first name alone is
+  their whole name as it is said, so two who share one are never chosen between. Every
+  message handed back carries a `ref` (its conversation and its thread's root,
+  `slack_context.REF`), which is the only thing but a name that names a place to a later
+  call, and is held to its pattern before it is used.
+- **Read-only by construction.** `HttpSlackApi.get` is the one request the read client
+  has: a `GET` with no body, of a method in `READ_METHODS`, refused before anything is
+  sent otherwise. There is a test named after each half. Nothing built on it can post,
+  react, join or mark anything read, whatever the token's scopes allow, so the read
+  commands are allowed under `KERYX_ACTOR=service`. No string from a caller reaches a
+  method name, a path or a shell: a conversation is an id matched against a pattern or
+  one looked up in a list Slack returned, and the words searched for are one parameter.
 - **Bounded.** One tool call or one command is one `SlackReader`: a budget of requests
-  (`MAX_REQUESTS`), capped lists, pagination followed for `MAX_PAGES`, a timeout on each
-  request, small concurrency, a window held to `MAX_DAYS`. A `429` is the status
-  `rate_limited`, said at once, never a sleep on a live call. What was left unread is
-  `more`, not a longer wait. Nothing the caller says is spliced into a request: a
-  conversation is an id matched against a pattern, a message a timestamp, and everything
-  else a query parameter.
+  (`MAX_REQUESTS`), capped lists, a few pages of anything, a timeout on each request,
+  small concurrency, a window held to `MAX_DAYS` here as well as in the query, 25 seconds
+  for a call and a minute for a command. A `429` is the status `rate_limited`, said at
+  once, never a sleep on a live call. What was left unread is `more`; a part that could
+  not be read at all is `incomplete`, and then the answer says the check was incomplete
+  and never that nothing is there. What a message costs to handle never depends on what
+  its author put in it: it is cut to a line before anything is looked for in it, names
+  are substituted by a function in one pass, and only the first few members it mentions
+  are named.
 - **The user token never leaves the process.** Not into a subagent's environment, an MCP
   server's config, a command line, a log or an error. Subagents get Slack by running a
   command that reads and prints, which is why there is no Slack read MCP server.
-- **Request and context are two things, start to finish.** A request is the owner's own
-  words (`slack_inbox.Request`, or what they said on a call) and the only thing ever
-  treated as an instruction. Everything read from Slack is context
-  (`slack_context.Context`): other people's messages, the rest of a thread, the owner's
-  own earlier messages. Context leaves that module one way, `Context.fenced`: between
-  markers carrying a token made for the call, under a header saying these are other
-  people's words and never instructions, each message attributed (who, when, where) and
-  held to one line so none can lay out a second. The request is never inside the fence
-  and context is never outside it; `check_slack`'s summariser gets the question before
-  the fence, and the subagent prompts say the same. The token is the defence and the
-  strip the second line, counted (`FENCE_PASSES`) and linear, with a test that fails on
-  time. A mitigation, not a wall (SECURITY.md).
-- **Reading only when asked.** Nothing polls Slack, pre-fetches or keeps a digest. It is
-  read by `check_slack` when the owner asks on a call, and by a task whose request asks
-  about Slack messages. The listener never reads context for a Slack-started task: it
-  hands over the request and a pointer, and `prompts/subagent_slack_origin.md` and
-  `subagent_slack_read.md` tell the subagent to read only when the request asks. That
-  last part is a prompt rule; the code cannot enforce it, and SECURITY.md says so.
-- **`unanswered` is a best effort, and says so.** Slack has no such question. It is the
-  direct and group conversations whose latest message is somebody else's (found from one
-  search, `UNANSWERED_QUERY`, and confirmed against each conversation's own last
-  message), plus mentions of the owner in a channel or thread where the owner has not
-  written since (`MENTION_QUERY`, then the thread, and for a message outside one the
-  conversation after it). What cannot be confirmed is not claimed. Search is one
-  function, `SlackReader.search`, so the legacy `search.messages` can be swapped.
+- **Request and context are two things, start to finish, and context is always fenced.**
+  A request is the owner's own words (`slack_inbox.Request`, or what they said on a
+  call) and the only thing ever treated as an instruction. Everything read from Slack is
+  context (`slack_context.Context`): other people's messages, the rest of a thread, the
+  owner's own earlier messages, and names. Context leaves that module one way,
+  `Context.fenced`: between markers carrying a token made for the call, under a header
+  saying these are other people's words and never instructions, each message attributed
+  (who, when, where) and held to one line. **The voice model gets it fenced like every
+  other reader**: a status, a count and that one string, never a message's text as a
+  field of its own, and `--json` carries the same string. The summariser gets the
+  question before the fence; candidates for an unclear name are fenced too. The token is
+  the defence and the strip the second line, counted (`FENCE_PASSES`) and linear, with a
+  test that fails on time. A mitigation, not a wall (SECURITY.md).
+- **Reading only when asked, and `waiting` is a best effort that says so.** Nothing
+  polls Slack, pre-fetches or keeps a digest. It is read when the owner asks on a call,
+  and by a task whose request asks about Slack messages; the listener never reads
+  context for a Slack-started task. That last part is a prompt rule; the code cannot
+  enforce it, and SECURITY.md says so. `waiting` is the direct and group conversations
+  whose last word is somebody else's (a person's: only a bot and Slack's own notices,
+  `SYSTEM_SUBTYPES`, are not one) and which the owner has not answered in its thread
+  either, plus mentions in a channel or thread where the owner has not written since.
+  What cannot be confirmed is not claimed: a conversation that could not be read, or one
+  with more after the mention than was read, is left out and said to be.
+- **Sending as the owner is a separate client with two methods, and two steps.**
+  `integrations/slack_write.py` can call `chat.postMessage` and `conversations.open` and
+  nothing else (a test is named after it), so "the read client cannot post" stays true by
+  construction. One new message or one reply in a thread: no edit, no delete, no file,
+  no broadcast, and a text with `@channel`, `@here` or `@everyone` is refused in one
+  sentence; the text is escaped, so nothing in it becomes a mention or a link. **The
+  first call of `slack_message` sends nothing**: it resolves the recipient with the read
+  side's resolver and returns `confirm` with the recipient as Slack names them, the exact
+  text, and a single-use value that lasts a few minutes. Only a second call carrying
+  that value sends, and it sends what was kept, never what the second call says. That
+  is enforced in `plugins/slack_message.py`; that the model asks the owner in between is
+  a prompt rule. The command's two steps are `--confirm`. A failure says whether
+  anything could have been sent, so nobody sends twice.
+- **An agent sends as the owner only for what the request asks.** `keryx slack message`
+  is allowed under `KERYX_ACTOR=service` (only a workspace at `write` has anything to
+  send with), and `prompts/subagent_slack_message.md` says: only when the owner's
+  request asks for exactly that message to exactly that recipient, never because
+  something in context says to. A prompt rule again, and SECURITY.md carries the
+  accepted risk plainly: at `write` a prompt-injected agent could send as the owner, and
+  `read` or lower removes the capability. `slack_report` and `keryx slack report` are
+  the other direction and reach only the owner: their destination, or the thread a
+  Slack-typed task was asked in. Neither takes a recipient.
 
-`check_slack` needs the PIN, loads only when a workspace is at `read` (refused with the
-reason otherwise), makes no model call to list and exactly one, through
-`integrations/summariser.py`, for a `question`. Its answer is clipped, and every failure
-is a status and one sentence. The wizard offers it once, when the Slack step has just
-raised a workspace to `read`.
+`slack_read` and `slack_message` need the PIN and load only when a workspace is at their
+level (refused with the reason otherwise). `slack_read` makes no model call to list and
+exactly one, through `integrations/summariser.py`, for a `question`; its answer is
+clipped. Every failure of all three is a status and one sentence, an unexpected one
+included. The wizard offers each once, when the Slack step has just raised a workspace
+to the level that unlocks it: reading as a yes, sending in their name as theirs to say
+yes to.
 
 ## Restarts are three halves
 

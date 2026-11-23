@@ -81,8 +81,8 @@ async def test_a_report_is_routed_by_the_plugin_as_it_stands_when_the_task_finis
         task = Task(id=1, kind=TaskKind.AGENT, description="x")
         assert built.notifier._reports(task) is None
         # Turned on since startup: honoured with no restart.
-        plugins.write_config(settings, "send_to_slack", {"channel_id": "U0OWNER"})
-        plugins.install(settings, "send_to_slack")
+        plugins.write_config(settings, "slack_report", {"channel_id": "U0OWNER"})
+        plugins.install(settings, "slack_report")
         route = built.notifier._reports(task)
         assert isinstance(route, ReportRoute) and route.workspace == "default"
     finally:

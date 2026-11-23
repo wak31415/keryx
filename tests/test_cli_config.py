@@ -446,7 +446,7 @@ def test_auth_logout_slack_forgets_the_workspace_and_turns_the_plugin_off(home, 
     result = run("auth", "logout", "slack")
 
     assert result.exit_code == 0, result.output
-    assert "Acme is disconnected" in result.output and "send_to_slack is off." in result.output
+    assert "Acme is disconnected" in result.output and "slack_report is off." in result.output
     assert "api.slack.com/apps" in result.output
     assert home._secrets() == {}
     assert json.loads(run("auth", "status", "--json").output)["slack"]["state"] == "missing"
@@ -550,13 +550,13 @@ def test_auth_login_slack_takes_the_token_on_stdin_and_turns_the_plugin_on(
 
     assert result.exit_code == 0, result.output
     assert "connected to the Acme workspace" in result.output
-    assert "send_to_slack is on, from the next call" in result.output
+    assert "slack_report is on, from the next call" in result.output
     assert "xoxb-very-secret" not in result.output
     assert asked == ["auth", "sam@example.com", "U0OWNER"]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-very-secret"}
     assert stat.S_IMODE(home.secrets_path.stat().st_mode) == 0o600
     assert 'channel_id = "U0OWNER"' in (
-        tmp_path / "keryx" / "tools" / "send_to_slack.toml"
+        tmp_path / "keryx" / "tools" / "slack_report.toml"
     ).read_text()
     assert json.loads(run("auth", "status", "--json").output)["slack"]["state"] == "ok"
 
@@ -738,7 +738,7 @@ def test_auth_login_slack_takes_a_level_and_its_tokens_one_to_a_line(home, tmp_p
     assert asked == ["auth", "open", "sam@example.com"]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-bot-secret",
                                "SLACK_APP_TOKEN": "xapp-app-secret"}
-    text = (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
+    text = (tmp_path / "keryx" / "tools" / "slack_report.toml").read_text()
     assert 'access = "converse"' in text and 'owner_id = "U0OWNER"' in text
     status = run("auth", "status").output
     assert "Acme: converse level, acts when you mention the app" in status
@@ -777,7 +777,7 @@ def test_auth_login_slack_for_a_further_workspace_stores_it_under_its_name(
         "SLACK_BOT_TOKEN": "xoxb-first-secret",
         "SLACK_WORKSPACE_TOKENS": '{"work": {"bot": "xoxb-work-secret"}}',
     }
-    assert "[workspace-work]" in (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
+    assert "[workspace-work]" in (tmp_path / "keryx" / "tools" / "slack_report.toml").read_text()
 
 
 def test_slack_turned_off_with_its_token_kept_is_said_and_does_not_fail_auth_status(
@@ -787,14 +787,14 @@ def test_slack_turned_off_with_its_token_kept_is_said_and_does_not_fail_auth_sta
     fake_slack(monkeypatch)
     run("auth", "login", "slack", "--stdin", "--email", "sam@example.com",
         input="xoxb-very-secret\n")
-    assert run("plugins", "remove", "send_to_slack", "--yes").exit_code == 0
+    assert run("plugins", "remove", "slack_report", "--yes").exit_code == 0
 
     result = run("auth", "status")
     report = json.loads(run("auth", "status", "--json").output)
 
     assert result.exit_code == 0, result.output
     line = next(line for line in result.output.splitlines() if line.startswith("slack"))
-    assert "failed" in line and "send_to_slack is off" in line
+    assert "failed" in line and "slack_report is off" in line
     assert report["slack"]["state"] == "failed" and report["slack"]["optional"] is True
     assert "optional" not in report["openai"]
 

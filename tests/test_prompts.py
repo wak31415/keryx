@@ -313,10 +313,10 @@ def test_the_digest_is_not_part_of_what_is_held_back(owners_world, trust):
 
 
 def test_voice_prompt_does_not_send_search_results_unasked(unwrapped):
-    """The web_search branch used to end with 'send_to_slack it as well'."""
+    """The web_search branch used to end with 'slack_report it as well'."""
     text = unwrapped(load_prompt("voice_system.md"))
 
-    assert "send_to_slack it as well" not in text
+    assert "slack_report it as well" not in text
     assert "do not send it anywhere in writing unless they asked for that" in text
 
 
@@ -624,8 +624,12 @@ def test_a_quick_read_of_their_mail_calendar_or_documents_goes_to_the_tool_that_
     assert "call it rather than dispatching" in mine
     # A quick read of Slack is the tool's when there is one; anything deeper is a task.
     theirs = text[dispatch : text.index("There are no task types")]
-    assert "replying on Slack or reading a long thread there" in theirs
-    assert "check_slack" not in text
+    assert ("a Slack message to somebody else when you have no tool that sends one, a long "
+            "thread there") in theirs
+    # One message is the tool's when there is one, and only after their yes.
+    assert ("sending one Slack message for them, when you have a tool that does and they "
+            "have said yes to it") in text[: dispatch]
+    assert "slack_read" not in text
 
 
 def test_putting_one_new_event_on_their_calendar_goes_to_the_tool_that_adds_one(unwrapped):

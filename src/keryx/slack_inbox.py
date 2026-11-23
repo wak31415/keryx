@@ -195,15 +195,45 @@ def own_words(text: str, bot_user_id: str) -> str | None:
     asked. Each step is one pass over the text.
     """
     lines = [line for line in text.split("\n") if not line.lstrip().startswith("&gt;")]
-    kept = "\n".join(lines)
-    mention = slack.mention(bot_user_id)
     # Outside code: the even pieces of the text split on the fence.
-    pieces = kept.split("```")
-    if not any(mention.search(piece) for piece in pieces[::2]):
+    pieces = "\n".join(lines).split("```")
+    found = False
+    for index in range(0, len(pieces), 2):
+        pieces[index], here = _without_mention(pieces[index], bot_user_id)
+        found = found or here
+    if not found:
         return None
-    pieces[::2] = [mention.sub(" ", piece) for piece in pieces[::2]]
     # The mention is not part of what was asked; the gap it leaves is closed.
     return _SPACES.sub(" ", slack.plain_text("```".join(pieces)))
+
+
+#: One of Slack's angle-bracket spans: from a `<` to the next `>`, or to the next `<`
+#: when it is never closed. One character class, so a failed match never retries a run.
+_SPAN = re.compile(r"<([^<>]*)(>?)")
+#: The most of a name Slack may write after a member's id in a mention.
+_NAME_CHARS = 200
+
+
+def _without_mention(text: str, bot_user_id: str) -> tuple[str, bool]:
+    """`text` with each mention of the app replaced by a space, and whether there was one.
+
+    A mention is a span of its own, `<@ID>` or `<@ID|name>`, exactly: not a longer or a
+    shorter id, not one inside another span that was never closed (a link's address), and
+    not the entity-escaped text of one, which is somebody writing about a mention.
+    """
+    plain, named = f"@{bot_user_id}", f"@{bot_user_id}|"
+    kept: list[str] = []
+    last, nested, found = 0, False, False
+    for span in _SPAN.finditer(text):
+        body, closed = span.group(1), bool(span.group(2))
+        if closed and not nested and (
+            body == plain or (body.startswith(named) and len(body) - len(named) <= _NAME_CHARS)
+        ):
+            kept += [text[last:span.start()], " "]
+            last, found = span.end(), True
+        nested = not closed
+    kept.append(text[last:])
+    return "".join(kept), found
 
 
 @dataclass(frozen=True)

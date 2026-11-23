@@ -1277,7 +1277,8 @@ def test_plugins_lists_every_one_off_on_a_fresh_machine(settings_stub):
     assert result.exit_code == 0, result.output
     found = json.loads(result.output)["plugins"]
     assert [(one["name"], one["on"]) for one in found] == [
-        ("send_to_slack", False), ("check_slack", False), ("check_email", False),
+        ("slack_report", False), ("slack_read", False), ("slack_message", False),
+        ("check_email", False),
         ("check_calendar", False), ("add_calendar_event", False),
         ("find_document", False), ("check_billing", False), ("cluster_stats", False),
     ]
@@ -1321,22 +1322,51 @@ def test_plugins_install_with_values_turns_one_on(settings_stub):
 
 
 def test_plugins_install_never_takes_a_secret(settings_stub):
-    result = runner.invoke(app, ["plugins", "install", "send_to_slack",
+    result = runner.invoke(app, ["plugins", "install", "slack_report",
                                  "--set", "SLACK_BOT_TOKEN=xoxb-secret"])
 
     assert result.exit_code == 1
     assert "keryx config set SLACK_BOT_TOKEN --stdin" in result.output
     assert "xoxb-secret" not in result.output
-    assert not plugins.config_path(settings_stub, "send_to_slack").exists()
+    assert not plugins.config_path(settings_stub, "slack_report").exists()
 
 
 def test_plugins_install_says_when_it_is_installed_but_refused(settings_stub):
-    result = runner.invoke(app, ["plugins", "install", "send_to_slack",
+    result = runner.invoke(app, ["plugins", "install", "slack_report",
                                  "--set", "channel_id=D123"])
 
     assert result.exit_code == 1
-    assert "send_to_slack is installed but refused" in result.output
+    assert "slack_report is installed but refused" in result.output
     assert "SLACK_BOT_TOKEN --stdin" in result.output
+
+
+def test_plugins_install_renames_a_pair_installed_under_the_plugins_old_name(
+    settings_stub, monkeypatch
+):
+    """`send_to_slack` became `slack_report`: only this command moves the files."""
+    with_token = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: with_token)
+    tools = with_token.custom_tools_dir
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "send_to_slack.py").write_text(plugins._template("send_to_slack.py"))
+    (tools / "send_to_slack.toml").write_text('channel_id = "U0OWNER"\n')
+    for path in tools.iterdir():
+        path.chmod(0o600)
+
+    listed = json.loads(runner.invoke(app, ["plugins", "--json"]).output)["plugins"]
+    assert [one["name"] for one in listed].count("slack_report") == 1
+    assert "send_to_slack" not in [one["name"] for one in listed]
+    assert sorted(path.name for path in tools.iterdir() if path.is_file()) == [
+        "send_to_slack.py", "send_to_slack.toml"], "listing moved nothing"
+
+    result = runner.invoke(app, ["plugins", "install", "send_to_slack"])
+
+    assert result.exit_code == 0, result.output
+    assert "send_to_slack is now called slack_report: its files were renamed" in result.output
+    assert "slack_report is on, from the next call" in result.output
+    assert sorted(path.name for path in tools.iterdir() if path.suffix in (".py", ".toml")) == [
+        "slack_report.py", "slack_report.toml"]
+    assert plugins.read_config(with_token, "slack_report")["channel_id"] == "U0OWNER"
 
 
 def test_plugins_install_takes_the_clusters_and_the_guard(settings_stub, tmp_path):

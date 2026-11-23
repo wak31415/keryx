@@ -251,7 +251,7 @@ def test_the_agent_instructions_name_this_machines_paths(make_ctx):
     assert "keryx auth login slack --stdin --email ADDRESS" in text
     assert "That token is not yours to see" in " ".join(text.split())
     # Above announce a Slack message can start work with no PIN: the owner's choice alone.
-    assert "Never choose `converse` or `read` for them" in " ".join(text.split())
+    assert "Never choose `converse`, `read` or `write` for them" in " ".join(text.split())
     assert "{" not in text
 
 

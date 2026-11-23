@@ -35,10 +35,10 @@ from keryx.tasks.models import Task, TaskKind
 
 
 def turn_on_slack(settings, server: str) -> None:
-    """The `send_to_slack` plugin on, naming `server` as the subagents' Slack."""
+    """The `slack_report` plugin on, naming `server` as the subagents' Slack."""
     settings.ensure_dirs()
-    plugins.write_config(settings, "send_to_slack", {"mcp_server": server})
-    plugins.install(settings, "send_to_slack")
+    plugins.write_config(settings, "slack_report", {"mcp_server": server})
+    plugins.install(settings, "slack_report")
 
 
 def make_task(**overrides) -> Task:

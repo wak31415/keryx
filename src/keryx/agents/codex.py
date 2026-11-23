@@ -238,7 +238,7 @@ def mcp_servers(settings: Settings) -> dict[str, Mapping[str, Any]]:
 
     Claude reaches Slack through its own configuration (the user-scope servers in
     `~/.claude.json`); Codex has none, so it is handed over explicitly. It is the server the
-    `send_to_slack` plugin names, and none while that is off. Google's is added for both
+    `slack_report` plugin names, and none while that is off. Google's is added for both
     agents by `AgentContext.build`.
     """
     from keryx.plugins.slack import slack_route

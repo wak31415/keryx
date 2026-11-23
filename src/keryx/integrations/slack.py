@@ -1,6 +1,6 @@
 """Sending the owner something on Slack, from the voice model itself.
 
-The client behind the `send_to_slack` plugin (`keryx.plugins.slack`). The subagents can
+The client behind the `slack_report` plugin (`keryx.plugins.slack`). The subagents can
 already have Slack: a Slack MCP server configured user-scope in the Claude CLI is inherited
 by every CLI the runner spawns, and the plugin's `mcp_server` names it. The voice model has
 no such thing — it only has the tools this process registers — so this module gives it
@@ -71,6 +71,9 @@ class Access(StrEnum):
     #: only the owner's is acted on, and answered there), and reads Slack as the owner,
     #: with a user token, when the owner asks about messages.
     READ = "read"
+    #: And may send a message as the owner, with the same user token, to a person, a
+    #: channel or a thread, when the owner asks for exactly that message.
+    WRITE = "write"
 
     def reaches(self, level: "Access") -> bool:
         """Whether this level is `level` or above it."""
@@ -116,6 +119,11 @@ USER_SCOPES = (
     "users:read",
     *SEARCH_SCOPES,
 )
+#: Added to the user token at `write`: `chat:write` posts as the owner wherever they could
+#: post, and `im:write` opens their direct conversation with a member they have not
+#: written to before (`conversations.open`). Nothing that edits, deletes, uploads or
+#: joins: `integrations/slack_write.py` can call those two methods and no other.
+WRITE_USER_SCOPES = ("chat:write", "im:write")
 #: The one scope an app-level token needs for Socket Mode.
 APP_TOKEN_SCOPE = "connections:write"
 #: The acknowledgement: the reaction put on a message that was acted on.
@@ -219,12 +227,6 @@ _ENTITIES = (("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&"))
 _LINK = re.compile(r"<((?:https?://|mailto:)[^<>|]{1,2000})(?:\|[^<>]{0,2000})?>")
 
 
-def mention(member_id: str) -> re.Pattern[str]:
-    """What a mention of `member_id` looks like in a message's text: `<@U…>`, or with the
-    name Slack sometimes writes after a bar."""
-    return re.compile(rf"<@{re.escape(member_id)}(?:\|[^<>]{{0,200}})?>")
-
-
 def plain_text(text: str) -> str:
     """A message's text as it was typed: links unwrapped and Slack's three escapes undone."""
     text = _LINK.sub(lambda match: match.group(1), text)
@@ -261,7 +263,7 @@ def mcp_server_config(server: str, config_path: Path | None = None) -> dict | No
     """The user-scope MCP server `server` from the Claude CLI's config, or None.
 
     Claude subagents find it there by themselves; this is for everything that does not —
-    `send_to_slack`, and a Codex subagent, which is handed the same server explicitly. The
+    `slack_report`, and a Codex subagent, which is handed the same server explicitly. The
     config is `claude_user_config()` unless `config_path` names another.
     """
     try:
@@ -334,6 +336,13 @@ def _get(url: str, params: dict, token: str) -> dict:
 # --- connecting --------------------------------------------------------------------------
 
 
+def user_scopes(access: Access) -> tuple[str, ...]:
+    """What the user token may do at `access`: nothing below `read`."""
+    if not access.reaches(Access.READ):
+        return ()
+    return USER_SCOPES + (WRITE_USER_SCOPES if access.reaches(Access.WRITE) else ())
+
+
 def bot_scopes(access: Access) -> tuple[str, ...]:
     """What the app's bot may do at `access`."""
     return (
@@ -360,7 +369,8 @@ def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
     tab takes messages, the bot subscribes to `message.im` and nothing else, and Socket
     Mode is on, so no address of Keryx's is ever given to Slack. At `read` the bot is
     also sent the mentions of it (`app_mention`), and the install asks the owner for a
-    user token, with `USER_SCOPES`.
+    user token, with `USER_SCOPES`; at `write` that token may also post as them
+    (`WRITE_USER_SCOPES`).
     """
     converse = access.reaches(Access.CONVERSE)
     manifest: dict = {
@@ -379,7 +389,7 @@ def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
         "oauth_config": {"scopes": {"bot": list(bot_scopes(access))}},
     }
     if access.reaches(Access.READ):
-        manifest["oauth_config"]["scopes"]["user"] = list(USER_SCOPES)
+        manifest["oauth_config"]["scopes"]["user"] = list(user_scopes(access))
     if converse:
         manifest["settings"] = {
             "event_subscriptions": {"bot_events": list(bot_events(access))},
@@ -470,9 +480,11 @@ class Workspace(SlackResult):
     """
 
     team: str = ""
-    url: str = ""
     team_id: str = ""
     user_id: str = ""
+    #: What the token may do, when Slack said (the `x-oauth-scopes` header of its
+    #: answer); None when it did not, which is never taken to mean "nothing".
+    scopes: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -527,14 +539,38 @@ def is_dm(channel: str) -> bool:
     return channel.startswith("D")
 
 
-def auth_test(token: str, *, post=_post) -> Workspace:
-    """Whether Slack takes `token`, and the workspace it belongs to. Needs no scope."""
+def _post_scoped(url: str, payload: dict, token: str) -> dict:
+    """`_post`, with what Slack says the token may do beside its answer, under `SCOPES`."""
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_S) as response:
+        answer = json.load(response)
+        if isinstance(answer, dict):
+            answer[SCOPES] = response.headers.get("x-oauth-scopes")
+        return answer
+
+
+#: Where `_post_scoped` puts the header: a key no Slack answer has.
+SCOPES = "\0scopes"
+
+
+def auth_test(token: str, *, post=_post_scoped) -> Workspace:
+    """Whether Slack takes `token`, the workspace it belongs to, and what it may do when
+    Slack says. Needs no scope."""
     result, error = _ask(post, AUTH_TEST_URL, {}, token)
     if error:
         return Workspace(error=error)
+    granted = result.get(SCOPES)
     return Workspace(
+        scopes=tuple(scope.strip() for scope in granted.split(",") if scope.strip())
+        if isinstance(granted, str) else None,
         team=_line(result.get("team")),
-        url=_line(result.get("url")),
         team_id=_id(result.get("team_id")),
         user_id=_id(result.get("user_id")),
     )

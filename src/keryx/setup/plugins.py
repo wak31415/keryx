@@ -58,18 +58,26 @@ from keryx.integrations.slack import (
     new_app_url,
     token_kinds,
 )
-from keryx.plugins import slack_check
+from keryx.plugins import slack_message, slack_read
 from keryx.setup import google, slack
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
 
 INSTALL, TEMPLATE, CANCEL = "install", "template", "cancel"
-#: Set in `ctx.memo` by the Slack step when it raised the level to read in this walk.
-RAISED_TO_READ = "slack raised to read"
-SLACK_ANSWERS = (
-    'Turn on Slack answers (check_slack) too? "Anything waiting for me on Slack?" is then '
-    "answered on a call, reading Slack as you only when you ask"
-)
+#: Set in `ctx.memo` by the Slack step: the plugins the level it raised to has unlocked.
+UNLOCKED = "slack level unlocked"
+#: What each of them is offered with, once, right after the level was raised.
+SLACK_OFFERS = {
+    slack_read.TOOL: (
+        'Turn on reading Slack (slack_read) too? "Anything waiting for me on Slack?" is '
+        "then answered on a call, reading Slack as you only when you ask"
+    ),
+    slack_message.TOOL: (
+        'Turn on sending as you (slack_message) too? "Tell Sam I am running late" is then '
+        "sent on a call, in your name, after it has said who to and what and you have "
+        "said yes"
+    ),
+}
 #: The option under a partition list that asks for one by name instead.
 TYPE_ONE = "\0type"
 
@@ -113,10 +121,11 @@ def run_section(ctx: SetupContext) -> None:
     # question, not three.
     sign_in_offered = False
     for name, spec in plugins.PLUGINS.items():
-        if (name == slack_check.TOOL and name not in picked and not on[name]
-                and ctx.memo.get(RAISED_TO_READ) and ui.confirm(SLACK_ANSWERS, default=True)):
-            # The Slack step has just raised a workspace to read: what reads it is offered
-            # once, here, as a sign-in to Google offers the plugins that use it.
+        if (name in ctx.memo.get(UNLOCKED, ()) and name not in picked and not on[name]
+                and ui.confirm(SLACK_OFFERS[name], default=name == slack_read.TOOL)):
+            # The Slack step has just raised a workspace: what that level unlocks is
+            # offered once, here, as a sign-in to Google offers the plugins that use it.
+            # Reading is offered as a yes; sending in their name is theirs to say yes to.
             picked = [*picked, name]
         if name in picked and spec.google:
             sign_in_offered = run_google(ctx, name, offer=not sign_in_offered) or sign_in_offered
@@ -221,8 +230,10 @@ def run_slack(ctx: SetupContext) -> None:
     needed = token_kinds(access)
     above = access.reaches(Access.CONVERSE)
     ui.note(slack.MEANING[access])
-    if access is Access.READ:
+    if access.reaches(Access.READ):
         ui.note(slack.READ_NOTE)
+    if access.reaches(Access.WRITE):
+        ui.note(slack.WRITE_NOTE)
     if not before:
         ui.link(new_app_url(access))
         ui.markdown(slack.guide(access))
@@ -259,7 +270,8 @@ def run_slack(ctx: SetupContext) -> None:
     if APP in needed:
         tokens[APP] = _slack_app_token(ctx)
     if USER in needed:
-        tokens[USER], owner = _slack_user_token(ctx, team, standing)
+        tokens[USER], owner = _slack_user_token(
+            ctx, team, standing, access, raised=not was.reaches(access))
     channel, found = _slack_where(
         ctx, token, new=token != before, on_file=on_file, server=server, access=access,
         owner=owner, says_who=above and not owner,
@@ -278,8 +290,12 @@ def run_slack(ctx: SetupContext) -> None:
              "team": team.team, "team_id": team.team_id, "bot_user_id": team.user_id}
     if not _finish(ctx, slack.PLUGIN, saved):
         return
-    if access is Access.READ and access is not was:
-        ctx.memo[RAISED_TO_READ] = True
+    # What the level now reached unlocks, and the one before it did not.
+    ctx.memo[UNLOCKED] = tuple(
+        name for level, name in ((Access.READ, slack_read.TOOL),
+                                 (Access.WRITE, slack_message.TOOL))
+        if access.reaches(level) and not was.reaches(level)
+    )
     # It is on now. From here it either sends a test or says why it did not.
     if not (token and channel):
         whose = "channel is" if token else "token and the channel are"
@@ -412,12 +428,14 @@ def _slack_app_token(ctx: SetupContext) -> str:
                      "has to be: try again when Slack answers.")
 
 
-def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str) -> tuple[str, str]:
+def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str,
+                      access: Access = Access.READ, *, raised: bool = False) -> tuple[str, str]:
     """The owner's own token, and the member it says they are.
 
     Never taken unchecked: which member it belongs to is the whole of what it is asked,
     and only Slack can say. A kept one stands for the owner on file, and is asked again
-    only when there is none. One that belongs to another member than the owner on file is
+    only when there is none, or when the level was `raised`, because what it may do has
+    to have grown with it. One that belongs to another member than the owner on file is
     refused: a token is never how the owner changes. Nothing is saved here.
     """
     ui = ctx.ui
@@ -428,10 +446,10 @@ def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str) -> tupl
 
     while True:
         answer = ui.secret("User token (xoxp-…)", validate=problem, current=before).strip()
-        if answer == before and standing:
+        if answer == before and standing and not raised:
             return answer, standing
         checked = _asked_slack(ctx, USER, answer, ctx.probes.slack_auth_test)
-        why = slack.user_token_problem(checked, team)
+        why = slack.user_token_problem(checked, team) or slack.scope_problem(checked, access)
         if why is None and standing and checked.user_id != standing:
             why = (f"it belongs to {checked.user_id}, and the member whose messages Keryx "
                    f"acts on is {standing}: paste your own (`keryx auth logout slack` and a "
@@ -543,18 +561,32 @@ def run_google(ctx: SetupContext, name: str, *, offer: bool = True) -> bool:
     return offered
 
 
-def run_check_slack(ctx: SetupContext) -> None:
-    """`check_slack` reads with a workspace's user token: on when one is at `read`, and
-    left off, with what would turn it on, when none is."""
-    if not slack_check.reading(ctx.settings):
+def run_slack_message(ctx: SetupContext) -> None:
+    """`slack_message` sends with a workspace's user token: on when one is at `write`,
+    and left off, with what would turn it on, when none is."""
+    if not slack_message.writing(ctx.settings):
         ctx.ui.note(
-            f"{slack_check.TOOL} reads Slack as you, which needs a workspace at the read "
-            "level, so it is left off: choose read in the Slack step (`keryx setup` again) "
-            "or run `keryx auth login slack --access read`, and then `keryx plugins install "
-            f"{slack_check.TOOL}`."
+            f"{slack_message.TOOL} sends as you, which needs a workspace at the write "
+            "level, so it is left off: choose write in the Slack step (`keryx setup` "
+            "again) or run `keryx auth login slack --access write`, and then `keryx "
+            f"plugins install {slack_message.TOOL}`."
         )
         return
-    _finish(ctx, slack_check.TOOL, {})
+    _finish(ctx, slack_message.TOOL, {})
+
+
+def run_slack_read(ctx: SetupContext) -> None:
+    """`slack_read` reads with a workspace's user token: on when one is at `read`, and
+    left off, with what would turn it on, when none is."""
+    if not slack_read.reading(ctx.settings):
+        ctx.ui.note(
+            f"{slack_read.TOOL} reads Slack as you, which needs a workspace at the read "
+            "level, so it is left off: choose read in the Slack step (`keryx setup` again) "
+            "or run `keryx auth login slack --access read`, and then `keryx plugins install "
+            f"{slack_read.TOOL}`."
+        )
+        return
+    _finish(ctx, slack_read.TOOL, {})
 
 
 def run_billing(ctx: SetupContext) -> None:
@@ -666,8 +698,9 @@ def _partition(ctx: SetupContext, alias: str, default: str, alive: bool) -> str:
 
 
 STEPS = {
-    "send_to_slack": run_slack,
-    "check_slack": run_check_slack,
+    "slack_report": run_slack,
+    "slack_read": run_slack_read,
+    "slack_message": run_slack_message,
     "check_billing": run_billing,
     "cluster_stats": run_cluster,
 }

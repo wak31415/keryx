@@ -58,7 +58,8 @@ To use the package in a project of your own, install it there with `pip install 
 - **Answers Claude Code prompts on your screen** with a keypress on your phone.
 - **Checks your email, calendar, documents and Slack** by voice and sends you links and
   reports on Slack. At the `converse` level you can write back: mention `@Keryx` under a
-  report to continue that task, or in a new message to start one.
+  report to continue that task, or in a new message to start one. At `write` it can send
+  a Slack message as you, after reading it back and hearing a yes.
 - **Grows by voice.** Ask for a new tool, or report a bug and Keryx files the issue.
 
 <p align="center">

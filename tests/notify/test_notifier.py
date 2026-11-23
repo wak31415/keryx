@@ -965,12 +965,12 @@ async def two_workspaces(tmp_path, monkeypatch):
         tmp_path, slack_bot_token="xoxb-first",
         slack_workspace_tokens={"personal": {"bot": "xoxb-perso", "app": "xapp-perso"}},
     )
-    plugins.write_config(settings, "send_to_slack", {
+    plugins.write_config(settings, "slack_report", {
         "channel_id": "C0EMPLOYER", "team_id": "T0EMPLOYER",
         "workspaces": {"personal": {"channel_id": "U0ME", "access": "converse",
                                     "owner_id": "U0ME", "team_id": "T0PERSONAL"}},
     })
-    plugins.install(settings, "send_to_slack")
+    plugins.install(settings, "slack_report")
     http = FakeSlackHttp()
     monkeypatch.setattr("urllib.request.urlopen", http)
     store = TaskStore(":memory:")
@@ -1075,7 +1075,7 @@ async def test_a_task_typed_in_a_workspace_since_disconnected_is_posted_nowhere(
 
     store, bus, http = two_workspaces
     settings = make_settings(tmp_path)
-    plugins.write_config(settings, "send_to_slack", {"workspaces": {}})
+    plugins.write_config(settings, "slack_report", {"workspaces": {}})
     task = await store.create(personal_task())
 
     await bus.publish(TaskCompleted(task.id, "the private answer"))

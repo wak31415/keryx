@@ -35,7 +35,7 @@ OWNER, DM, TEAM, BOT = "U0OWNER", "D0OWNER", "T0ACME", "U0KERYX"
 #: How the owner mentions the app, as Slack writes it in a message's text.
 AT = f"<@{BOT}>"
 SHARED = "C0SHARED"
-NAME = "send_to_slack"
+NAME = "slack_report"
 TS = "1700000000.000100"
 LATER = "1700000000.000200"
 
@@ -335,10 +335,18 @@ def test_a_mention_inside_pasted_code_is_no_request_and_code_beside_one_is_kept(
 @pytest.mark.parametrize(
     "text",
     [f"&lt;@{BOT}&gt; do it", f"<@{BOT} do it", "<!subteam^S0KERYX|@keryx> do it",
-     f"<@{BOT}|" + "x" * 300 + "> do it", f"<@{BOT.lower()}> do it"],
+     f"<@{BOT}|" + "x" * 300 + "> do it", f"<@{BOT.lower()}> do it", f"<@{BOT}X> do it",
+     f"<@{BOT[:-1]}> do it", f"<https://example.com/<@{BOT}>|x> do it", "@keryx do it"],
 )
 def test_what_only_looks_like_a_mention_is_not_one(conversing, text):
     assert owner_request(payload(text), workspace_of(conversing)) == Dropped("no_mention")
+
+
+def test_a_mention_with_the_name_slack_sometimes_adds_is_one_and_is_taken_out(conversing):
+    request = owner_request(payload(f"hey <@{BOT}|keryx>   look at the  build"),
+                            workspace_of(conversing))
+
+    assert request.text == "hey look at the build"
 
 
 def test_no_message_can_cost_the_event_loop_much_by_its_shape(reading):

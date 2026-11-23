@@ -1,20 +1,22 @@
 """Reading Slack as the owner, when they ask about it: bounded, and reading only.
 
-Behind the `check_slack` plugin (`plugins/slack_check.py`) and the `keryx slack` commands
-a subagent runs. It works with the user token of a workspace at the `read` level, which
-never leaves this process: not into a subagent's environment, not onto a command line,
-not into a log or an error.
+The client behind the `slack_read` plugin (`plugins/slack_read.py`) and `keryx slack read`,
+both of which plan what to read in `integrations/slack_query.py` and nowhere else. It
+works with the user token of a workspace at the `read` level, which never leaves this
+process: not into a subagent's environment, not onto a command line, not into a log or an
+error.
 
 **Read-only by construction.** `HttpSlackApi.get` is the one request there is: a `GET`,
 with no body and no method to choose, to a Web API method that has to be in `READ_METHODS`
 or is refused before anything is sent. So nothing built on this can post, react, join or
-mark anything read, whatever the token allows.
+mark anything read, whatever the token allows. Sending as the owner is another client
+altogether (`integrations/slack_write.py`).
 
 **Bounded.** One tool call or one command gets one `SlackReader`, and with it a budget of
 requests (`MAX_REQUESTS`) that no question may spend past; every list is cut to a cap, no
-pagination is followed past `MAX_PAGES`, every request has a timeout, and a `429` is the
+pagination is followed past a few pages, every request has a timeout, and a `429` is the
 status `rate_limited`, said at once, never a sleep on a live call. What was left unread is
-`more`, not a longer wait.
+`more`, and a part that failed is `incomplete`: neither is ever a longer wait.
 
 **What comes back is context** (`slack_context.Context`): messages attributed to who
 wrote them, when and where, for the caller to fence. Nothing here decides what to do
@@ -23,28 +25,28 @@ with them, and nothing here is asked to read unless the owner asked about Slack.
 **Search is one function**, `SlackReader.search`, over the legacy `search.messages`. The
 Real-time Search API's terms forbid storing results and Keryx keeps transcripts and
 reports, so it is not used; if that changes, this is the function that does.
-
-**`unanswered` is a best effort**, because Slack has no such question to ask. Within the
-window it is (a) the direct and group conversations whose latest message is from somebody
-else (not the owner, not a bot), found from a search for what was sent to them and
-confirmed against each conversation's own latest message; and (b) mentions of the owner in
-a channel or thread where the owner has not written since. `UNANSWERED_QUERY` and
-`MENTION_QUERY` are the two searches it rests on.
 """
 
 import asyncio
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import httpx
 
-from keryx.integrations.slack import is_ts, plain_text, ts_key
-from keryx.integrations.slack_context import Context, ContextMessage, clip, say_when
+from keryx.integrations.slack import is_ts, plain_text
+from keryx.integrations.slack_context import (
+    MESSAGE_CHARS,
+    NAME_CHARS,
+    Context,
+    ContextMessage,
+    clip,
+    say_when,
+)
 from keryx.logging_util import quiet_http_loggers
 
 log = logging.getLogger("keryx.slack.read")
@@ -55,35 +57,56 @@ READ_METHODS = frozenset({
     "users.conversations",
     "conversations.history",
     "conversations.replies",
-    "conversations.info",
     "search.messages",
     "users.info",
+    "users.list",
 })
 REQUEST_TIMEOUT_S = 8.0
 #: The most requests one tool call or one command may make, whatever it was asked.
 MAX_REQUESTS = 30
 #: How many at once: a few seconds on a call, without a burst Slack would throttle.
 CONCURRENCY = 4
-#: The most pages of any one list that are followed.
+#: The most pages of any one list of messages or conversations that are followed, and of
+#: the member list, which is the longest of them.
 MAX_PAGES = 2
-#: The most messages one answer lists, and the most a history or a thread reads.
+DIRECTORY_PAGES = 3
+#: How many of a list one page asks for: Slack's most for these methods.
+LIST_LIMIT = 999
+#: The most messages one answer on a call lists, and the most a command may be asked for.
 MAX_ITEMS = 8
 MAX_MESSAGES = 60
+#: The most of one conversation or thread read behind an answer, a page at a time.
+PAGE_MESSAGES = 200
+#: The most matches one search asks for.
+SEARCH_COUNT = 40
 #: The most candidates looked at behind a list, each costing a request to confirm.
 MAX_CANDIDATES = 6
 #: How far back a question may look, in days, and how far when it does not say.
 MAX_DAYS, DEFAULT_DAYS = 30, 7
+#: The most members named inside one message's text; the rest are "someone".
+MAX_NAMED = 5
+#: The most of a message's raw text that is looked at before it is clipped to a line.
+RAW_CHARS = 4 * MESSAGE_CHARS
 
-#: What was sent to the owner directly, newest first: the index `unanswered` starts from.
-UNANSWERED_QUERY = "to:me"
-#: A mention of the member `owner`, as Slack writes one in a message.
-MENTION_QUERY = "<@{owner}>"
-
-_CONVERSATION = re.compile(r"[CDG][A-Z0-9]{2,31}")
 _MEMBER = re.compile(r"[UW][A-Z0-9]{2,31}")
 _ERROR_CODE = re.compile(r"[a-z0-9_]{1,64}")
-#: A member as Slack writes one inside a message: `<@U…>` or `<@U…|name>`.
+#: A member as Slack writes one inside a message: `<@U…>` or `<@U…|name>`. One pattern,
+#: and every use of it is a single pass with a callback: the text is somebody else's.
 _MENTION = re.compile(r"<@([UW][A-Z0-9]{2,31})(?:\|[^<>]{0,200})?>")
+#: The message subtypes that are Slack talking, not a person: somebody joined, a topic
+#: was set, a bot posted. Anything else with a subtype (a file shared, a reply also sent
+#: to the channel, a /me) is a person writing.
+SYSTEM_SUBTYPES = frozenset({
+    "bot_message", "bot_add", "bot_remove",
+    "channel_join", "channel_leave", "channel_topic", "channel_purpose", "channel_name",
+    "channel_archive", "channel_unarchive", "channel_convert_to_private",
+    "channel_convert_to_public", "channel_posting_permissions",
+    "group_join", "group_leave", "group_topic", "group_purpose", "group_name",
+    "group_archive", "group_unarchive",
+    "pinned_item", "unpinned_item", "reminder_add", "joiner_notification",
+    "joiner_notification_for_inviter", "sh_room_created", "huddle_thread",
+    "ekm_access_denied",
+})
 
 #: What each failure is to say, by its code. Anything else is said by its code alone.
 SENTENCES = {
@@ -93,8 +116,8 @@ SENTENCES = {
     "signed_out": "Slack no longer takes the token it was given. Say that reading Slack "
                   "needs `keryx auth login slack --access read` at their keyboard again.",
     "missing_scope": "The Slack app lacks a permission this needs. Say that it has to be "
-                     "reinstalled at the read level, with `keryx auth login slack --access "
-                     "read` at their keyboard.",
+                     "reinstalled at the level they chose, with `keryx auth login slack` "
+                     "at their keyboard.",
     "not_found": "Slack does not know that conversation or message. Say so in one sentence.",
     "over_budget": "That needed more of Slack than one answer may read. Say what was "
                    "found so far, and that the rest is a task to hand over.",
@@ -126,8 +149,28 @@ class SlackReadError(Exception):
         return {"status": self.code, "message": self.sentence}
 
 
+@dataclass(frozen=True)
+class Candidate:
+    """One thing a name could have meant: what Slack calls it, and a `ref` to say which."""
+
+    label: str
+    ref: str = ""
+
+    def line(self) -> str:
+        said = clip(self.label, NAME_CHARS)
+        return f"- [{self.ref}] {said}" if self.ref else f"- {said}"
+
+
 class Unclear(ValueError):
-    """What was asked cannot be asked of Slack: said back as it is, nothing sent."""
+    """What was asked cannot be read as it stands: said back in one sentence, nothing
+    guessed and nothing sent. `candidates` are what a name could have meant, when that is
+    why; `status` is `unclear`, or `no_match` for a name nothing answers to."""
+
+    def __init__(self, sentence: str, candidates: tuple[Candidate, ...] = (),
+                 status: str = "unclear") -> None:
+        self.candidates = candidates
+        self.status = status
+        super().__init__(sentence)
 
 
 class SlackApi(Protocol):
@@ -203,8 +246,54 @@ class Read:
     #: `im`, `mpim` or `channel`, when the answer said.
     kind: str = ""
     link: str = ""
-    #: A bot's or an app's, or anything that is not an ordinary message.
+    #: A bot's or an app's, or Slack's own notice: not a person writing.
     automated: bool = False
+    #: Who has replied in the thread under it, as far as Slack lists them, and whether
+    #: there are repliers it did not list.
+    reply_users: tuple[str, ...] = ()
+    repliers_unlisted: bool = False
+
+    @property
+    def root(self) -> str:
+        """The message its thread hangs from: itself, when it is not a reply."""
+        return self.thread_ts or self.ts
+
+    @property
+    def ref(self) -> str:
+        """What names its thread to a later call: the conversation and the thread's root."""
+        return f"{self.channel}:{self.root}" if self.channel else ""
+
+
+class Page(NamedTuple):
+    """One read's messages, and whether Slack had more than these."""
+
+    reads: list[Read]
+    more: bool = False
+
+
+@dataclass(frozen=True)
+class Place:
+    """One conversation the owner is in: its id, its kind, and what it is called."""
+
+    id: str
+    #: `im`, `mpim`, `channel` (public) or `private`.
+    kind: str = "channel"
+    name: str = ""
+    #: For a direct message: the other member.
+    user: str = ""
+
+
+@dataclass(frozen=True)
+class Person:
+    """One member of the workspace: their id and the names they go by."""
+
+    id: str
+    #: Their full name, the name they show, and their handle: whichever there are.
+    names: tuple[str, ...] = ()
+
+    @property
+    def label(self) -> str:
+        return self.names[0] if self.names else self.id
 
 
 def _read(item: Any, *, channel: str = "", channel_name: str = "", kind: str = "") -> Read | None:
@@ -219,6 +308,10 @@ def _read(item: Any, *, channel: str = "", channel_name: str = "", kind: str = "
     user = item.get("user")
     thread = item.get("thread_ts")
     link = item.get("permalink")
+    repliers = item.get("reply_users")
+    repliers = tuple(each for each in repliers if isinstance(each, str)) if isinstance(
+        repliers, list) else ()
+    count = item.get("reply_users_count")
     return Read(
         channel=channel,
         ts=item["ts"],
@@ -228,27 +321,39 @@ def _read(item: Any, *, channel: str = "", channel_name: str = "", kind: str = "
         channel_name=channel_name,
         kind=kind,
         link=link if isinstance(link, str) and link.startswith("https://") else "",
-        automated=bool(item.get("bot_id") or item.get("subtype")),
+        automated=bool(item.get("bot_id")) or item.get("subtype") in SYSTEM_SUBTYPES,
+        reply_users=repliers,
+        repliers_unlisted=isinstance(count, int) and count > len(repliers),
     )
 
 
-def conversation_id(value: str) -> str:
-    """`value` as a conversation's id, or `Unclear`: nothing else is put in a request."""
-    value = value.strip()
-    if not _CONVERSATION.fullmatch(value):
-        raise Unclear("a conversation is named by its id, like C0123ABCD or D0123ABCD")
-    return value
+def _place(item: Any) -> Place | None:
+    """One conversation object as a `Place`; None for anything that is not one."""
+    if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+        return None
+    if item.get("is_im"):
+        user = item.get("user")
+        return Place(item["id"], "im", user=user if isinstance(user, str) else "")
+    name = item.get("name")
+    kind = "mpim" if item.get("is_mpim") else "private" if item.get("is_private") else "channel"
+    return Place(item["id"], kind, name=name if isinstance(name, str) else "")
 
 
-def message_ts(value: str) -> str:
-    """`value` as a message's timestamp, or `Unclear`."""
-    value = value.strip()
-    if not is_ts(value):
-        raise Unclear("a message is named by its timestamp, like 1700000000.000100")
-    return value
+def _person(item: Any) -> Person | None:
+    """One member object as a `Person`; None for a bot, a deleted member or anything else."""
+    if not isinstance(item, dict) or not _MEMBER.fullmatch(str(item.get("id") or "")):
+        return None
+    if item.get("deleted") or item.get("is_bot") or item["id"] == "USLACKBOT":
+        return None
+    profile = item.get("profile") if isinstance(item.get("profile"), dict) else {}
+    names = (item.get("real_name") or profile.get("real_name"), profile.get("display_name"),
+             item.get("name"))
+    return Person(item["id"], tuple(dict.fromkeys(
+        clip(name, NAME_CHARS) for name in names if isinstance(name, str) and name.strip()
+    )))
 
 
-def window(days: int | None) -> int:
+def window(days: Any) -> int:
     """How many days back to look: what was asked, held between one and `MAX_DAYS`."""
     try:
         wanted = int(days) if days is not None else DEFAULT_DAYS
@@ -258,7 +363,7 @@ def window(days: int | None) -> int:
 
 
 class SlackReader:
-    """One question's worth of reading: a budget, a cache of names, and the reads.
+    """One question's worth of reading: a budget, what it has learned, and the reads.
 
     Made for one tool call or one command and closed when it has answered (`aclose`), as
     the Google tools close theirs. `owner` is the member the token belongs to.
@@ -277,9 +382,15 @@ class SlackReader:
         self._left = budget
         self._clock = clock
         self._names: dict[str, str] = {}
+        #: A name lookup was refused for asking too much: no more are made this call.
+        self._names_off = False
+        self._places: list[Place] | None = None
+        self._people: list[Person] | None = None
         self._gate = asyncio.Semaphore(CONCURRENCY)
         #: Something was left unread because a bound was reached.
         self.more = False
+        #: Part of what was asked could not be read at all: the answer is not the whole.
+        self.incomplete = False
 
     async def aclose(self) -> None:
         await self._api.aclose()
@@ -295,89 +406,138 @@ class SlackReader:
                 method, {key: str(value) for key, value in params.items() if value is not None}
             )
 
-    def _oldest(self, days: int) -> float:
+    def oldest(self, days: int) -> float:
+        """The start of a window of `days`, as a time."""
         return self._clock() - days * 86400
 
     # --- the reads -----------------------------------------------------------------------
 
-    async def search(self, query: str, *, days: int, count: int = 40) -> list[Read]:
-        """Messages matching `query` in the last `days`, newest first.
+    async def search(self, query: str, *, days: int, before: str = "",
+                     count: int = SEARCH_COUNT) -> Page:
+        """Messages matching `query` in the last `days` (and before `before`), newest first.
 
         The one function search goes through: `search.messages` today. The query is what
-        the caller built or the owner said; the window is added here, as a date.
+        the planner built from the owner's words; the window is added here, as dates, and
+        held again on what comes back, because a date is a day and the window is a moment.
         """
-        after = datetime.fromtimestamp(self._oldest(days)) - timedelta(days=1)
-        answer = await self._get(
-            "search.messages", query=f"{query} after:{after:%Y-%m-%d}", count=count,
-            sort="timestamp", sort_dir="desc",
-        )
+        after = datetime.fromtimestamp(self.oldest(days)) - timedelta(days=1)
+        dated = f"{query} after:{after:%Y-%m-%d}"
+        if before:
+            until = datetime.fromtimestamp(float(before)) + timedelta(days=1)
+            dated += f" before:{until:%Y-%m-%d}"
+        answer = await self._get("search.messages", query=dated, count=count,
+                                 sort="timestamp", sort_dir="desc")
         found = answer.get("messages")
         matches = found.get("matches") if isinstance(found, dict) else None
-        if isinstance(found, dict) and isinstance(found.get("total"), int):
-            self.more = self.more or found["total"] > count
-        oldest = self._oldest(days)
+        total = found.get("total") if isinstance(found, dict) else None
+        oldest = self.oldest(days)
         reads = [read for item in matches or [] if (read := _read(item)) is not None]
-        return [read for read in reads if float(read.ts) >= oldest]
+        kept = [read for read in reads if float(read.ts) >= oldest
+                and (not before or float(read.ts) < float(before))]
+        return Page(kept, isinstance(total, int) and total > count)
 
-    async def history(self, channel: str, *, days: int | None = None, limit: int = MAX_MESSAGES,
-                      oldest: str | None = None) -> list[Read]:
-        """The latest messages of `channel`, newest first, at most `limit`."""
-        since = oldest or (f"{self._oldest(days):.6f}" if days is not None else None)
+    async def history(self, channel: str, *, limit: int, oldest: str | None = None,
+                      latest: str | None = None) -> Page:
+        """The latest messages of `channel` between `oldest` and `latest`, newest first."""
         answer = await self._get("conversations.history", channel=channel, limit=limit,
-                                 oldest=since)
-        self.more = self.more or bool(answer.get("has_more"))
+                                 oldest=oldest, latest=latest)
         items = answer.get("messages") if isinstance(answer.get("messages"), list) else []
-        return [read for item in items if (read := _read(item, channel=channel)) is not None]
+        return Page([read for item in items if (read := _read(item, channel=channel)) is not None],
+                    bool(answer.get("has_more")))
 
-    async def replies(self, channel: str, ts: str, *, limit: int = MAX_MESSAGES,
-                      oldest: str | None = None) -> list[Read]:
-        """The thread hanging from `ts` in `channel`, oldest first, at most `limit`."""
-        answer = await self._get("conversations.replies", channel=channel, ts=ts, limit=limit,
-                                 oldest=oldest)
-        self.more = self.more or bool(answer.get("has_more"))
-        items = answer.get("messages") if isinstance(answer.get("messages"), list) else []
-        return [read for item in items if (read := _read(item, channel=channel)) is not None]
-
-    async def conversations(self, types: str = "im,mpim") -> list[dict]:
-        """The owner's conversations of `types`, for at most `MAX_PAGES` pages."""
-        found: list[dict] = []
+    async def replies(self, channel: str, ts: str, *, limit: int = PAGE_MESSAGES,
+                      oldest: str | None = None, latest: str | None = None) -> Page:
+        """The thread hanging from `ts` in `channel`, oldest first, for at most
+        `MAX_PAGES` pages of `limit`."""
+        reads: list[Read] = []
         cursor = None
         for _ in range(MAX_PAGES):
-            answer = await self._get("users.conversations", types=types, limit=200,
-                                     exclude_archived="true", cursor=cursor)
-            channels = answer.get("channels")
-            found += [each for each in channels or [] if isinstance(each, dict)]
+            answer = await self._get("conversations.replies", channel=channel, ts=ts,
+                                     limit=limit, oldest=oldest, latest=latest, cursor=cursor)
+            items = answer.get("messages") if isinstance(answer.get("messages"), list) else []
+            reads += [read for item in items if (read := _read(item, channel=channel)) is not None]
+            meta = answer.get("response_metadata")
+            cursor = meta.get("next_cursor") if isinstance(meta, dict) else None
+            if not (answer.get("has_more") and cursor):
+                return Page(reads, bool(answer.get("has_more")))
+        return Page(reads, True)
+
+    async def _listed(self, method: str, key: str, pages: int, **params: Any) -> tuple[list, bool]:
+        """Every item of one cursored list, for at most `pages` pages; and whether it
+        was cut short."""
+        found: list = []
+        cursor = None
+        for _ in range(pages):
+            answer = await self._get(method, limit=LIST_LIMIT, cursor=cursor, **params)
+            items = answer.get(key)
+            found += items if isinstance(items, list) else []
             meta = answer.get("response_metadata")
             cursor = meta.get("next_cursor") if isinstance(meta, dict) else None
             if not cursor:
-                return found
-        self.more = True
-        return found
+                return found, False
+        return found, True
+
+    async def places(self) -> list[Place]:
+        """Every conversation the owner is in, asked once a call: channels, private
+        channels, group messages and direct messages."""
+        if self._places is None:
+            items, cut = await self._listed(
+                "users.conversations", "channels", MAX_PAGES,
+                types="public_channel,private_channel,mpim,im", exclude_archived="true",
+            )
+            self.more = self.more or cut
+            self._places = [place for item in items if (place := _place(item)) is not None]
+        return self._places
+
+    async def place(self, channel: str) -> Place:
+        """The conversation with id `channel`, by its name when the owner's list has it."""
+        try:
+            found = next((each for each in await self.places() if each.id == channel), None)
+        except SlackReadError:
+            found = None  # what it is called is a nicety: its id still reads it
+        return found or Place(channel, "im" if channel.startswith("D") else "channel")
+
+    async def people(self) -> list[Person]:
+        """The workspace's members, asked once a call, for at most `DIRECTORY_PAGES`."""
+        if self._people is None:
+            items, cut = await self._listed("users.list", "members", DIRECTORY_PAGES)
+            self.more = self.more or cut
+            self._people = [person for item in items if (person := _person(item)) is not None]
+            for person in self._people:
+                self._names.setdefault(person.id, _nameable(person.label, person.id))
+        return self._people
 
     async def name(self, member: str) -> str:
-        """What to call `member`: their name, asked once a call, else their id."""
+        """What to call `member`: `you` for the owner and nobody else, their name asked
+        once a call, else their id. One refusal for asking too much ends the asking."""
         if not _MEMBER.fullmatch(member or ""):
             return "somebody"
         if member == self.owner:
             return "you"
         if member not in self._names:
+            if self._names_off:
+                return member
             try:
                 answer = await self._get("users.info", user=member)
-            except SlackReadError:
-                self._names[member] = member  # a name is a nicety: its id will do
+            except SlackReadError as error:
+                # A name is a nicety: its id will do. And once Slack says it is being
+                # asked too much, or the budget is spent, no more names are asked for.
+                self._names_off = error.code in ("rate_limited", "over_budget")
+                self._names[member] = member
             else:
-                user = answer.get("user") if isinstance(answer.get("user"), dict) else {}
-                profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
-                self._names[member] = clip(
-                    user.get("real_name") or profile.get("display_name") or user.get("name")
-                    or member, 80,
-                )
+                person = _person(answer.get("user"))
+                self._names[member] = _nameable(person.label if person else member, member)
         return self._names[member]
 
     # --- context: what a read becomes ----------------------------------------------------
 
     async def attributed(self, read: Read) -> ContextMessage:
-        """`read` as context: who, when and where in words, and mentions by name."""
+        """`read` as context: who, when and where in words, and mentions by name.
+
+        The text is cut to a line before anything is looked for in it, and the members it
+        mentions are named in one pass, the first few of them: what a message costs to
+        handle never depends on what its author put in it.
+        """
         who = await self.name(read.user) if read.user else "an app"
         if read.kind == "im":
             where = "a direct message"
@@ -387,109 +547,24 @@ class SlackReader:
             where = f"#{read.channel_name}"
         else:
             where = read.channel or "Slack"
-        text = plain_text(read.text)
-        for member in dict.fromkeys(_MENTION.findall(text)):
-            named = await self.name(member)
-            text = re.sub(rf"<@{member}(?:\|[^<>]{{0,200}})?>", f"@{named}", text)
+        text = clip(plain_text(read.text[:RAW_CHARS]))
+        members = list(dict.fromkeys(_MENTION.findall(text)))[:MAX_NAMED]
+        named = {member: await self.name(member) for member in members}
+        text = _MENTION.sub(lambda found: "@" + named.get(found.group(1), "someone"), text)
         return ContextMessage(who=who, when=say_when(read.ts), where=where, text=text,
-                              link=read.link)
+                              link=read.link, ref=read.ref)
 
-    async def context(self, reads: list[Read], *, limit: int = MAX_ITEMS) -> Context:
-        """`reads` as a `Context`: the first `limit`, attributed, and whether more were left."""
+    async def context(self, reads: list[Read], *, limit: int = MAX_ITEMS,
+                      before: str = "") -> Context:
+        """`reads` as a `Context`: the first `limit`, attributed, with what was left out
+        and what could not be read said beside them."""
         self.more = self.more or len(reads) > limit
         messages = [await self.attributed(read) for read in reads[:limit]]
-        return Context(messages=tuple(messages), more=self.more)
+        return Context(messages=tuple(messages), more=self.more, incomplete=self.incomplete,
+                       before=before if self.more else "")
 
 
-# --- the questions ---------------------------------------------------------------------------
-
-
-def _theirs(read: Read, owner: str) -> bool:
-    """Written by somebody else: not the owner, and not a bot or an app."""
-    return bool(read.user) and read.user != owner and not read.automated
-
-
-async def _all(calls: list[Awaitable[Any]]) -> list[Any]:
-    """Every call's answer, a failure in its place: one conversation that cannot be read
-    does not cost the rest."""
-    return await asyncio.gather(*calls, return_exceptions=True)
-
-
-async def unanswered(reader: SlackReader, *, days: int) -> Context:
-    """What is waiting on the owner, as best it can be told (see the module's docstring)."""
-    owner = reader.owner
-    sent, mentioned = await _all([
-        reader.search(UNANSWERED_QUERY, days=days),
-        reader.search(MENTION_QUERY.format(owner=owner), days=days),
-    ])
-    if isinstance(sent, SlackReadError) and isinstance(mentioned, SlackReadError):
-        raise sent
-    waiting: list[Read] = []
-
-    # (a) Direct and group conversations whose latest message is somebody else's.
-    newest: dict[str, Read] = {}
-    for read in sent if isinstance(sent, list) else []:
-        if read.kind in ("im", "mpim") and _theirs(read, owner):
-            newest.setdefault(read.channel, read)
-    candidates = list(newest.values())[:MAX_CANDIDATES]
-    reader.more = reader.more or len(newest) > MAX_CANDIDATES
-    latest = await _all([reader.history(read.channel, limit=1) for read in candidates])
-    for read, last in zip(candidates, latest, strict=True):
-        if not isinstance(last, list):
-            reader.more = True  # could not be confirmed, so it is not claimed
-        elif last and _theirs(last[0], owner):
-            waiting.append(Read(read.channel, last[0].ts, last[0].user, last[0].text,
-                                kind=read.kind, link=read.link))
-
-    # (b) Mentions in a channel or a thread where the owner has not written since.
-    mentions = [read for read in mentioned if _theirs(read, owner)
-                and read.kind == "channel"] if isinstance(mentioned, list) else []
-    reader.more = reader.more or len(mentions) > MAX_CANDIDATES
-    mentions = mentions[:MAX_CANDIDATES]
-    after = await _all([_since(reader, read) for read in mentions])
-    for read, later in zip(mentions, after, strict=True):
-        if not isinstance(later, list):
-            reader.more = True
-        elif not any(each.user == owner and ts_key(each.ts) > ts_key(read.ts)
-                     for each in later):
-            waiting.append(read)
-
-    waiting.sort(key=lambda read: ts_key(read.ts), reverse=True)
-    return await reader.context(waiting)
-
-
-async def _since(reader: SlackReader, read: Read) -> list[Read]:
-    """What was written after `read` where the owner would have answered it: its thread,
-    and for a message that is not in one, the conversation as well."""
-    later = await reader.replies(read.channel, read.thread_ts or read.ts, oldest=read.ts)
-    if not read.thread_ts:
-        later += await reader.history(read.channel, oldest=read.ts, limit=30)
-    return later
-
-
-async def mentions(reader: SlackReader, *, days: int) -> Context:
-    """Messages that mention the owner, newest first, answered or not."""
-    found = await reader.search(MENTION_QUERY.format(owner=reader.owner), days=days)
-    return await reader.context([read for read in found if _theirs(read, reader.owner)])
-
-
-async def search(reader: SlackReader, text: str, *, days: int) -> Context:
-    """Messages matching the owner's own words, newest first."""
-    words = " ".join(text.split())
-    if not words:
-        raise Unclear("search needs the words to look for")
-    return await reader.context(await reader.search(words, days=days))
-
-
-async def history(reader: SlackReader, conversation: str, *, days: int,
-                  limit: int = MAX_MESSAGES) -> Context:
-    """The latest messages of one conversation, oldest first, for a subagent to read."""
-    reads = await reader.history(conversation_id(conversation), days=days, limit=limit)
-    return await reader.context(list(reversed(reads)), limit=limit)
-
-
-async def thread(reader: SlackReader, conversation: str, ts: str, *,
-                 limit: int = MAX_MESSAGES) -> Context:
-    """One thread, oldest first, for a subagent to read."""
-    reads = await reader.replies(conversation_id(conversation), message_ts(ts), limit=limit)
-    return await reader.context(reads, limit=limit)
+def _nameable(name: str, member: str) -> str:
+    """`name` as it may be put beside a message: never the word kept for the owner."""
+    name = clip(name, NAME_CHARS) or member
+    return f"a member named \"{name}\"" if name.casefold() == "you" else name

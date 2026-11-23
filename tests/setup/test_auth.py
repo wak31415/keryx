@@ -334,13 +334,13 @@ def test_slack_is_missing_until_it_is_on_and_failed_with_a_token_nothing_uses(se
     half = auth.status(settings.model_copy(update={"slack_bot_token": "xoxb-1"}), ConfigStore())
 
     assert half["slack"]["state"] == "failed"
-    assert "send_to_slack is off" in half["slack"]["detail"]
+    assert "slack_report is off" in half["slack"]["detail"]
 
 
 def test_slack_that_is_on_is_ok_and_says_where_it_posts(settings):
     settings = settings.model_copy(update={"slack_bot_token": "xoxb-1"})
-    plugins.write_config(settings, "send_to_slack", {"channel_id": "U0OWNER"})
-    plugins.install(settings, "send_to_slack")
+    plugins.write_config(settings, "slack_report", {"channel_id": "U0OWNER"})
+    plugins.install(settings, "slack_report")
 
     entry = auth.status(settings, ConfigStore())["slack"]
 
@@ -357,13 +357,13 @@ def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
         "slack_bot_token": "xoxb-1", "slack_app_token": "xapp-1",
         "slack_workspace_tokens": {"work": {"bot": "xoxb-w"}},
     })
-    plugins.write_config(settings, "send_to_slack", {
+    plugins.write_config(settings, "slack_report", {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX",
         "workspaces": {"work": {"access": "read", "channel_id": "U0WORK", "owner_id": "U0WORK",
                                 "team_id": "T0WORK", "bot_user_id": "U0WORKBOT"}},
     })
-    plugins.install(settings, "send_to_slack")
+    plugins.install(settings, "slack_report")
 
     entry = auth.status(settings, ConfigStore())["slack"]
 
