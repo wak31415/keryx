@@ -32,9 +32,10 @@ may not be.
 """
 
 import asyncio
+import contextlib
 import json
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
@@ -238,7 +239,9 @@ class GoogleReader:
 
     The client is opened when first needed and closed by `aclose`, which a tool calls when
     it has answered: one question is one set of connections, and none outlives it. The
-    access token is kept across them.
+    access token is kept across them. Two questions may be in the air at once (a model can
+    call a tool twice in one turn), so a close asked for while a request is still out
+    waits for it: nothing is ever closed under a request.
     """
 
     def __init__(
@@ -260,6 +263,8 @@ class GoogleReader:
         self._access: str | None = None
         self._expires_at = 0.0
         self._lock = asyncio.Lock()
+        self._in_flight = 0
+        self._close_due = False
 
     def _http(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -269,10 +274,27 @@ class GoogleReader:
         return self._client
 
     async def aclose(self) -> None:
-        """Close the connections this opened. The next request opens them again."""
-        if self._owns_client and self._client is not None:
-            client, self._client = self._client, None
-            await client.aclose()
+        """Close the connections this opened, once no request is out on them. The next
+        request opens them again."""
+        if not self._owns_client or self._client is None:
+            return
+        if self._in_flight:
+            self._close_due = True
+            return
+        client, self._client = self._client, None
+        await client.aclose()
+
+    @contextlib.asynccontextmanager
+    async def _request(self) -> AsyncIterator[None]:
+        """One request out: a close asked for meanwhile is carried out when it is back."""
+        self._in_flight += 1
+        try:
+            yield
+        finally:
+            self._in_flight -= 1
+            if self._close_due and not self._in_flight:
+                self._close_due = False
+                await self.aclose()
 
     async def _token(self, *, force: bool = False) -> str:
         async with self._lock:
@@ -364,7 +386,8 @@ class GoogleReader:
         raise AssertionError("unreachable")  # pragma: no cover
 
     async def get(self, path: str, params: Mapping[str, Any] | None = None) -> dict:
-        return _json(await self._send("GET", path, params))
+        async with self._request():
+            return _json(await self._send("GET", path, params))
 
     async def text(
         self, path: str, params: Mapping[str, Any] | None = None, *, limit: int
@@ -375,19 +398,20 @@ class GoogleReader:
         further than the cut: a file of any size costs the memory of `limit` characters,
         and the connection is closed on what was not read.
         """
-        response = await self._send("GET", path, params, stream=True)
         # UTF-8 at its widest is four bytes a character; a byte-order mark is three more.
         budget = limit * 4 + 3
         received = bytearray()
-        try:
-            async for chunk in response.aiter_bytes():
-                received += chunk
-                if len(received) > budget:
-                    break
-        except httpx.HTTPError as exc:
-            raise _unreachable(path.split("/", 1)[0], exc, sent=True) from exc
-        finally:
-            await response.aclose()
+        async with self._request():
+            response = await self._send("GET", path, params, stream=True)
+            try:
+                async for chunk in response.aiter_bytes():
+                    received += chunk
+                    if len(received) > budget:
+                        break
+            except httpx.HTTPError as exc:
+                raise _unreachable(path.split("/", 1)[0], exc, sent=True) from exc
+            finally:
+                await response.aclose()
         cut = len(received) > budget
         # A cut can fall inside a character, which is then dropped, not shown as damage.
         text = bytes(received[:budget]).decode("utf-8", "ignore" if cut else "replace")
@@ -408,7 +432,8 @@ class GoogleWriter(GoogleReader):
     ) -> dict:
         """`sending` is called once the request is about to leave: before it, a failure is
         known to have created nothing."""
-        return _json(await self._send("POST", path, params, body, sending=sending))
+        async with self._request():
+            return _json(await self._send("POST", path, params, body, sending=sending))
 
 
 #: The failures of a connection that was never made: nothing was sent.

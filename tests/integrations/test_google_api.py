@@ -5,6 +5,7 @@ refresh itself (reuse, expiry, a 401) is held by `HttpGmail`'s tests in `test_gm
 which run through this same class; what is here is what Gmail never needed.
 """
 
+import asyncio
 import json
 
 import httpx
@@ -441,3 +442,28 @@ async def test_a_refusal_whose_body_breaks_off_is_still_a_failure_with_a_sentenc
         await reader(tmp_path, broken).text("files/abc/export", limit=50)
 
     assert raised.value.code == "failed"
+
+
+async def test_a_close_asked_for_while_a_request_is_out_waits_for_it(tmp_path):
+    """A model can call a tool twice in one turn. The first to finish used to close the
+    connections the second was still waiting on."""
+    held, entered = asyncio.Event(), asyncio.Event()
+
+    async def slow(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        entered.set()
+        await held.wait()
+        return httpx.Response(200, json={"ok": True})
+
+    api = GoogleReader(token_file(tmp_path), CALENDAR)
+    client = api._client = httpx.AsyncClient(transport=httpx.MockTransport(slow))
+    still_out = asyncio.create_task(api.get("events"))
+    await entered.wait()
+
+    await api.aclose()  # the other question has been answered
+
+    assert not client.is_closed
+    held.set()
+    assert await still_out == {"ok": True}
+    assert client.is_closed and api._client is None
