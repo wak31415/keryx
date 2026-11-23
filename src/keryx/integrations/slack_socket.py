@@ -9,15 +9,22 @@ protocol is small enough to hold in one file rather than take a dependency for:
    **That address is a secret**: it carries a ticket that is the whole of its
    authentication. It is never logged and never in an error, so a failure here is
    reported by its kind alone (a websocket library's exception can quote the address),
-   and the library's own logger for these connections is held at WARNING, because at
-   DEBUG it writes the request line.
+   and the library's own loggers are held at WARNING (`logging_util.HTTP_LOGGERS`,
+   asked for again here), because at DEBUG they write the request line.
 2. Slack says `hello`, then sends envelopes. Every envelope that carries an
-   `envelope_id` is acknowledged with it at once, whatever it holds, so Slack does not
-   send it again; what an `events_api` envelope carries is then handed on, one at a time
-   and in the order it arrived.
-3. Slack says `disconnect` when it wants the connection renewed (every few hours), and
-   the connection may simply drop. Either way a new address is asked for and connected
-   to, after a wait that doubles while connections keep failing and is bounded.
+   `envelope_id` is acknowledged with it at once, whatever it holds; what an
+   `events_api` envelope carries is then handed on, one at a time and in the order it
+   arrived. **Acknowledged before it is acted on, on purpose**: Slack wants its answer
+   within seconds and sends again without one, while acting on a message can take
+   longer than that and must happen once. The price is that an event acknowledged and
+   then lost with the process is not sent again.
+3. Slack says `disconnect` when it wants the connection renewed (every few hours). A
+   reason of `warning` only says that is coming in about ten seconds, so the connection
+   is kept and read until Slack asks in earnest or closes it; any other reason, or a
+   connection that simply drops, is answered with a new address and a new connection.
+   The wait before one starts at a second and doubles while connections keep failing,
+   to five minutes, each wait shortened by a random part so that several listeners do
+   not come back in step.
 
 `SocketModeListener.run` never returns and never raises anything but cancellation: a
 listener that fails is a listener that tries again later, and never something that takes
@@ -29,6 +36,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import random
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -37,13 +45,11 @@ from typing import Protocol
 import websockets
 
 from keryx.integrations.slack import Connection, open_connection
+from keryx.logging_util import quiet_http_loggers
 
 log = logging.getLogger("keryx.slack.socket")
-#: What the websocket library logs these connections to. Held at WARNING whatever
-#: `LOG_LEVEL` says: its DEBUG lines are the request line, which is the ticket.
-WIRE_LOGGER = "keryx.slack.socket.wire"
 
-#: The wait before the first reconnect, and after a connection that had settled.
+#: The wait before the first retry, and after a connection that had settled.
 BACKOFF_FIRST_S = 1.0
 #: The most it ever waits: connections that keep failing are tried every five minutes.
 BACKOFF_MAX_S = 300.0
@@ -56,6 +62,8 @@ PING_TIMEOUT_S = 30.0
 #: How many events may wait to be acted on before a new one is dropped, unacted.
 MAX_WAITING = 100
 
+#: The one `disconnect` that is only notice of one: the connection is still good.
+WARNING = "warning"
 _REASON = re.compile(r"[a-z_]{1,32}")
 
 
@@ -74,12 +82,15 @@ Handler = Callable[[dict], Awaitable[None]]
 
 
 async def connect(url: str) -> Socket:
-    """Open the connection at `url`, which is never logged by anything on the way."""
-    wire = logging.getLogger(WIRE_LOGGER)
-    wire.setLevel(logging.WARNING)
+    """Open the connection at `url`, which is never logged by anything on the way.
+
+    The websocket library's loggers are held to warnings by `configure_logging`; this
+    asks again for itself, as the Google request layer does, so the address stays out
+    of the log however the process around it set logging up.
+    """
+    quiet_http_loggers()
     return await websockets.connect(
         url,
-        logger=wire,
         open_timeout=OPEN_TIMEOUT_S,
         close_timeout=CLOSE_TIMEOUT_S,
         ping_interval=PING_INTERVAL_S,
@@ -104,6 +115,7 @@ class SocketModeListener:
         connect: Connect = connect,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         clock: Callable[[], float] = time.monotonic,
+        jitter: Callable[[], float] = random.random,
     ) -> None:
         self._name = name
         self._app_token = app_token
@@ -112,12 +124,13 @@ class SocketModeListener:
         self._connect = connect
         self._sleep = sleep
         self._clock = clock
+        self._jitter = jitter
         self._waiting: asyncio.Queue[dict] = asyncio.Queue(MAX_WAITING)
 
     async def run(self) -> None:
         """Listen until cancelled, reconnecting as often as it takes. Never raises else."""
         worker = asyncio.create_task(self._work(), name=f"slack-events-{self._name}")
-        delay = BACKOFF_FIRST_S
+        failures = 0
         try:
             while True:
                 started = self._clock()
@@ -129,9 +142,12 @@ class SocketModeListener:
                     # Its kind and nothing it says: the message may quote the address.
                     log.warning("the Slack connection for %s ended (%s)", self._name,
                                 type(exc).__name__)
-                settled = self._clock() - started >= SETTLED_S
-                delay = BACKOFF_FIRST_S if settled else min(delay * 2, BACKOFF_MAX_S)
-                await self._sleep(delay)
+                # A connection that had settled starts the count again; one that did not
+                # doubles the wait, from a second up to the most it ever is.
+                failures = 0 if self._clock() - started >= SETTLED_S else failures + 1
+                delay = min(BACKOFF_FIRST_S * 2 ** max(failures - 1, 0), BACKOFF_MAX_S)
+                # Between half of it and all of it: never longer, and not in step.
+                await self._sleep(delay * (0.5 + 0.5 * self._jitter()))
         finally:
             worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -154,6 +170,10 @@ class SocketModeListener:
                     continue
                 if kind == "disconnect":
                     reason = envelope.get("reason")
+                    if reason == WARNING:
+                        # Notice that one is coming: this connection is good until then.
+                        log.info("Slack will renew the connection for %s shortly", self._name)
+                        continue
                     log.info("Slack is renewing the connection for %s (%s)", self._name,
                              reason if isinstance(reason, str) and _REASON.fullmatch(reason)
                              else "no reason given")

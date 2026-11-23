@@ -8,11 +8,7 @@ import pytest
 
 from keryx.integrations import slack_socket
 from keryx.integrations.slack import Connection
-from keryx.integrations.slack_socket import (
-    BACKOFF_MAX_S,
-    WIRE_LOGGER,
-    SocketModeListener,
-)
+from keryx.integrations.slack_socket import BACKOFF_MAX_S, SocketModeListener
 
 URL = "wss://wss.slack.example/link/?ticket=very-secret-ticket"
 
@@ -63,6 +59,8 @@ class World:
         self.now = 0.0
         #: How long each connection lasts, by the listener's own clock.
         self.lasts = 0.0
+        #: What the random part of each wait comes out as: 1.0 is the whole of it.
+        self.jitter = 1.0
         self._sleeps = sleeps
 
     def open(self, token: str) -> Connection:
@@ -93,6 +91,7 @@ class World:
         return SocketModeListener(
             "work", "xapp-secret", handle or self.handle, open_connection=self.open,
             connect=self.connect, sleep=self.sleep, clock=self.clock,
+            jitter=lambda: self.jitter,
         )
 
     async def run(self, handle=None) -> None:
@@ -169,8 +168,38 @@ async def test_connections_that_keep_failing_are_tried_less_and_less_often_and_n
     await world.run()
 
     assert world.connects == []
-    assert world.delays == [2, 4, 8, 16, 32, 64, 128, 256, 300, 300, 300, 300]
+    # The first retry is after a second, and the wait doubles to five minutes.
+    assert world.delays == [1, 2, 4, 8, 16, 32, 64, 128, 256, 300, 300, 300]
     assert max(world.delays) == BACKOFF_MAX_S
+
+
+@pytest.mark.parametrize(("part", "waits"), [(0.0, [0.5, 1, 2, 4]), (0.5, [0.75, 1.5, 3, 6])])
+async def test_each_wait_is_shortened_by_a_random_part_and_never_lengthened(part, waits):
+    """So several listeners that lost Slack together do not come back in step."""
+    world = World(opened=[Connection(error="http_503")] * 4, sleeps=4)
+    world.jitter = part
+
+    await world.run()
+
+    assert world.delays == waits
+
+
+async def test_a_warning_of_a_disconnect_is_not_one_and_the_connection_is_kept():
+    """Slack says so about ten seconds ahead: what arrives in between is still acted on."""
+    world = World([
+        frame(type="hello"),
+        frame(type="disconnect", reason="warning"),
+        event("e1", "after the warning"),
+        frame(type="disconnect", reason="refresh_requested"),
+        event("never", "after the disconnect"),
+    ])
+    socket = world.sockets[0]
+
+    await world.run()
+
+    assert world.opens == ["xapp-secret"]
+    assert socket.sent == [{"envelope_id": "e1"}]
+    assert [payload["event"]["text"] for payload in world.handled] == ["after the warning"]
 
 
 async def test_a_connection_that_had_settled_is_renewed_at_once():
@@ -188,7 +217,7 @@ async def test_a_connection_that_had_settled_is_renewed_at_once():
     with pytest.raises(asyncio.CancelledError):
         await listener.run()
 
-    assert world.delays == [2, 1, 1]
+    assert world.delays == [1, 1, 1]
 
 
 async def test_the_address_is_never_logged_whatever_goes_wrong(caplog):
@@ -304,18 +333,18 @@ async def test_stopping_it_mid_connection_closes_the_socket():
 
 
 async def test_the_real_connection_keeps_the_librarys_own_log_off_the_address(monkeypatch):
+    """At DEBUG the library writes the request line, which is the ticket: so before it
+    connects, its loggers are held to warnings, however logging was set up around it."""
     seen = {}
 
     async def fake_connect(url, **options):
-        seen.update(url=url, **options)
+        seen.update(url=url, level=logging.getLogger("websockets.client").getEffectiveLevel(),
+                    **options)
         return "the connection"
 
     monkeypatch.setattr(slack_socket.websockets, "connect", fake_connect)
-    logging.getLogger(WIRE_LOGGER).setLevel(logging.DEBUG)
+    monkeypatch.setattr(logging.getLogger("websockets"), "level", logging.DEBUG)
 
     assert await slack_socket.connect(URL) == "the connection"
-    assert seen["url"] == URL
-    # At DEBUG the library writes the request line, which is the ticket.
-    assert seen["logger"].name == WIRE_LOGGER
-    assert seen["logger"].getEffectiveLevel() == logging.WARNING
-    assert seen["open_timeout"] and seen["ping_interval"]
+    assert seen["url"] == URL and seen["level"] == logging.WARNING
+    assert seen["open_timeout"] and seen["ping_interval"] and "logger" not in seen
