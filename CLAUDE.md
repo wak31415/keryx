@@ -166,8 +166,13 @@ watchdog): it holds `httpx`, `httpcore` and `websockets` at WARNING whatever `LO
 says, because at INFO the first two log every request's whole address, which for Google is a
 calendar's id (somebody's email address), the words searched for, and file ids, and at DEBUG
 `websockets` logs every handshake header and both ends of every frame, which for the
-Realtime socket is the OpenAI key and what was said on the call. Never call
-`logging.basicConfig` anywhere else. The Google request layer quiets them again for itself
+Realtime socket is the OpenAI key and what was said on the call. uvicorn is held back
+where it is built (`cli._build_server`, the only place): `uvicorn_log_level` never hands it
+a level below `info`, because at DEBUG `uvicorn.error` logs the frames of the Twilio media
+socket, which are the keypad digits of a PIN and the caller's number, and
+`drop_queries_from_the_access_log` cuts the query string from `uvicorn.access`, which for
+`/reports/<id>?t=…` is the token. A new route keeps a secret out of its path, where that
+filter does not reach. Never call `logging.basicConfig` anywhere else. The Google request layer quiets them again for itself
 (`quiet_http_loggers`, in `GoogleReader`), so the rule holds in a process that set its
 logging up some other way.
 

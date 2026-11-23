@@ -199,6 +199,48 @@ def test_serve_runs_the_phone_server_on_the_configured_address(settings_stub, mo
     assert "/twilio/media" in {route.path for route in config.app.routes}
 
 
+@pytest.mark.parametrize(
+    ("level", "handed"),
+    [("DEBUG", "info"), ("INFO", "info"), ("WARNING", "warning"), ("ERROR", "error")],
+)
+def test_serve_never_runs_the_phone_server_below_info(settings_stub, monkeypatch, level, handed):
+    """`LOG_LEVEL=DEBUG` is for Keryx's own lines. uvicorn's are every frame of the Twilio
+    media socket, and a frame is a keypad digit of the PIN or the caller's number."""
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr(settings_stub, "log_level", level)
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0, result.output
+    assert built["config"].log_level == handed
+    # What uvicorn's websocket protocol asks before it logs a frame or a header.
+    assert not logging.getLogger("uvicorn.error").isEnabledFor(logging.DEBUG)
+    assert logging.getLogger("uvicorn.error").isEnabledFor(logging.ERROR)
+
+
+def test_serve_keeps_a_report_links_token_out_of_the_access_log(settings_stub, monkeypatch):
+    """uvicorn's access line is the request's whole address, and `/reports/<id>?t=<token>`
+    is a link whose query is what opens it."""
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    lines: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            lines.append(record.getMessage())
+
+    result = runner.invoke(app, ["serve"])
+
+    # uvicorn's own handler writes to the stream this run has already closed.
+    access = logging.getLogger("uvicorn.access")
+    monkeypatch.setattr(access, "handlers", [Capture()])
+    access.info('%s - "%s %s HTTP/%s" %d', "203.0.113.9:1", "GET", "/reports/7?t=tok", "1.1", 200)
+
+    assert result.exit_code == 0, result.output
+    assert lines == ['203.0.113.9:1 - "GET /reports/7 HTTP/1.1" 200']
+
+
 def test_serve_takes_the_address_from_the_command_line(settings_stub, monkeypatch):
     built: dict = {}
     stub_uvicorn(monkeypatch, built)

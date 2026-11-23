@@ -7,7 +7,14 @@ import logging
 import httpx
 import pytest
 
-from keryx.logging_util import HTTP_LOGGERS, configure_logging, mask_number, quiet_http_loggers
+from keryx.logging_util import (
+    HTTP_LOGGERS,
+    configure_logging,
+    drop_queries_from_the_access_log,
+    mask_number,
+    quiet_http_loggers,
+    uvicorn_log_level,
+)
 
 
 @pytest.fixture
@@ -231,3 +238,120 @@ def test_every_websockets_logger_is_held_to_warnings_whatever_the_level(
 
     assert not logging.getLogger(name).isEnabledFor(logging.INFO)
     assert logging.getLogger(name).isEnabledFor(logging.WARNING)
+
+
+# --- what the phone server may not write down ----------------------------------------------
+
+#: uvicorn's own access line: `access_logger.info(ACCESS_LINE, client, method, path, version,
+#: status)`, the path with its query string.
+ACCESS_LINE = '%s - "%s %s HTTP/%s" %d'
+REPORT_FETCH = ("203.0.113.9:4321", "GET", "/reports/7?t=tok-not-a-token", "1.1", 200)
+
+
+def access_record(*args, message: str = ACCESS_LINE) -> logging.LogRecord:
+    """A record as `uvicorn.access` would be handed it, already through its filters."""
+    record = logging.getLogger("uvicorn.access").makeRecord(
+        "uvicorn.access", logging.INFO, __file__, 0, message, args, None
+    )
+    assert logging.getLogger("uvicorn.access").filter(record)  # never dropped, only trimmed
+    return record
+
+
+@pytest.fixture
+def access_log_filtered():
+    """The access log with Keryx's filter on it, and without it again afterwards."""
+    before = list(logging.getLogger("uvicorn.access").filters)
+    drop_queries_from_the_access_log()
+    yield
+    logging.getLogger("uvicorn.access").filters[:] = before
+
+
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    [
+        ("DEBUG", "info"),  # the one that is clamped
+        ("debug", "info"),
+        ("INFO", "info"),
+        ("WARNING", "warning"),
+        ("ERROR", "error"),
+        ("CRITICAL", "critical"),
+    ],
+)
+def test_uvicorn_is_never_handed_a_level_below_info(level, expected):
+    """At DEBUG uvicorn's websocket protocol logs every frame of the Twilio media socket
+    under `uvicorn.error`: each keypad digit of a PIN, and the caller's number."""
+    assert uvicorn_log_level(level) == expected
+
+
+def test_the_access_log_loses_the_query_string_of_a_report_link(access_log_filtered):
+    """`GET /reports/7?t=…`: the query is the token that opens the report."""
+    record = access_record(*REPORT_FETCH)
+
+    assert record.getMessage() == '203.0.113.9:4321 - "GET /reports/7 HTTP/1.1" 200'
+    assert "tok-not-a-token" not in str(record.args)
+
+
+def test_a_trimmed_access_record_is_still_one_uvicorn_can_format(access_log_filtered):
+    from uvicorn.logging import AccessFormatter
+
+    record = access_record("203.0.113.9:4321", "GET", "/reports/7?t=tok-not-a-token", "1.1", 403)
+    formatter = AccessFormatter(
+        '%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False
+    )
+
+    assert formatter.format(record) == '203.0.113.9:4321 - "GET /reports/7 HTTP/1.1" 403 Forbidden'
+
+
+def test_an_access_line_with_no_query_is_left_as_it_was(access_log_filtered):
+    args = ("203.0.113.9:4321", "POST", "/twilio/voice", "1.1", 200)
+
+    record = access_record(*args)
+
+    assert record.args == args
+    assert record.getMessage() == '203.0.113.9:4321 - "POST /twilio/voice HTTP/1.1" 200'
+
+
+@pytest.mark.parametrize(
+    ("message", "args"),
+    [
+        ("no arguments at all", ()),
+        ("%s and %s", ("two", "of them")),
+        ("%s %s %s %s %s %s", ("six", "of", "them?here", "is", "one", "more")),
+        ("%s %s %r %s %s", ("the", "path", b"/is/bytes?t=1", "this", "time")),
+        ("%s %s %s %s %s", ("the", "path", None, "is", "missing")),
+        ("%(name)s is a mapping", ({"name": "this?one"},)),
+    ],
+)
+def test_a_record_of_any_other_shape_passes_through_unharmed(
+    access_log_filtered, message, args
+):
+    """The filter is on a logger it does not own. A line it does not recognise is written
+    as it came, and nothing it is handed can make it raise."""
+    expected = message % (args[0] if isinstance(args[0], dict) else args) if args else message
+
+    record = access_record(*args, message=message)
+
+    assert record.getMessage() == expected
+
+
+def test_the_filter_is_put_on_the_access_log_once_however_often_it_is_asked(
+    access_log_filtered,
+):
+    before = len(logging.getLogger("uvicorn.access").filters)
+
+    drop_queries_from_the_access_log()
+    drop_queries_from_the_access_log()
+
+    assert len(logging.getLogger("uvicorn.access").filters) == before
+
+
+def test_left_alone_the_access_log_writes_the_token_down():
+    """The tests above have teeth: without the filter the query is in the line."""
+    filters = logging.getLogger("uvicorn.access").filters
+    before, filters[:] = list(filters), []
+    try:
+        record = access_record(*REPORT_FETCH)
+    finally:
+        filters[:] = before
+
+    assert "tok-not-a-token" in record.getMessage()
