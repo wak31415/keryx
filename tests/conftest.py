@@ -80,6 +80,22 @@ def _isolated_env(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _broken_files_are_not_tolerated_by_the_next_test():
+    """Put `tolerate_broken_files` back after every test.
+
+    A command that reads past a configuration file that does not parse (`config get`,
+    `doctor`, the watchdog) sets it for the rest of its process, which is one command. The
+    suite is one process for every command, so without this the test after such a command
+    loads a broken file without a word.
+    """
+    from keryx.config.settings import tolerate_broken_files
+
+    token = tolerate_broken_files.set(False)
+    yield
+    tolerate_broken_files.reset(token)
+
+
+@pytest.fixture(autouse=True)
 def _no_published_google_client(monkeypatch, tmp_path):
     """No test signs in with the Google client Keryx ships, whether a build has one or not.
 
