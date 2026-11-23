@@ -334,6 +334,11 @@ async def _serve(settings: Settings) -> None:
     # a failure to bind is logged and the bridge simply stays off (keryx/approvals).
     if state.approvals is not None:
         await state.approvals.start()
+    # What the owner types to their Slack app, where a workspace's level lets Keryx hear
+    # it: a connection outwards per workspace, which never stops the server from starting.
+    if state.slack_inbox is not None:
+        for name in state.slack_inbox.start():
+            typer.echo(f"listening to Slack for your messages in {name}")
     server = _build_server(state)
     server_task = asyncio.create_task(server.serve(), name="phone-server")
     typer.echo(f"phone server on http://{settings.host}:{settings.port}")
