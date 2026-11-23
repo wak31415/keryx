@@ -273,8 +273,7 @@ def test_every_template_loads_nothing_it_should_not(slack_settings):
 
 
 WORK = {"access": "converse", "owner_id": "U0WORK", "team": "Acme", "team_id": "T0WORK",
-        "channel_id": "U0WORK", "bot_user_id": "U0WORKBOT",
-        "url": "https://acme.slack.com/"}
+        "channel_id": "U0WORK", "bot_user_id": "U0WORKBOT"}
 FIRST = {"channel_id": "U0ME", "team": "Home", "team_id": "T0HOME"}
 
 
@@ -529,49 +528,24 @@ def test_what_is_on_file_is_keryxs_own_and_never_the_mcp_servers(settings, monke
     assert (sending.token("bot"), sending.channel) == ("xoxb-the-servers", "D0SERVER")
 
 
-# --- asked in one place, answered in another ------------------------------------------------
+# --- answered where it was asked -------------------------------------------------------------
 
 
-def test_a_task_asked_for_in_a_shared_conversation_is_answered_in_the_owners_dm(two_workspaces):
-    """A report can hold anything from their machine: it never goes where it was asked."""
-    task = slack_task(origin_channel="slack", slack_workspace="work",
-                      slack_asked_channel="C0SHARED", slack_asked_ts="1700000000.000100")
-
-    route = report_route(two_workspaces, task)
-
-    assert (route.workspace, route.thread_ts, route.broadcast) == ("work", None, False)
-    assert (route.poster._channel, route.poster._token) == ("U0WORK", "xoxb-work")
-    assert route.preface == (
-        "Answering what you asked here: "
-        "https://acme.slack.com/archives/C0SHARED/p1700000000000100"
-    )
-
-
-def test_once_answered_its_later_reports_are_replies_under_that_answer(two_workspaces):
-    task = slack_task(origin_channel="slack", slack_workspace="work",
-                      slack_asked_channel="C0SHARED", slack_asked_ts="1700000000.000100",
-                      slack_channel="D0WORK", slack_thread_ts="1700000000.000900")
+def test_a_task_asked_for_in_a_shared_conversation_is_answered_in_that_thread(two_workspaces):
+    """The owner's ruling: the answer goes where the question was, and its members read it."""
+    task = slack_task(origin_channel="slack", slack_workspace="work", slack_channel="C0SHARED",
+                      slack_thread_ts="1700000000.000100")
 
     route = report_route(two_workspaces, task)
 
-    assert (route.poster._channel, route.thread_ts, route.preface) == (
-        "D0WORK", "1700000000.000900", ""
+    assert (route.workspace, route.thread_ts, route.broadcast) == (
+        "work", "1700000000.000100", False
     )
-    assert route.poster._channel != "C0SHARED" and route.usual._channel == "U0WORK"
+    assert (route.poster._channel, route.poster._token) == ("C0SHARED", "xoxb-work")
+    # Only a thread that is gone for good falls back, and then to the owner alone.
+    assert route.usual._channel == "U0WORK"
 
 
-def test_with_no_address_for_the_workspace_the_conversation_is_named_instead(two_workspaces):
-    plugins.write_config(two_workspaces, NAME, {"workspaces": {"work": {**WORK, "url": ""}}})
-    task = slack_task(origin_channel="slack", slack_workspace="work",
-                      slack_asked_channel="C0SHARED", slack_asked_ts="1700000000.000100")
-
-    assert report_route(two_workspaces, task).preface == (
-        "Answering what you asked in another conversation (C0SHARED)."
-    )
-
-
-def test_a_slack_task_with_neither_a_thread_nor_an_asking_place_is_posted_nowhere(
-    two_workspaces,
-):
+def test_a_slack_task_with_no_thread_is_posted_nowhere(two_workspaces):
     assert report_route(two_workspaces, slack_task(origin_channel="slack",
                                                    slack_workspace="work")) is None

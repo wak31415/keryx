@@ -96,6 +96,12 @@ def _deserialize_field(name: str, value: Any) -> Any:
     return value
 
 
+#: Columns an earlier cut of a branch added and nothing reads any more. A database that
+#: met one keeps it: dropping a column under a build that still writes it would break that
+#: build, and the database runs ahead of the code. So they are passed over without the
+#: "newer schema" warning, which would be untrue of them.
+RETIRED_COLUMNS = frozenset({"slack_last_ts", "slack_asked_channel", "slack_asked_ts"})
+
 #: Columns already reported by `_warn_unknown_columns`. A process behind the schema reads
 #: rows constantly, and the news is about the *column*, so it is worth saying exactly once.
 _warned_columns: set[str] = set()
@@ -103,7 +109,7 @@ _warned_columns: set[str] = set()
 
 def _warn_unknown_columns(names: Iterable[str]) -> None:
     """Say once, per column, that the database is carrying something we cannot model."""
-    fresh = sorted(set(names) - _warned_columns)
+    fresh = sorted(set(names) - _warned_columns - RETIRED_COLUMNS)
     if not fresh:
         return
     _warned_columns.update(fresh)
@@ -178,22 +184,16 @@ class Task:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
-    #: The Slack thread this task is *answered* in (schema v7): the workspace by the
-    #: owner's name for it, the conversation, and the timestamp of the message the thread
-    #: hangs from. That message is the owner's own when the task was asked for in their
-    #: direct messages with the app, and otherwise the first report Keryx posted for it.
-    #: Set once: every later report is a reply there, and a reply the owner types there
-    #: (mentioning the app) is a follow-up to this task.
+    #: The Slack thread this task lives in (schema v7): the workspace by the owner's name
+    #: for it, the conversation, and the timestamp of the message the thread hangs from.
+    #: That is the thread the owner asked in, when the task was asked for on Slack (their
+    #: direct messages with the app, or a conversation the app was mentioned in), and
+    #: otherwise the first report Keryx posted for it. Set once: every report is a reply
+    #: there, and a message the owner types there, mentioning the app, is a follow-up to
+    #: this task. Asked and answered in the same place, wherever that is.
     slack_workspace: str | None = None
     slack_channel: str | None = None
     slack_thread_ts: str | None = None
-    #: Where it was *asked*, when that is somewhere else (schema v8): a conversation the
-    #: app was mentioned in, and the message that thread hangs from. Asked in one place
-    #: and answered in another: a report can hold anything from the owner's machine, so
-    #: it never goes into a shared conversation, only to their direct messages. A later
-    #: mention in the asking thread is still a follow-up to this task.
-    slack_asked_channel: str | None = None
-    slack_asked_ts: str | None = None
     #: The last few Slack messages this task has acted on, space-separated (schema v8).
     #: Slack delivers an event again when its acknowledgement was lost, and promises no
     #: order: a message is a repeat when it is in here, never because it is older.
@@ -255,16 +255,13 @@ SLACK_SEEN_MAX = 20
 class SlackThread:
     """A thread on Slack: which workspace, which conversation, and the message it hangs from.
 
-    `shared` says the conversation is one the app was mentioned in rather than the owner's
-    direct messages with it: a task asked for there is answered somewhere else. `asked_at`
-    is the message that asked, when it is a reply in the thread and not the message the
-    thread hangs from.
+    `asked_at` is the message that asked, when it is a reply in the thread and not the
+    message the thread hangs from.
     """
 
     workspace: str
     channel: str
     ts: str
-    shared: bool = False
     asked_at: str | None = None
 
 

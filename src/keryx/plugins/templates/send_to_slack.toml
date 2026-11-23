@@ -31,7 +31,6 @@ owner_id = {owner_id}
 team = {team}
 team_id = {team_id}
 bot_user_id = {bot_user_id}
-url = {url}
 
 # The user-scope MCP server in ~/.claude.json (in $CLAUDE_CONFIG_DIR, when that is set)
 # that gives subagents Slack. Named, subagents are told to use it, and a missing token or

@@ -108,7 +108,6 @@ def test_one_that_is_on_and_cannot_be_ticked_is_not_turned_off_for_it(make_ctx, 
 SLACK = ("Which plugins", ["send_to_slack"])
 TOKEN, WHERE, TEST = "Bot token", "Where to send", "Send a test message"
 LEVEL, APP_TOKEN, USER_TOKEN = "What may Keryx see", "App-level token", "User token"
-OWNER = "Your own member id"
 #: The offer of `check_slack`, made once when the level has just been raised to read.
 ANSWERS = "Turn on Slack answers"
 #: The level every install had before there were levels, taken as it is offered.
@@ -133,7 +132,7 @@ def slack_walk(ctx):
 
 def asked(ctx) -> list[str]:
     """Each question in the order it was put on the terminal, by its first words."""
-    names = ("Which plugins", LEVEL, TOKEN, APP_TOKEN, USER_TOKEN, WHERE, OWNER, TEST, NEXT,
+    names = ("Which plugins", LEVEL, TOKEN, APP_TOKEN, USER_TOKEN, WHERE, TEST, NEXT,
              "Save it without checking")
     return [next(name for name in names if name in message) for _, message in ctx.ui.asked]
 
@@ -510,26 +509,30 @@ def test_a_user_token_from_another_workspace_is_asked_for_again_and_never_saved(
     assert toml(ctx, "send_to_slack")["owner_id"] == "U0SAM"
 
 
-def test_converse_with_a_channel_typed_by_hand_asks_which_member_the_owner_is(make_ctx, world):
+def test_the_first_time_above_announce_where_to_send_also_says_who_they_are(make_ctx, world):
+    """No question can change the owner, so the one that establishes it must name them:
+    a channel says nothing about who is asking."""
     ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
-                    (WHERE, "C0CHANNEL"), (OWNER, " U0SAM "), (TEST, False)])
+                    (WHERE, "C0CHANNEL")])
+
+    with pytest.raises(AssertionError, match="this is also who you are"):
+        section.run_section(ctx)
+
+    assert ConfigStore()._secrets() == {}
+    assert not any("Your own member id" in message for _, message in ctx.ui.asked)
+
+
+def test_with_an_owner_on_file_a_channel_is_a_destination_like_any_other(make_ctx, world):
+    ctx = conversing(make_ctx)
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
+                      (WHERE, "C0CHANNEL"), (TEST, False)]
 
     section.run_section(ctx)
 
-    assert ctx.ui.done()
     saved = toml(ctx, "send_to_slack")
-    assert (saved["channel_id"], saved["owner_id"]) == ("C0CHANNEL", "U0SAM")
-    assert MEMBER_ID_HINT in ctx.ui.lines("note")
+    assert ctx.ui.done() and (saved["channel_id"], saved["owner_id"]) == ("C0CHANNEL", "U0OWNER")
     assert any(line.startswith("Reports go to C0CHANNEL, which is not your direct messages")
                for line in ctx.ui.lines("note"))
-
-
-def test_the_owners_member_id_must_be_one(make_ctx):
-    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
-                    (WHERE, "C0CHANNEL"), (OWNER, "sam")])
-
-    with pytest.raises(AssertionError, match="A member id"):
-        section.run_section(ctx)
 
 
 def test_a_member_id_typed_as_the_destination_is_the_owner_and_nothing_more_is_asked(
@@ -670,7 +673,8 @@ def test_a_user_token_that_is_not_the_owners_on_file_is_asked_for_again(make_ctx
     assert ctx.ui.done()
     assert ctx.ui.lines("error") == [
         "That user token cannot be used: it belongs to U0ELSE, and the member whose "
-        "messages Keryx acts on is U0OWNER (`keryx auth login slack --owner` changes that)"
+        "messages Keryx acts on is U0OWNER: paste your own (`keryx auth logout slack` and a "
+        "new login connects as somebody else)"
     ]
     assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-mine"
     assert toml(ctx, "send_to_slack")["owner_id"] == "U0OWNER"

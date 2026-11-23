@@ -647,9 +647,9 @@ async def test_a_v6_database_gains_the_slack_columns_and_keeps_its_rows(tmp_path
     try:
         tasks = await store.list()
         assert {task.description for task in tasks} == {"old finished work", "old queued work"}
-        assert {(t.slack_workspace, t.slack_channel, t.slack_thread_ts, t.slack_asked_ts,
-                 t.slack_seen, t.slack_reruns, t.slack_reruns_on) for t in tasks} == {
-            (None, None, None, None, None, 0, None)
+        assert {(t.slack_workspace, t.slack_channel, t.slack_thread_ts, t.slack_seen,
+                 t.slack_reruns, t.slack_reruns_on) for t in tasks} == {
+            (None, None, None, None, 0, None)
         }
         await store.update(tasks[0].id, slack_workspace="default", slack_channel="D1",
                            slack_thread_ts="17.000100")
@@ -659,17 +659,32 @@ async def test_a_v6_database_gains_the_slack_columns_and_keeps_its_rows(tmp_path
         await store.close()
 
 
-async def test_a_v7_database_from_this_branchs_first_cut_gains_the_rest(tmp_path):
-    """A database that met the first v7 has a column nothing reads any more, and is
-    upgraded past it like any other."""
+@pytest.mark.parametrize(
+    ("version", "extra"),
+    [
+        # The cut reviewed first: v7 with a column for the latest message alone.
+        (7, ("slack_last_ts TEXT",)),
+        # The cut after it: v8 with where a task was asked apart from where it is answered.
+        (8, ("slack_last_ts TEXT", "slack_asked_channel TEXT", "slack_asked_ts TEXT",
+             *store_module._V8_COLUMNS)),
+    ],
+)
+async def test_a_database_an_earlier_cut_of_this_branch_touched_is_read_without_complaint(
+    tmp_path, caplog, version, extra
+):
+    """Its dead columns are kept (a build that still writes one must not break) and are
+    passed over without the "newer schema" warning, which would be untrue of them."""
+    from keryx.tasks import models
+
     path = tmp_path / "tasks.db"
     _v2_database(path)
     conn = sqlite3.connect(path, isolation_level=None)
     for column in (*_V3_COLUMNS, *_V4_COLUMNS, *_V5_COLUMNS, *store_module._V6_COLUMNS,
-                   *store_module._V7_COLUMNS, "slack_last_ts TEXT"):
+                   *store_module._V7_COLUMNS, *extra):
         conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
-    conn.execute("UPDATE schema_version SET version = 7")
+    conn.execute("UPDATE schema_version SET version = ?", (version,))
     conn.close()
+    models._warned_columns.clear()
 
     store = TaskStore(path)
     try:
@@ -679,6 +694,7 @@ async def test_a_v7_database_from_this_branchs_first_cut_gains_the_rest(tmp_path
         assert await store.count_slack_reruns_on("2026-11-23") == 1
     finally:
         await store.close()
+    assert "ignoring task column" not in caplog.text
 
 
 async def test_a_task_remembers_the_last_few_slack_messages_it_acted_on(store):
@@ -724,18 +740,6 @@ async def test_a_task_is_found_by_the_slack_thread_it_lives_in(store):
     assert await store.find_by_slack_thread("work", "D2", "17.000100") is None
     assert await store.find_by_slack_thread("default", "D1", "17.000100") is None
     assert await store.find_by_slack_thread("work", "D1", "17.000200") is None
-
-
-async def test_a_task_is_also_found_by_the_thread_it_was_asked_in(store):
-    asked = await store.create(Task(id=None, kind=TaskKind.AGENT, description="asked elsewhere",
-                                    slack_workspace="work", slack_asked_channel="C1",
-                                    slack_asked_ts="17.000100", slack_channel="D1",
-                                    slack_thread_ts="18.000100"))
-
-    assert (await store.find_by_slack_thread("work", "C1", "17.000100")).id == asked.id
-    assert (await store.find_by_slack_thread("work", "D1", "18.000100")).id == asked.id
-    # Not a mix of the two: the asking conversation with the answering thread's timestamp.
-    assert await store.find_by_slack_thread("work", "C1", "18.000100") is None
 
 
 # --- a database that has run ahead of us -----------------------------------

@@ -14,8 +14,8 @@ Four stages, in order, on every `TaskCompleted` / `TaskFailed`:
    Where the first report landed becomes the task's thread (`Task.slack_thread_ts`), and
    every later report of that task is a reply there, so a reply the owner types under it
    finds the task (`keryx.slack_inbox`). A task asked for on Slack already has its
-   thread, the owner's own message, and answers there: nothing is texted about it, because
-   the thread they wrote in is where they are looking.
+   thread, the one the owner asked in, and answers there, wherever that is: nothing is
+   texted about it, because the thread they wrote in is where they are looking.
 4. **Call back**, if they asked to be called and have not had it already. The call
    carries a fresh single-use stream token whose `extra` tells the new session why it
    opened, so Keryx leads with the result instead of "hello?". If the phone it would ring
@@ -314,8 +314,7 @@ class Notifier:
                 header, body = FAILED_TEXT.format(task_id=task.id, detail=detail), report
             else:
                 header, body = f"Task {task.id} finished", report or detail
-            # Asked in one conversation and answered in another: say which message this is.
-            text = "\n\n".join(part for part in (f"**{header}**", route.preface, body) if part)
+            text = f"**{header}**\n\n{body}".strip()
             posted = await route.poster.post(
                 text, fallback=header, thread_ts=route.thread_ts, broadcast=route.broadcast
             )
@@ -328,8 +327,8 @@ class Notifier:
                 # then not on Slack, and is still in the task for a call to read out.
                 posted = await route.usual.post(text, fallback=header)
                 moved = True
-            if not posted.ok:
-                return False
+            # A long report whose first piece landed has started a thread, whatever became
+            # of the rest: that is still where the task lives.
             if (route.thread_ts is None or moved) and posted.ts:
                 # The first report: where it landed is this task's thread from now on.
                 try:
@@ -341,7 +340,7 @@ class Notifier:
                     )
                 except Exception:
                     log.exception("could not record where task %s was posted", task.id)
-            return True
+            return posted.ok
         except Exception:
             log.exception("could not post the report of task %s to Slack", task.id)
             return False

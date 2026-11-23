@@ -949,7 +949,7 @@ class FakeSlackHttp:
         answer = answers.pop(0) if answers else None
         if isinstance(answer, Exception):
             raise answer
-        if answer is None:
+        if answer is None:  # also what a None in a script means: take this one
             answer = {"ok": True, "channel": "D0" + token[-5:].upper(),
                       "ts": f"17000000{len(self.calls):02d}.000100"}
         return io.BytesIO(json.dumps(answer).encode())
@@ -1034,25 +1034,38 @@ async def test_a_personal_thread_that_is_gone_falls_back_to_the_owners_dm_there_
     assert after.slack_thread_ts == "1700000002.000100"
 
 
-async def test_a_task_asked_for_in_a_channel_is_answered_in_the_dm_and_says_which_message(
-    two_workspaces,
-):
-    """Never in the channel: a report can hold anything from the owner's machine."""
+async def test_a_task_asked_for_in_a_channel_is_answered_in_that_thread(two_workspaces):
+    """Answered where it was asked, with that workspace's bot, and nowhere else."""
     store, bus, http = two_workspaces
     task = await store.create(Task(
         id=None, kind=TaskKind.AGENT, description="summarise this", origin_channel="slack",
-        slack_workspace="personal", slack_asked_channel="C0SHARED",
-        slack_asked_ts="1700000000.000500",
+        slack_workspace="personal", slack_channel="C0SHARED",
+        slack_thread_ts="1700000000.000500",
     ))
 
     await bus.publish(TaskCompleted(task.id, "they decided to ship"))
 
-    assert http.calls == [("xoxb-perso", "U0ME", None)]
-    assert "C0SHARED" not in [channel for _, channel, _ in http.calls]
+    assert http.calls == [("xoxb-perso", "C0SHARED", "1700000000.000500")]
     after = await store.get(task.id)
-    assert (after.slack_channel, after.slack_thread_ts) == ("D0PERSO", "1700000001.000100")
-    assert (after.slack_asked_channel, after.slack_asked_ts) == ("C0SHARED", "1700000000.000500")
-    assert "Answering what you asked in another conversation (C0SHARED)." in http.texts[0]
+    assert (after.slack_channel, after.slack_thread_ts) == ("C0SHARED", "1700000000.000500")
+
+
+async def test_a_long_first_report_whose_second_piece_fails_still_has_its_thread(
+    two_workspaces, tmp_path
+):
+    """Its first piece is on Slack: a reply under it has to find the task."""
+    store, bus, http = two_workspaces
+    report = tmp_path / "keryx" / "tasks" / "1.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# Task 1\n\nq\n\n---\n\n" + "\n\n".join(["word " * 200] * 40))
+    task = await store.create(Task(id=None, kind=TaskKind.AGENT, description="q",
+                                   report_path=str(report)))
+    http.script["xoxb-first"] = [None, {"ok": False, "error": "msg_too_long"}]
+
+    await bus.publish(TaskCompleted(task.id, "answer"))
+
+    after = await store.get(task.id)
+    assert (after.slack_channel, after.slack_thread_ts) == ("D0FIRST", "1700000001.000100")
 
 
 async def test_a_task_typed_in_a_workspace_since_disconnected_is_posted_nowhere(

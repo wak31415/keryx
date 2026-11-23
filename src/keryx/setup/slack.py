@@ -31,13 +31,16 @@ workspace that is connected prints the new manifest to paste into the app there 
 message is acted on only when it mentions it; a workspace above `announce` without it
 hears nothing.
 
-**Where reports go is never whose messages are acted on.** The destination (`--email`,
-the wizard's "where to send") and the owner (`owner_id`: the one member whose direct
-messages may start work with no PIN) are separate settings. An owner on file for the same
-workspace stands whatever is looked up or typed as a destination (`standing_owner`); one
-is derived only when there is none, and then it is said in a line of its own
-(`OWNER_LINE`), as it is on every connect at `converse` or above. Changing it is one
-explicit act: `keryx auth login slack --owner MEMBER_ID_OR_ADDRESS`.
+**One owner, fixed at connect** (the owner's ruling of 2026-11-23). The owner is whoever
+set the connection up, and `owner_id` (the one member whose messages may start work with
+no PIN) is established once: at `read` and above from the user token's own member, and
+at `converse` from the address given at connect, or a destination already on file that
+is a member's id, said aloud. After that nothing changes it in place: not `--email` or
+the wizard's "where to send", which only ever choose where reports go; not a user token,
+which is refused when it is somebody else's; not a bot token from another workspace,
+which is refused too. There is no option for it. `keryx auth logout slack` and a new
+login is the one way to connect as somebody else. `OWNER_LINE` names the member on every
+connect at `converse` or above.
 
 A second workspace is the same flow with `--workspace NAME`: its own app from the same
 manifest, its own level, tokens, member id and destination (`plugins.slack`), and
@@ -93,9 +96,10 @@ MEANING = {
     ),
     Access.READ: (
         "Everything in converse. You can also mention the app (@Keryx) in any conversation "
-        "it has been added to: it is sent that one message, acts only when it is yours, "
-        "and answers in your direct messages, never there. And Keryx can read Slack as "
-        "you, only when you ask it about messages: every channel, private channel, direct "
+        "it has been added to: every message that mentions it there is sent to Keryx, "
+        "anyone's but yours is dropped, and yours is answered in that thread, where the "
+        "others in the conversation read the answer too. And Keryx can read Slack as you, "
+        "only when you ask it about messages: every channel, private channel, direct "
         "message and group message you are in, their lists, the member list, and search."
     ),
 }
@@ -104,8 +108,8 @@ SHORT = {
     Access.ANNOUNCE: "Keryx posts to you and reads nothing",
     Access.CONVERSE: "also acts on a message you send the Keryx app that mentions it "
                      "(@Keryx): it can resume or start work without the PIN",
-    Access.READ: "also answers a mention in a conversation it was added to, and reads "
-                 "Slack as you when you ask it about messages",
+    Access.READ: "also answers your mention in a conversation it was added to, there, "
+                 "and reads Slack as you when you ask it about messages",
 }
 #: Said at `read`: when Slack is read as the owner, and what turns that on.
 READ_NOTE = (
@@ -163,7 +167,7 @@ LISTEN_NOTE = "Keryx starts listening for your messages there at its next start:
 #: Said at `converse` and above, every time: whose messages may start work with no PIN.
 OWNER_LINE = (
     "Only messages from {who} that mention the app (@Keryx) are acted on there: that "
-    "member id is taken to be you, and only --owner changes it."
+    "member id is taken to be you, for as long as this workspace is connected."
 )
 #: Said when the destination is a channel: only the app's direct messages are heard.
 CHANNEL_NOTE = (
@@ -384,6 +388,8 @@ def _already(saved: SlackWorkspace, echo: Callable[[str], None]) -> None:
         echo(f"It is without {' or '.join(saved.missing)}.")
     if saved.access.reaches(Access.CONVERSE) and saved.owner_id:
         echo(OWNER_LINE.format(who=saved.owner_id))
+        echo(f"To connect as somebody else: keryx auth logout slack{named}, then log in "
+             "again.")
     others = [level for level in slack.LEVELS if level is not saved.access]
     echo(
         f"\nTo change what Keryx may see there: keryx auth login slack{named} --access "
@@ -474,7 +480,7 @@ def logout(
         try:
             plugins.write_config(settings, PLUGIN, {
                 "channel_id": "", "access": str(Access.ANNOUNCE), "owner_id": "", "team": "",
-                "team_id": "",
+                "team_id": "", "bot_user_id": "",
             })
         except plugins.PluginConfigError as error:
             raise SlackSetupError(f"its tokens are removed, but {error}") from None
@@ -582,7 +588,7 @@ def standing_owner(saved: SlackWorkspace, team: Workspace, *, same_app: bool) ->
 
     Whose messages may start work with no PIN is never changed by changing where reports
     go. An owner on file for the same team (or, where the file never learned the team,
-    for the same app) is the owner until `--owner` says otherwise.
+    for the same app) is the owner until the workspace is logged out.
     """
     if not saved.owner_id:
         return ""
@@ -601,7 +607,6 @@ def connect(
     api: SlackApi | None = None,
     workspace: str = DEFAULT,
     access: Access | None = None,
-    owner: str | None = None,
 ) -> None:
     """Check the tokens, find where to send, save it all, turn the plugin on, and prove it.
 
@@ -615,8 +620,8 @@ def connect(
     the test message can fail, and that says so and undoes nothing.
 
     **Where reports go and whose messages are acted on are two things.** `email` is the
-    first and never the second once there is an owner on file (`standing_owner`); `owner`
-    (a member id, or the address they use there) is the one way to change the second.
+    first, and the second only the first time, when nobody is on file: after that the
+    owner stands (`standing_owner`) until the workspace is logged out.
     """
     api = api or SlackApi()
     given = read_tokens(tokens)
@@ -668,6 +673,15 @@ def connect(
             "the app is there, and above announce every message is held to both. Nothing "
             "was saved"
         )
+    if saved.owner_id and saved.team_id and saved.team_id != team.team_id:
+        # Another workspace's token would bring another owner with it, and the owner is
+        # fixed for as long as a workspace is connected.
+        named = "" if workspace == DEFAULT else f" --workspace {workspace}"
+        raise SlackSetupError(
+            f"that bot token is for {team.team or 'another workspace'}, and {saved.label} "
+            f"is connected here: `keryx auth logout slack{named}` first, then log in "
+            "again. Nothing was saved"
+        )
     token_owner = ""
     if USER in needed:
         token_owner = _check_user_token(api, held[USER], team)
@@ -689,9 +703,9 @@ def connect(
             )
     channel = found.user_id if found is not None else (kept or token_owner)
     acted_on, who = _owner(
-        api, token, access=access, explicit=(owner or "").strip(),
-        standing=standing_owner(saved, team, same_app=token == before),
+        access=access, standing=standing_owner(saved, team, same_app=token == before),
         token_owner=token_owner, found=found, channel=channel,
+        named="" if workspace == DEFAULT else f" --workspace {workspace}",
     )
 
     _save_tokens(store, settings, workspace, held)
@@ -720,7 +734,6 @@ def connect(
             "team": team.team,
             "team_id": team.team_id,
             "bot_user_id": team.user_id,
-            "url": team.url,
         })
         plugins.install(settings, PLUGIN)
     except plugins.PluginConfigError as error:
@@ -758,53 +771,34 @@ def connect(
 
 
 def _owner(
-    api: SlackApi,
-    token: str,
     *,
     access: Access,
-    explicit: str,
     standing: str,
     token_owner: str,
     found: Member | None,
     channel: str,
+    named: str,
 ) -> tuple[str, str]:
     """The member whose messages are acted on, and how to name them in a line.
 
-    In order: the one `--owner` named, which is the only thing that replaces an owner on
-    file; the owner on file; and only when there is neither, the first one that can be
-    derived: whom the user token belongs to, the member the address found, or a
-    destination that is a member's id. Below `converse` nobody's messages are acted on,
-    so nothing is derived: an owner on file is kept for the day the level is raised.
+    The owner on file stands. Only when there is none is one established: whom the user
+    token belongs to, else the member the address found, else a destination that is a
+    member's id. Below `converse` nobody's messages are acted on, so nothing is
+    established: an owner on file is kept for the day the level is raised. Nothing here
+    replaces an owner: that is `keryx auth logout slack` and a new login.
     """
-    name = ""
-    if explicit:
-        if "@" in explicit:
-            member = api.lookup_by_email(token, explicit)
-            if not member.ok:
-                raise SlackSetupError(
-                    f"Slack could not find {explicit} to act on messages from: "
-                    f"{member.problem}. Nothing was saved"
-                )
-            acted_on, name = member.user_id, member.name
-        elif is_member(explicit):
-            acted_on = explicit
-        else:
-            raise SlackSetupError(
-                "--owner takes a member id (U…) or the address they use in Slack. "
-                "Nothing was saved"
-            )
-    elif standing:
+    if standing:
         acted_on = standing
     elif not access.reaches(Access.CONVERSE):
         return "", ""
     else:
         acted_on = token_owner or (found.user_id if found is not None else "") or (
             channel if is_member(channel) else "")
-    if access is Access.READ and acted_on != token_owner:
+    if token_owner and acted_on != token_owner:
         raise SlackSetupError(
             f"the user token belongs to {token_owner}, and the member whose messages Keryx "
-            f"acts on there is {acted_on}: paste your own user token, or change the "
-            f"member with --owner {token_owner}. Nothing was saved"
+            f"acts on there is {acted_on}: paste your own user token. To connect as "
+            f"somebody else, `keryx auth logout slack{named}` first. Nothing was saved"
         )
     if access.reaches(Access.CONVERSE) and not acted_on:
         raise SlackSetupError(
@@ -812,8 +806,7 @@ def _owner(
             f"and {channel} is not one: add --email ADDRESS, the one you use in Slack. "
             "Nothing was saved"
         )
-    if not name and found is not None and found.user_id == acted_on:
-        name = found.name
+    name = found.name if found is not None and found.user_id == acted_on else ""
     return acted_on, f"{name} ({acted_on})" if name else acted_on
 
 

@@ -19,7 +19,6 @@ token and is done at once. `--workspace NAME` is a further workspace, with its o
 """
 
 import asyncio
-import dataclasses
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -161,9 +160,6 @@ class LoginOptions:
     test: bool = True
     workspace: str | None = None
     access: str | None = None
-    #: Slack: the member whose messages to the app are acted on, by id or by address.
-    #: The one way that is ever changed; None leaves it as it is.
-    owner: str | None = None
 
 
 def login(
@@ -269,10 +265,6 @@ def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, ech
     try:
         workspace = slack.workspace_name(options.workspace)
         access = slack.parse_access(options.access)
-        if options.tokens is None and options.owner:
-            # Changing whose messages are acted on is an act of its own: the tokens on
-            # file are checked again, and nothing need be typed.
-            options = dataclasses.replace(options, tokens="")
         if options.tokens is None:
             # Taking access away needs nothing from Slack, so it is done here and now.
             lowered = access is not None and slack.lower(
@@ -290,7 +282,6 @@ def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, ech
             echo=echo,
             workspace=workspace,
             access=access,
-            owner=options.owner,
         )
     except slack.SlackSetupError as exc:
         raise AuthError(str(exc)) from None

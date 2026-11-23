@@ -27,21 +27,26 @@ nothing more.
 **A request is the owner's words; everything else on Slack is context.** This module
 never reads context: not the rest of the thread, not the message a reply is under. A task
 is handed the request and a pointer to where it was typed (`SlackThread`), and a subagent
-that needs the thread reads it itself, fenced, with `keryx slack` (`keryx.slack_context`).
+that needs the thread reads it itself, fenced, with `keryx slack` (`integrations.slack_context`).
 
-**Asked in one place, answered in another.** A request typed in a shared conversation is
-acknowledged there with a reaction and nothing else. Its report goes to the owner's direct
-messages (`plugins.slack.report_route`), and so does a refusal: a report can hold anything
-from their machine, and a shared conversation is not theirs alone.
+**Answered where it was asked** (the owner's ruling of 2026-11-23). The reaction, the
+report, every later report of that task and any one-sentence refusal all go in the thread
+the request was typed in: the thread under the message itself when it stood alone, or the
+thread it was a reply in. In a shared conversation that means its members read the report
+too, which the level's description says before it is chosen.
 
-**What is acted on is decided in one function, `owner_request`, and it fails closed.**
+**What is a request is decided in one function, `owner_request`, and it fails closed.**
 Everything it needs is on file or it refuses: the workspace's id, the owner's member id,
-the app's own. The event must say whose authorization delivered it. Because the real
-payload has only ever been read in Slack's documentation, every event that is not acted on
-writes one log line with a reason and nothing else — never the text, the member or the
-conversation — so a live test shows at once which check refused. The settings are read
-again for every message, so lowering a workspace to `announce`, or turning the plugin off,
-stops Keryx acting at once.
+the app's own. The checks are the team, the owner, the mention, the event's type and
+subtype, and once only. A mention only counts where the owner wrote it: not on a quoted
+line (`>` at its start) and not inside a code block, and quoted lines are left out of the
+request. Whose authorization delivered the event is *not* a check: under the mention rule
+it defends nothing (only the owner's own mention is a request, wherever it arrives), and
+Slack's own examples disagree about its shape. Because the real payload has only ever been
+read in Slack's documentation, every event that is not acted on writes one log line with a
+reason and nothing else — never the text, the member or the conversation — so a live test
+shows at once which check refused. The settings are read again for every message, so
+lowering a workspace to `announce`, or turning the plugin off, stops Keryx acting at once.
 
 **Each message is acted on once.** Slack sends an event again when its acknowledgement was
 lost, and promises no order. A message is a repeat when its task remembers acting on it
@@ -84,8 +89,6 @@ CAP_REACHED = "Keryx has reached today's task limit ({cap}), so this was not sta
 NOT_STARTED = "Keryx could not start that."
 TEXT_ONLY = "Keryx reads text only: send that again as a message without the file."
 NOTHING_ASKED = "Keryx was mentioned with nothing to do: say what you want after the mention."
-#: Added to a sentence that has to be said somewhere other than where the request was typed.
-ELSEWHERE = " (about {link})"
 
 #: The events a request may arrive as, and the subtypes of a message that may be one: an
 #: ordinary message has none, a reply "also sent to the channel" is `thread_broadcast`, and
@@ -109,8 +112,6 @@ class Request:
     ts: str
     #: The message its thread hangs from, when it is a reply; None for one of its own.
     thread_ts: str | None = None
-    #: Typed in a conversation that is not the owner's direct messages with the app.
-    shared: bool = False
     #: It came with a file, which Keryx does not read.
     files: bool = False
 
@@ -148,8 +149,7 @@ def envelope_problem(payload: Any) -> str | None:
 def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
     """The owner's request in `payload`, or why there is none. The one place it is decided.
 
-    Fails closed: a workspace with no id, owner or bot member on file accepts nothing, and
-    so does an event that does not say whose authorization delivered it.
+    Fails closed: a workspace with no id, owner or bot member on file accepts nothing.
     """
     if problem := envelope_problem(payload):
         return Dropped(problem)
@@ -157,44 +157,53 @@ def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
         return Dropped("not_on_file")
     if payload.get("team_id") != workspace.team_id:
         return Dropped("other_team")
-    # Delivered to the app as its bot. A user-level subscription, which the manifest
-    # never asks for, would deliver every direct message the owner has with anybody.
-    authorizations = payload.get("authorizations")
-    if not (isinstance(authorizations, list) and authorizations):
-        return Dropped("no_authorizations")
-    if not any(
-        isinstance(each, dict)
-        and (each.get("is_bot") is True or each.get("user_id") == workspace.bot_user_id)
-        for each in authorizations
-    ):
-        return Dropped("not_for_the_bot")
     event = payload["event"]
     if event.get("user") != workspace.owner_id:
         return Dropped("not_the_owner")
-    shared = event["type"] == MENTION
-    if shared and not workspace.access.reaches(Access.READ):
+    mentioned = event["type"] == MENTION
+    if mentioned and not workspace.access.reaches(Access.READ):
         return Dropped("mention_below_read")
-    if not shared and event.get("channel_type") != "im":
+    if not mentioned and event.get("channel_type") != "im":
         return Dropped("not_a_direct_message")
+    # An id and a timestamp, held to their shapes before they go anywhere: into a request
+    # to Slack, a task's row, or the pointer a subagent is handed.
     channel, ts, thread_ts = event.get("channel"), event.get("ts"), event.get("thread_ts")
-    if not (isinstance(channel, str) and channel and slack.is_ts(ts)):
+    if not (slack.is_conversation(channel) and slack.is_ts(ts)):
         return Dropped("malformed")
     if thread_ts is not None and not slack.is_ts(thread_ts):
         return Dropped("malformed")
     text = event.get("text")
-    text = text if isinstance(text, str) else ""
-    mention = slack.mention(workspace.bot_user_id)
-    if not mention.search(text):
+    asked = own_words(text if isinstance(text, str) else "", workspace.bot_user_id)
+    if asked is None:
         return Dropped("no_mention")
     return Request(
-        # The mention is not part of what was asked; the gap it leaves is closed.
-        text=_SPACES.sub(" ", slack.plain_text(mention.sub(" ", text))),
+        text=asked,
         channel=channel,
         ts=ts,
         thread_ts=thread_ts if thread_ts and thread_ts != ts else None,
-        shared=shared,
         files=event.get("subtype") == "file_share" or bool(event.get("files")),
     )
+
+
+def own_words(text: str, bot_user_id: str) -> str | None:
+    """What the owner asked in `text`, with the mention taken out; None when they did not
+    mention the app in words of their own.
+
+    A mention counts only where they wrote it. A line that starts with `>` (`&gt;` as
+    Slack sends it) quotes somebody else, and what is between a pair of ``` is something
+    pasted: a mention in either is not theirs, and quoted lines are not part of what they
+    asked. Each step is one pass over the text.
+    """
+    lines = [line for line in text.split("\n") if not line.lstrip().startswith("&gt;")]
+    kept = "\n".join(lines)
+    mention = slack.mention(bot_user_id)
+    # Outside code: the even pieces of the text split on the fence.
+    pieces = kept.split("```")
+    if not any(mention.search(piece) for piece in pieces[::2]):
+        return None
+    pieces[::2] = [mention.sub(" ", piece) for piece in pieces[::2]]
+    # The mention is not part of what was asked; the gap it leaves is closed.
+    return _SPACES.sub(" ", slack.plain_text("```".join(pieces)))
 
 
 @dataclass(frozen=True)
@@ -221,6 +230,9 @@ class SlackInbox:
     def start(self) -> list[str]:
         """Start one listener for each workspace at `converse` or above; their names.
 
+        A listener's task that ever ends (it should not: `run` only stops when it is
+        cancelled) is noticed, logged and forgotten, so the next `start` makes another.
+
         Idempotent, and never raises: a plugin file that does not parse, or a workspace
         missing a token, is a workspace not listened to, and `doctor` says which.
         """
@@ -236,11 +248,21 @@ class SlackInbox:
                 each.name, each.token(slack.APP), lambda payload, name=each.name:
                 self.handle(name, payload)
             )
-            self._listeners[each.name] = asyncio.create_task(
-                listener.run(), name=f"slack-listener-{each.name}"
-            )
+            running = asyncio.create_task(listener.run(), name=f"slack-listener-{each.name}")
+            running.add_done_callback(lambda task, name=each.name: self._ended(name, task))
+            self._listeners[each.name] = running
             log.info("Slack: listening for the owner's messages in %s", each.name)
         return [each.name for each in found]
+
+    def _ended(self, name: str, task: asyncio.Task) -> None:
+        """A listener's task is over: said when it was not us who stopped it."""
+        if self._listeners.get(name) is task:
+            del self._listeners[name]
+        if task.cancelled():
+            return
+        failure = task.exception()
+        log.error("Slack: the listener for %s ended (%s); nothing is heard there until Keryx "
+                  "restarts", name, type(failure).__name__ if failure else "it returned")
 
     async def stop(self) -> None:
         """Stop every listener. Idempotent."""
@@ -266,8 +288,7 @@ class SlackInbox:
             return _dropped(name, request.reason)
         if not self._first_time(name, request):
             return _dropped(name, "seen")
-        thread = SlackThread(name, request.channel, request.root, shared=request.shared,
-                             asked_at=request.ts)
+        thread = SlackThread(name, request.channel, request.root, asked_at=request.ts)
         task = await self._manager.task_in_slack_thread(thread)
         if task is not None and request.ts in (task.slack_seen or "").split():
             return _dropped(name, "already_acted_on")
@@ -352,16 +373,10 @@ class SlackInbox:
             log.exception("could not acknowledge a Slack message in %s", workspace.name)
 
     async def _say(self, workspace: SlackWorkspace, request: Request, sentence: str) -> None:
-        """One sentence: in the request's thread, or for one typed in a shared
-        conversation, in the owner's direct messages. Never raises."""
+        """One sentence in the request's thread, where it was asked. Never raises."""
         try:
-            if request.shared:
-                link = slack.permalink(workspace.url, request.channel, request.ts)
-                poster = self._api.poster(workspace.token(slack.BOT), workspace.owner_id)
-                await poster.post(sentence + (ELSEWHERE.format(link=link) if link else ""))
-            else:
-                poster = self._api.poster(workspace.token(slack.BOT), request.channel)
-                await poster.post(sentence, thread_ts=request.root)
+            poster = self._api.poster(workspace.token(slack.BOT), request.channel)
+            await poster.post(sentence, thread_ts=request.root)
         except Exception:
             log.exception("could not answer a Slack message in %s", workspace.name)
 

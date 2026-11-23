@@ -329,11 +329,8 @@ class TaskManager:
         the life of the task, and one that is not enabled raises `AgentUnavailableError`.
 
         `slack` is the thread the request was typed in, when it was typed to the app on
-        Slack: the row is born knowing it, so the same message delivered twice finds the
-        task it already started. Typed in the owner's direct messages with the app, that
-        thread is also where the report is posted. Typed in a shared conversation
-        (`slack.shared`), it is only where the task was asked: the answer goes to their
-        direct messages, and its thread is whatever the first report lands as.
+        Slack: the row is born knowing it, so the report is posted there, wherever that is,
+        and the same message delivered twice finds the task it already started.
         """
         agent = agent or self._settings.agent_backend
         if agent not in self._settings.enabled_agents:
@@ -366,10 +363,8 @@ class TaskManager:
                 origin_session_id=origin_session_id,
                 internal=internal,
                 slack_workspace=slack.workspace if slack else None,
-                slack_channel=slack.channel if slack and not slack.shared else None,
-                slack_thread_ts=slack.ts if slack and not slack.shared else None,
-                slack_asked_channel=slack.channel if slack and slack.shared else None,
-                slack_asked_ts=slack.ts if slack and slack.shared else None,
+                slack_channel=slack.channel if slack else None,
+                slack_thread_ts=slack.ts if slack else None,
                 slack_seen=(slack.asked_at or slack.ts) if slack else None,
             )
         )
@@ -673,7 +668,7 @@ class TaskManager:
         return await self._store.search(terms, limit=limit)
 
     async def task_in_slack_thread(self, thread: SlackThread) -> Task | None:
-        """The task that lives in `thread`, if one does: answered there, or asked there."""
+        """The task that lives in `thread`, if one does."""
         return await self._store.find_by_slack_thread(thread.workspace, thread.channel, thread.ts)
 
     async def followup_from_slack(self, task_id: int, text: str, ts: str) -> Task:

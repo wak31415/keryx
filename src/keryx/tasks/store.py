@@ -74,8 +74,6 @@ CREATE TABLE IF NOT EXISTS tasks (
     slack_workspace TEXT,
     slack_channel TEXT,
     slack_thread_ts TEXT,
-    slack_asked_channel TEXT,
-    slack_asked_ts TEXT,
     slack_seen TEXT,
     slack_reruns INTEGER NOT NULL DEFAULT 0,
     slack_reruns_on TEXT,
@@ -136,11 +134,11 @@ _V7_COLUMNS = (
     "slack_thread_ts TEXT",
 )
 
-#: v7 -> v8 (2026-11-23): where a task was asked when that is not where it is answered,
-#: the Slack messages it has acted on, and how often a Slack reply re-ran it today.
+#: v7 -> v8 (2026-11-23): the Slack messages a task has acted on, and how often a Slack
+#: reply re-ran it today. (Earlier cuts of v7 and v8 on this branch also added
+#: `slack_last_ts` and `slack_asked_channel`/`slack_asked_ts`; a database that met one
+#: keeps the column, unread: see `models.RETIRED_COLUMNS`.)
 _V8_COLUMNS = (
-    "slack_asked_channel TEXT",
-    "slack_asked_ts TEXT",
     "slack_seen TEXT",
     "slack_reruns INTEGER NOT NULL DEFAULT 0",
     "slack_reruns_on TEXT",
@@ -234,8 +232,10 @@ class TaskStore:
                     conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
                 conn.execute(_CREATE_SLACK_INDEX_SQL)
             if version < 8:
+                present = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
                 for column in _V8_COLUMNS:
-                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+                    if column.split()[0] not in present:
+                        conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
             conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
             log.info(
                 "migrated tasks schema v%d -> v%d at %s", version, _SCHEMA_VERSION, self._path
@@ -413,8 +413,7 @@ class TaskStore:
     async def find_by_slack_thread(
         self, workspace: str, channel: str, thread_ts: str
     ) -> Task | None:
-        """The task that lives in the thread hanging from `thread_ts` in `channel`: the one
-        answered there, or the one asked for there and answered elsewhere.
+        """The task that lives in the thread hanging from `thread_ts` in `channel`.
 
         The newest, should two ever share a thread. Housekeeping never has one.
         """
@@ -427,10 +426,9 @@ class TaskStore:
     ) -> Task | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM tasks WHERE slack_workspace = ? AND internal = 0 AND ("
-                "(slack_channel = ? AND slack_thread_ts = ?) OR "
-                "(slack_asked_channel = ? AND slack_asked_ts = ?)) ORDER BY id DESC LIMIT 1",
-                (workspace, channel, thread_ts, channel, thread_ts),
+                "SELECT * FROM tasks WHERE slack_channel = ? AND slack_thread_ts = ? "
+                "AND slack_workspace = ? AND internal = 0 ORDER BY id DESC LIMIT 1",
+                (channel, thread_ts, workspace),
             ).fetchone()
         return Task.from_row(row) if row is not None else None
 

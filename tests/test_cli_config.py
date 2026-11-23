@@ -14,7 +14,7 @@ from keryx.cli import app
 from keryx.config.files import read_toml
 from keryx.config.store import ConfigStore
 from keryx.integrations.slack import Connection, Member, SlackResult, Workspace
-from keryx.setup.slack import OWNER_LINE, SlackApi
+from keryx.setup.slack import SlackApi
 
 runner = CliRunner()
 
@@ -475,21 +475,13 @@ def test_auth_logout_workspace_is_slacks_alone_and_the_service_may_not(home, mon
     assert run("auth", "logout", "slack").exit_code == 1
 
 
-def test_auth_login_slack_owner_changes_whose_messages_are_acted_on_and_nothing_else(
-    home, tmp_path, monkeypatch
-):
-    asked = fake_slack(monkeypatch)
-    run("auth", "login", "slack", "--stdin", "--access", "converse", "--email",
-        "sam@example.com", "--no-test", input="xapp-app-secret\nxoxb-bot-secret\n")
-    asked.clear()
+def test_auth_login_slack_has_no_option_that_changes_the_owner(home, monkeypatch):
+    """One owner, fixed at connect: `--owner` is not an option of the command."""
+    fake_slack(monkeypatch)
 
-    result = run("auth", "login", "slack", "--owner", "U0NEWME", "--no-test")
+    result = run("auth", "login", "slack", "--owner", "U0NEWME")
 
-    assert result.exit_code == 0, result.output
-    assert OWNER_LINE.format(who="U0NEWME") in result.output
-    text = (tmp_path / "keryx" / "tools" / "send_to_slack.toml").read_text()
-    assert 'owner_id = "U0NEWME"' in text and 'channel_id = "U0OWNER"' in text
-    assert asked == ["auth", "open"]
+    assert result.exit_code == 2 and "No such option" in result.output
 
 
 def test_auth_login_google_refuses_a_service_it_does_not_know(home):
@@ -598,7 +590,7 @@ def test_auth_login_slack_with_a_refused_token_says_slacks_code_and_saves_nothin
 @pytest.mark.parametrize(
     "flags",
     [("--stdin",), ("--email", "sam@example.com"), ("--no-test",), ("--access", "converse"),
-     ("--workspace", "work"), ("--owner", "U0OWNER")],
+     ("--workspace", "work")],
 )
 def test_slacks_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags):
     """Not ignored: `gmail --email …` silently doing nothing reads as having been taken."""
@@ -609,8 +601,9 @@ def test_slacks_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags
         result = run("auth", "login", name, *flags, input="xoxb-very-secret\n")
 
         assert result.exit_code == 2
-        assert ("--stdin, --email, --no-test, --access, --workspace and --owner are for "
-                "slack") in result.output
+        assert "--stdin, --email, --no-test, --access and --workspace are for slack" in (
+            result.output
+        )
     assert ran == [] and home.stored() == {}
 
 

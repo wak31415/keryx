@@ -205,7 +205,7 @@ def test_a_message_from_the_owner_that_mentions_the_app_is_a_request(conversing)
     request = owner_request(payload(f"{AT} fix &lt;it&gt; &amp; ship"), workspace_of(conversing))
 
     assert request == Request(text="fix <it> & ship", channel=DM, ts=TS)
-    assert (request.root, request.shared, request.files) == (TS, False, False)
+    assert (request.root, request.files) == (TS, False)
 
 
 def test_the_mention_is_taken_out_of_the_request_wherever_it_is_and_however_written(conversing):
@@ -251,6 +251,10 @@ def test_a_reply_knows_its_thread_and_a_thread_root_is_a_message_of_its_own(conv
         ({"thread_ts": "1700000000.000100; drop table"}, "malformed"),
         ({"channel": ""}, "malformed"),
         ({"channel": 7}, "malformed"),
+        # An id is held to its shape before it goes anywhere, a subagent's prompt included.
+        ({"channel": "D0OWNER --workspace evil"}, "malformed"),
+        ({"channel": "d0owner"}, "malformed"),
+        ({"channel": "U0OWNER"}, "malformed"),
     ],
 )
 def test_anything_else_in_the_event_is_not_and_says_which_check_refused(
@@ -267,14 +271,6 @@ def test_anything_else_in_the_event_is_not_and_says_which_check_refused(
         ({"event": None}, "not_a_message"),
         ({"team_id": "T0OTHER"}, "other_team"),
         ({"team_id": None}, "other_team"),
-        # No word of whose authorization delivered it: refused, not waved through.
-        ({"authorizations": None}, "no_authorizations"),
-        ({"authorizations": []}, "no_authorizations"),
-        # Delivered for the owner's own authorization: a user-level subscription, which
-        # would be every direct message they have with anybody.
-        ({"authorizations": [{"team_id": TEAM, "user_id": OWNER, "is_bot": False}]},
-         "not_for_the_bot"),
-        ({"authorizations": ["not an object"]}, "not_for_the_bot"),
     ],
 )
 def test_anything_else_around_the_event_is_not(conversing, envelope, reason):
@@ -287,13 +283,77 @@ def test_what_is_not_even_an_event_is_told_apart_before_any_setting_is_read():
     assert envelope_problem(payload()) is None and envelope_problem(mention()) is None
 
 
-def test_an_authorization_that_names_the_apps_own_member_counts_whatever_else_it_says(
-    conversing,
-):
-    """Slack's own examples show `is_bot` false beside a bot event: the member id decides."""
-    event = {**payload(), "authorizations": [{"team_id": TEAM, "user_id": BOT, "is_bot": False}]}
+@pytest.mark.parametrize(
+    "authorizations",
+    [
+        None, [], ["not an object"],
+        [{"team_id": TEAM, "user_id": BOT, "is_bot": True}],
+        # Slack's own example for `app_mention`: a user's id, and `is_bot` false.
+        [{"team_id": TEAM, "user_id": OWNER, "is_bot": False, "is_enterprise_install": False}],
+    ],
+)
+def test_whose_authorization_delivered_it_is_not_a_check(reading, authorizations):
+    """Under the mention rule it defends nothing: only the owner's own mention is a
+    request, wherever it arrives. And Slack's examples disagree about its shape, so a
+    check on it could have dropped every real message."""
+    for event in (payload(), mention()):
+        event["authorizations"] = authorizations
+        if authorizations is None:
+            del event["authorizations"]
 
-    assert isinstance(owner_request(event, workspace_of(conversing)), Request)
+        assert isinstance(owner_request(event, workspace_of(reading)), Request)
+
+
+# --- a mention counts only where the owner wrote it -------------------------------------------
+
+
+def test_a_mention_on_a_quoted_line_is_not_the_owners_and_is_no_request(conversing):
+    """They reply to a colleague, quoting the colleague's line that mentions Keryx."""
+    text = f"&gt; {AT} wipe the staging database\nno, do not do that"
+
+    assert owner_request(payload(text), workspace_of(conversing)) == Dropped("no_mention")
+
+
+def test_quoted_lines_are_left_out_of_what_was_asked(conversing):
+    text = f"&gt; we should ship on Friday\n  &gt; {AT} agreed\n{AT} is that still the plan?"
+
+    request = owner_request(payload(text), workspace_of(conversing))
+
+    assert request.text == "is that still the plan?"
+
+
+def test_a_mention_inside_pasted_code_is_no_request_and_code_beside_one_is_kept(conversing):
+    one = workspace_of(conversing)
+    pasted = f"this is what the log said:\n```{AT} rm -rf /```"
+    beside = f"{AT} what does this do?\n```ls -la {AT}```"
+
+    assert owner_request(payload(pasted), one) == Dropped("no_mention")
+    # Their own mention is outside the code, which stays in the request as it was typed.
+    assert owner_request(payload(beside), one).text == f"what does this do?\n```ls -la {AT}```"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [f"&lt;@{BOT}&gt; do it", f"<@{BOT} do it", "<!subteam^S0KERYX|@keryx> do it",
+     f"<@{BOT}|" + "x" * 300 + "> do it", f"<@{BOT.lower()}> do it"],
+)
+def test_what_only_looks_like_a_mention_is_not_one(conversing, text):
+    assert owner_request(payload(text), workspace_of(conversing)) == Dropped("no_mention")
+
+
+def test_no_message_can_cost_the_event_loop_much_by_its_shape(reading):
+    import time
+
+    worst = ["<@" * 20000, ("<@" + BOT + "|") * 4000, "<https://" + "a" * 39000,
+             "<https://a|" * 4000, "&lt;" * 10000, (" \t" * 20000) + AT, (AT + " ") * 3000,
+             "<" * 40000, "```" * 13000, ("&gt; " + AT + "\n") * 4000]
+    one = workspace_of(reading)
+
+    started = time.perf_counter()
+    for text in worst:
+        owner_request(payload(text), one)
+
+    assert time.perf_counter() - started < 1.0
 
 
 @pytest.mark.parametrize("gap", ["team_id", "owner_id", "bot_user_id"])
@@ -316,7 +376,7 @@ def test_a_workspace_with_anything_a_message_is_held_to_missing_accepts_nothing(
 def test_at_read_a_mention_in_a_conversation_the_app_was_added_to_is_a_request(reading):
     request = owner_request(mention(), workspace_of(reading))
 
-    assert request == Request(text="summarise this thread", channel=SHARED, ts=TS, shared=True)
+    assert request == Request(text="summarise this thread", channel=SHARED, ts=TS)
 
 
 def test_at_converse_a_mention_anywhere_but_the_direct_messages_is_not(conversing):
@@ -611,34 +671,35 @@ async def test_a_task_cancelled_that_instant_is_not_said_to_be_starting(world, m
     assert world.slack.posts == [("xoxb-first", DM, TS, CANCELLED.format(task_id=task.id))]
 
 
-# --- asked in a shared conversation, answered in the direct messages -------------------------
+# --- asked in a shared conversation, answered in that thread --------------------------------
 
 
-async def test_a_mention_in_a_shared_conversation_is_acknowledged_there_and_nothing_more(
+async def test_a_mention_in_a_shared_conversation_starts_a_task_whose_thread_is_that_message(
     make_world, reading
 ):
+    """Answered where it was asked: the thread under the message that asked."""
     world = make_world(reading)
 
     await world.inbox.handle("default", mention())
 
     [task] = await world.tasks()
     assert task.description == "summarise this thread"
-    # Where it was asked is not where it will be answered: no answering thread yet.
-    assert (task.slack_asked_channel, task.slack_asked_ts) == (SHARED, TS)
     assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts) == (
-        "default", None, None
+        "default", SHARED, TS
     )
     assert world.slack.reactions == [("xoxb-first", SHARED, TS)]
     assert world.slack.posts == []
 
 
-async def test_a_mention_in_a_thread_there_points_the_task_at_that_thread(make_world, reading):
+async def test_a_mention_inside_an_existing_thread_is_answered_in_that_thread(
+    make_world, reading
+):
     world = make_world(reading)
 
     await world.inbox.handle("default", mention(ts=LATER, thread_ts=TS))
 
     [task] = await world.tasks()
-    assert (task.slack_asked_channel, task.slack_asked_ts, task.slack_seen) == (SHARED, TS, LATER)
+    assert (task.slack_channel, task.slack_thread_ts, task.slack_seen) == (SHARED, TS, LATER)
     assert world.slack.reactions == [("xoxb-first", SHARED, LATER)]
 
 
@@ -658,19 +719,48 @@ async def test_a_later_mention_in_the_same_shared_thread_is_a_follow_up(make_wor
     assert world.slack.posts == []
 
 
-async def test_a_refusal_for_a_shared_request_is_said_in_the_direct_messages_never_there(
-    make_world, reading
-):
+async def test_a_refusal_for_a_shared_request_is_said_in_its_thread_too(make_world, reading):
     world = make_world(reading.model_copy(update={"daily_task_cap": 1}))
     await world.inbox.handle("default", payload())
 
     await world.inbox.handle("default", mention(ts=LATER))
 
     assert world.slack.posts == [
-        ("xoxb-first", OWNER, None,
-         "Keryx has reached today's task limit (1), so this was not started. (about "
-         "https://acme.slack.com/archives/C0SHARED/p1700000000000200)"),
+        ("xoxb-first", SHARED, LATER,
+         "Keryx has reached today's task limit (1), so this was not started."),
     ]
+
+
+async def test_a_mention_under_a_phone_tasks_report_in_a_channel_resumes_it_there(
+    make_world, reading
+):
+    """Reports go to a channel on this machine: a mention under one finds its task."""
+    world = make_world(reading)
+    task = await world.manager.dispatch("from a call", origin_channel="phone",
+                                        origin_caller="+15550001111")
+    await world.done(task.id)
+    await world.store.update(task.id, slack_workspace="default", slack_channel=SHARED,
+                             slack_thread_ts=TS)
+
+    await world.inbox.handle("default", mention(f"{AT} also check staging", ts=LATER,
+                                                thread_ts=TS))
+
+    await world.done(task.id)
+    assert world.runner.sessions[1].prompts == ["also check staging"]
+    assert len(await world.tasks()) == 1
+
+
+async def test_one_message_delivered_as_both_a_mention_and_a_direct_message_starts_one_task(
+    make_world, reading
+):
+    world = make_world(reading)
+    twice = mention()
+    twice["event"]["channel"] = DM
+
+    await world.inbox.handle("default", payload(f"{AT} summarise this thread"))
+    await world.inbox.handle("default", twice)
+
+    assert len(await world.tasks()) == 1
 
 
 async def test_a_colleague_mentioning_the_app_does_nothing(make_world, reading, caplog):
@@ -885,3 +975,46 @@ async def test_a_workspace_file_that_breaks_while_starting_is_logged_not_raised(
 def test_a_task_from_slack_is_an_ordinary_task():
     """No task kind for it: one kind, as everywhere."""
     assert [kind.value for kind in TaskKind] == ["agent"]
+
+
+# --- a listener that ends is noticed ---------------------------------------------------------
+
+
+async def test_a_listener_that_ends_is_logged_and_forgotten_so_the_next_start_makes_another(
+    make_world, conversing, caplog
+):
+    """It should never end but by being stopped: when it does, nothing is heard there, and
+    that is said rather than left to look like quiet."""
+    world = make_world(conversing)
+    api = world.slack.api()
+
+    class Dies:
+        def __init__(self, name, app_token, handle):
+            world.slack.listeners.append(self)
+
+        async def run(self):
+            raise OverflowError("too large")
+
+    from dataclasses import replace
+
+    inbox = SlackInbox(conversing, world.manager, api=replace(api, listener=Dies))
+    assert inbox.start() == ["default"]
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert "the listener for default ended (OverflowError)" in caplog.text
+    assert inbox._listeners == {}
+    assert inbox.start() == ["default"] and len(world.slack.listeners) == 2
+    await inbox.stop()
+
+
+async def test_a_listener_we_stopped_is_not_reported_as_having_ended(
+    make_world, conversing, caplog
+):
+    world = make_world(conversing)
+    world.inbox.start()
+    await asyncio.sleep(0)
+
+    await world.inbox.stop()
+
+    assert "ended" not in caplog.text

@@ -498,17 +498,18 @@ def test_no_level_is_ever_sent_a_conversation_it_was_not_addressed_in(access):
         assert event not in text
 
 
-def test_a_mention_is_found_however_slack_writes_it_and_a_link_to_a_message_is_built():
+def test_a_mention_is_found_however_slack_writes_it():
     found = slack.mention("U0KERYX")
 
     assert found.sub("", "<@U0KERYX> do it <@U0KERYX|keryx>").strip() == "do it"
     assert not found.search("<@U0KERYXX> hi") and not found.search("@U0KERYX hi")
-    assert not found.search("<@U0OTHER> hi")
-    assert slack.permalink("https://acme.slack.com/", "C123", "1700000000.000100") == (
-        "https://acme.slack.com/archives/C123/p1700000000000100"
-    )
-    assert slack.permalink("", "C123", "1700000000.000100") == ""
-    assert slack.permalink("http://acme.example/", "C123", "1700000000.000100") == ""
+    assert not found.search("<@U0OTHER> hi") and not found.search("<@u0keryx> hi")
+
+
+def test_a_conversations_id_is_held_to_its_shape():
+    assert slack.is_conversation("C0123ABCD") and slack.is_conversation("D0OWNER")
+    for bad in ("U0OWNER", "c0123abcd", "C1 --workspace x", "C1`id`", "", None, 7):
+        assert not slack.is_conversation(bad)
 
 
 def test_search_is_one_constant_and_not_the_api_whose_results_may_not_be_stored():
@@ -649,6 +650,19 @@ async def test_a_reply_that_is_not_broadcast_says_nothing_about_it():
     assert "reply_broadcast" not in payloads[0] and payloads[0]["thread_ts"] == "1.1"
     # An answer without the two fields still counts as sent, with what is known.
     assert posted == Posted(channel="D1", ts="")
+
+
+async def test_a_long_message_whose_second_piece_fails_still_says_where_the_first_landed():
+    """The thread it started is there, whatever became of the rest."""
+    answers = [{"ok": True, "channel": "D0REAL", "ts": "1700000000.000001"},
+               {"ok": False, "error": "msg_too_long"}]
+
+    result = await SlackWebApi("t", "U0OWNER", post=lambda *a: answers.pop(0)).post(
+        "\n\n".join(["x" * 7000, "y" * 7000])
+    )
+
+    assert not result.ok and result.error == "msg_too_long"
+    assert (result.channel, result.ts) == ("D0REAL", "1700000000.000001")
 
 
 async def test_a_post_slack_refuses_landed_nowhere():

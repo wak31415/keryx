@@ -41,7 +41,6 @@ from keryx.integrations.slack import (
     SlackPoster,
     SlackSender,
     SlackWebApi,
-    permalink,
     slack_credentials,
     token_kinds,
 )
@@ -113,8 +112,6 @@ class SlackWorkspace:
     team_id: str = ""
     #: The app's own member id there: a message is acted on only when it mentions it.
     bot_user_id: str = ""
-    #: The workspace's address, for a link to a message in it.
-    url: str = ""
     #: The tokens there are, by kind (`bot`, `app`, `user`).
     tokens: Mapping[str, str] = field(default_factory=dict, repr=False)
 
@@ -184,7 +181,6 @@ def _workspace(name: str, values: Mapping[str, Any], tokens: Mapping[str, str]) 
         team=str(values.get("team") or ""),
         team_id=str(values.get("team_id") or ""),
         bot_user_id=str(values.get("bot_user_id") or ""),
-        url=str(values.get("url") or ""),
         tokens={kind: token for kind, token in tokens.items() if token},
     )
 
@@ -280,38 +276,18 @@ class ReportRoute:
     #: Where the *same* workspace would post a message of its own, for a thread that is
     #: gone for good. Never another workspace's destination.
     usual: SlackPoster | None = None
-    #: One line under the heading saying which message this answers, when it was asked
-    #: somewhere other than where it is answered.
-    preface: str = ""
-
-
-#: What a report says of the message it answers, when that is in another conversation.
-ASKED_THERE = "Answering what you asked here: {link}"
-ASKED_SOMEWHERE = "Answering what you asked in another conversation ({channel})."
-
-
-def asked_line(home: SlackWorkspace, task: "Task") -> str:
-    """Which message a report answers, for one asked in a shared conversation."""
-    link = permalink(home.url, task.slack_asked_channel or "", task.slack_asked_ts or "")
-    if link:
-        return ASKED_THERE.format(link=link)
-    return ASKED_SOMEWHERE.format(channel=task.slack_asked_channel)
 
 
 def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
     """Where `task`'s report goes, or None when it goes nowhere on Slack.
 
     A task has a thread from the moment it is asked for on Slack, or from its first report.
-    Every later report is a reply there, so one task stays one thread and a reply in it
-    always finds the task. A reply under a report Keryx posted is also shown in the
-    conversation, as each report always was; one under the owner's own message is not,
-    since they are in that thread already.
-
-    **A report never goes into a shared conversation.** A task asked for by mentioning the
-    app somewhere other than the owner's direct messages with it is answered in those
-    direct messages: a report can hold anything from their machine, and posting it where
-    it was asked would publish it. Its first report is a message of its own there, under a
-    line saying which message it answers, and that message is the task's thread from then.
+    Every report is a reply there, so one task stays one thread and a message typed in it
+    always finds the task. **A task is answered where it was asked** (the owner's ruling of
+    2026-11-23): in their direct messages with the app, or in the thread of a conversation
+    the app was mentioned in, where its other members read the report too. A reply under a
+    report Keryx posted is also shown in the conversation, as each report always was; one
+    under the owner's own message is not, since they are in that thread already.
 
     **A report never leaves the workspace its task belongs to.** A task asked for on Slack
     is that workspace's: if the workspace is no longer connected, its report is posted
@@ -325,8 +301,9 @@ def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
     home = found.get(task.slack_workspace or "")
     if task.slack_channel and task.slack_thread_ts and home is not None:
         poster = home.poster(task.slack_channel)
-        # A task asked for on Slack falls back to the owner's own direct messages with
-        # the app, never to a channel that workspace's reports happen to go to.
+        # When its thread is gone for good, a task asked for on Slack falls back to the
+        # owner's own direct messages with the app, never to a channel that workspace's
+        # reports happen to go to.
         usual = home.poster(home.owner_id) if asked_here and home.owner_id else home.poster()
         if poster is not None:
             return ReportRoute(
@@ -337,14 +314,7 @@ def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
                 usual=usual,
             )
     if asked_here:
-        # Asked in a shared conversation and not answered yet: to the owner's own direct
-        # messages with that workspace's app. Anything else typed on Slack whose
-        # workspace or thread is gone is posted nowhere.
-        to_owner = home.poster(home.owner_id) if home is not None and home.owner_id else None
-        if to_owner is None or not task.slack_asked_channel or task.slack_thread_ts:
-            return None
-        return ReportRoute(workspace=home.name, poster=to_owner,
-                           preface=asked_line(home, task))
+        return None
     first = found.get(DEFAULT)
     poster = first.poster() if first is not None else None
     return ReportRoute(workspace=DEFAULT, poster=poster) if poster is not None else None

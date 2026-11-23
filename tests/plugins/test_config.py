@@ -230,7 +230,7 @@ def test_each_further_slack_workspace_is_a_table_of_the_same_settings(settings):
 
     data = tomllib.loads(path.read_text())
     # In the file each is a table of its own, one level deep.
-    assert data["workspace-work"] == {**work, "team_id": "", "bot_user_id": "", "url": ""}
+    assert data["workspace-work"] == {**work, "team_id": "", "bot_user_id": ""}
     assert "workspaces" not in data
     assert (data["channel_id"], data["access"], data["owner_id"]) == ("U0ME", "announce", "")
     assert "# Further workspaces, one [workspace-NAME] table each" in path.read_text()
@@ -251,7 +251,7 @@ def test_a_workspace_table_survives_a_rewrite_with_what_was_added_by_hand(settin
     assert data["access"] == "converse"
     assert data["workspace-work"] == {
         "channel_id": "", "access": "announce", "owner_id": "", "team": "", "team_id": "",
-        "bot_user_id": "", "url": "", "note": "mine",
+        "bot_user_id": "", "note": "mine",
     }
 
 
@@ -265,7 +265,7 @@ def test_a_slack_file_from_before_workspaces_reads_as_one_at_announce(settings):
     values = plugins.read_config(settings, "send_to_slack")
 
     assert values == {"channel_id": "D123", "access": "announce", "owner_id": "", "team": "",
-                      "team_id": "", "bot_user_id": "", "url": "", "mcp_server": "",
+                      "team_id": "", "bot_user_id": "", "mcp_server": "",
                       "workspaces": {}}
     assert plugins.install_problem(settings, "send_to_slack") is None
 
@@ -311,7 +311,7 @@ def test_an_older_build_rewriting_the_slack_file_keeps_every_workspace(settings)
     workspaces rewrites the file when its own setup saves a channel: the level, the owner
     and every further workspace have to come through, in shapes the newer build reads."""
     work = {"channel_id": "U0W", "access": "converse", "owner_id": "U0W", "team": "Acme Inc",
-            "team_id": "T0W", "bot_user_id": "U0WBOT", "url": "https://acme.slack.com/"}
+            "team_id": "T0W", "bot_user_id": "U0WBOT"}
     path = plugins.write_config(settings, "send_to_slack", {
         "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team_id": "T0A",
         "workspaces": {"work": work},
@@ -340,3 +340,14 @@ def test_a_file_with_workspaces_nested_under_one_table_is_still_read(settings):
     assert {name: each["access"] for name, each in values["workspaces"].items()} == {
         "work": "converse", "lab": "read",
     }
+
+
+def test_a_key_an_earlier_cut_wrote_and_nothing_reads_now_is_carried_and_harmless(settings):
+    """`url` was stored for a while on this branch: a file that has it still loads."""
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "send_to_slack").write_text(
+        'channel_id = "U0ME"\nurl = "https://acme.slack.com/"\n'
+    )
+
+    assert plugins.install_problem(settings, "send_to_slack") is None
+    assert plugins.read_config(settings, "send_to_slack")["channel_id"] == "U0ME"

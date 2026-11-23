@@ -705,7 +705,8 @@ Until 2026-11-23 Slack only carried things out. The owner's app now comes at one
   Messages tab writable, and `reactions:write` for the acknowledgement. One more token,
   the app-level `xapp-` with `connections:write`.
 - **`read`** — and it is sent the mentions of it in conversations it was added to
-  (`app_mentions:read`, the `app_mention` bot event), and holds a user token (`xoxp-`)
+  (`app_mentions:read`, the `app_mention` bot event: anyone's mention arrives, and only
+  the owner's is acted on, and answered there), and holds a user token (`xoxp-`)
   that reads Slack as the owner: the four `*:history` scopes, the four `*:read` listings,
   `users:read` and search (see "Slack reads, and only reads").
 
@@ -727,13 +728,17 @@ Eleven rulings:
   `Task.slack_reruns`), because nothing else stands between a Slack message and a run
   here: no PIN, no keypress. A follow-up on the phone is not counted, as it never was.
 - **What is a request is decided in one function, and it fails closed.**
-  `slack_inbox.owner_request`: an `event_callback` for the workspace's own `team_id`, with
-  an authorization that is the bot's; a `message` in the direct messages with the app
-  (`channel_type == "im"`) or, at `read`, an `app_mention`; no `bot_id`; no subtype but
-  `thread_broadcast` (a reply also sent to the channel) or `file_share` (answered with one
-  sentence, never acted on); from the owner; mentioning the app. A workspace with no
-  `team_id`, `owner_id` or `bot_user_id` on file is `missing` and hears nothing, and an
-  event with no `authorizations` is dropped. Do not widen it, and never add
+  `slack_inbox.owner_request`: an `event_callback` for the workspace's own `team_id`; a
+  `message` in the direct messages with the app (`channel_type == "im"`) or, at `read`,
+  an `app_mention`; no `bot_id`; no subtype but `thread_broadcast` (a reply also sent to
+  the channel) or `file_share` (answered with one sentence, never acted on); from the
+  owner; mentioning the app; the conversation and timestamps held to an id's shape. A
+  workspace with no `team_id`, `owner_id` or `bot_user_id` on file is `missing` and hears
+  nothing. **A mention counts only where the owner wrote it** (`own_words`): not on a
+  quoted line, not inside a code block, and quoted lines are left out of the request.
+  **`authorizations` is not a check**: it was one for a day, and Slack's own `app_mention`
+  example carries a user's id with `is_bot: false`, which that check dropped; under the
+  mention rule it defended nothing. Do not widen the rest, and never add
   `message.channels`/`.groups`/`.mpim` or a user-level event to the manifest: Keryx must
   not be sent a conversation it was not addressed in. **Every event not acted on leaves
   one log line with a reason code and nothing of the message**, because the real payload
@@ -745,13 +750,15 @@ Eleven rulings:
   text and a pointer to where it was typed (`SlackThread`), nothing else. Anything read
   from Slack afterwards is context, fenced as other people's words, and the request is
   never inside that fence (see "Slack reads, and only reads").
-- **Asked in one place, answered in another.** A request typed in a shared conversation is
-  acknowledged there with the reaction only. Its report, and any refusal, goes to the
-  owner's direct messages with the app, under a line saying which message it answers
-  (`plugins.slack.asked_line`): a report can hold anything from their machine, and a
-  shared conversation is not theirs alone. `Task.slack_asked_channel`/`slack_asked_ts`
-  are where it was asked, apart from the thread it is answered in, and a later mention in
-  the asking thread is still a follow-up to the same task.
+- **Answered where it was asked.** The owner's ruling (2026-11-23), which withdrew "never
+  into a shared conversation". The reaction, the report, every later report of that task
+  and any one-sentence refusal go in the thread the request was typed in: under the
+  message itself when it stood alone, in the thread it was a reply in otherwise. In a
+  shared conversation its members read the report, which the `read` level's description
+  says before it is chosen, SECURITY.md says plainly, and the subagent is told
+  (`agents/base._OTHERS_TOO`). So a task has one thread and no second place: there is no
+  "asked there, answered here" bookkeeping, and a mention under any task's report, a phone
+  task's in a channel included, is a follow-up to it.
 - **The level is chosen before the app exists, and said in plain words first.** It decides
   the manifest, so the wizard's Slack step asks it before anything else and
   `keryx auth login slack` says it before the link (`setup.slack.MEANING`: where Keryx
@@ -770,13 +777,18 @@ Eleven rulings:
   the app-level token. The wizard saves nothing until every answer is in, and above
   `announce` never offers to save a token unchecked: what a message is held to is what
   Slack said of the token.
-- **Where reports go is never whose messages are acted on.** `channel_id` (the
-  destination: `--email`, the wizard's "where to send") and `owner_id` are separate. An
-  owner on file for the same workspace stands whatever is looked up or typed as a
-  destination (`setup.slack.standing_owner`); one is derived only when there is none, and
-  at `converse` and above a line names the member on every connect
-  (`OWNER_LINE`). Changing it is one explicit act, `keryx auth login slack --owner`, and a
-  user token that belongs to anybody else is refused.
+- **One owner, fixed at connect.** The owner's ruling (2026-11-23): the owner is whoever
+  set the connection up, and there is no option to change it. `owner_id` is established
+  once: at `read` and above from the user token's own member, at `converse` from the
+  address given at connect or a destination already on file that is a member's id, said
+  aloud (`OWNER_LINE`, on every connect at `converse` and above). After that nothing
+  changes it in place. `channel_id` (the destination: `--email`, the wizard's "where to
+  send") is a separate setting and only ever chooses where reports go
+  (`setup.slack.standing_owner`); a user token that belongs to anybody else is refused; a
+  bot token from another workspace is refused while one is connected; the wizard has no
+  question that can change it, and the first time above `announce` its "where to send"
+  must say who they are. `keryx auth logout slack` and a new login is the one way to
+  connect as somebody else. Do not add an option for it.
 - **One app per workspace, in shapes every build on the machine writes back.** The first
   workspace is the top of `send_to_slack.toml` and the three plain settings
   (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_USER_TOKEN`); a file from before reads as
@@ -794,10 +806,10 @@ Eleven rulings:
   to the owner by Slack's name for it (`default` is the key and the CLI's word).
 - **A task is one thread, and a thread is given up only when it is gone.**
   `Task.slack_workspace` / `slack_channel` / `slack_thread_ts` are set once: at dispatch
-  for a task asked for in the direct messages (the thread is the owner's message), else
-  when the first report is posted (at the channel and `ts` *Slack answered with*, since a
-  member id lands in a `D…`). Every later report is a reply there, and a report too long
-  for one message is one thread under its first piece. A post Slack refuses because the
+  for a task asked for on Slack (the thread the owner asked in), else when the first
+  report is posted (at the channel and `ts` *Slack answered with*, since a member id
+  lands in a `D…`). Every later report is a reply there, and a report too long for one
+  message is one thread under its first piece, recorded even when a later piece fails. A post Slack refuses because the
   thread is gone for good (`integrations.slack.THREAD_GONE`) is sent as a message of its
   own **in the same workspace**, which becomes the thread; a timeout or `ratelimited`
   moves nothing, and that report is then simply not on Slack (it is still in the task,
@@ -817,8 +829,10 @@ Eleven rulings:
   error, left out of `Connection`'s repr, with the websocket loggers held at WARNING, so
   a failure is logged by its *kind*. `SocketModeListener.run` acknowledges every envelope
   before acting on it, keeps a connection through a `warning`, answers any other
-  `disconnect` with a new one, backs off from a second to five minutes with jitter, and
-  never raises. Only `keryx serve` starts one (`SlackInbox.start`), per workspace at
+  `disconnect` with a new one, backs off from a second to five minutes with jitter (the
+  exponent is capped: an uncapped one overflowed after about a thousand failures and
+  ended the listener for good), and ends only by being cancelled; `SlackInbox` logs a
+  listener task that ended anyway. Only `keryx serve` starts one (`SlackInbox.start`), per workspace at
   `converse` or above, and only once a restart has been confirmed and the queue picked
   up (`cli._settle_then_listen`). A level raised under a running service is heard from
   its next start; the settings are read again for every message, so a level lowered is

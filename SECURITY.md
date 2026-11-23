@@ -300,10 +300,11 @@ direct messages typed to your Keryx app.
   coding agent that has your full access; a reply under a task's report that mentions it
   continues that task.
 - **Everything else is dropped silently.** An edit, a deletion, a message from a bot, a
-  message from anyone else, a message from another workspace, or one that does not say
-  whose authorization delivered it. A workspace whose own id, your member id, or the
-  app's member id is not on file is not listened to at all. Each dropped event leaves one
-  log line with a reason code and nothing of the message.
+  message from anyone else, or a message from another workspace. A mention counts only
+  where you wrote it: one on a quoted line, or inside a pasted code block, is not yours,
+  and quoted lines are left out of what Keryx is asked. A workspace whose own id, your
+  member id, or the app's member id is not on file is not listened to at all. Each
+  dropped event leaves one log line with a reason code and nothing of the message.
 - **The PIN is not asked for, on purpose.** The PIN exists because caller ID is free to
   spoof. A message from your own member id is not: it needs your Slack account, or
   something that can post as you.
@@ -319,10 +320,12 @@ direct messages typed to your Keryx app.
   daily task cap like a new task, because nothing else limits it here: there is no PIN
   and no keypress on this channel. Over the cap, Keryx says so in one sentence and does
   nothing. Follow-ups on the phone are not counted, as before.
-- **Where reports go and whose messages are acted on are separate.** Changing where
-  reports are sent never changes whose messages start work. The member is named on a
-  line of its own each time you connect at `converse` or above, and only
-  `keryx auth login slack --owner` changes it.
+- **There is one owner, fixed when you connect.** Whose messages start work is settled
+  once: from your user token at `read`, or from the address you give at `converse`. It
+  is named on a line of its own each time you connect. Nothing changes it afterwards:
+  not changing where reports are sent, not a user token (somebody else's is refused), and
+  there is no option for it. To connect as somebody else, `keryx auth logout slack` and
+  log in again.
 - **Lowering the level works at once.** `keryx auth login slack --access announce` (or
   `keryx setup`) forgets the tokens the lower level does not use, and a running Keryx
   stops acting on messages immediately. `keryx auth logout slack` forgets a workspace
@@ -335,19 +338,24 @@ direct messages typed to your Keryx app.
 - **The connection's address is treated as a secret.** Slack hands Keryx a one-time
   WebSocket address that carries its own ticket. Keryx never logs it or puts it in an
   error message.
-- **Results are answered in Slack, and the phone stays quiet.** A task you started from
-  Slack reports in your direct messages with the app. It is not texted or called about,
-  though it is mentioned at the start of your next call like any other result you have
-  not heard.
+- **Results are answered where you asked, and the phone stays quiet.** A task you
+  started from Slack reports in the thread you asked in. It is not texted or called
+  about, though it is mentioned at the start of your next call like any other result you
+  have not heard.
 
 **At `read`, you can also mention Keryx in other conversations, and it can read Slack as
 you.**
 
-- **Mentions elsewhere.** The app is sent the messages that mention it in conversations
-  it has been added to, and nothing else from them. It still acts only on yours: a
-  colleague mentioning it does nothing. It acknowledges yours there with a reaction and
-  **posts its report in your direct messages, never in the shared conversation**, because
-  a report can contain anything from your machine.
+- **Mentions elsewhere.** The app is sent every message that mentions it in
+  conversations it has been added to, anyone's, and nothing else from them. It acts only
+  on yours: a colleague mentioning it does nothing and is told nothing.
+- **A report you ask for in a shared conversation is posted there, and its members can
+  read it.** Keryx answers in the thread under your message: the reaction, the report,
+  later reports for that task, and a refusal. A report is written by a coding agent with
+  your full access, so it can contain anything from your machine that the request led it
+  to. The agent is told who will read it. That is an instruction, not a filter: ask in a
+  shared conversation only what you would be content to have answered in front of it,
+  and ask in your direct messages with the app for anything else.
 - **What the user token can see.** Every channel, private channel, direct message, and
   group message you are in, the list of them, the member list, and search across them.
   The token is in `secrets.toml` with the rest, so anyone who can read that file can read
@@ -377,7 +385,7 @@ you.**
   Ask about conversations you would be content to have an agent read, and treat a summary
   of an untrusted channel as you would the channel.
 - **What is read is kept.** An answer said on a call is in that call's transcript, and a
-  task's report is on disk and posted to your direct messages. That is why search uses
+  task's report is on disk and posted where you asked. That is why search uses
   Slack's older search method and not its newer one, whose terms forbid keeping results.
 
 Each further workspace (`keryx auth login slack --workspace NAME`) is a separate app with

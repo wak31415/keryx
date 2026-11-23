@@ -67,8 +67,9 @@ class Access(StrEnum):
     #: And is sent the direct messages typed to the app itself; one from the owner that
     #: mentions the app may resume or start work.
     CONVERSE = "converse"
-    #: And is sent the mentions of the app in conversations it was added to, and reads
-    #: Slack as the owner, with a user token, when the owner asks about messages.
+    #: And is sent the mentions of the app in conversations it was added to (anyone's;
+    #: only the owner's is acted on, and answered there), and reads Slack as the owner,
+    #: with a user token, when the owner asks about messages.
     READ = "read"
 
     def reaches(self, level: "Access") -> bool:
@@ -151,6 +152,8 @@ _ERROR_CODE = re.compile(r"[a-z0-9_]{1,64}")
 _MEMBER_ID = re.compile(r"[A-Z0-9]{2,32}")
 #: A message's timestamp, which is also its id within its conversation.
 _TS = re.compile(r"\d{1,12}\.\d{1,9}")
+#: A conversation's id: a channel's, a group's or a direct message's.
+_CONVERSATION = re.compile(r"[CDG][A-Z0-9]{2,31}")
 
 #: The refusals setup meets often enough to say in words; the code always follows.
 _EXPLAINED = {
@@ -200,6 +203,11 @@ def is_ts(value: object) -> bool:
     return isinstance(value, str) and _TS.fullmatch(value) is not None
 
 
+def is_conversation(value: object) -> bool:
+    """Whether `value` is a conversation's id as Slack writes one."""
+    return isinstance(value, str) and _CONVERSATION.fullmatch(value) is not None
+
+
 def ts_key(ts: str) -> tuple[int, int]:
     """A timestamp in an order that can be compared: later messages are greater."""
     seconds, _, fraction = ts.partition(".")
@@ -215,14 +223,6 @@ def mention(member_id: str) -> re.Pattern[str]:
     """What a mention of `member_id` looks like in a message's text: `<@U…>`, or with the
     name Slack sometimes writes after a bar."""
     return re.compile(rf"<@{re.escape(member_id)}(?:\|[^<>]{{0,200}})?>")
-
-
-def permalink(url: str, channel: str, ts: str) -> str:
-    """The address of the message at `ts` in `channel`, in the workspace at `url`; "" when
-    the workspace's address is not known. Built, not asked for: it needs no call."""
-    if not (url.startswith("https://") and channel and is_ts(ts)):
-        return ""
-    return f"{url.rstrip('/')}/archives/{channel}/p{ts.replace('.', '')}"
 
 
 def plain_text(text: str) -> str:
@@ -659,12 +659,12 @@ class SlackWebApi:
                     )
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
                 log.warning("could not post to Slack: %s", exc)
-                return Posted(error=UNREACHABLE)
+                return self._failed(first, UNREACHABLE)
             if not result.get("ok"):
                 # Slack reports failure in the body with a 200, e.g. {"ok": false, "error": …}
                 code = str(result.get("error") or "")
                 log.warning("Slack refused the message: %s", code)
-                return Posted(error=code if _ERROR_CODE.fullmatch(code) else UNKNOWN_ERROR)
+                return self._failed(first, code if _ERROR_CODE.fullmatch(code) else UNKNOWN_ERROR)
             if first is None:
                 landed, ts = result.get("channel"), result.get("ts")
                 first = Posted(
@@ -675,3 +675,11 @@ class SlackWebApi:
                     thread_ts, channel = first.ts, first.channel
         assert first is not None  # `markdown_pieces` always yields one piece
         return first
+
+    @staticmethod
+    def _failed(first: Posted | None, error: str) -> Posted:
+        """A failure that still says where the first piece landed, when one did: the
+        thread it started is there, whatever became of the rest."""
+        if first is None:
+            return Posted(error=error)
+        return Posted(error=error, channel=first.channel, ts=first.ts)

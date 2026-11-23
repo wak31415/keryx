@@ -172,7 +172,6 @@ def _word(value: str) -> str | None:
 #: of the step finds the questions it recorded.
 SLACK_ACCESS = "What may Keryx see in your Slack?"
 SLACK_WHERE = "Where to send: the address you use in Slack, or a channel or member id"
-SLACK_OWNER = "Your own member id in Slack (U…): only its messages are acted on"
 
 
 def run_slack(ctx: SetupContext) -> None:
@@ -181,8 +180,7 @@ def run_slack(ctx: SetupContext) -> None:
     The level comes first, because it decides the app, and what it lets Keryx see is said
     before any link. After it the questions are always the same ones in the same order,
     whatever is already saved: the bot token, the app-level token at `converse` and above,
-    the user token at `read`, where to send, and (only when nothing says which member the
-    owner is) their member id.
+    the user token at `read`, and where to send.
 
     **Nothing is saved until every answer is in**, as on the command line: a level is all
     of its tokens or none of it, so a token Slack refuses, or a walk abandoned half-way,
@@ -203,10 +201,12 @@ def run_slack(ctx: SetupContext) -> None:
     no longer uses. Above `announce` no token is saved unchecked: what a message is held
     to is the workspace Slack names for it.
 
-    **Where to send is never whose messages are acted on.** The owner on file stands
-    (`slack.standing_owner`); one is derived here only when there is none, and at
-    `converse` and above a line names the member every time. Changing it is
-    `keryx auth login slack --owner`, not this step.
+    **One owner, fixed at connect.** The owner on file stands (`slack.standing_owner`),
+    and no question here can change it: where to send only ever chooses a destination. It
+    is established once, when there is none: at `read` from the user token, and at
+    `converse` from the first answer to where to send, which then has to say who they are
+    (their address, or their member id) rather than name a channel. At `converse` and
+    above a line names the member every time.
     """
     ui = ctx.ui
     values = current_values(ctx, slack.PLUGIN)
@@ -239,7 +239,7 @@ def run_slack(ctx: SetupContext) -> None:
     if team is None:
         # A token that was kept, or one saved unchecked: the workspace is the one on file.
         team = Workspace(team=values["team"], team_id=values["team_id"],
-                         user_id=values["bot_user_id"], url=values["url"])
+                         user_id=values["bot_user_id"])
         if token and above and not (team.team_id and team.user_id):
             # An install from before levels never wrote down which workspace it is or
             # which member the app is, and above announce every message is held to both.
@@ -262,15 +262,11 @@ def run_slack(ctx: SetupContext) -> None:
         tokens[USER], owner = _slack_user_token(ctx, team, standing)
     channel, found = _slack_where(
         ctx, token, new=token != before, on_file=on_file, server=server, access=access,
-        owner=owner,
+        owner=owner, says_who=above and not owner,
     )
     if above and not owner:
-        # Nobody is on file: the first owner is whoever the destination says, or is asked.
-        owner = found or (channel if slack.is_member(channel) else "")
-        if not owner:
-            ui.note(slack.MEMBER_ID_HINT)
-            owner = ui.text(SLACK_OWNER, validate=lambda v: None if slack.is_member(v.strip())
-                            else "A member id: U and some capital letters and digits.").strip()
+        # Nobody is on file: the first owner is who the destination says they are.
+        owner = found or channel
     if above:
         ui.note(slack.OWNER_LINE.format(who=owner))
     keys = {kind: ctx.current(key) for kind, key in slack.TOKEN_KEYS.items()}
@@ -279,8 +275,7 @@ def run_slack(ctx: SetupContext) -> None:
     if not _save_slack_tokens(ctx, tokens, keys, access):
         return
     saved = {"channel_id": channel, "access": str(access), "owner_id": owner,
-             "team": team.team, "team_id": team.team_id, "bot_user_id": team.user_id,
-             "url": team.url}
+             "team": team.team, "team_id": team.team_id, "bot_user_id": team.user_id}
     if not _finish(ctx, slack.PLUGIN, saved):
         return
     if access is Access.READ and access is not was:
@@ -439,7 +434,8 @@ def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str) -> tupl
         why = slack.user_token_problem(checked, team)
         if why is None and standing and checked.user_id != standing:
             why = (f"it belongs to {checked.user_id}, and the member whose messages Keryx "
-                   f"acts on is {standing} (`keryx auth login slack --owner` changes that)")
+                   f"acts on is {standing}: paste your own (`keryx auth logout slack` and a "
+                   "new login connects as somebody else)")
         if why:
             ctx.memo.pop((USER, answer), None)
             ui.error(f"That user token cannot be used: {why}")
@@ -457,6 +453,7 @@ def _slack_where(
     server: str,
     access: Access = Access.ANNOUNCE,
     owner: str = "",
+    says_who: bool = False,
 ) -> tuple[str, str]:
     """Where to send, as an id: one typed or kept, or the member behind an address.
 
@@ -464,6 +461,8 @@ def _slack_where(
     server's is used, and `new` says it is not the token that was on file. With the id
     comes the member an address was found to be ("" when none was looked up), who is the
     owner. `owner` is who a user token already said they are: the default, at `read`.
+    `says_who` is the first connect above `announce` with nobody on file: the answer is
+    then also who the owner is, so it has to be their address or their own member id.
     """
     ui = ctx.ui
     kept = on_file if slack.keeps(on_file, new_token=new) else ""
@@ -482,6 +481,9 @@ def _slack_where(
             return (f"A token of its own needs somewhere of its own to send, not the {server} "
                     "MCP server's channel." if server else "Required.")
         if "@" not in value:
+            if says_who and not slack.is_member(value):
+                return ("The first time at this level this is also who you are: your "
+                        "address, or your own member id. A channel can be chosen afterwards.")
             return _word(value)
         return None if token else "An id: there is no token of its own to look an address up with."
 

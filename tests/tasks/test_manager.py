@@ -1227,27 +1227,24 @@ async def test_a_task_dispatched_from_slack_is_born_knowing_its_thread(make_harn
     assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts, task.slack_seen) == (
         "work", "D0WORK", "1700000000.000100", "1700000000.000100"
     )
-    assert (task.slack_asked_channel, task.slack_asked_ts) == (None, None)
     assert (await harness.manager.task_in_slack_thread(thread)).id == task.id
 
 
-async def test_a_task_asked_for_in_a_shared_conversation_is_answered_somewhere_else(make_harness):
-    """Asked in one place, answered in another: the thread it is answered in is not known
-    until the first report lands, and the thread it was asked in still finds it."""
+async def test_a_task_asked_for_by_a_reply_remembers_the_reply_and_lives_in_its_thread(
+    make_harness,
+):
+    """Asked and answered in the same thread, whatever conversation that is in."""
     from keryx.tasks.models import SlackThread
 
     harness = make_harness()
-    asked = SlackThread("work", "C0SHARED", "1700000000.000100", shared=True)
+    asked = SlackThread("work", "C0SHARED", "1700000000.000100", asked_at="1700000000.000700")
 
     task = await dispatch(harness.manager, origin_channel="slack", slack=asked)
 
-    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts) == ("work", None, None)
-    assert (task.slack_asked_channel, task.slack_asked_ts) == ("C0SHARED", "1700000000.000100")
+    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts, task.slack_seen) == (
+        "work", "C0SHARED", "1700000000.000100", "1700000000.000700"
+    )
     assert (await harness.manager.task_in_slack_thread(asked)).id == task.id
-    await harness.manager._store.update(task.id, slack_channel="D0WORK",
-                                        slack_thread_ts="1700000000.000900")
-    answered = SlackThread("work", "D0WORK", "1700000000.000900")
-    assert (await harness.manager.task_in_slack_thread(answered)).id == task.id
 
 
 async def test_a_reply_from_slack_is_counted_against_the_daily_cap_like_a_dispatch(make_harness):

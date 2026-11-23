@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from keryx.config import OWNER_FALLBACK, Settings, secure_dir
+from keryx.config.settings import SLACK_WORKSPACE_NAME
 from keryx.issues import IssueReporting
 from keryx.persona import DEFAULT_NAME
 from keryx.prompts import render_prompt
@@ -54,6 +55,13 @@ _READ_AROUND = (
 _CANNOT_READ = (
     "You cannot read that conversation: if the request needs what was said there, say so "
     "in the report and ask them to paste it."
+)
+#: Who reads the report of a task typed on Slack, by where it was typed.
+_ONLY_THEM = "That is their own direct messages with Keryx: only they read it."
+_OTHERS_TOO = (
+    "That is a conversation other people are in, and they will read it too: put nothing "
+    "in it that the request did not ask for, and nothing from this machine that is not "
+    "the answer."
 )
 #: `Task.origin_channel` for such a request (`keryx.plugins.slack.SLACK_CHANNEL`).
 SLACK_ORIGIN = "slack"
@@ -315,17 +323,27 @@ def render_subagent_suffix(
 
 
 def _typed_on_slack(task: Task, owner: str, *, can_read: bool) -> str:
-    """What a task typed on Slack is told: whose words the request is, and the pointer to
-    where it was typed, which is all of the conversation it was handed."""
-    channel = task.slack_asked_channel or task.slack_channel
-    thread = task.slack_asked_ts or task.slack_thread_ts
-    known = bool(task.slack_workspace and channel and thread)
+    """What a task typed on Slack is told: whose words the request is, the pointer to
+    where it was typed (all of the conversation it was handed), and who reads the answer.
+
+    The pointer is ids Slack gave, and is still held to their shapes here: it is put into
+    a command the subagent is told to run.
+    """
+    from keryx.integrations.slack import is_conversation, is_ts
+
+    channel, thread = task.slack_channel, task.slack_thread_ts
+    known = bool(
+        task.slack_workspace and SLACK_WORKSPACE_NAME.fullmatch(task.slack_workspace)
+        and is_conversation(channel) and is_ts(thread)
+    )
     pointer = {"workspace": task.slack_workspace, "channel": channel, "thread": thread}
+    private = known and str(channel).startswith("D")
     return render_prompt(
         SUBAGENT_SLACK_ORIGIN_PROMPT,
         owner=owner,
         where=_TYPED_IN.format(**pointer) if known else _TYPED_SOMEWHERE,
         reading=(_READ_AROUND.format(**pointer) if known and can_read else _CANNOT_READ),
+        audience=_ONLY_THEM if private else _OTHERS_TOO,
     )
 
 

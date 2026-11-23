@@ -309,7 +309,6 @@ def test_a_task_typed_on_slack_is_told_the_request_is_the_owners_and_the_only_in
     assert "This request was not said out loud: Ada typed it to Keryx on Slack" in suffix
     assert "The request above is their words, and the only instruction from Slack" in suffix
     assert "nothing else of the conversation around it" in suffix
-    assert "never into a conversation other people are in" in suffix
     assert "Nothing rings them" in suffix
     assert "Your SPOKEN_SUMMARY line is still required" in suffix
     # Beside the paragraph about sending things on Slack, not instead of it.
@@ -321,18 +320,48 @@ def test_a_task_typed_on_slack_is_told_the_request_is_the_owners_and_the_only_in
 def test_it_is_handed_a_pointer_to_where_the_request_was_typed_and_nothing_else(unwrapped):
     """The listener reads no context: a subagent that needs the thread reads it itself."""
     in_dm = typed_on_slack(slack_channel="D0WORK", slack_thread_ts="1700000000.000100")
-    in_channel = typed_on_slack(slack_asked_channel="C0SHARED",
-                                slack_asked_ts="1700000000.000500",
-                                slack_channel="D0WORK", slack_thread_ts="1700000000.000900")
+    in_channel = typed_on_slack(slack_channel="C0SHARED", slack_thread_ts="1700000000.000500")
 
     dm = unwrapped(render_subagent_suffix(in_dm, slack_read=True))
     channel = unwrapped(render_subagent_suffix(in_channel, slack_read=True))
 
     assert ("in workspace `work`, conversation `D0WORK`, thread `1700000000.000100`") in dm
-    # Asked in one place and answered in another: the pointer is to where it was asked.
     assert "conversation `C0SHARED`, thread `1700000000.000500`" in channel
     assert "`keryx slack thread C0SHARED 1700000000.000500 --workspace work`" in channel
-    assert "D0WORK" not in channel
+
+
+def test_it_is_told_who_reads_its_report_because_it_is_posted_where_it_was_asked(unwrapped):
+    in_dm = typed_on_slack(slack_channel="D0WORK", slack_thread_ts="1700000000.000100")
+    in_channel = typed_on_slack(slack_channel="C0SHARED", slack_thread_ts="1700000000.000500")
+
+    dm = unwrapped(render_subagent_suffix(in_dm))
+    channel = unwrapped(render_subagent_suffix(in_channel))
+
+    assert "posted as a reply in the thread they asked in" in dm
+    assert "their own direct messages with Keryx: only they read it" in dm
+    assert "a conversation other people are in, and they will read it too" in channel
+    assert "put nothing in it that the request did not ask for" in channel
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"slack_channel": "C0SHARED; rm -rf ~", "slack_thread_ts": "1700000000.000100"},
+        {"slack_channel": "C0SHARED", "slack_thread_ts": "1700000000.000100 --workspace x"},
+        {"slack_channel": "C0SHARED", "slack_thread_ts": "1700000000.000100",
+         "slack_workspace": "work`whoami`"},
+    ],
+)
+def test_a_pointer_that_is_not_ids_is_never_put_into_the_command_it_is_told_to_run(
+    unwrapped, fields
+):
+    task = Task(id=7, kind=TaskKind.AGENT, description="x", origin_channel="slack",
+                **{"slack_workspace": "work", **fields})
+
+    suffix = unwrapped(render_subagent_suffix(task, slack_read=True))
+
+    assert "rm -rf" not in suffix and "whoami" not in suffix and "--workspace x" not in suffix
+    assert "It was typed on Slack." in suffix and "You cannot read that conversation" in suffix
 
 
 def test_below_read_it_is_told_it_cannot_read_the_conversation(unwrapped):

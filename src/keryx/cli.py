@@ -1650,7 +1650,12 @@ def auth_login(
     ] = False,
     email: Annotated[
         str | None,
-        typer.Option("--email", help="slack: the address you use there, to send to you."),
+        typer.Option(
+            "--email",
+            help="slack: the address you use there, to send to you. The first time, at "
+            "converse and above, it is also who you are there; after that it only ever "
+            "changes where reports go.",
+        ),
     ] = None,
     test: Annotated[
         bool, typer.Option("--test/--no-test", help="slack: send one test message.")
@@ -1671,15 +1676,6 @@ def auth_login(
             "--workspace",
             help="slack: a further workspace, by a short name of your own, with its own "
             "app (default: your first workspace).",
-        ),
-    ] = None,
-    owner: Annotated[
-        str | None,
-        typer.Option(
-            "--owner",
-            help="slack: change the one member whose direct messages to the app are acted "
-            "on, by member id (U…) or the address they use there. It is you, and is set "
-            "the first time; --email only ever changes where reports go.",
         ),
     ] = None,
 ) -> None:
@@ -1703,9 +1699,9 @@ def auth_login(
     for_google = name == "google" or name in auth_flow.GOOGLE_ALIASES
     googles = (services, account, client_file, callback_url)
     misplaced = (
-        (name != "slack" and (stdin or email is not None or not test or access is not None
-                              or workspace is not None or owner is not None),
-         "--stdin, --email, --no-test, --access, --workspace and --owner are for slack"),
+        (name != "slack" and (stdin or email is not None or not test
+                              or access is not None or workspace is not None),
+         "--stdin, --email, --no-test, --access and --workspace are for slack"),
         (not for_google and any(value is not None for value in googles),
          "--services, --account, --client-file and --callback-url are for google"),
         (name == "slack" and headless is not None,
@@ -1739,7 +1735,6 @@ def auth_login(
         test=test,
         workspace=workspace,
         access=access,
-        owner=owner,
     )
     try:
         auth_flow.login(
