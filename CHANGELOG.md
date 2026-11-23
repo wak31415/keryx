@@ -51,6 +51,9 @@ the version starts with 0.
   Gmail and Calendar APIs enabled. After signing in again, enable Drive, Docs, Sheets and
   Slides there too (the links are in the guide `keryx setup` shows, and the sign-in names
   it), or those tools answer "API not enabled".
+- The assistant answers a quick question about your mail, your calendar or a document
+  itself when the plugin that reads it is on, and no longer hands it to a coding agent
+  first. Replying, changing an event and editing a file are still tasks.
 - A sign-in turns the agents' Google tools on the first time only. If you have set
   `GOOGLE_WORKSPACE_MCP` to false, signing in again leaves it off.
 - A coding agent finishing a Google sign-in gives the address on standard input

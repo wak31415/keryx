@@ -154,7 +154,9 @@ there and offers to send it, rather than reading a path down the phone.
 
 Small talk, task status and small factual questions the voice answers itself — `web_search`
 goes through the Responses API, because a Realtime session has no hosted search tool of its
-own. Everything else becomes a task, and a task is just "a coding agent, on this machine" —
+own. So is a quick read of your mail, your calendar or a document, when the plugin that
+reads it is on; without it, and for anything it does not do (replying, changing an event,
+editing a file), that is a task too. Everything else becomes a task, and a task is just "a coding agent, on this machine" —
 Claude Code or Codex ([`agents.md`](agents.md)): one kind, every tool, the repositories,
 the Google services you connected (Gmail, Calendar, Drive, Docs, Sheets and Slides, from
 one `keryx auth login google`), the installed skills, and subagents of its own. Nothing

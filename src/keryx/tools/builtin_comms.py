@@ -31,9 +31,10 @@ def register_comms_tools(registry: ToolRegistry, *, searcher: WebSearcher | None
             "web_search",
             "Look something up on the web and get a short spoken answer. Use it yourself "
             "for small, factual questions — a price, a date, a score, what a company "
-            "announced — instead of dispatching a task. Anything that needs their files, "
-            "their repositories, their mail, or more than a couple of sentences of work goes "
-            "to dispatch_task instead.",
+            "announced — instead of dispatching a task. It reads the web and nothing of "
+            "theirs: their mail, their calendar and their documents are for the tool that "
+            "reads them when you have one, and their files, their repositories, or more "
+            "than a couple of sentences of work go to dispatch_task.",
             {
                 "type": "object",
                 "properties": {
