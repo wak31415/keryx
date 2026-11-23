@@ -30,9 +30,10 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config lock|unlock KEY` (what the running service may change)
 - Sign-ins: `uv run keryx auth login claude|codex|google [--headless] [--services a,b]
-  [--account ADDRESS] [--client-file PATH] [--callback-url URL]` (google is one sign-in
+  [--account ADDRESS] [--client-file PATH] [--callback-url -]` (google is one sign-in
   for everything; with `--headless` it prints a link and takes back the address the
-  browser landed on, and with no terminal that is two commands; `--account` says which
+  browser landed on, and with no terminal that is two commands, the second reading the
+  address from standard input so its code is never on a command line; `--account` says which
   account is meant when it is not the saved one; `gmail` and `google-workspace` still mean
   it, for one release), `uv run keryx auth logout google` (revokes the grant at Google and
   removes every file a sign-in left), `uv run keryx auth status [--json] [--smoke]`

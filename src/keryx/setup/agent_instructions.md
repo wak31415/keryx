@@ -17,8 +17,11 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides:
    `keryx auth login google --headless` prints a link: relay it; the person approves it
    on any device and gives you the address their browser lands on
-   (`http://localhost:1/?…`); finish with
-   `keryx auth login google --callback-url 'THAT ADDRESS'`. Only when the first command
+   (`http://localhost:1/?…`). That address holds a one-time code, so never put it in a
+   command: write it to a file with your file tool, finish with
+   `keryx auth login google --callback-url - < THAT_FILE`, and delete the file. If it is
+   refused because the account is not the one saved, ask them which they mean and add
+   `--account ADDRESS`. Only when the first command
    says there is no Google OAuth client does the person have to make one (the steps:
    `{google_guide}`), which you then pass once with `--client-file PATH`.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the four optional voice
@@ -26,7 +29,8 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a
    ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin` or
-   `keryx auth login google`.
+   `keryx auth login google`. `keryx auth logout google` ends that sign-in, and is theirs
+   to ask for.
    Filing bug reports and feature requests about Keryx as GitHub issues is not yours to
    turn on: it is theirs, in `keryx setup` (Issue reports), and you never set
    `ISSUE_REPORTING` or `ISSUE_REPO`.

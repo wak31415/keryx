@@ -247,7 +247,7 @@ def test_the_agent_instructions_name_this_machines_paths(make_ctx):
     assert str(ctx.store.home) in text
     assert str(ctx.settings.data_dir / "projects") in text
     assert "--from-env" in text and "never set it yourself" in text
-    assert "keryx auth login google --headless" in text and "--callback-url" in text
+    assert "keryx auth login google --headless" in text and "--callback-url - < " in text
     assert "{" not in text
 
 

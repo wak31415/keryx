@@ -219,8 +219,10 @@ def _google(
             landed = "\nYou will land on a page that does not load. "
             if ask is None:
                 echo(
-                    f"{landed}Copy its whole address, then run"
-                    "\n  keryx auth login google --callback-url '<that address>'"
+                    f"{landed}Copy its whole address into a file, then run"
+                    "\n  keryx auth login google --callback-url - < FILE"
+                    "\nThe address holds a one-time code: handed over on standard input, "
+                    "it is never on a command line."
                 )
                 return
             result = google.finish_signin(

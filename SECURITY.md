@@ -465,7 +465,12 @@ email answers on a call. What it leaves, and what protects it:
   own in Personal mode closes it too, because Google refuses every account but yours.
 - **An address pasted back is a code in your scrollback.** It is single-use, it expires in
   minutes, and it cannot be exchanged without the verifier, which waits in
-  `DATA_DIR/google_signin.json` (0600) until the sign-in finishes.
+  `DATA_DIR/google_signin.json` (0600) until the sign-in finishes. With `--headless` at a
+  terminal the address is typed at a prompt. Without a terminal it is handed over on
+  standard input (`--callback-url -`), so it is not on a command line either. The older
+  form, the address as the option's value, still works for one release and does put the
+  code where other users of the machine can read it; they cannot use it without the
+  verifier.
 
 ### What Keryx may change about itself
 

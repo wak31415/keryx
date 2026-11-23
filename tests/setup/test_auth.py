@@ -283,7 +283,7 @@ def test_headless_without_a_terminal_is_two_commands(client, monkeypatch):
 
     first = login("google", client, headless=True)
 
-    assert any("keryx auth login google --callback-url '<that address>'" in line for line in first)
+    assert any("keryx auth login google --callback-url - < FILE" in line for line in first)
     assert finished == [] and ConfigStore().stored() == {}
 
     second = login("google", client, callback_url="http://localhost:1/?state=s&code=c")

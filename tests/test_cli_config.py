@@ -319,7 +319,7 @@ def test_auth_login_google_without_a_terminal_prints_a_link_then_finishes_with_t
                 "--client-file", str(client))
 
     assert first.exit_code == 0, first.output
-    assert "keryx auth login google --callback-url" in first.output
+    assert "keryx auth login google --callback-url - < FILE" in first.output
     assert home.stored()["GOOGLE_CLIENT_SECRETS_FILE"].endswith("google_client_secret.json")
 
     [link] = [line for line in first.output.splitlines() if line.startswith("https://accounts.")]
@@ -328,8 +328,10 @@ def test_auth_login_google_without_a_terminal_prints_a_link_then_finishes_with_t
         "keryx.setup.google.httpx.post",
         lambda url, data, timeout: google_answer(query["scope"][0]),
     )
-    second = run("auth", "login", "google", "--callback-url",
-                 f"http://localhost:1/?state={query['state'][0]}&code=c")
+    # The address goes in on standard input: it holds the code, and a command line is
+    # readable by every user of the machine.
+    second = run("auth", "login", "google", "--callback-url", "-",
+                 input=f"http://localhost:1/?state={query['state'][0]}&code=c\n")
 
     assert second.exit_code == 0, second.output
     assert "Signed in as ada@example.com. Connected: Gmail and Calendar." in second.output
@@ -400,6 +402,12 @@ def test_auth_login_google_with_a_browser_here_is_one_command(home, monkeypatch)
     assert asked == [("gmail", "calendar", "drive", "docs", "sheets", "slides")]
     assert "https://accounts.google.com/x" in result.output
     assert "Signed in as ada@example.com." in result.output
+
+
+def test_auth_login_google_with_nothing_on_standard_input_says_so(home):
+    result = run("auth", "login", "google", "--callback-url", "-", input="")
+
+    assert result.exit_code == 2 and "standard input" in result.output
 
 
 def test_auth_logout_google_revokes_and_removes(home, tmp_path, monkeypatch):

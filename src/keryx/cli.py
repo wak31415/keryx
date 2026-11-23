@@ -1552,8 +1552,10 @@ def auth_login(
         str | None,
         typer.Option(
             "--callback-url",
-            help="google: the address the browser landed on, in quotes, to finish a "
-            "sign-in started without a terminal.",
+            help="google: finish a sign-in started without a terminal, from the address "
+            "the browser landed on. Give `-` and the address on standard input, which keeps "
+            "its one-time code off the command line; the address itself is still taken "
+            "here for one release.",
         ),
     ] = None,
     account: Annotated[
@@ -1588,6 +1590,12 @@ def auth_login(
         typer.echo(str(error), err=True)
         raise typer.Exit(2) from None
     _owner_only("sign in")
+    if callback_url == "-":
+        callback_url = sys.stdin.readline().strip()
+        if not callback_url:
+            typer.echo("--callback-url - reads the address from standard input, and there "
+                       "was none", err=True)
+            raise typer.Exit(2)
     settings = _configure_readonly()
     options = auth_flow.LoginOptions(
         headless=is_headless() if headless is None else headless,
