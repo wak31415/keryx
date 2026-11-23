@@ -278,11 +278,15 @@ def test_auth_status_json_lists_every_sign_in(home):
 
     report = json.loads(result.output)
     assert set(report) == {
-        "openai", "claude", "codex", "gmail", "google-workspace", "twilio", "slack"
-    }
+        "openai", "claude", "codex", "google", "gmail", "google-workspace", "twilio", "slack"
+    }  # fmt: skip
     assert report["slack"]["state"] == "missing"
     assert report["openai"]["state"] == "missing"
-    assert report["gmail"]["state"] == "missing"
+    assert report["google"]["state"] == "missing"
+    # The two older names are still there for a script that reads them, as the same sign-in.
+    assert report["gmail"] == report["google-workspace"] == {
+        **report["google"], "alias_of": "google"
+    }  # fmt: skip
     assert report["codex"]["enabled"] is False
 
 
@@ -290,39 +294,162 @@ def test_auth_login_knows_only_what_it_can_sign_in_to(home):
     assert run("auth", "login", "twitter").exit_code == 2
 
 
-def test_auth_login_gmail_prints_a_link_then_finishes_with_the_callback(
+def test_auth_status_lists_google_once(home):
+    result = run("auth", "status")
+
+    assert "google  " in result.output
+    assert "gmail" not in result.output and "google-workspace" not in result.output
+
+
+def google_answer(scope):
+    import base64
+
+    claims = base64.urlsafe_b64encode(b'{"email": "ada@example.com"}').decode().rstrip("=")
+    body = {"refresh_token": "r", "access_token": "a", "scope": scope,
+            "id_token": f"h.{claims}.s"}
+    return type("R", (), {"status_code": 200, "json": lambda self: body})()
+
+
+def test_auth_login_google_without_a_terminal_prints_a_link_then_finishes_with_the_callback(
     home, tmp_path, monkeypatch
 ):
+    from urllib.parse import parse_qs, urlparse
+
     client = tmp_path / "client.json"
     client.write_text('{"installed": {"client_id": "cid", "client_secret": "cs"}}')
 
-    first = run("auth", "login", "gmail", "--client-file", str(client))
+    first = run("auth", "login", "google", "--headless", "--services", "gmail,calendar",
+                "--client-file", str(client))
 
     assert first.exit_code == 0, first.output
-    assert "accounts.google.com" in first.output and "--callback-url" in first.output
+    assert "keryx auth login google --callback-url - < FILE" in first.output
     assert home.stored()["GOOGLE_CLIENT_SECRETS_FILE"].endswith("google_client_secret.json")
 
-    state = first.output.split("state=")[1].split("&")[0]
-
-    def post(url, data, timeout):
-        return type("R", (), {"status_code": 200, "json": lambda self: {"refresh_token": "r"}})()
-
-    monkeypatch.setattr("keryx.setup.google.httpx.post", post)
-    second = run(
-        "auth", "login", "gmail", "--callback-url",
-        f"http://localhost:1/?state={state}&code=c&scope=https://www.googleapis.com/auth/gmail.readonly",
+    [link] = [line for line in first.output.splitlines() if line.startswith("https://accounts.")]
+    query = parse_qs(urlparse(link).query)
+    monkeypatch.setattr(
+        "keryx.setup.google.httpx.post",
+        lambda url, data, timeout: google_answer(query["scope"][0]),
     )
+    # The address goes in on standard input: it holds the code, and a command line is
+    # readable by every user of the machine.
+    second = run("auth", "login", "google", "--callback-url", "-",
+                 input=f"http://localhost:1/?state={query['state'][0]}&code=c\n")
 
     assert second.exit_code == 0, second.output
-    assert "signed in" in second.output
-    assert (tmp_path / "keryx" / "gmail_token.json").is_file()
+    assert "Signed in as ada@example.com. Connected: Gmail and Calendar." in second.output
+    assert (tmp_path / "keryx" / "google_token.json").is_file()
+    assert (tmp_path / "keryx" / "google" / "ada@example.com.json").is_file()
+    stored = home.stored()
+    assert stored["USER_GOOGLE_EMAIL"] == "ada@example.com"
+    assert stored["GOOGLE_WORKSPACE_MCP"] is True
 
 
-def test_auth_login_gmail_without_a_client_says_how_to_get_one(home):
-    result = run("auth", "login", "gmail")
+def test_auth_login_google_refuses_an_account_nobody_expected_until_it_is_named(
+    home, tmp_path, monkeypatch
+):
+    from urllib.parse import parse_qs, urlparse
+
+    home.set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs",
+              "USER_GOOGLE_EMAIL": "owner@example.com"})
+    posted = []
+
+    def start():
+        first = run("auth", "login", "google", "--headless")
+        [link] = [line for line in first.output.splitlines() if line.startswith("https://")]
+        query = parse_qs(urlparse(link).query)
+
+        def post(url, data, timeout):
+            posted.append(url)
+            return google_answer(query["scope"][0])
+
+        monkeypatch.setattr("keryx.setup.google.httpx.post", post)
+        return f"http://localhost:1/?state={query['state'][0]}&code=c"
+
+    refused = run("auth", "login", "google", "--callback-url", start())
+
+    assert refused.exit_code == 1
+    assert "signed in as ada@example.com" in refused.output
+    assert "saved as owner@example.com" in refused.output
+    assert "--account ada@example.com" in refused.output
+    assert not (tmp_path / "keryx" / "google_token.json").exists()
+    assert posted[-1] == "https://oauth2.googleapis.com/revoke"
+    assert home.stored()["USER_GOOGLE_EMAIL"] == "owner@example.com"
+
+    named = run("auth", "login", "google", "--account", "ada@example.com",
+                "--callback-url", start())
+
+    assert named.exit_code == 0, named.output
+    assert "USER_GOOGLE_EMAIL is now ada@example.com (it was owner@example.com)." in named.output
+    assert (tmp_path / "keryx" / "google_token.json").is_file()
+
+
+def test_auth_login_google_with_a_browser_here_is_one_command(home, monkeypatch):
+    from keryx.setup import google
+
+    home.set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+    asked = []
+
+    def signin(settings, chosen, *, announce, account=None, post=None):
+        asked.append(chosen.services)
+        announce("https://accounts.google.com/x", True)
+        return google.SignInResult(
+            "ada@example.com", chosen.services, (), None, chosen.client.whose
+        )
+
+    monkeypatch.setattr(google, "browser_signin", signin)
+
+    result = run("auth", "login", "google", "--browser")
+
+    assert result.exit_code == 0, result.output
+    assert asked == [("gmail", "calendar", "drive", "docs", "sheets", "slides")]
+    assert "https://accounts.google.com/x" in result.output
+    assert "Signed in as ada@example.com." in result.output
+
+
+def test_auth_login_google_with_nothing_on_standard_input_says_so(home):
+    result = run("auth", "login", "google", "--callback-url", "-", input="")
+
+    assert result.exit_code == 2 and "standard input" in result.output
+
+
+def test_auth_logout_google_revokes_and_removes(home, tmp_path, monkeypatch):
+    token = tmp_path / "keryx" / "google_token.json"
+    token.parent.mkdir(parents=True)
+    token.write_text('{"refresh_token": "1//rt", "client_id": "cid", "email": "a@b.c"}')
+    posted = []
+
+    def post(url, data, timeout):
+        posted.append((url, data))
+        return type("R", (), {"status_code": 200, "json": lambda self: {}})()
+
+    monkeypatch.setattr("keryx.setup.google.httpx.post", post)
+
+    result = run("auth", "logout", "google")
+
+    assert result.exit_code == 0, result.output
+    assert posted == [("https://oauth2.googleapis.com/revoke", {"token": "1//rt"})]
+    assert not token.exists()
+    assert "Signed out of Google" in result.output and "1//rt" not in result.output
+
+
+def test_auth_logout_knows_only_google(home):
+    assert run("auth", "logout", "claude").exit_code == 2
+
+
+def test_auth_login_google_refuses_a_service_it_does_not_know(home):
+    result = run("auth", "login", "google", "--services", "gmail,chat")
+
+    assert result.exit_code == 2
+    assert "chat is not a Google service" in result.output
+
+
+@pytest.mark.parametrize("name", ["google", "gmail", "google-workspace"])
+def test_auth_login_google_without_a_client_says_how_to_get_one(home, name):
+    result = run("auth", "login", name, "--headless")
 
     assert result.exit_code == 1
-    assert "--client-file" in result.output
+    assert "--client-file" in result.output and "google.md" in result.output
 
 
 def test_auth_login_of_an_agent_that_is_not_installed_says_how(home, monkeypatch):
@@ -600,7 +727,9 @@ def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch
 @pytest.mark.parametrize(
     "args",
     [
+        ("auth", "login", "google"),
         ("auth", "login", "google-workspace"),
+        ("auth", "logout", "google"),
         ("auth", "login", "slack", "--stdin"),
         ("memory", "seed", "--file", "-", "--force"),
         ("setup",),

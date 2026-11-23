@@ -127,7 +127,7 @@ META_TABLES = frozenset({"service_writable", "setup"})
 
 #: Where `keryx setup` puts the Google OAuth client file it is handed, in `KERYX_HOME`
 #: beside `secrets.toml`: it is configuration, and a secret one. Not `DATA_DIR/google`,
-#: which is workspace-mcp's own credentials directory.
+#: which holds the copy of the sign-in that the agents' workspace-mcp server reads.
 GOOGLE_CLIENT_FILE = "google_client_secret.json"
 #: The settings that say where Keryx keeps things. Each must be absolute: a relative one
 #: would be resolved against whatever directory a process happened to start in, and the
@@ -522,7 +522,8 @@ class Settings(BaseSettings):
 
     google_oauth_client_id: str | None = setting(
         None,
-        "The Google OAuth client id. Blank: read from `GOOGLE_CLIENT_SECRETS_FILE`.",
+        "The id of a Google OAuth client of your own. Blank: read from "
+        "`GOOGLE_CLIENT_SECRETS_FILE`, else the client Keryx publishes, when it has one.",
         group="google",
     )
     google_oauth_client_secret: str | None = setting(
@@ -530,21 +531,24 @@ class Settings(BaseSettings):
     )
     google_client_secrets_file: Path | None = setting(
         None,
-        "The OAuth client JSON the Google Cloud console downloads (desktop or web shape). "
-        f"Blank: `KERYX_HOME/{GOOGLE_CLIENT_FILE}`, where `keryx setup` puts it.",
+        "The OAuth client JSON the Google Cloud console downloads, for a client of your "
+        f"own (desktop or web shape). Blank: `KERYX_HOME/{GOOGLE_CLIENT_FILE}`, where "
+        "`keryx setup` and `keryx auth login google --client-file` put it.",
         group="google",
     )
     user_google_email: str | None = setting(
         None,
-        "The Google account agents act as; `keryx setup` fills it in from the sign-in.",
+        "The Google account agents act as; `keryx auth login google` fills it in from the "
+        "sign-in.",
         group="google",
     )
-    #: Off since 2026-08-24: the Claude CLI already carries authorized claude.ai
-    #: Gmail/Calendar/Drive connectors, so this only added a second path to trip over.
+    #: Off until the owner signs in: an unauthorized Google server only gave subagents a
+    #: tool that fails. `keryx auth login google` turns it on.
     google_workspace_mcp: bool = setting(
         False,
-        "Give every subagent the workspace-mcp server (send mail, manage the calendar). "
-        "Needed for Codex, which has no claude.ai connectors; Claude already has them.",
+        "Give every subagent Google tools (the workspace-mcp server) for the services your "
+        "Google sign-in connected. `keryx auth login google` turns it on; set it to false "
+        "to keep the sign-in for email answers only.",
         group="google",
     )
 
@@ -964,11 +968,12 @@ class Settings(BaseSettings):
         return path if path.is_file() else None
 
     def google_oauth_client(self) -> tuple[str, str] | None:
-        """The OAuth client as `(id, secret)`: the configured pair if set, else the JSON file.
+        """The owner's own OAuth client as `(id, secret)`: the configured pair, else the file.
 
         The console hands out that file with the pair nested under `installed` (desktop
-        clients) or `web`; either shape is accepted. A missing or malformed file simply
-        means "no Google", which the doctor reports and Gmail/Calendar work refuses.
+        clients) or `web`; either shape is accepted. None means the owner has made no
+        client, and a sign-in falls back to the one Keryx publishes, when it has one
+        (`keryx.integrations.google.resolve_client`).
         """
         if self.google_oauth_client_id and self.google_oauth_client_secret:
             return self.google_oauth_client_id, self.google_oauth_client_secret
@@ -1122,18 +1127,20 @@ class Settings(BaseSettings):
 def parse_google_client(text: str) -> tuple[str, str]:
     """`(client_id, client_secret)` from a Google OAuth client JSON; ValueError if it is not one.
 
-    The console nests the pair under `installed` (a desktop client) or `web`.
+    The console nests the pair under `installed` (a desktop client) or `web`. A file with no
+    secret is still a client (Google's documentation calls a desktop client's secret
+    optional), and its secret comes back as `""`, to be left out of every request.
     """
     try:
         data = json.loads(text)
     except json.JSONDecodeError as error:
         raise ValueError("that is not JSON") from error
     block = (data.get("installed") or data.get("web") or data) if isinstance(data, dict) else {}
-    pair = (block.get("client_id"), block.get("client_secret")) if isinstance(block, dict) else ()
-    if not (len(pair) == 2 and all(isinstance(part, str) and part for part in pair)):
-        raise ValueError("it has no client_id and client_secret")
-    client_id, client_secret = pair
-    return client_id, client_secret
+    client_id = block.get("client_id") if isinstance(block, dict) else None
+    if not (isinstance(client_id, str) and client_id):
+        raise ValueError("it has no client_id")
+    client_secret = block.get("client_secret")
+    return client_id, client_secret if isinstance(client_secret, str) else ""
 
 
 def env_var_name(field_name: str) -> str:

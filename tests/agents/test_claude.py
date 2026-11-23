@@ -18,6 +18,7 @@ from claude_agent_sdk.types import (
     UserMessage,
 )
 
+from agents.fakes import sign_in_to_google
 from keryx import plugins
 from keryx.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
 from keryx.agents.claude import (
@@ -252,54 +253,50 @@ def test_build_options_never_restricts_the_built_in_tools(settings):
 
 
 def test_build_options_leaves_the_google_mcp_server_out_by_default(settings):
-    """Gmail and Calendar come from the CLI's own claude.ai connectors now."""
+    """Nothing is attached until the owner signs in: a server that can only fail is worse."""
     options = build_options(make_task(), settings)
 
     assert options.mcp_servers == {}
     assert options.allowed_tools == []
 
 
-def test_build_options_wires_the_google_mcp_server_when_it_is_asked_for(settings):
-    settings.google_workspace_mcp = True
+def test_build_options_wires_the_google_mcp_server_from_the_sign_in(settings):
     settings.google_oauth_client_id = "client-id"
-    settings.google_oauth_client_secret = "client-secret"
-    settings.user_google_email = "mail@example.com"
+    settings.google_oauth_client_secret = "GOCSPX-a-real-looking-secret"
+    sign_in_to_google(settings)
 
     options = build_options(make_task(), settings)
 
     assert options.allowed_tools == ["mcp__google__*"]
     google = options.mcp_servers["google"]
     assert google["type"] == "stdio"
-    assert google["command"] == "uvx"
-    assert google["args"] == [
-        "workspace-mcp",
-        "--tools",
-        "gmail",
-        "calendar",
-        "--transport",
-        "stdio",
+    assert google["command"] == "env"
+    start = google["args"].index("uvx")
+    assert google["args"][start : start + 10] == [
+        "uvx", "--from", "workspace-mcp==2.6.0", "workspace-mcp",
+        "--tools", "gmail", "calendar",
+        "--transport", "stdio",
         "--single-user",
-    ]
+    ]  # fmt: skip
+    assert "start_google_auth" in google["args"]
+    # The server is handed where its credential is and whose it is, and no OAuth client:
+    # it can use the sign-in, and can never start one of its own. This whole config is
+    # on the CLI's command line (`--mcp-config`), so nothing in it may be a secret.
     assert google["env"] == {
-        "GOOGLE_OAUTH_CLIENT_ID": "client-id",
-        "GOOGLE_OAUTH_CLIENT_SECRET": "client-secret",
-        "GOOGLE_OAUTH_REDIRECT_URI": "http://localhost:8000/oauth2callback",
+        "WORKSPACE_MCP_CREDENTIALS_DIR": str(settings.data_dir / "google"),
         "USER_GOOGLE_EMAIL": "mail@example.com",
-        "GOOGLE_MCP_CREDENTIALS_DIR": str(settings.data_dir / "google"),
-        "OAUTHLIB_INSECURE_TRANSPORT": "1",
     }
+    assert (settings.data_dir / "google" / "mail@example.com.json").is_file()
 
 
-def test_build_options_omits_unconfigured_google_env(settings):
+def test_build_options_attaches_no_google_server_before_anyone_signs_in(settings):
     settings.google_workspace_mcp = True
+    settings.google_oauth_client_id = "client-id"
+    settings.google_oauth_client_secret = "client-secret"
 
     options = build_options(make_task(), settings)
 
-    env = options.mcp_servers["google"]["env"]
-    assert "GOOGLE_OAUTH_CLIENT_ID" not in env
-    assert "GOOGLE_OAUTH_CLIENT_SECRET" not in env
-    assert "USER_GOOGLE_EMAIL" not in env
-    assert env["OAUTHLIB_INSECURE_TRANSPORT"] == "1"
+    assert options.mcp_servers == {} and options.allowed_tools == []
 
 
 async def test_runner_open_connects_a_client_built_from_the_task(settings):
@@ -354,19 +351,23 @@ async def test_a_connect_failure_never_quotes_the_key(settings):
     assert "sk-ant-api03-secret-key" not in str(raised.value)
 
 
-async def test_the_google_client_secret_is_kept_out_of_a_failed_turn(settings):
-    settings.google_workspace_mcp = True
-    settings.google_oauth_client_id = "client-id"
-    settings.google_oauth_client_secret = "GOCSPX-a-real-looking-secret"
-    client = FakeSdkClient(error=RuntimeError("workspace-mcp: GOCSPX-a-real-looking-secret"))
+async def test_the_google_credentials_are_kept_out_of_a_failed_turn(settings):
+    """They reach the server in a file, not its environment, and are redacted all the same."""
+    sign_in_to_google(settings)
+    client = FakeSdkClient(
+        error=RuntimeError(
+            "workspace-mcp: refresh with 1//google-refresh-token and "
+            "GOCSPX-a-real-looking-secret failed"
+        )
+    )
     session = await ClaudeAgentRunner(settings, client_factory=lambda options: client).open(
         make_task()
     )
 
     outcome = await session.run("go", on_progress=lambda text: None)
 
-    assert "GOCSPX" not in outcome.error
-    assert "[redacted]" in outcome.error
+    assert "GOCSPX" not in outcome.error and "1//google" not in outcome.error
+    assert outcome.error.count("[redacted]") == 2
 
 
 async def test_session_run_returns_the_result_and_reports_progress():

@@ -29,9 +29,14 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   (never a secret), `config set KEY VALUE […]` (a secret only with `--stdin` or
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config lock|unlock KEY` (what the running service may change)
-- Sign-ins: `uv run keryx auth login claude|codex|gmail|google-workspace [--headless]
-  [--client-file PATH] [--callback-url URL]` (gmail is two steps: a link, then the address
-  the browser landed on), `uv run keryx auth status [--json] [--smoke]`
+- Sign-ins: `uv run keryx auth login claude|codex|google [--headless] [--services a,b]
+  [--account ADDRESS] [--client-file PATH] [--callback-url -]` (google is one sign-in
+  for everything; with `--headless` it prints a link and takes back the address the
+  browser landed on, and with no terminal that is two commands, the second reading the
+  address from standard input so its code is never on a command line; `--account` says which
+  account is meant when it is not the saved one; `gmail` and `google-workspace` still mean
+  it, for one release), `uv run keryx auth logout google` (revokes the grant at Google and
+  removes every file a sign-in left), `uv run keryx auth status [--json] [--smoke]`
 - Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`); `scripts/dev.sh` adds
   the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
@@ -132,7 +137,8 @@ remember:
 - **integrations** — `integrations/` is one module per outside service (`billing`,
   `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
   `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
-  built. Their builders take explicit values, never a plugin's file.
+  built. Their builders take explicit values, never a plugin's file. `google` is the one
+  with no voice tool: the Google account itself (see "Google is one sign-in").
   `slack` is also where connecting Slack lives. Each owner has a Slack app of their own,
   because an app Keryx published could not hand a command line a bot token without a
   server holding its client secret: `app_manifest` is that app and the only place its
@@ -174,8 +180,9 @@ remember:
 ## One task kind
 
 There is one `TaskKind` (`agent`) and no per-kind tool restriction: every subagent gets
-the full built-in tool set, the Google MCP server, the installed skills and subagents of
-its own, and decides for itself what a request needs. The voice model's only routing
+the full built-in tool set, the Google MCP server once the owner has signed in (see "Google
+is one sign-in"), the installed skills and subagents of its own, and decides for itself what
+a request needs. The voice model's only routing
 decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
 Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
@@ -397,7 +404,7 @@ stay protected in `secrets.toml`. Four rulings:
   `permissions.NEVER_OFF` but never set it to 0 ("no limit") or above `NEVER_OFF_CEILING`
   times its default, which is no limit by another name, and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
-  commands that write what the service may not — `auth login`, `memory seed`, `setup`,
+  commands that write what the service may not — `auth login|logout`, `memory seed`, `setup`,
   `config lock|unlock`, `service install|uninstall`, `upgrade`, `forget`, `approvals
   --enable|--install-hook|--uninstall-hook`, `plugins install|remove` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
@@ -423,7 +430,8 @@ relative one ignored as the specification says (`config/files.py::xdg_home`):
 - `~/.config/keryx` — `KERYX_HOME`: `config.toml`, `secrets.toml`, `pin`, the Google
   client file. Only the environment moves it.
 - `~/.local/share/keryx` — `DATA_DIR`: `tasks.db`, `tasks/`, `calls/`, `memory.md`,
-  `projects/`, `workspace/`, `tools/` (the owner's own voice tools and the plugins), the sign-in tokens,
+  `projects/`, `workspace/`, `tools/` (the owner's own voice tools and the plugins), the
+  sign-in tokens (`google_token.json`, and `google/`, its copy for the agents' MCP server),
   `codex/`, and `pin-failures.json`.
 - `~/.local/state/keryx` — `STATE_DIR`: `logs/`, `restart.json`, the version stamps,
   `approvals/` and `approvals.sock` together, so the hook needs one directory.
@@ -444,6 +452,102 @@ Three rulings:
   `KERYX_HOME` and the four `XDG_*_HOME`, and the restart watchdog's transient unit is
   handed them with `--setenv`: a user manager's environment is not the service's. A
   relative `DATA_DIR`, `STATE_DIR` or `CACHE_DIR` is refused for the same reason.
+
+## Google is one sign-in
+
+`keryx auth login google` (and the wizard's Google section) connects Gmail, Calendar, Drive,
+Docs, Sheets and Slides at once, for everything: `check_email` and the coding agents alike.
+`keryx/integrations/google.py` is the account (scopes, client, token, the agents' server)
+and `keryx/setup/google.py` is the flow. Seven rulings:
+
+- **One table says what is asked for.** `SERVICES` maps each service to the scopes it
+  requests and what they enable, and nothing else restates a scope. Every scope has to be
+  justified to Google, so the set is the narrowest the agents' tools work with: no full
+  `drive`, no full `calendar`, no `gmail.settings.basic`, and `gmail.modify` alone for Gmail
+  (asking for `gmail.readonly` beside it is redundant, and reviewers say so). Google lets
+  the owner untick any scope, so the token keeps exactly what was granted, and a service is
+  connected only when every scope it needs was. Reading Gmail is the one test with two
+  answers (`reads_gmail`): this sign-in's `gmail.modify`, or an older one's `gmail.readonly`.
+  A sign-in replaces the token, so it asks again for whatever is connected now
+  (`offer`): `--services calendar` adds Calendar and ends nothing. Taking access away is
+  its own act, `keryx auth logout google`.
+- **One token, and Keryx owns it.** `DATA_DIR/google_token.json` (0600, `write_private`) is
+  the only Google credential Keryx writes. The agents' `workspace-mcp` server reads a
+  *copy* of it (`export_for_mcp`, into `DATA_DIR/google/<address>.json`), rewritten only
+  when it is missing or is a different sign-in, so the access token the server refreshes
+  into that file is not thrown away. A sign-in also removes every other account's file
+  from that directory, because the server's tools take an address as an argument. The
+  server is started with that directory and the address and **no OAuth client**: through
+  `env -u`, which takes the variables it would read one from out of its environment, since
+  it inherits Keryx's. Not by handing them over empty, which depends on what an agent's
+  CLI does with an empty value. So it can use the sign-in and can never start a consent
+  flow of its own, and a tool the token cannot serve is an error (on the way to which
+  2.6.0 starts its own callback listener on `localhost:8000` for the life of that task's
+  server, with nothing it could complete). The Claude SDK puts the whole server config on
+  the CLI's command line, so nothing in it may ever be a secret. Its credentials are in a
+  file rather than its environment, so they reach the redaction through
+  `AgentContext.mcp_secrets`, which reads the file each time it is asked: the server
+  writes a fresh access token into it while the task runs, and `AdapterSession` redacts
+  with what is there then. Nothing
+  is attached at all until somebody has signed in, nor for a client with no secret, which
+  the server's library would send empty.
+- **The pin, the scope table and the disabled tools move together.** `WORKSPACE_MCP_VERSION`
+  is exact, because `MCP_SCOPED_TOOLS` — the tools that check for a scope the table does not
+  request — was read from that release's decorators. A tool is switched off unless the
+  token holds its scope, so an agent never meets one whose only answer is "authorize again".
+  Bump the pin only with that list re-read from the new source.
+- **Two clients, and whose it is gets said.** `resolve_client`: the owner's own
+  (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`, or the client file) wins; else the one Keryx
+  publishes, which is a packaged data file (`keryx/data/google_client.json`, the console's
+  JSON plus an optional `keryx_services` list of what Google has approved it for) and may
+  not be there. A published client is limited to its list; the owner's own offers
+  everything. Its secret ships in the wheel and is not a secret (SECURITY.md): PKCE,
+  `state` and a loopback-only redirect are what protect the exchange. A client with no
+  secret sends none, never an empty one.
+- **Two ways to finish, chosen before the link is made.** With a browser on this machine, a
+  listener on `127.0.0.1` on a port the OS picks takes the redirect: one request that
+  carries this sign-in's `state`, nothing logged (the request line holds the code), every
+  connection cut after five seconds, and it is shut. **The consent link never goes on a
+  command line**, which every user of the machine can read: the browser is opened on the
+  listener's `/start`, which redirects to Google once, and a second request for it stops
+  the sign-in, because nobody can tell which of the two was the owner (SECURITY.md has the
+  race that remains). Every connection is served on its own thread, or a few held open
+  would queue the owner's browser behind them and that second request would never run;
+  `tests/setup/test_google_listener.py` holds this over a real loopback socket, the one
+  place the suite opens one. With the browser elsewhere the redirect is a dead loopback address
+  and the owner pastes it back. In the wizard each is a `Probes` field that returns a plain
+  value (the grant), *a failure included*: a probe that raises is not recorded, and would
+  run the sign-in again on Esc.
+- **A sign-in is a grant in memory until it is kept.** `exchange` gets it and saves
+  nothing; `keep` writes the token and its copy, both or neither, and leaves the sign-in
+  before it in place when it cannot. Between the two is `admit`: a grant that came back as
+  an account other than the saved `USER_GOOGLE_EMAIL` is refused and revoked (the wizard
+  asks, defaulting to no; the command line wants `--account`), because an unexpected
+  account is how every way of finishing somebody else's sign-in shows. Only the token
+  endpoint is believed about what was granted: an answer with no `scope` grants nothing.
+  A grant that is refused is revoked rather than left at Google unheld, except when a
+  saved sign-in shares it (Google revokes by account and client, so that would end the
+  one that works).
+- **A sign-in turns the agents' tools on once, and at once.** What a kept sign-in implies
+  is saved before anything further is asked or said: the address, and
+  `GOOGLE_WORKSPACE_MCP`, which is set by the first sign-in and never again once the owner
+  has stored a value for it (`agents_switched_off`): false is how they keep the sign-in
+  for email answers only. Once somebody is signed in the wizard asks a different question
+  with different answers, so an answer recorded before the sign-in is never offered after
+  it, where it would mean signing in a second time.
+
+`keryx auth logout google` is the one way access is taken away (`sign_out`): every grant
+Keryx holds is revoked at Google, and the token, its copies, a sign-in in progress and an
+older sign-in's files are removed whether or not Google answers. Google's user-data policy
+wants an app to offer exactly this, so do not fold it into something else.
+
+An install from before this keeps working until its owner signs in again, and nothing of
+its is rewritten: `check_email` still reads an older `gmail_token.json` while no Google
+token reads Gmail (the first sign-in that does removes it; one that leaves Gmail out does
+not, or email answers would stop), and a credential `workspace-mcp` wrote itself into
+`DATA_DIR/google` is still served, with the tools its own scopes cover, until a sign-in
+replaces it. It is never adopted as Keryx's token: its scopes are whatever that flow asked
+for.
 
 ## Restarts are three halves
 

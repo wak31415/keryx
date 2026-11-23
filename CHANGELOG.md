@@ -7,6 +7,55 @@ the version starts with 0.
 
 ## [Unreleased]
 
+### Added
+
+- **One Google sign-in for everything: `keryx auth login google`.** It connects Gmail,
+  Calendar, Drive, Docs, Sheets and Slides at once, for the coding agents and for email
+  answers on a call, and `--services gmail,calendar` chooses fewer. With a browser on the
+  same machine it is one command and no pasting: Keryx opens Google's screen and takes the
+  answer itself. With `--headless`, or over ssh, it prints a link for any device and asks
+  for the address the browser lands on. What you leave unticked on Google's screen is
+  simply not connected, and the command says which services are.
+- **`keryx auth logout google`** revokes Keryx's access at Google and deletes the sign-in
+  from this machine.
+- Agents get Drive, Docs, Sheets and Slides as well as Gmail and Calendar, and both Claude
+  and Codex get them the same way.
+- When a release ships Keryx's own Google app, signing in needs no Google Cloud project.
+  Until then you make a client of your own once, and the guide in `keryx setup` now starts
+  with Google's shorter Personal mode.
+
+### Changed
+
+- `keryx auth login gmail` and `keryx auth login google-workspace` run the one Google
+  sign-in. Both names are accepted for one more release, and `keryx auth status --json`
+  still lists them beside the new `google`.
+- An install that already signed in keeps working and needs nothing done. Signing in again
+  with `keryx auth login google` replaces the two older sign-ins with one.
+- If you made your own Google Cloud client with the earlier guide, its project has only the
+  Gmail and Calendar APIs enabled. After signing in again, enable Drive, Docs, Sheets and
+  Slides there too (the links are in the guide `keryx setup` shows, and the sign-in names
+  it), or those tools answer "API not enabled".
+- A sign-in turns the agents' Google tools on the first time only. If you have set
+  `GOOGLE_WORKSPACE_MCP` to false, signing in again leaves it off.
+- A coding agent finishing a Google sign-in gives the address on standard input
+  (`--callback-url -`), not in the command, where its one-time code could be read.
+- Signing in again adds to what is connected. `keryx auth login google --services
+  calendar` keeps Gmail and the rest and adds Calendar, and says so.
+- Signing in as a different Google account from the one you signed in as before is
+  refused unless you say you mean it: `keryx setup` asks, and the command line takes
+  `--account ADDRESS`.
+- The agents' Google tools are attached only once you have signed in, and they can no
+  longer open a sign-in of their own in the middle of a task.
+- Turning `check_email` off no longer offers to delete the Google sign-in, because the
+  agents use it too.
+- `keryx doctor` has one **Google** check in place of "Google for agents": who is signed
+  in, with whose client, and which services are connected.
+
+### Fixed
+
+- `keryx auth status` reported Gmail as missing however it was signed in.
+- `--headless` was ignored by both Google sign-ins.
+
 ## [0.2.0] - 2026-11-09
 
 Keryx installs with one line and no clone, and every command starts with `keryx`. An

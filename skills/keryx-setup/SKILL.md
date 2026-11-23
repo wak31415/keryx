@@ -89,7 +89,9 @@ keryx plugins install cluster_stats --cluster HOST=PARTITION
 
 A plugin's secret is never a `--set`: the billing admin keys are
 `keryx config set KEY --stdin` (theirs to type, through `keryx setup` if you do not have
-it), and email needs `keryx auth login gmail` (the sign-ins step of the instructions).
+it), and email needs the Google sign-in, `keryx auth login google` (the sign-ins step of the
+instructions; the same sign-in gives the agents Calendar, Drive, Docs, Sheets and Slides, and
+the address they paste back goes in on standard input, never into the command).
 
 Slack is a sign-in too, and it turns `send_to_slack` on by itself:
 

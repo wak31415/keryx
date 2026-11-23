@@ -62,3 +62,20 @@ class ScriptedAdapter:
         self.closes += 1
         if "close" in self.fail_on:
             raise RuntimeError(f"cannot close: {self.secrets}")
+
+
+def sign_in_to_google(settings, services=("gmail", "calendar"), **changes):
+    """Leave the token `keryx auth login google` would, and turn the agents' tools on."""
+    from keryx.integrations import google
+
+    settings.google_workspace_mcp = True
+    values = {
+        "refresh_token": "1//google-refresh-token",
+        "client_id": "client-id",
+        "client_secret": "GOCSPX-a-real-looking-secret",
+        "scopes": google.requested_scopes(services),
+        "email": "mail@example.com",
+    }
+    token = google.GoogleToken(**{**values, **changes})
+    google.write_token(settings, token)
+    return token

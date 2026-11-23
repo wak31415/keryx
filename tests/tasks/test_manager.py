@@ -168,6 +168,60 @@ def test_build_prompt_offers_the_whole_machine_not_a_kind():
     assert "never push" in prompt
 
 
+def google_signed_in(settings, services):
+    from keryx.integrations import google
+
+    settings.google_workspace_mcp = True
+    google.write_token(
+        settings,
+        google.GoogleToken("rt", "cid", "cs", google.requested_scopes(services), "a@b.c"),
+    )
+
+
+def test_build_prompt_names_the_google_services_that_are_actually_connected(settings):
+    google_signed_in(settings, ["gmail", "calendar", "docs"])
+
+    prompt = build_prompt(Task(id=1, kind=TaskKind.AGENT, description="anything"), settings)
+
+    assert "their Gmail, Calendar, Drive and Docs (through the google MCP tools)" in prompt
+    assert "Sheets" not in prompt and "own connectors" not in prompt
+
+
+def test_build_prompt_says_whose_job_a_google_authorization_is(settings):
+    """The server's own advice is to set OAuth variables or open a link: neither is the
+    subagent's to do, and the owner's command is one line."""
+    google_signed_in(settings, ["gmail"])
+
+    prompt = build_prompt(Task(id=1, kind=TaskKind.AGENT, description="anything"), settings)
+
+    assert "they have to run `keryx auth login google` at their keyboard" in prompt
+    assert "never follow the tool's own advice" in prompt
+
+
+def test_build_prompt_says_what_an_api_that_is_not_enabled_means(settings):
+    """A Cloud project of the owner's own may predate Drive, Docs, Sheets and Slides: the
+    scope is granted and the API is off, which no sign-in fixes."""
+    google_signed_in(settings, ["gmail", "drive"])
+
+    prompt = build_prompt(Task(id=1, kind=TaskKind.AGENT, description="anything"), settings)
+
+    assert "an API is not enabled" in prompt and "Google Cloud project" in prompt
+
+
+@pytest.mark.parametrize(("signed_in", "switched_on"), [(False, True), (True, False)])
+def test_build_prompt_promises_no_google_tools_that_are_not_attached(
+    settings, signed_in, switched_on
+):
+    if signed_in:
+        google_signed_in(settings, ["gmail"])
+    settings.google_workspace_mcp = switched_on
+
+    prompt = build_prompt(Task(id=1, kind=TaskKind.AGENT, description="anything"), settings)
+
+    assert "google MCP tools" not in prompt and "keryx auth login google" not in prompt
+    assert "their Gmail and Calendar where your own connectors reach them" in prompt
+
+
 def test_build_prompt_leaves_braces_in_the_description_alone():
     task = Task(id=1, kind=TaskKind.AGENT, description="explain {cwd} and {project}")
 
@@ -234,6 +288,7 @@ async def test_dispatch_prompts_the_agent_with_the_standing_preamble(make_harnes
     assert harness.runner.sessions[0].prompts == [
         build_prompt(await harness.manager.get(task.id))
     ]
+    assert "own connectors" in harness.runner.sessions[0].prompts[0]  # nobody is signed in
     opened_task, resume = harness.runner.opened[0]
     assert opened_task.id == task.id
     assert resume is None

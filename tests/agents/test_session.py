@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agents.fakes import BLOCK, ScriptedAdapter
+from agents.fakes import BLOCK, ScriptedAdapter, sign_in_to_google
 from keryx.agents.auth import AuthMode, AuthSource, AuthStatus
 from keryx.agents.base import AgentOpenError, RunResult, SteerUnavailable, TokenUsage
 from keryx.agents.session import (
@@ -297,7 +297,7 @@ def test_the_context_is_resolved_once_from_the_task_and_settings(settings, tmp_p
             "command": "uvx",
             "env": {
                 "GOOGLE_OAUTH_CLIENT_SECRET": "GOCSPX-google-client-secret",
-                "GOOGLE_MCP_CREDENTIALS_DIR": "/home/ada/.local/share/keryx/google",
+                "WORKSPACE_MCP_CREDENTIALS_DIR": "/home/ada/.local/share/keryx/google",
                 "GOOGLE_OAUTH_REDIRECT_URI": "http://localhost:8000/oauth2callback",
             },
         },
@@ -314,6 +314,60 @@ def test_the_context_is_resolved_once_from_the_task_and_settings(settings, tmp_p
     assert context.auth.mode is AuthMode.API_KEY
     assert context.mcp_env["SLACK_BOT_TOKEN"] == SLACK
     assert context.secrets == (KEY, SLACK, "GOCSPX-google-client-secret")
+
+
+def test_the_google_server_comes_from_the_sign_in_and_its_file_is_redacted(settings, tmp_path):
+    """Whatever the backend passed, Google's server and its credentials are added once here."""
+    settings.codex_api_key = KEY
+    token = sign_in_to_google(settings)
+    slack = {"slack": {"command": "slack-mcp", "env": {"SLACK_BOT_TOKEN": SLACK}}}
+
+    context = AgentContext.build(
+        make_task(cwd=str(tmp_path)), settings, auth=SOURCE, model="", mcp_servers=slack
+    )
+
+    assert set(context.mcp_servers) == {"slack", "google"}
+    assert context.mcp_secrets == (token.refresh_token, token.client_secret)
+    assert context.secrets == (
+        KEY, token.refresh_token, token.client_secret, SLACK, "mail@example.com"
+    )  # fmt: skip
+
+
+async def test_an_access_token_the_server_minted_mid_task_is_redacted_too(settings, tmp_path):
+    """The copy starts with no access token; the server refreshes and writes one back while
+    the task runs. What a session says is redacted of the file as it is then, not as it
+    was when the task began."""
+    import json
+
+    from keryx.integrations import google
+
+    settings.codex_api_key = KEY
+    token = sign_in_to_google(settings)
+    runner = ContextRunner(settings, ScriptedAdapter([RuntimeError("401 for ya29.minted-later")]))
+    session = await runner.open(make_task(cwd=str(tmp_path)))
+    path = google.mcp_credential_path(settings, token.email)
+    path.write_text(json.dumps({**json.loads(path.read_text()), "token": "ya29.minted-later"}))
+
+    outcome = await session.run("go", on_progress=lambda text: None)
+
+    assert "ya29" not in outcome.error and "[redacted]" in outcome.error
+
+
+class ContextRunner(AdapterRunner):
+    """A runner whose context is the real one, built from the settings."""
+
+    name = "scripted"
+
+    def __init__(self, settings, adapter):
+        super().__init__(settings)
+        self.adapter = adapter
+
+    def context(self, task):
+        return AgentContext.build(task, self.settings, auth=SOURCE, model="")
+
+    async def connect(self, context, resume):
+        self.adapter.secrets = list(context.secrets)  # a snapshot, as the real adapters take
+        return self.adapter
 
 
 class ScriptedRunner(AdapterRunner):

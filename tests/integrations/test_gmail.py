@@ -16,7 +16,7 @@ from datetime import datetime
 import httpx
 import pytest
 
-from keryx.integrations import gmail
+from keryx.integrations import gmail, google
 from keryx.integrations.gmail import (
     DAY_PROMPT,
     MAX_BODY_CHARS,
@@ -31,13 +31,15 @@ from keryx.integrations.gmail import (
     build_email_reader,
     build_query,
     collect,
+    credentials_path,
     day_window,
     email_problem,
     fold_search,
     fold_thread,
+    legacy_token_path,
     plan_search,
     search,
-    token_path,
+    signed_in,
     worth_reading,
 )
 
@@ -779,6 +781,40 @@ async def test_the_real_runner_feeds_stdin_and_returns_what_came_out():
     assert (code, out.strip(), err) == (0, "HELLO", "")
 
 
+async def test_a_client_with_no_secret_sends_none(tmp_path):
+    seen: list[httpx.Request] = []
+    client = httpx.AsyncClient(
+        transport=transport([ok_token()], [httpx.Response(200, json={})], seen)
+    )
+    api = HttpGmail(token_file(tmp_path, client_secret=""), client=client)
+
+    await api.get("profile")
+
+    assert b"client_secret" not in seen[0].content and b"client_id=cid" in seen[0].content
+
+
+@pytest.mark.parametrize("scope", [google.GMAIL_MODIFY, google.GMAIL_READONLY])
+async def test_either_gmail_scope_reads_the_mail(tmp_path, scope):
+    client = httpx.AsyncClient(
+        transport=transport([ok_token()], [httpx.Response(200, json={"a": 1})], [])
+    )
+    api = HttpGmail(token_file(tmp_path, scopes=["openid", scope]), client=client)
+
+    assert await api.get("profile") == {"a": 1}
+
+
+async def test_a_sign_in_that_does_not_include_gmail_is_signed_out_before_any_request(tmp_path):
+    seen: list[httpx.Request] = []
+    client = httpx.AsyncClient(transport=transport([], [], seen))
+    api = HttpGmail(token_file(tmp_path, scopes=[google.CALENDAR_READONLY]), client=client)
+
+    with pytest.raises(EmailError) as raised:
+        await api.get("profile")
+
+    assert raised.value.code == "signed_out" and seen == []
+    assert "keryx auth login google" in raised.value.spoken
+
+
 async def test_a_cancelled_runner_kills_its_process():
     task = asyncio.create_task(
         gmail._run_cli([sys.executable, "-c", "import time; time.sleep(30)"], "", {})
@@ -793,22 +829,68 @@ async def test_a_cancelled_runner_kills_its_process():
 # --------------------------------------------------------------------------- build
 
 
+def google_token(settings, services=("gmail",)):
+    return google.write_token(
+        settings,
+        google.GoogleToken(
+            refresh_token="rt",
+            client_id="cid",
+            client_secret="cs",
+            scopes=google.requested_scopes(services),
+            email="ada@example.com",
+        ),
+    )
+
+
+def older_gmail_token(settings):
+    path = legacy_token_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"refresh_token": "old", "client_id": "c", "client_secret": "s",
+                                "scopes": [google.GMAIL_READONLY]}))
+    return path
+
+
 def test_no_sign_in_means_no_tool(settings):
-    assert "keryx auth login gmail" in email_problem(settings)
+    assert not signed_in(settings) and credentials_path(settings) is None
+    assert email_problem(settings) == "not signed in to Google: `keryx auth login google`"
+
+
+def test_the_google_sign_in_is_what_email_reads(settings):
+    path = google_token(settings)
+
+    assert signed_in(settings) and credentials_path(settings) == path
+
+
+def test_a_sign_in_without_gmail_means_no_tool_and_says_which(settings):
+    google_token(settings, ["calendar"])
+
+    assert not signed_in(settings)
+    assert "Gmail is not part of your Google sign-in" in email_problem(settings)
+
+
+def test_an_older_gmail_only_sign_in_still_answers_until_a_sign_in_reads_gmail(settings):
+    path = older_gmail_token(settings)
+    before = path.read_text()
+
+    assert signed_in(settings) and credentials_path(settings) == path
+    assert path.read_text() == before  # read, never written
+
+    google_token(settings, ["calendar"])  # a sign-in that left Gmail out: still the older one
+    assert signed_in(settings) and credentials_path(settings) == path
+
+    newer = google_token(settings, ["gmail"])
+    assert credentials_path(settings) == newer
 
 
 def test_no_claude_cli_means_no_tool(settings, monkeypatch):
-    token_path(settings).parent.mkdir(parents=True, exist_ok=True)
-    token_path(settings).write_text("{}")
+    google_token(settings)
     monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: False)
 
     assert "claude CLI is not installed" in email_problem(settings)
 
 
 def test_a_sign_in_and_a_cli_is_the_tool_with_its_token_kept_private(settings, monkeypatch):
-    path = token_path(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{}")
+    path = google_token(settings)
     path.chmod(0o644)
     monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: True)
     spec = gmail_backend_with_cli(monkeypatch)

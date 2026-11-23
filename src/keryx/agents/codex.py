@@ -22,7 +22,7 @@ What Claude gets from its SDK options, Codex gets from the thread:
 - the rendered `subagent_suffix.md` as `developer_instructions` (re-sent on a resume);
 - `bypassPermissions` as the full-access sandbox with approvals never asked for, because
   the phone PIN gates the dispatch, not the agent;
-- MCP servers (`workspace-mcp` for Gmail and Calendar, the Slack server) as the thread's
+- MCP servers (`workspace-mcp` for the owner's Google account, the Slack server) as the thread's
   `mcp_servers` config, with their secrets forwarded by *name* through `env_vars` and the
   values in the app-server's environment only.
 
@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from keryx.agents.auth import AuthMode, AuthSource, AuthStatus, redact
-from keryx.agents.base import SteerUnavailable, TokenUsage, google_mcp_server_config
+from keryx.agents.base import SteerUnavailable, TokenUsage
 from keryx.agents.session import (
     AdapterRunner,
     AgentContext,
@@ -234,17 +234,16 @@ def ensure_login_home(
 
 
 def mcp_servers(settings: Settings) -> dict[str, Mapping[str, Any]]:
-    """The MCP servers a Codex subagent gets: Google when asked for, Slack when named.
+    """The MCP servers a Codex subagent gets beside Google's: Slack's, when one is named.
 
-    Claude reaches both through its own configuration (claude.ai connectors, the user-scope
-    servers in `~/.claude.json`); Codex has neither, so they are handed over explicitly.
-    Slack's server is the one the `send_to_slack` plugin names, and none while it is off.
+    Claude reaches Slack through its own configuration (the user-scope servers in
+    `~/.claude.json`); Codex has none, so it is handed over explicitly. It is the server the
+    `send_to_slack` plugin names, and none while that is off. Google's is added for both
+    agents by `AgentContext.build`.
     """
     from keryx.plugins.slack import slack_route
 
     servers: dict[str, Mapping[str, Any]] = {}
-    if settings.google_workspace_mcp:
-        servers["google"] = google_mcp_server_config(settings)
     route = slack_route(settings)
     if route is not None and route.mcp_server:
         slack = mcp_server_config(route.mcp_server)

@@ -40,8 +40,9 @@ FIRST_RUN = [
     ("Set the PIN", "now"),
     ("New PIN", "482915"),
     ("same PIN again", "482915"),
-    # Phone and plugins left for later (Google is done: Claude's connectors carry it)
+    # Phone, Google and plugins left for later
     ("Set up phone calls", "skip"),
+    ("Sign in to Google?", DEFAULT),  # no client to sign in with: skipping is the default
     ("Which plugins", []),
     # Issue reports: on, and gh (the fake) is already signed in
     ("bug reports and feature requests", True),
@@ -246,7 +247,7 @@ def test_the_agent_instructions_name_this_machines_paths(make_ctx):
     assert str(ctx.store.home) in text
     assert str(ctx.settings.data_dir / "projects") in text
     assert "--from-env" in text and "never set it yourself" in text
-    assert "keryx auth login gmail --callback-url" in text
+    assert "keryx auth login google --headless" in text and "--callback-url - < " in text
     assert "keryx auth login slack --stdin --email ADDRESS" in text
     assert "That token is not yours to see" in " ".join(text.split())
     assert "{" not in text

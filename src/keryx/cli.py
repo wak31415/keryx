@@ -55,6 +55,7 @@ from keryx.install import (
     keryx_command,
     release,
 )
+from keryx.integrations.google import parse_services as parse_google_services
 from keryx.logging_util import LOG_FORMAT, mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
@@ -1053,7 +1054,7 @@ def plugins_install(
 
     With no values, a settings file already edited by hand (and a `--template` draft) is
     what is turned on. A secret is never taken here: `keryx config set KEY --stdin`, or
-    `keryx auth login gmail`. It is offered from the next call; no restart.
+    `keryx auth login google`. It is offered from the next call; no restart.
     """
     _owner_only("install a plugin")
     settings = _configure_readonly()
@@ -1527,21 +1528,51 @@ def config_unlock(key: Annotated[str, typer.Argument(help="The setting.")]) -> N
 
 @auth_app.command("login")
 def auth_login(
-    name: Annotated[str, typer.Argument(help="claude, codex, gmail, google-workspace or slack.")],
+    name: Annotated[
+        str,
+        typer.Argument(
+            help="claude, codex, google or slack. gmail and google-workspace, the two older "
+            "Google sign-ins, are still accepted for one release and mean google."
+        ),
+    ],
     headless: Annotated[
         bool | None,
         typer.Option(
             "--headless/--browser",
-            help="The agent login for a machine with no browser (default: detected).",
+            help="Sign in from a machine with no browser: an agent's own headless login, or "
+            "for Google a link to open anywhere and an address to paste back (default: "
+            "detected).",
         ),
     ] = None,
     client_file: Annotated[
         Path | None,
-        typer.Option("--client-file", help="The Google OAuth client JSON you downloaded."),
+        typer.Option("--client-file", help="google: an OAuth client JSON of your own."),
     ] = None,
     callback_url: Annotated[
         str | None,
-        typer.Option("--callback-url", help="gmail: the address you landed on, in quotes."),
+        typer.Option(
+            "--callback-url",
+            help="google: finish a sign-in started without a terminal, from the address "
+            "the browser landed on. Give `-` and the address on standard input, which keeps "
+            "its one-time code off the command line; the address itself is still taken "
+            "here for one release.",
+        ),
+    ] = None,
+    account: Annotated[
+        str | None,
+        typer.Option(
+            "--account",
+            help="google: the address you mean to sign in as, when it is not the one saved. "
+            "A sign-in that comes back as any other account is refused.",
+        ),
+    ] = None,
+    services: Annotated[
+        str | None,
+        typer.Option(
+            "--services",
+            help="google: what to connect, comma-separated, from gmail, calendar, drive, "
+            "docs, sheets and slides (default: everything the client offers).",
+        ),
     ] = None,
     stdin: Annotated[
         bool,
@@ -1555,13 +1586,14 @@ def auth_login(
         bool, typer.Option("--test/--no-test", help="slack: send one test message.")
     ] = True,
 ) -> None:
-    """Sign in to one thing: a coding agent, Gmail (read-only), Google for agents, or Slack.
+    """Sign in to one thing: a coding agent, Google, or Slack.
 
-    gmail is two steps: once for a link to open on any device, then again with
-    --callback-url and the address the browser landed on.
+    google is one sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides. With a
+    browser on this machine it opens the consent screen and finishes by itself; with
+    --headless it prints a link for any device and asks for the address the browser lands on.
 
-    slack is two steps too: once for the link that creates your Slack app, then
-    again with --stdin and its bot token, which is never taken as an argument.
+    slack is two steps: once for the link that creates your Slack app, then again
+    with --stdin and its bot token, which is never taken as an argument.
     """
     if name not in auth_flow.LOGINS:
         typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
@@ -1569,23 +1601,58 @@ def auth_login(
     if name != "slack" and (stdin or email is not None or not test):
         typer.echo("--stdin, --email and --no-test are for slack", err=True)
         raise typer.Exit(2)
+    try:
+        wanted = parse_google_services(services) if services is not None else None
+    except ValueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(2) from None
     _owner_only("sign in")
+    if callback_url == "-":
+        callback_url = sys.stdin.readline().strip()
+        if not callback_url:
+            typer.echo("--callback-url - reads the address from standard input, and there "
+                       "was none", err=True)
+            raise typer.Exit(2)
     settings = _configure_readonly()
     options = auth_flow.LoginOptions(
         headless=is_headless() if headless is None else headless,
         client_file=client_file,
         callback_url=callback_url,
+        services=wanted,
+        account=account,
         token=_read_secret_input("SLACK_BOT_TOKEN") if stdin else None,
         email=email,
         test=test,
     )
     try:
         auth_flow.login(
-            name, settings, ConfigStore(), options=options, echo=typer.echo, run_login=run_command
+            name,
+            settings,
+            ConfigStore(),
+            options=options,
+            echo=typer.echo,
+            run_login=run_command,
+            ask=typer.prompt if sys.stdin.isatty() else None,
         )
     except auth_flow.AuthError as error:
         typer.echo(f"{name} sign-in failed: {error}", err=True)
         raise typer.Exit(1) from None
+
+
+@auth_app.command("logout")
+def auth_logout(
+    name: Annotated[str, typer.Argument(help="google.")],
+) -> None:
+    """Sign out of Google: revoke Keryx's access at Google and delete the sign-in here.
+
+    The token, its copy for the agents' tools, and anything an older sign-in left are all
+    removed, whether or not Google answers. `keryx auth login google` signs in again.
+    """
+    if name not in auth_flow.LOGOUTS:
+        typer.echo(f"sign out of one of: {', '.join(auth_flow.LOGOUTS)}", err=True)
+        raise typer.Exit(2)
+    _owner_only("sign out")
+    auth_flow.logout(name, _configure_readonly(), echo=typer.echo)
 
 
 @auth_app.command("status")
@@ -1604,6 +1671,7 @@ def auth_status_command(
     if as_json:
         typer.echo(json.dumps(report, indent=2))
     else:
+        report = {name: entry for name, entry in report.items() if "alias_of" not in entry}
         width = max(map(len, report))
         for name, entry in report.items():
             # An agent nobody chose is not a sign-in that is missing. The JSON keeps the

@@ -519,7 +519,7 @@ def command_line_values(name: str, assignments: list[str]) -> dict[str, Any]:
             known = ", ".join(k for k, spec_key in keys.items() if spec_key.kind != "table")
             hint = "; its secrets: " + ", ".join(spec.secrets) if spec.secrets else ""
             if name == "check_email":
-                hint = "; the Gmail sign-in is `keryx auth login gmail`"
+                hint = "; its sign-in is `keryx auth login google`"
             raise PluginConfigError(f"{name} has no setting {key!r} (it has {known}{hint})")
         values[key] = value
     cleaned = clean(name, values)

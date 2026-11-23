@@ -18,9 +18,29 @@ from keryx.doctor import (
     has_hard_failure,
     run_doctor_checks,
 )
-from keryx.integrations.gmail import token_path
+from keryx.integrations import google
+from keryx.integrations.gmail import legacy_token_path
 from keryx.issues import GhStatus
 from keryx.logging_util import mask_number
+
+
+def sign_in(settings, services=tuple(google.SERVICES)):
+    """A Google sign-in as `keryx auth login google` leaves it: the token and its export."""
+    settings.google_workspace_mcp = True
+    token = google.GoogleToken(
+        refresh_token="rt",
+        client_id="client-id",
+        client_secret="client-secret",
+        scopes=google.requested_scopes(services),
+        email="sam@example.com",
+    )
+    google.write_token(settings, token)
+    google.export_for_mcp(settings, token)
+
+
+def sign_out(settings):
+    google.token_path(settings).unlink()
+    google.mcp_credential_path(settings, "sam@example.com").unlink()
 
 
 @pytest.fixture
@@ -31,13 +51,6 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/local/bin/{name}")
     # The service is installed. Asked of a fake: the real question goes to `systemctl`.
     monkeypatch.setattr("keryx.restart.service.is_installed", lambda target: True)
-
-    credentials = tmp_path / "keryx" / "google"
-    credentials.mkdir(parents=True, mode=0o700)
-    (credentials / "credentials.json").write_text("{}")
-    (credentials / "credentials.json").chmod(0o600)
-    (tmp_path / "keryx" / "gmail_token.json").write_text("{}")
-    (tmp_path / "keryx" / "gmail_token.json").chmod(0o600)
 
     settings = Settings(
         _env_file=None,
@@ -57,6 +70,7 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
         slack_bot_token="xoxb-test",
         openai_admin_key="sk-admin-test",
     )
+    sign_in(settings)
     # As every entry point does before running anything — it is what makes `data_dir`
     # owner-only, which the privacy check then looks at.
     settings.ensure_dirs()
@@ -206,13 +220,15 @@ def test_a_default_agent_that_is_not_enabled_is_a_hard_failure(healthy):
     assert (check.ok, check.severity) == (False, "hard")
 
 
-def test_codex_without_workspace_mcp_has_no_mailbox_and_says_so(healthy, monkeypatch):
+def test_codex_without_a_google_sign_in_has_no_mailbox_and_says_so(healthy, monkeypatch):
     with_agent(monkeypatch, "codex")
     settings = healthy.model_copy(update={"agents_enabled": ["claude", "codex"]})
+    sign_out(settings)
 
-    check = by_name(run_doctor_checks(settings))["Google for agents"]
+    check = by_name(run_doctor_checks(settings))["Google"]
     assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
-    assert "not set up (optional)" in check.detail and "keryx setup" in check.detail
+    assert "Codex tasks have no Gmail or Calendar" in check.detail
+    assert "`keryx auth login google` signs in with your own Google client" in check.detail
 
 
 def test_cloudflared_satisfies_the_tunnel_check(healthy, monkeypatch):
@@ -451,37 +467,123 @@ def test_a_data_dir_that_cannot_be_read_is_reported_not_raised(healthy):
     assert (check.ok, check.severity) == (False, "soft")
 
 
-def test_google_is_reported_as_unused_while_workspace_mcp_is_off(healthy):
-    check = by_name(run_doctor_checks(healthy))["Google for agents"]
+def test_google_says_who_signed_in_with_whose_client_and_what_is_connected(healthy):
+    check = by_name(run_doctor_checks(healthy))["Google"]
 
-    assert (check.ok, check.severity) == (True, "soft")
-    assert "connectors" in check.detail
+    assert (check.ok, check.severity, check.section) == (True, "soft", "google")
+    assert check.detail == (
+        "signed in as sam@example.com with your own Google client; connected: Gmail, "
+        "Calendar, Drive, Docs, Sheets and Slides"
+    )
 
 
-def test_google_credentials_only_warn_when_the_oauth_client_is_configured(healthy, tmp_path):
-    healthy.google_workspace_mcp = True
-    for path in (tmp_path / "keryx" / "google").iterdir():
-        path.unlink()
+def test_google_names_what_is_not_connected_and_how_to_add_it(healthy):
+    sign_in(healthy, ["gmail", "calendar"])
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert check.ok and "connected: Gmail and Calendar; not connected: Drive, Docs" in check.detail
+    assert "`keryx auth login google` adds them" in check.detail
+
+
+def test_google_says_when_the_agents_tools_are_switched_off(healthy):
+    healthy.google_workspace_mcp = False
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert check.ok and "while GOOGLE_WORKSPACE_MCP is off" in check.detail
+
+
+def test_google_says_when_the_saved_address_is_not_the_account_that_signed_in(healthy):
+    healthy.user_google_email = "old@example.com"
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert check.ok and "USER_GOOGLE_EMAIL still says old@example.com" in check.detail
+
+
+def test_google_says_when_a_client_with_no_secret_keeps_the_tools_from_agents(healthy):
+    google.write_token(
+        healthy,
+        google.GoogleToken("rt", "client-id", "", google.requested_scopes(["gmail"]), "a@b.c"),
+    )
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert "agents do not get the Google tools from a client with no secret" in check.detail
+
+
+def test_google_signed_in_with_keryxs_own_client_says_so(healthy, tmp_path, monkeypatch):
+    path = tmp_path / "google_client.json"
+    path.write_text('{"installed": {"client_id": "client-id", "client_secret": "s"},'
+                    ' "keryx_services": ["gmail", "calendar"]}')
+    monkeypatch.setattr(google, "PUBLISHED_CLIENT_FILE", path)
+    settings = healthy.model_copy(
+        update={"google_oauth_client_id": None, "google_oauth_client_secret": None}
+    )
+    sign_in(settings, ["gmail", "calendar"])
+
+    check = by_name(run_doctor_checks(settings))["Google"]
+
+    # Everything Keryx's client offers is connected: the rest is not counted against it.
+    assert check.detail == (
+        "signed in as sam@example.com with Keryx's Google app; connected: Gmail and Calendar"
+    )
+
+
+def test_a_sign_in_that_connected_nothing_is_a_failure(healthy):
+    google.write_token(healthy, google.GoogleToken("rt", "client-id", "cs", ("openid",), "a@b.c"))
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert (check.ok, check.state) == (False, "failed")
+
+
+def test_google_not_signed_in_is_missing_and_never_a_hard_failure(healthy):
+    sign_out(healthy)
 
     checks = run_doctor_checks(healthy)
-    check = by_name(checks)["Google for agents"]
-    assert (check.ok, check.severity) == (False, "soft")
-    assert "keryx auth login google-workspace" in check.detail
+    check = by_name(checks)["Google"]
+
+    assert (check.ok, check.severity, check.state) == (False, "soft", "missing")
+    assert check.detail == (
+        "not signed in (optional) — `keryx auth login google` signs in with your own Google client"
+    )
     assert has_hard_failure(checks) is False
 
 
-def test_google_is_reported_as_not_configured_without_an_oauth_client(healthy):
+def test_google_with_no_client_at_all_points_at_setup(healthy):
+    sign_out(healthy)
     settings = healthy.model_copy(
-        update={
-            "google_workspace_mcp": True,
-            "google_oauth_client_id": None,
-            "google_oauth_client_secret": None,
-        }
+        update={"google_oauth_client_id": None, "google_oauth_client_secret": None}
     )
 
-    check = by_name(run_doctor_checks(settings))["Google for agents"]
-    assert (check.ok, check.severity, check.state) == (False, "soft", "failed")
-    assert "no OAuth client" in check.detail
+    check = by_name(run_doctor_checks(settings))["Google"]
+
+    assert check.state == "missing" and "no OAuth client yet: `keryx setup`" in check.detail
+
+
+def test_an_install_that_signed_its_agents_in_the_older_way_is_fine_and_told_so(healthy):
+    sign_out(healthy)
+    older = google.mcp_credentials_dir(healthy) / "sam@example.com.json"
+    older.write_text(
+        '{"refresh_token": "r", "client_id": "c", "client_secret": "s", "scopes": ['
+        f'"{google.GMAIL_MODIFY}", "{google.CALENDAR_FULL}"]}}'
+    )
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert check.ok and "the older way, for agents only (Gmail and Calendar)" in check.detail
+    assert "`keryx auth login google` connects everything" in check.detail
+
+
+def test_an_older_gmail_only_sign_in_is_fine_and_told_so(healthy):
+    sign_out(healthy)
+    legacy_token_path(healthy).write_text("{}")
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert check.ok and "an older Gmail-only sign-in" in check.detail
 
 
 # --- what a stranger needs to know about their own install -----------------
@@ -567,10 +669,11 @@ def test_a_plugin_that_is_on_and_refused_says_why(healthy):
         ("send_to_slack", "SLACK_BOT_TOKEN is set but send_to_slack is off, so PIN-lockout "
                           "alerts are not going to Slack"),
         ("check_billing", "OPENAI_ADMIN_KEY is set but check_billing is off"),
-        ("check_email", "a Gmail sign-in is set but check_email is off"),
+        ("check_email", "an older Gmail-only sign-in is set but check_email is off"),
     ],
 )
 def test_a_secret_set_for_a_plugin_that_is_off_is_a_warning(healthy, name, says):
+    legacy_token_path(healthy).write_text("{}")
     plugins.remove(healthy, name)
 
     check = by_name(run_doctor_checks(healthy))[name]
@@ -578,6 +681,15 @@ def test_a_secret_set_for_a_plugin_that_is_off_is_a_warning(healthy, name, says)
     assert (check.ok, check.state, check.severity) == (False, "failed", "soft")
     assert says in check.detail
     assert f"keryx plugins install {name}" in check.detail
+
+
+def test_a_google_sign_in_does_not_nag_about_email_answers_being_off(healthy):
+    """The sign-in is the agents' as well: having it says nothing about wanting the plugin."""
+    plugins.remove(healthy, "check_email")
+
+    check = by_name(run_doctor_checks(healthy))["check_email"]
+
+    assert check.state == "missing" and "off (optional)" in check.detail
 
 
 def test_email_signed_in_without_the_claude_cli_is_refused_with_how(healthy, monkeypatch):
@@ -622,13 +734,16 @@ def test_a_loose_secret_file_is_named_and_fix_tightens_only_modes(healthy):
     assert (check.ok, check.severity) == (False, "soft")
     assert str(store.secrets_path) in check.detail and "0644" in check.detail
     # After the checks: loading the email plugin tightens its token by itself.
-    token_path(healthy).chmod(0o640)
+    google.token_path(healthy).chmod(0o640)
+    exported = google.mcp_credential_path(healthy, "sam@example.com")
+    exported.chmod(0o644)
 
     changed = fix_permissions(healthy, store)
 
-    assert len(changed) == 2
+    assert len(changed) == 3
     assert store.secrets_path.stat().st_mode & 0o777 == 0o600
-    assert token_path(healthy).stat().st_mode & 0o777 == 0o600
+    assert google.token_path(healthy).stat().st_mode & 0o777 == 0o600
+    assert exported.stat().st_mode & 0o777 == 0o600
     assert store.secrets_path.read_text() == before
     assert by_name(run_doctor_checks(healthy, store=store))[
         "secret files private"

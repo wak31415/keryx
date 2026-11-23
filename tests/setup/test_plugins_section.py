@@ -11,7 +11,8 @@ import pytest
 from keryx import plugins
 from keryx.agents import registry
 from keryx.config.store import ConfigStore
-from keryx.integrations.gmail import token_path
+from keryx.integrations import google as account
+from keryx.integrations.gmail import legacy_token_path
 from keryx.integrations.slack import Member, SlackResult, Workspace, new_app_url
 from keryx.plugins.ssh_hosts import SshHost
 from keryx.setup import plugins as section
@@ -472,27 +473,72 @@ def test_tab_from_the_first_question_passes_a_slack_step_already_walked(make_ctx
 # --- email -------------------------------------------------------------------------------
 
 
-def test_email_signed_in_already_asks_nothing_and_turns_it_on(make_ctx):
-    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+def google_signed_in(ctx, services=("gmail",)):
+    account.write_token(
+        ctx.settings,
+        account.GoogleToken("rt", "cid", "cs", account.requested_scopes(services), "a@b.c"),
+    )
+
+
+def test_email_with_gmail_connected_asks_nothing_about_signing_in(make_ctx, world):
     ctx = make_ctx([("Which plugins", ["check_email"])])
-    ctx.settings.ensure_dirs()
-    token_path(ctx.settings).write_text("{}")
+    google_signed_in(ctx)
 
     section.run_section(ctx)
 
-    assert ctx.ui.done()
-    assert "Gmail: signed in" in ctx.ui.lines("success")
+    assert ctx.ui.done() and world.calls == []
+    assert "Gmail: connected" in ctx.ui.lines("success")
     assert on(ctx, "check_email")
+
+
+def test_email_is_not_signed_in_again_on_review(make_ctx, world):
+    ctx = make_ctx([("Which plugins", ["check_email"])], review=True)
+    google_signed_in(ctx)
+
+    section.run_section(ctx)
+
+    assert world.calls == [] and on(ctx, "check_email")
+
+
+def test_an_older_gmail_only_sign_in_still_turns_email_on(make_ctx, world):
+    ctx = make_ctx([("Which plugins", ["check_email"])])
+    ctx.settings.ensure_dirs()
+    legacy_token_path(ctx.settings).write_text("{}")
+
+    section.run_section(ctx)
+
+    assert world.calls == [] and on(ctx, "check_email")
+
+
+def test_email_without_a_sign_in_offers_the_google_one(make_ctx, world):
+    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+    ctx = make_ctx([("Which plugins", ["check_email"]), ("Sign in to Google?", DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert world.calls[0][0] == "google_browser"
+    assert on(ctx, "check_email") and ctx.settings.user_google_email == "sam@example.com"
 
 
 def test_email_not_signed_in_is_left_off(make_ctx):
     ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
-    ctx = make_ctx([("Which plugins", ["check_email"]), ("address you landed on", "")])
+    ctx = make_ctx([("Which plugins", ["check_email"]), ("Sign in to Google?", "skip")])
 
     section.run_section(ctx)
 
     assert not on(ctx, "check_email")
-    assert any("keryx auth login gmail" in line for line in ctx.ui.lines("note"))
+    assert any("keryx auth login google" in line for line in ctx.ui.lines("note"))
+
+
+def test_email_is_left_off_when_gmail_was_not_granted(make_ctx, world):
+    ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
+    world.google_services = ("calendar",)
+    ctx = make_ctx([("Which plugins", ["check_email"]), ("Sign in to Google?", DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert not on(ctx, "check_email")
+    assert any("Gmail is not connected" in line for line in ctx.ui.lines("note"))
 
 
 # --- billing -----------------------------------------------------------------------------
@@ -541,17 +587,30 @@ def test_a_plugin_left_unticked_is_turned_off_after_a_yes(make_ctx):
     assert plugins.off_path(ctx.settings, "check_billing").exists()
 
 
-def test_turning_email_off_can_take_the_sign_in_with_it(make_ctx):
+def test_turning_email_off_leaves_the_google_sign_in_alone(make_ctx):
+    """The sign-in is everything's now: the agents' tools run on the same token."""
     ctx = make_ctx([])
-    ctx.settings.ensure_dirs()
-    token_path(ctx.settings).write_text("{}")
+    google_signed_in(ctx)
     plugins.install(ctx.settings, "check_email")
-    ctx.ui.answers = [("Which plugins", []), ("Turn off Email answers", True),
-                      ("delete the Gmail sign-in", True)]
+    ctx.ui.answers = [("Which plugins", []), ("Turn off Email answers", True)]
 
     section.run_section(ctx)
 
-    assert not on(ctx, "check_email") and not token_path(ctx.settings).exists()
+    assert ctx.ui.done() and not on(ctx, "check_email")
+    assert account.read_token(ctx.settings) is not None
+
+
+def test_turning_email_off_can_take_an_older_gmail_only_sign_in_with_it(make_ctx):
+    ctx = make_ctx([])
+    ctx.settings.ensure_dirs()
+    legacy_token_path(ctx.settings).write_text("{}")
+    plugins.install(ctx.settings, "check_email")
+    ctx.ui.answers = [("Which plugins", []), ("Turn off Email answers", True),
+                      ("delete the older Gmail-only sign-in", True)]
+
+    section.run_section(ctx)
+
+    assert not on(ctx, "check_email") and not legacy_token_path(ctx.settings).exists()
 
 
 def test_a_no_leaves_it_on(make_ctx):

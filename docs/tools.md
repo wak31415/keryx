@@ -48,7 +48,7 @@ first time through.
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|
 | `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too | yes | `SLACK_BOT_TOKEN` (`keryx auth login slack`), or the MCP server's |
-| `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | the read-only Gmail sign-in (`keryx auth login gmail`) and the `claude` extra |
+| `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | your Google sign-in (`keryx auth login google`) and the `claude` extra |
 | `check_billing` | what the month has cost and where it is heading, from the provider's billing API | no | `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` |
 | `cluster_stats` | what is free on your Slurm clusters and whether your jobs are still running | no | none: it rides the ssh login you already have open |
 
@@ -58,7 +58,7 @@ A plugin is two files in `~/.local/share/keryx/tools/`:
   to Keryx reaches your copy; and
 - **`<name>.toml`**, its settings, with a comment on every one — edit it by hand, or walk
   `keryx setup` → Plugins again. A secret is never in it: it stays in `secrets.toml`
-  (`keryx config set KEY --stdin`), or in the Gmail sign-in's own file.
+  (`keryx config set KEY --stdin`), or in the Google sign-in's own file.
 
 To turn one on: `keryx setup` → Plugins, or `keryx plugins install NAME [--set KEY=VALUE]`.
 `keryx plugins` lists them, and why one that is on is refused (not signed in, a setting
@@ -144,8 +144,9 @@ Small talk, task status and small factual questions the voice answers itself —
 goes through the Responses API, because a Realtime session has no hosted search tool of its
 own. Everything else becomes a task, and a task is just "a coding agent, on this machine" —
 Claude Code or Codex ([`agents.md`](agents.md)): one kind, every tool, the repositories,
-Gmail and Calendar, the installed skills, and subagents of its own. Nothing classifies the
-work in advance.
+the Google services you connected (Gmail, Calendar, Drive, Docs, Sheets and Slides, from
+one `keryx auth login google`), the installed skills, and subagents of its own. Nothing
+classifies the work in advance.
 
 That is why the plugins are short. **The default answer to "can Keryx do X" is "ask
 Claude to do X"** — a task already has your machine, your repositories, your mailbox and

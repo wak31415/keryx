@@ -22,6 +22,19 @@ from keryx.skills import CUSTOM_TOOLS_SKILL
 from keryx.tasks.models import Task, TaskKind
 
 
+def test_the_google_server_config_is_none_until_somebody_signs_in(settings):
+    from agents.fakes import sign_in_to_google
+    from keryx.tasks.agent_runner import google_mcp_server_config
+
+    settings.google_workspace_mcp = True
+    assert google_mcp_server_config(settings) is None
+
+    sign_in_to_google(settings)
+
+    config = google_mcp_server_config(settings)
+    assert config["command"] == "env" and "workspace-mcp==2.6.0" in config["args"]
+
+
 def make_task(**overrides) -> Task:
     values = {
         "id": 7,

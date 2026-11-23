@@ -5,7 +5,8 @@ above that seam — the task manager, the notifier, the voice tools — sees onl
 `RunResult`. So the protocol, the result, and the text protocol a subagent speaks back
 (`SPOKEN_SUMMARY:` and `RESTART_REQUIRED:`) live here once, along with the context every
 subagent is handed whichever agent runs it: the rendered system-prompt suffix, the
-directory it starts in, and the `workspace-mcp` server that gives it Gmail and Calendar.
+directory it starts in, and the `workspace-mcp` server that gives it the owner's Google
+account (`keryx.integrations.google`, which owns the sign-in it runs on).
 
 `FakeAgentRunner` is the scripted stand-in used by tests and by `keryx serve --demo`.
 
@@ -51,17 +52,6 @@ MAX_SUMMARY_CHARS = 400
 #: How much of the subagent's own "why" is kept as the restart's reason.
 MAX_RESTART_REASON_CHARS = 120
 NO_SUMMARY = "The task finished, but no summary was produced."
-
-GOOGLE_MCP_ARGS = [
-    "workspace-mcp",
-    "--tools",
-    "gmail",
-    "calendar",
-    "--transport",
-    "stdio",
-    "--single-user",
-]
-GOOGLE_OAUTH_REDIRECT_URI = "http://localhost:8000/oauth2callback"
 
 _MAX_ERROR_CHARS = 160
 
@@ -315,27 +305,17 @@ def _issues_section(task: Task, issues: IssueReporting | None) -> str:
     ).strip()
 
 
-def google_mcp_server_config(settings: Settings) -> dict[str, Any]:
-    """The `workspace-mcp` stdio server config for Gmail + Calendar.
+def google_mcp_server_config(settings: Settings) -> dict[str, Any] | None:
+    """The `workspace-mcp` stdio server config for the connected Google services.
 
-    Public because `keryx auth login google-workspace` runs the very same server once, by
-    hand, to walk through the browser OAuth flow that leaves credentials behind for later
-    tasks.
+    None when a subagent should not have one: `GOOGLE_WORKSPACE_MCP` is off, or nobody has
+    signed in (`keryx.integrations.google.mcp_server`, which a runner asks directly when it
+    also wants the credentials to redact).
     """
-    client = settings.google_oauth_client()
-    env = {
-        name: value
-        for name, value in (
-            ("GOOGLE_OAUTH_CLIENT_ID", client[0] if client else None),
-            ("GOOGLE_OAUTH_CLIENT_SECRET", client[1] if client else None),
-            ("USER_GOOGLE_EMAIL", settings.user_google_email),
-        )
-        if value
-    }
-    env["GOOGLE_OAUTH_REDIRECT_URI"] = GOOGLE_OAUTH_REDIRECT_URI
-    env["GOOGLE_MCP_CREDENTIALS_DIR"] = str(settings.data_dir / "google")
-    env["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-    return {"type": "stdio", "command": "uvx", "args": list(GOOGLE_MCP_ARGS), "env": env}
+    from keryx.integrations.google import mcp_server
+
+    server = mcp_server(settings)
+    return server.config if server is not None else None
 
 
 def workspace_dir(task: Task, settings: Settings) -> Path:
