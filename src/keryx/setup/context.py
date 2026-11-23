@@ -64,15 +64,24 @@ def _task(settings: Settings, agent: str, prompt: str) -> Awaitable[RunResult]:
 
 
 def _google_browser_signin(settings: Settings, chosen: Any, announce: Any) -> Any:
-    from keryx.setup.google import browser_signin
+    from keryx.setup.google import GoogleSetupError, browser_signin
 
-    return browser_signin(settings, chosen, announce=announce)
+    try:
+        return browser_signin(settings, chosen, announce=announce)
+    except GoogleSetupError as error:
+        return error
+    except KeyboardInterrupt:
+        # Ctrl-C while the browser is out stops the wait, not the whole of `keryx setup`.
+        return GoogleSetupError("stopped before the browser came back")
 
 
 def _google_finish(settings: Settings, redirected_to: str) -> Any:
-    from keryx.setup.google import finish_signin
+    from keryx.setup.google import GoogleSetupError, finish_signin
 
-    return finish_signin(settings, redirected_to)
+    try:
+        return finish_signin(settings, redirected_to)
+    except GoogleSetupError as error:
+        return error
 
 
 def _install_service(settings: Settings, echo: Callable[[str], None]) -> None:
@@ -119,7 +128,8 @@ class Probes:
     headless: Callable[[], bool] = _headless
     #: The Google sign-in with a browser on this machine (`setup.google.browser_signin`:
     #: listener, browser, exchange), and the exchange that ends a pasted-back one. Each
-    #: returns a `SignInResult` or raises `GoogleSetupError`.
+    #: returns a `SignInResult`, or the `GoogleSetupError` it ended in *as a value*: a
+    #: result is recorded and replayed, and a raise would run the sign-in again on Esc.
     google_browser_signin: Callable[[Settings, Any, Any], Any] = _google_browser_signin
     google_finish: Callable[[Settings, str], Any] = _google_finish
     http_post: Callable[..., Any] = httpx.post

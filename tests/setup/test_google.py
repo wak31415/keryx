@@ -224,6 +224,14 @@ def test_an_address_pasted_with_its_quotes_still_finishes(client):
     assert result.connected == ALL
 
 
+@pytest.mark.parametrize("address", ["http://[::1", "  "])
+def test_what_is_not_an_address_is_said_not_raised(client, address):
+    start_signin(client)
+
+    with pytest.raises(GoogleSetupError, match="not an address|different sign-in"):
+        finish_signin(client, address, post=FakePost())
+
+
 def test_finishing_hands_the_agents_server_its_copy(client):
     finish_signin(client, redirect(start_signin(client)), post=FakePost())
 
@@ -239,6 +247,29 @@ def test_finishing_spends_the_older_gmail_only_token(client):
     finish_signin(client, redirect(start_signin(client)), post=FakePost())
 
     assert not older.exists()
+
+
+def test_a_sign_in_that_leaves_gmail_out_keeps_the_older_gmail_only_token(client):
+    """It is still the only thing `check_email` can read mail with."""
+    older = legacy_token_path(client)
+    older.parent.mkdir(parents=True, exist_ok=True)
+    older.write_text("{}")
+    url = start_signin(client, offer(client, ["calendar"]))
+
+    finish_signin(client, redirect(url), post=FakePost(body=granted(["calendar"])))
+
+    assert older.exists() and account.read_token(client).connected == ("calendar",)
+
+
+def test_signing_in_as_another_account_removes_the_first_ones_credential(client):
+    finish_signin(client, redirect(start_signin(client)), post=FakePost())
+    other = FakePost(body=granted(id_token=id_token("bob@example.com")))
+
+    finish_signin(client, redirect(start_signin(client)), post=other)
+
+    assert [path.name for path in (client.data_dir / "google").iterdir()] == [
+        "bob@example.com.json"
+    ]
 
 
 def test_what_the_owner_unticked_is_not_connected_and_is_said(client):
@@ -355,8 +386,11 @@ def test_no_access_token_and_no_id_token_asks_nobody(client):
     url = start_signin(client)
     post = FakePost(body=granted(id_token="e30.e30.x", access_token=None))
 
+    def get(*args, **kwargs):
+        raise AssertionError("there is no token to ask userinfo with")
+
     with pytest.raises(GoogleSetupError, match="did not say which account"):
-        finish_signin(client, redirect(url), post=post, get=None)
+        finish_signin(client, redirect(url), post=post, get=get)
 
 
 @pytest.mark.parametrize(
@@ -436,11 +470,16 @@ class Connection:
     def settimeout(self, timeout):
         self.timeout = timeout
 
+    def shutdown(self, how):
+        self.shut = how
+
 
 class Server:
     """What the handler and `Listener` use of an `HTTPServer`."""
 
     server_address = ("127.0.0.1", 49152)
+    start_url = None
+    started = False
 
     def __init__(self, requests=()):
         self.requests = list(requests)
@@ -460,6 +499,49 @@ def serve(server, target: str, method="GET") -> str:
     connection = Connection(f"{method} {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
     google._Callback(connection, ("127.0.0.1", 5), server)
     return connection.out.getvalue().decode()
+
+
+# --- the start page: the consent link never goes on a command line -------------------------
+
+CONSENT = "https://accounts.google.com/o/oauth2/v2/auth?state=st&code_challenge=c"
+
+
+def test_the_start_page_sends_the_browser_to_google_once():
+    server = waiting()
+    listener = Listener(server)
+    server.state = "st"
+
+    assert listener.start_page(CONSENT) == "http://127.0.0.1:49152/start"
+    reply = serve(server, "/start")
+
+    assert reply.startswith("HTTP/1.0 302") and f"Location: {CONSENT}\r\n" in reply
+    assert "no-store" in reply and server.answer is None
+
+
+def test_a_start_page_asked_for_twice_stops_the_sign_in():
+    """The browser Keryx opened, and something that read its command line: nobody can
+    tell which came first, so neither gets to finish."""
+    server = waiting()
+    Listener(server).start_page(CONSENT)
+    serve(server, "/start")
+
+    reply = serve(server, "/start")
+
+    assert reply.startswith("HTTP/1.0 410") and CONSENT not in reply
+    assert server.answer == {"error": google.OPENED_TWICE}
+
+
+def test_there_is_no_start_page_until_a_sign_in_has_one():
+    assert serve(waiting(), "/start").startswith("HTTP/1.0 404")
+
+
+def test_a_sign_in_whose_start_page_was_opened_twice_saves_nothing(client, monkeypatch):
+    listener = ScriptedListener(answer={"error": google.OPENED_TWICE})
+    browser(monkeypatch, listener)
+
+    with pytest.raises(GoogleSetupError, match="opened twice on this machine.*--headless"):
+        google.browser_signin(client, announce=lambda url, did: None, post=FakePost())
+    assert account.read_token(client) is None
 
 
 def waiting(state="st") -> Server:
@@ -526,8 +608,32 @@ def test_the_request_line_is_never_logged(capsys):
     assert captured.out == captured.err == ""
 
 
-def test_a_stalled_request_cannot_hold_the_listener():
-    assert google._Callback.timeout == google.CALLBACK_READ_TIMEOUT_S
+def test_a_connection_is_cut_on_the_clock_however_slowly_it_dribbles(monkeypatch):
+    """A socket timeout is per read, so a byte every few seconds would never trip it."""
+    timers = []
+
+    class Timer:
+        def __init__(self, seconds, action):
+            self.seconds, self.action, self.cancelled = seconds, action, False
+            timers.append(self)
+
+        def start(self):
+            self.started = True
+
+        def cancel(self):
+            self.cancelled = True
+
+    monkeypatch.setattr(google.threading, "Timer", Timer)
+    connection = Connection("GET /favicon.ico HTTP/1.1\r\n\r\n")
+
+    google._Callback(connection, ("127.0.0.1", 5), waiting())
+
+    [timer] = timers
+    assert timer.seconds == google.CALLBACK_READ_TIMEOUT_S and timer.started
+    assert timer.cancelled  # the request finished in time
+    timer.action()  # and had it not, the connection is shut under the reader
+    assert connection.shut == google.socket.SHUT_RDWR
+    assert connection.timeout == google.CALLBACK_READ_TIMEOUT_S
 
 
 def test_the_listener_waits_past_strays_for_the_right_request():
@@ -560,9 +666,13 @@ def test_a_port_that_cannot_be_bound_says_to_paste_instead(monkeypatch):
 
 
 def test_the_listener_is_bound_to_loopback_only(monkeypatch):
-    monkeypatch.setattr(google, "_Server", lambda address, handler: Server())
+    bound = []
+    monkeypatch.setattr(
+        google, "_Server", lambda address, handler: bound.append((address, handler)) or Server()
+    )
 
     assert isinstance(google.listen(), Listener)
+    assert bound == [(("127.0.0.1", 0), google._Callback)]
 
 
 def test_a_request_that_breaks_puts_nothing_on_the_terminal(capsys):
@@ -596,6 +706,10 @@ class ScriptedListener:
     def __init__(self, answer=None, error=None):
         self.answer, self.error, self.closed = answer or {}, error, False
 
+    def start_page(self, url):
+        self.consent = url
+        return self.redirect_uri + "/start"
+
     def wait(self, state, timeout_s):
         self.waited = (state, timeout_s)
         if self.error:
@@ -623,7 +737,9 @@ def test_a_browser_sign_in_listens_opens_shows_the_link_and_exchanges(client, mo
     )
 
     [(url, did)] = shown
-    assert opened == [url] and did is True
+    # The browser is opened on the listener, never on the link: a command line is public.
+    assert opened == ["http://127.0.0.1:49152/start"] and did is True
+    assert listener.consent == url and "state=" in url
     assert link_query(url)["redirect_uri"] == "http://127.0.0.1:49152"
     assert listener.waited == (link_query(url)["state"], google.CALLBACK_TIMEOUT_S)
     assert post.calls[0][1]["redirect_uri"] == "http://127.0.0.1:49152"

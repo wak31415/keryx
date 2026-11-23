@@ -701,6 +701,11 @@ def _google_check(settings: Settings) -> Check:
             detail += f"; not connected: {google.labels(missing)} — {SIGN_IN_TO_GOOGLE} adds them"
         if token.connected and not settings.google_workspace_mcp:
             detail += "; agents do not get the Google tools while GOOGLE_WORKSPACE_MCP is off"
+        elif token.connected and not token.client_secret:
+            detail += "; agents do not get the Google tools from a client with no secret"
+        saved = settings.user_google_email
+        if saved and token.email and saved.lower() != token.email.lower():
+            detail += f"; USER_GOOGLE_EMAIL still says {saved}"
         return check(bool(token.connected), detail)
     older = google.mcp_server(settings)
     if older is not None:

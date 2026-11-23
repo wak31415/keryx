@@ -187,11 +187,13 @@ def legacy_token_path(settings: Settings) -> Path:
 
 
 def credentials_path(settings: Settings) -> Path | None:
-    """The token `check_email` reads: Keryx's Google token, else an older Gmail-only one."""
-    for path in (google.token_path(settings), legacy_token_path(settings)):
-        if path.is_file():
-            return path
-    return None
+    """The token `check_email` reads: Keryx's Google token when it reads Gmail, else the
+    Gmail-only one an older sign-in left, which stays until a sign-in that does."""
+    token = google.read_token(settings)
+    if token is not None and token.reads_gmail:
+        return google.token_path(settings)
+    legacy = legacy_token_path(settings)
+    return legacy if legacy.is_file() else None
 
 
 class HttpGmail(GmailApi):
@@ -282,11 +284,7 @@ class HttpGmail(GmailApi):
 
 
 def signed_in(settings: Settings) -> bool:
-    """Whether there is a sign-in Gmail can be read with: a Google token that covers it, or,
-    with no Google token at all, the older Gmail-only one."""
-    token = google.read_token(settings)
-    if token is not None:
-        return token.reads_gmail
+    """Whether there is a sign-in Gmail can be read with."""
     return credentials_path(settings) is not None
 
 
@@ -836,10 +834,9 @@ class EmailReader:
 
 def email_problem(settings: Settings) -> str | None:
     """Why no reader can be built on this machine, in a sentence; None when one can."""
-    token = google.read_token(settings)
-    if token is not None and not token.reads_gmail:
-        return "Gmail is not part of your Google sign-in: `keryx auth login google`"
     if credentials_path(settings) is None:
+        if google.read_token(settings) is not None:
+            return "Gmail is not part of your Google sign-in: `keryx auth login google`"
         return "not signed in to Google: `keryx auth login google`"
     from keryx.agents.registry import BACKENDS, install_command, installed
 

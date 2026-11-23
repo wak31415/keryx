@@ -65,6 +65,35 @@ def test_the_default_probes_reach_the_real_implementations(monkeypatch, settings
     assert probes.headless() is True
 
 
+@pytest.mark.parametrize(
+    ("raised", "says"),
+    [
+        ("error", "the browser did not come back"),
+        (KeyboardInterrupt(), "stopped before the browser came back"),
+    ],
+)
+def test_a_google_sign_in_that_fails_is_handed_back_not_raised(
+    monkeypatch, settings, raised, says
+):
+    """A result is recorded and replayed by the wizard; a raise would run it again. And
+    Ctrl-C while the browser is out stops the wait, not `keryx setup`."""
+    from keryx.setup.google import GoogleSetupError
+
+    error = GoogleSetupError(says) if raised == "error" else raised
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr("keryx.setup.google.browser_signin", fail)
+    monkeypatch.setattr("keryx.setup.google.finish_signin", fail)
+    probes = Probes()
+
+    result = probes.google_browser_signin(settings, "offer", print)
+    assert isinstance(result, GoogleSetupError) and str(result) == says
+    if raised == "error":
+        assert probes.google_finish(settings, "http://localhost:1/?x") is error
+
+
 def test_a_refused_save_is_said_and_changes_nothing(make_ctx):
     ctx = make_ctx([])
 

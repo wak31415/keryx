@@ -280,7 +280,14 @@ def test_build_options_wires_the_google_mcp_server_from_the_sign_in(settings):
     assert "start_google_auth" in google["args"]
     # The server is handed where its credential is and whose it is, and no OAuth client:
     # it can use the sign-in, and can never start one of its own.
-    assert google["env"] == {
+    env = dict(google["env"])
+    assert {name: env.pop(name) for name in list(env) if name.startswith("GOOGLE_")} == {
+        "GOOGLE_OAUTH_CLIENT_ID": "",
+        "GOOGLE_OAUTH_CLIENT_SECRET": "",
+        "GOOGLE_CLIENT_SECRET_PATH": "",
+        "GOOGLE_CLIENT_SECRETS": "",
+    }
+    assert env == {
         "WORKSPACE_MCP_CREDENTIALS_DIR": str(settings.data_dir / "google"),
         "USER_GOOGLE_EMAIL": "mail@example.com",
     }

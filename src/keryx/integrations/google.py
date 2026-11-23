@@ -119,6 +119,14 @@ MCP_SCOPED_TOOLS: dict[str, tuple[str, str]] = {
 }
 #: The server's own consent flow. Keryx signs in; the server only ever uses the result.
 MCP_NEVER_TOOLS = ("start_google_auth",)
+#: Where that release looks for an OAuth client of its own. Each is handed over empty,
+#: which it reads as unset, so one in Keryx's own environment never reaches it.
+MCP_BLANKED_ENV = (
+    "GOOGLE_OAUTH_CLIENT_ID",
+    "GOOGLE_OAUTH_CLIENT_SECRET",
+    "GOOGLE_CLIENT_SECRET_PATH",
+    "GOOGLE_CLIENT_SECRETS",
+)
 
 TOKEN_FILE = "google_token.json"
 #: A sign-in whose link is out and whose answer has not come back: its verifier and state.
@@ -332,17 +340,25 @@ def mcp_credential_path(settings: Settings, email: str) -> Path:
 _IDENTITY_KEYS = ("refresh_token", "client_id", "client_secret", "token_uri")
 
 
-def export_for_mcp(settings: Settings, token: GoogleToken) -> Path | None:
+def export_for_mcp(settings: Settings, token: GoogleToken, *, only: bool = False) -> Path | None:
     """Give the agents' MCP server `token`, as the credential file it reads. None without
     an address to name it by.
 
     Written only when the file is missing or is a different sign-in: the server refreshes
     the access token and writes it back to this file, and replacing it on every task would
     throw that away. `token` and `expiry` start null, which makes its first use a refresh.
+
+    `only`, which a new sign-in passes, also removes every other account's credential from
+    the directory. The server's tools take an address as an argument, so a credential left
+    there for the account signed in before would still be one an agent could act as.
     """
     if not token.email:
         return None
     path = mcp_credential_path(settings, token.email)
+    if only:
+        for other in mcp_credentials_dir(settings).glob("*.json"):
+            if other != path:
+                other.unlink(missing_ok=True)
     wanted = {**{key: getattr(token, key) for key in _IDENTITY_KEYS}, "scopes": list(token.scopes)}
     found = _read_json(path) or {}
     same = all(found.get(key) == wanted[key] for key in _IDENTITY_KEYS) and set(
@@ -394,6 +410,10 @@ def mcp_server(settings: Settings) -> McpServer | None:
     if not settings.google_workspace_mcp:
         return None
     token, older = read_token(settings), False
+    if token is not None and not token.client_secret:
+        # The server refreshes through a library that cannot leave a secret out: it would
+        # send an empty one, which Keryx never does. Email answers still work.
+        return None
     path = export_for_mcp(settings, token) if token is not None else None
     if path is None:
         found = _older_mcp_credential(settings)
@@ -418,10 +438,12 @@ def mcp_server(settings: Settings) -> McpServer | None:
         "--disabled-tools", *MCP_NEVER_TOOLS, *disabled,
     ]  # fmt: skip
     # No OAuth client and no redirect address: with neither, a tool the token cannot serve
-    # is a plain error, never a consent flow started behind a task nobody is watching.
+    # is a plain error, never a consent flow started behind a task nobody is watching. The
+    # server inherits Keryx's environment, so a client the owner keeps there is blanked.
     env = {
         "WORKSPACE_MCP_CREDENTIALS_DIR": str(path.parent),
         "USER_GOOGLE_EMAIL": token.email,
+        **dict.fromkeys(MCP_BLANKED_ENV, ""),
     }
     stored = _read_json(path) or {}
     secrets = [token.refresh_token, token.client_secret, stored.get("token")]

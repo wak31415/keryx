@@ -434,7 +434,7 @@ Three rulings:
 `keryx auth login google` (and the wizard's Google section) connects Gmail, Calendar, Drive,
 Docs, Sheets and Slides at once, for everything: `check_email` and the coding agents alike.
 `keryx/integrations/google.py` is the account (scopes, client, token, the agents' server)
-and `keryx/setup/google.py` is the flow. Five rulings:
+and `keryx/setup/google.py` is the flow. Six rulings:
 
 - **One table says what is asked for.** `SERVICES` maps each service to the scopes it
   requests and what they enable, and nothing else restates a scope. Every scope has to be
@@ -448,11 +448,15 @@ and `keryx/setup/google.py` is the flow. Five rulings:
   the only Google credential Keryx writes. The agents' `workspace-mcp` server reads a
   *copy* of it (`export_for_mcp`, into `DATA_DIR/google/<address>.json`), rewritten only
   when it is missing or is a different sign-in, so the access token the server refreshes
-  into that file is not thrown away. The server is started with that directory and the
-  address and **no OAuth client**: it can use the sign-in and can never start a consent
-  flow of its own, so a tool the token cannot serve is a plain error. Its credentials are in
-  a file rather than its environment, so they reach the redaction through
-  `AgentContext.mcp_secrets`. Nothing is attached at all until somebody has signed in.
+  into that file is not thrown away. A sign-in also removes every other account's file
+  from that directory, because the server's tools take an address as an argument. The
+  server is started with that directory and the address and **no OAuth client** (the
+  variables it would read one from are handed over empty, since it inherits Keryx's
+  environment): it can use the sign-in and can never start a consent flow of its own, so a
+  tool the token cannot serve is a plain error. Its credentials are in a file rather than
+  its environment, so they reach the redaction through `AgentContext.mcp_secrets`. Nothing
+  is attached at all until somebody has signed in, nor for a client with no secret, which
+  the server's library would send empty.
 - **The pin, the scope table and the disabled tools move together.** `WORKSPACE_MCP_VERSION`
   is exact, because `MCP_SCOPED_TOOLS` — the tools that check for a scope the table does not
   request — was read from that release's decorators. A tool is switched off unless the
@@ -467,17 +471,27 @@ and `keryx/setup/google.py` is the flow. Five rulings:
   `state` and a loopback-only redirect are what protect the exchange. A client with no
   secret sends none, never an empty one.
 - **Two ways to finish, chosen before the link is made.** With a browser on this machine, a
-  listener on `127.0.0.1` on a port the OS picks takes the redirect: one path, one request
-  that carries this sign-in's `state`, nothing logged (the request line holds the code),
-  and it is shut. With the browser elsewhere the redirect is a dead loopback address and
-  the owner pastes it back. In the wizard each is a `Probes` field that returns a plain
-  result, so a rewind replays it and no sign-in runs twice.
+  listener on `127.0.0.1` on a port the OS picks takes the redirect: one request that
+  carries this sign-in's `state`, nothing logged (the request line holds the code), every
+  connection cut after five seconds, and it is shut. **The consent link never goes on a
+  command line**, which every user of the machine can read: the browser is opened on the
+  listener's `/start`, which redirects to Google once, and a second request for it stops
+  the sign-in, because nobody can tell which of the two was the owner (SECURITY.md has the
+  race that remains). With the browser elsewhere the redirect is a dead loopback address
+  and the owner pastes it back. In the wizard each is a `Probes` field that returns a plain
+  value, *a failure included*: a probe that raises is not recorded, and would run the
+  sign-in again on Esc.
+- **A sign-in turns the agents' tools on once.** `GOOGLE_WORKSPACE_MCP` is set by the first
+  sign-in, and never again once the owner has stored a value for it
+  (`agents_switched_off`): false is how they keep the sign-in for email answers only.
 
 An install from before this keeps working until its owner signs in again, and nothing of
-its is rewritten: `check_email` still reads an older `gmail_token.json` when there is no
-Google token (the next sign-in removes it), and a credential `workspace-mcp` wrote itself
-into `DATA_DIR/google` is still served, with the tools its own scopes cover. It is never
-adopted as Keryx's token: its scopes are whatever that flow asked for.
+its is rewritten: `check_email` still reads an older `gmail_token.json` while no Google
+token reads Gmail (the first sign-in that does removes it; one that leaves Gmail out does
+not, or email answers would stop), and a credential `workspace-mcp` wrote itself into
+`DATA_DIR/google` is still served, with the tools its own scopes cover, until a sign-in
+replaces it. It is never adopted as Keryx's token: its scopes are whatever that flow asked
+for.
 
 ## Restarts are three halves
 

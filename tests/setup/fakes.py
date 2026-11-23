@@ -194,7 +194,7 @@ class FakeWorld:
             from keryx.setup.google import GoogleSetupError, SignInResult
 
             if self.google_error:
-                raise GoogleSetupError(self.google_error)
+                return GoogleSetupError(self.google_error)  # a failure is a value, as it is live
             granted = tuple(name for name in self.google_services if name in asked)
             token = google.GoogleToken(
                 refresh_token="rt",

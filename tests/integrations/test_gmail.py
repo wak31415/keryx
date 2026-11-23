@@ -868,15 +868,18 @@ def test_a_sign_in_without_gmail_means_no_tool_and_says_which(settings):
     assert "Gmail is not part of your Google sign-in" in email_problem(settings)
 
 
-def test_an_older_gmail_only_sign_in_still_answers_until_the_next_sign_in(settings):
+def test_an_older_gmail_only_sign_in_still_answers_until_a_sign_in_reads_gmail(settings):
     path = older_gmail_token(settings)
     before = path.read_text()
 
     assert signed_in(settings) and credentials_path(settings) == path
     assert path.read_text() == before  # read, never written
 
-    google_token(settings, ["calendar"])  # one token now, and it does not read Gmail
-    assert not signed_in(settings)
+    google_token(settings, ["calendar"])  # a sign-in that left Gmail out: still the older one
+    assert signed_in(settings) and credentials_path(settings) == path
+
+    newer = google_token(settings, ["gmail"])
+    assert credentials_path(settings) == newer
 
 
 def test_no_claude_cli_means_no_tool(settings, monkeypatch):

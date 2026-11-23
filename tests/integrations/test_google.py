@@ -280,6 +280,24 @@ def test_an_export_that_cannot_be_read_is_written_again(settings):
     assert json.loads(path.read_text())["refresh_token"] == "1//refresh-token"
 
 
+def test_a_new_sign_in_leaves_no_other_accounts_credential_behind(settings):
+    """The server's tools take an address as an argument: a file is an account to act as."""
+    before = google.export_for_mcp(settings, token(email="old@example.com"))
+
+    path = google.export_for_mcp(settings, token(email="new@example.com"), only=True)
+
+    assert not before.exists()
+    assert [p.name for p in path.parent.iterdir()] == ["new@example.com.json"]
+
+
+def test_an_ordinary_export_touches_nobody_elses_file(settings):
+    before = google.export_for_mcp(settings, token(email="old@example.com"))
+
+    google.export_for_mcp(settings, token(email="new@example.com"))
+
+    assert before.exists()
+
+
 def test_a_token_with_no_address_cannot_be_exported(settings):
     assert google.export_for_mcp(settings, token(email="")) is None
     assert not google.mcp_credentials_dir(settings).exists()
@@ -329,6 +347,12 @@ def test_the_server_is_pinned_and_started_on_what_is_connected_with_no_client(se
         "env": {
             "WORKSPACE_MCP_CREDENTIALS_DIR": str(settings.data_dir / "google"),
             "USER_GOOGLE_EMAIL": "ada@example.com",
+            # Blanked, not absent: the server inherits Keryx's environment, and a client
+            # the owner keeps there must not reach it.
+            "GOOGLE_OAUTH_CLIENT_ID": "",
+            "GOOGLE_OAUTH_CLIENT_SECRET": "",
+            "GOOGLE_CLIENT_SECRET_PATH": "",
+            "GOOGLE_CLIENT_SECRETS": "",
         },
     }  # fmt: skip
     assert server.services == ALL and not server.older
@@ -353,6 +377,24 @@ def test_the_servers_credentials_are_what_gets_redacted(settings):
 
     assert server.secrets == ("1//refresh-token", "GOCSPX-client-secret", "ya29.access-token")
     assert not any(secret in json.dumps(server.config) for secret in server.secrets)
+
+
+def test_the_server_is_never_handed_an_oauth_client_even_from_keryxs_environment(settings):
+    signed_in(settings)
+
+    env = google.mcp_server(settings).config["env"]
+
+    assert {name: env[name] for name in google.MCP_BLANKED_ENV} == dict.fromkeys(
+        ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_CLIENT_SECRET_PATH",
+         "GOOGLE_CLIENT_SECRETS"], "")  # fmt: skip
+
+
+def test_a_client_with_no_secret_gets_no_server(settings):
+    """The server's library would send an empty secret on every refresh."""
+    signed_in(settings, client_secret="")
+
+    assert google.mcp_server(settings) is None
+    assert not google.mcp_credentials_dir(settings).exists()
 
 
 def test_signed_in_with_nothing_connected_means_no_server(settings):
@@ -397,10 +439,8 @@ def test_an_older_install_keeps_its_tools_and_its_file_untouched(settings):
     assert args[args.index("--tools") + 1 : args.index("--transport")] == ["gmail", "calendar"]
     # Its scopes cover filters and whole calendars, so those tools stay.
     assert args[args.index("--disabled-tools") + 1 :] == ["start_google_auth"]
-    assert server.config["env"] == {
-        "WORKSPACE_MCP_CREDENTIALS_DIR": str(path.parent),
-        "USER_GOOGLE_EMAIL": "ada@example.com",
-    }
+    assert server.config["env"]["WORKSPACE_MCP_CREDENTIALS_DIR"] == str(path.parent)
+    assert server.config["env"]["USER_GOOGLE_EMAIL"] == "ada@example.com"
     assert server.secrets == ("1//old-refresh", "GOCSPX-mine", "ya29.old")
     assert path.read_text() == before and google.read_token(settings) is None
 

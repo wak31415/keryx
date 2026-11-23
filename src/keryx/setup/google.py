@@ -6,11 +6,13 @@ chosen services (`keryx.integrations.google.SERVICES`, the only place a scope is
 and it ends one of two ways, chosen before the link is made:
 
 - **The browser is on this machine** (`browser_signin`). A listener is bound on
-  `127.0.0.1`, on a port the OS picks, and its address is the redirect. The link is opened
-  and always shown as well; Google sends the browser back to the listener, which answers
-  with a line of text saying the tab can be closed and is shut. It serves one path, takes
-  only the request that carries this sign-in's `state`, and logs nothing, because the
-  request line holds the one-time code.
+  `127.0.0.1`, on a port the OS picks, and its address is the redirect. The browser is
+  opened on the listener's own `/start`, which sends it on to Google, once: a command line
+  is readable by every user of the machine, and the link itself carries this sign-in's
+  `state`. The link is always shown on the terminal as well. Google sends the browser back
+  to the listener, which answers with a line of text saying the tab can be closed and is
+  shut. It takes only the request that carries this sign-in's `state`, and logs nothing,
+  because the request line holds the one-time code.
 - **The browser is somewhere else** (`start_signin`, then `finish_signin`): a machine
   reached over ssh, or a coding agent relaying the link. The redirect is a loopback address
   nothing listens on, so the browser lands on a page that does not load, and the owner
@@ -30,10 +32,13 @@ screen, and `connect` is the part of it the `check_email` plugin's step reuses.
 """
 
 import base64
+import contextlib
 import hashlib
 import json
 import logging
 import secrets
+import socket
+import threading
 import time
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
@@ -65,13 +70,22 @@ LOOPBACK = "127.0.0.1"
 PASTE_REDIRECT_URI = "http://localhost:1"
 #: How long the listener waits for the browser to come back.
 CALLBACK_TIMEOUT_S = 300.0
-#: How long one request the listener is reading may take, so a stalled one cannot hold it.
+#: How long one connection to the listener may take, start to finish, so a stalled or
+#: dribbling one cannot hold it.
 CALLBACK_READ_TIMEOUT_S = 5.0
+#: Where the browser is first sent: the listener's own address, which redirects to Google.
+START_PATH = "/start"
+#: What the listener answers itself with when its start page is asked for a second time.
+OPENED_TWICE = "opened_twice"
 REQUEST_TIMEOUT_S = 30.0
 
 SIGN_IN = "`keryx auth login google`"
 CLOSE_PAGE = "Keryx has Google's answer. You can close this tab and go back to the terminal.\n"
 REFUSED_PAGE = "Google did not grant access. You can close this tab and go back to the terminal.\n"
+TWICE_PAGE = (
+    "This sign-in was already opened once, so Keryx has stopped it. Go back to the terminal "
+    "and start it again.\n"
+)
 
 Announce = Callable[[str, bool], None]
 
@@ -233,9 +247,17 @@ def finish_signin(
         pending = Pending(**{**saved, "services": tuple(saved["services"])})
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise GoogleSetupError(f"no sign-in in progress: run {SIGN_IN} first") from exc
-    query = parse_qs(urlparse(redirected_to.strip().strip("'\"")).query)
+    try:
+        query = parse_qs(urlparse(redirected_to.strip().strip("'\"")).query)
+    except ValueError:
+        raise GoogleSetupError("that is not an address; copy the whole address bar") from None
     answer = {key: values[0] for key, values in query.items()}
     return _complete(settings, pending, answer, post=post, get=get)
+
+
+def discard_pending(settings: Settings) -> None:
+    """Forget a pasted-back sign-in that will not be finished: its verifier is spent."""
+    _pending_path(settings).unlink(missing_ok=True)
 
 
 # --- the listener, for a browser on this machine ------------------------------------------
@@ -251,6 +273,9 @@ class _Server(HTTPServer):
 
     state: str | None = None
     answer: dict[str, str] | None = None
+    #: Where `/start` sends the browser, and whether it has been asked for already.
+    start_url: str | None = None
+    started: bool = False
 
     def handle_error(self, request: Any, client_address: Any) -> None:
         """Nothing: a request that broke is waited past like any other stray, and the
@@ -258,24 +283,64 @@ class _Server(HTTPServer):
 
 
 class _Callback(BaseHTTPRequestHandler):
-    """The one request Google's redirect makes: `GET /?code=…&state=…`."""
+    """The two requests a sign-in makes of the listener: `GET /start`, which sends the
+    browser to Google, and Google's redirect back, `GET /?code=…&state=…`."""
 
     timeout = CALLBACK_READ_TIMEOUT_S
+
+    def setup(self) -> None:
+        # The socket timeout above is per read, so a client that sends a byte now and then
+        # would never trip it. This ends the connection on the clock instead.
+        self._cutoff = threading.Timer(CALLBACK_READ_TIMEOUT_S, self._cut)
+        self._cutoff.daemon = True
+        self._cutoff.start()
+        super().setup()
+
+    def _cut(self) -> None:
+        with contextlib.suppress(OSError):
+            self.request.shutdown(socket.SHUT_RDWR)
+
+    def finish(self) -> None:
+        self._cutoff.cancel()
+        with contextlib.suppress(OSError):  # a connection the cutoff has already ended
+            super().finish()
 
     def do_GET(self) -> None:
         url = urlparse(self.path)
         answer = {key: values[0] for key, values in parse_qs(url.query).items()}
-        if url.path not in ("", "/"):
+        server: Any = self.server
+        if url.path == START_PATH:
+            self._start(server)
+        elif url.path not in ("", "/"):
             self._say(404, "Not found.\n")
-        elif not _same_state(answer.get("state", ""), getattr(self.server, "state", None)):
+        elif not _same_state(answer.get("state", ""), getattr(server, "state", None)):
             self._say(400, "This is not the sign-in Keryx is waiting for.\n")
         else:
-            self.server.answer = answer  # type: ignore[attr-defined]
+            server.answer = answer
             self._say(200, REFUSED_PAGE if "error" in answer else CLOSE_PAGE)
 
-    def _say(self, status: int, text: str) -> None:
+    def _start(self, server: Any) -> None:
+        """Send the browser on to Google, once.
+
+        The second time it is asked for, somebody else has the link: the browser Keryx
+        opened, and something that read its command line. Nobody can tell which came
+        first, so the sign-in is stopped rather than finished for the wrong one.
+        """
+        target = getattr(server, "start_url", None)
+        if not target:
+            self._say(404, "Not found.\n")
+        elif getattr(server, "started", False):
+            server.answer = {"error": OPENED_TWICE}
+            self._say(410, TWICE_PAGE)
+        else:
+            server.started = True
+            self._say(302, "Redirecting to Google.\n", location=target)
+
+    def _say(self, status: int, text: str, *, location: str | None = None) -> None:
         body = text.encode()
         self.send_response(status)
+        if location is not None:
+            self.send_header("Location", location)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -297,6 +362,12 @@ class Listener:
     @property
     def redirect_uri(self) -> str:
         return f"http://{LOOPBACK}:{self._server.server_address[1]}"
+
+    def start_page(self, url: str) -> str:
+        """The address to open in the browser, which redirects to the consent link `url`
+        once: a link with nothing in it worth reading off a command line."""
+        self._server.start_url, self._server.started = url, False
+        return self.redirect_uri + START_PATH
 
     def wait(
         self, state: str, timeout_s: float, *, clock: Callable[[], float] = time.monotonic
@@ -351,15 +422,18 @@ def browser_signin(
 ) -> "SignInResult":
     """The whole sign-in with a browser on this machine: listen, open, wait, exchange.
 
-    `announce(link, opened)` is told the link before the wait, opened or not, so it can
-    always be shown. `listen` and `open_browser` are looked up when called, which is how the
-    tests keep this from binding a socket or opening anything.
+    The browser is opened on the listener's start page, never on the consent link itself:
+    a browser's command line can be read by every user of the machine, and the link holds
+    this sign-in's `state`. `announce(link, opened)` is told the link before the wait,
+    opened or not, so it can always be shown on the terminal. `listen` and `open_browser`
+    are looked up when called, which is how the tests keep this from binding a socket or
+    opening anything.
     """
     chosen = chosen or offer(settings)
     listener = listen()
     try:
         pending, url = _begin(settings, chosen, listener.redirect_uri)
-        announce(url, open_browser(url))
+        announce(url, open_browser(listener.start_page(url)))
         answer = listener.wait(pending.state, timeout_s)
     finally:
         listener.close()
@@ -431,6 +505,12 @@ def _complete(
     time can reach the network from a test that patched them.
     """
     post, get = post or httpx.post, get or httpx.get
+    if answer.get("error") == OPENED_TWICE:
+        raise GoogleSetupError(
+            "the sign-in page was opened twice on this machine, so it was stopped and "
+            f"nothing was saved; run {SIGN_IN} again, or with --headless to paste the "
+            "address back instead"
+        )
     if answer.get("error"):
         raise GoogleSetupError(f"Google said: {answer['error']}")
     if not _same_state(answer.get("state", ""), pending.state):
@@ -483,10 +563,12 @@ def _complete(
     if not email:
         raise GoogleSetupError(f"Google did not say which account signed in; try {SIGN_IN} again")
     path = google.write_token(settings, token)
-    google.export_for_mcp(settings, token)
-    # One token now: the Gmail-only one an older sign-in left is spent.
-    legacy_token_path(settings).unlink(missing_ok=True)
-    _pending_path(settings).unlink(missing_ok=True)
+    google.export_for_mcp(settings, token, only=True)
+    # One token now. The Gmail-only one an older sign-in left is spent once this one reads
+    # Gmail; until it does, that file is still what `check_email` answers from.
+    if token.reads_gmail:
+        legacy_token_path(settings).unlink(missing_ok=True)
+    discard_pending(settings)
     connected = token.connected
     return SignInResult(
         email=email,
@@ -620,33 +702,42 @@ def _sign_in(ctx: "SetupContext") -> SignInResult | None:
     if chosen.client.published:
         ui.markdown(guide(CONSENT_GUIDE))
     way = ELSEWHERE if ctx.probes.headless() else HERE
-    while True:
-        try:
+    try:
+        while True:
+            # Each probe hands a failure back as a value, never raises it: a result is
+            # recorded, so going back through the wizard replays it instead of running the
+            # sign-in a second time.
             if way == HERE:
-                return ctx.probes.google_browser_signin(ctx.settings, chosen, _announcer(ctx))
-            url = start_signin(ctx.settings, chosen)
-            ui.panel(
-                "Sign in to Google — open this on any device",
-                f"{url}\n\nApprove it. The page you land on will not load: copy its whole "
-                "address and paste it below.",
+                result = ctx.probes.google_browser_signin(ctx.settings, chosen, _announcer(ctx))
+            else:
+                url = start_signin(ctx.settings, chosen)
+                ui.panel(
+                    "Sign in to Google — open this on any device",
+                    f"{url}\n\nApprove it. The page you land on will not load: copy its "
+                    "whole address and paste it below.",
+                )
+                address = ui.text("The address you landed on (blank to skip)")
+                if not address:
+                    return None
+                result = ctx.probes.google_finish(ctx.settings, address)
+            if isinstance(result, SignInResult):
+                return result
+            ui.error(str(result))
+            way = ui.select(
+                "Try the sign-in again?",
+                [
+                    Choice(HERE, "In a browser on this machine"),
+                    Choice(ELSEWHERE, "In a browser somewhere else",
+                           hint="paste the address back"),
+                    Choice(SKIP, "Skip for now"),
+                ],
+                default=ELSEWHERE,
             )
-            address = ui.text("The address you landed on (blank to skip)")
-            if not address:
+            if way == SKIP:
                 return None
-            return ctx.probes.google_finish(ctx.settings, address)
-        except GoogleSetupError as exc:
-            ui.error(str(exc))
-        way = ui.select(
-            "Try the sign-in again?",
-            [
-                Choice(HERE, "In a browser on this machine"),
-                Choice(ELSEWHERE, "In a browser somewhere else", hint="paste the address back"),
-                Choice(SKIP, "Skip for now"),
-            ],
-            default=ELSEWHERE,
-        )
-        if way == SKIP:
-            return None
+    finally:
+        # Finished or given up, nothing of a pasted-back sign-in waits on disk.
+        discard_pending(ctx.settings)
 
 
 def _announcer(ctx: "SetupContext") -> Announce:
@@ -655,23 +746,36 @@ def _announcer(ctx: "SetupContext") -> Announce:
             "Sign in to Google",
             ("Your browser is opening this link" if opened else "Open this link in a browser "
              "on this machine")
-            + f":\n\n{url}\n\nWaiting for you to finish there. Ctrl-C stops.",
+            + f":\n\n{url}\n\nWaiting for you to finish there. Ctrl-C stops waiting.",
         )
 
     return announce
 
 
+def agents_switched_off(settings: Settings, stored: Mapping[str, Any]) -> bool:
+    """Whether the owner has turned the agents' Google tools off on purpose: the setting is
+    false because somebody stored it, not because nobody has signed in yet."""
+    return not settings.google_workspace_mcp and "GOOGLE_WORKSPACE_MCP" in stored
+
+
 def _keep(ctx: "SetupContext", result: SignInResult) -> None:
-    """Save the address the agents act as, and turn their Google tools on."""
+    """Save the address the agents act as, and turn their Google tools on the first time."""
     ui, settings = ctx.ui, ctx.settings
     current = settings.user_google_email
-    if current != result.email and (
-        not current
-        or ui.confirm(f"Your Google address is saved as {current}. Replace it with "
-                      f"{result.email}?", default=True)
-    ):
-        ctx.save({"USER_GOOGLE_EMAIL": result.email})
-    if not settings.google_workspace_mcp:
+    if current != result.email:
+        if not current or ui.confirm(
+            f"You signed in as {result.email}, and your Google address is saved as "
+            f"{current}. Save {result.email} instead?",
+            default=True,
+        ):
+            ctx.save({"USER_GOOGLE_EMAIL": result.email})
+        else:
+            ui.warn(f"Agents act as {result.email}, the account that signed in, whatever is "
+                    f"saved. To use {current}, sign in again as that account.")
+    if agents_switched_off(settings, ctx.store.stored()):
+        ui.note("Agents' Google tools stay off, as you set them: `keryx config set "
+                "GOOGLE_WORKSPACE_MCP true` turns them on.")
+    elif not settings.google_workspace_mcp:
         ctx.save({"GOOGLE_WORKSPACE_MCP": True})
         ui.note("Agents get the Google tools from the next task (`keryx restart` if Keryx is "
                 "running). `keryx config set GOOGLE_WORKSPACE_MCP false` turns them off.")

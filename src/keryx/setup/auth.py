@@ -207,13 +207,19 @@ def _announcer(echo: Echo) -> Callable[[str, bool], None]:
 def _keep(
     settings: Settings, store: ConfigStore, result: google.SignInResult, echo: Echo
 ) -> None:
-    """Save the address the agents act as and turn their Google tools on, and say so."""
+    """Save the address the agents act as, turn their Google tools on the first time, and
+    say what was done."""
     values: dict[str, Any] = {}
     if settings.user_google_email != result.email:
         values["USER_GOOGLE_EMAIL"] = result.email
         was = f" (it was {settings.user_google_email})" if settings.user_google_email else ""
         echo(f"USER_GOOGLE_EMAIL is now {result.email}{was}.")
-    if not settings.google_workspace_mcp:
+    if google.agents_switched_off(settings, store.stored()):
+        echo(
+            "Agents' Google tools stay off, as you set them: `keryx config set "
+            "GOOGLE_WORKSPACE_MCP true` turns them on."
+        )
+    elif not settings.google_workspace_mcp:
         values["GOOGLE_WORKSPACE_MCP"] = True
         echo(
             "Agents get the Google tools from the next task (`keryx restart` if Keryx is "

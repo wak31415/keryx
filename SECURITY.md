@@ -404,9 +404,11 @@ email answers on a call. What it leaves, and what protects it:
   task you authorized is still inherent. You can leave any service unticked on Google's
   screen, and revoke the whole sign-in at <https://myaccount.google.com/permissions>.
 - **The agents' tools cannot sign in.** The server is started with the token's location
-  and no OAuth client, so it can refresh and use what you granted and can never open a
-  consent screen of its own behind a task nobody is watching. Tools that would need a
-  wider scope are switched off rather than left to fail.
+  and no OAuth client (one set in Keryx's own environment is blanked on the way), so it
+  can refresh and use what you granted and can never open a consent screen of its own
+  behind a task nobody is watching. Tools that would need a wider scope are switched off
+  rather than left to fail. Signing in as a different account removes the previous
+  account's copy, because those tools would still accept its address.
 - **Keryx's own Google client, when a release ships one, is not a secret.** It is a
   "Desktop app" client, and its client secret is a file inside the package that anyone
   can read. Google says so of this kind of client in its own words: "In this context, the
@@ -422,14 +424,26 @@ email answers on a call. What it leaves, and what protects it:
   machine can reach.
 - **The listener is local and short-lived.** With a browser on the same machine, Keryx
   listens on `127.0.0.1` only, on a port the operating system picks, for the length of one
-  sign-in. It serves one path, accepts only the request that carries this sign-in's
-  `state`, answers anything else with an error and keeps waiting, logs nothing (the
-  request holds the one-time code), and closes as soon as it has its answer or after five
-  minutes. **The accepted risk:** another program running as any user on the same machine
-  can connect to that port while it is open. Without the `state` it is refused, and
-  without the verifier a stolen code cannot be exchanged, so the most it can do is make
-  the sign-in fail. With `--headless` there is no listener at all: the browser lands on an
-  address nothing listens on, and you paste that address back.
+  sign-in. It accepts only the request that carries this sign-in's `state`, answers
+  anything else with an error and keeps waiting, ends any connection that takes longer
+  than five seconds, logs nothing (the request holds the one-time code), and closes as
+  soon as it has its answer or after five minutes.
+- **The sign-in link is never put on a command line.** The link holds this sign-in's
+  `state`, and on a shared machine every user can read every process's command line. So
+  the browser is opened on the listener's own address (`/start`), which sends it on to
+  Google once, and the link itself is shown only on your terminal.
+- **The accepted risk, on a machine you share:** another user can see the listener's
+  port and ask for `/start` themselves. If they get there before your browser does, they
+  hold the link, and could finish the sign-in with a Google account of their own, so that
+  Keryx's agents would read and write *their* account while you believe it is yours. Two
+  things stand in the way. `/start` works once: when it is asked for a second time, which
+  is your browser arriving after theirs, Keryx stops the sign-in and saves nothing. And
+  the command always ends by saying which account signed in. Neither is proof against a
+  program that finishes the whole exchange in the moment before your browser opens, so on
+  a machine you share with people you do not trust, sign in with `--headless`: there is no
+  listener and nothing on a command line, the browser lands on an address nothing listens
+  on, and you paste that address back yourself. A client of your own in Personal mode
+  closes it too, because Google refuses every account but yours.
 - **An address pasted back is a code in your scrollback.** It is single-use, it expires in
   minutes, and it cannot be exchanged without the verifier, which waits in
   `DATA_DIR/google_signin.json` (0600) until the sign-in finishes.

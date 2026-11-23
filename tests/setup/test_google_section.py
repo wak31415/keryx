@@ -216,12 +216,13 @@ def test_with_no_display_the_address_is_pasted_back(make_ctx, world):
     google.run_section(ctx)
 
     assert world.calls == [("google_finish", "http://localhost:1/?state=s&code=c")]
+    assert not (ctx.settings.data_dir / "google_signin.json").exists()
     [panel] = ctx.ui.lines("panel")
     assert "open this on any device" in panel and "redirect_uri=http%3A%2F%2Flocalhost%3A1" in panel
     assert ctx.settings.user_google_email == "sam@example.com"
 
 
-def test_a_blank_address_skips_the_sign_in(make_ctx, world):
+def test_a_blank_address_skips_the_sign_in_and_leaves_no_verifier_behind(make_ctx, world):
     own_client()
     world.headless = True
     ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", "")])
@@ -229,6 +230,7 @@ def test_a_blank_address_skips_the_sign_in(make_ctx, world):
     google.run_section(ctx)
 
     assert world.calls == [] and account.read_token(ctx.settings) is None
+    assert not (ctx.settings.data_dir / "google_signin.json").exists()
 
 
 def test_a_sign_in_that_fails_can_be_tried_the_other_way_or_left(make_ctx, world):
@@ -265,12 +267,25 @@ def test_no_client_after_all_is_said_not_raised(make_ctx, world, monkeypatch):
 def test_a_different_saved_address_is_replaced_only_after_asking(make_ctx, world):
     own_client()
     ConfigStore().set({"USER_GOOGLE_EMAIL": "old@example.com"})
-    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("Replace it with sam@example.com?", False)])
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("Save sam@example.com instead?", False)])
 
     google.run_section(ctx)
 
     assert ctx.settings.user_google_email == "old@example.com"
     assert ctx.settings.google_workspace_mcp is True
+    # No is not a way to stay the old account: the sign-in is the new one, and it says so.
+    assert any("Agents act as sam@example.com" in line for line in ctx.ui.lines("warn"))
+
+
+def test_agents_tools_the_owner_turned_off_stay_off(make_ctx, world):
+    own_client()
+    ConfigStore().set({"GOOGLE_WORKSPACE_MCP": False})
+    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
+
+    google.run_section(ctx)
+
+    assert ctx.settings.google_workspace_mcp is False
+    assert any("stay off, as you set them" in line for line in ctx.ui.lines("note"))
 
 
 def test_the_same_address_is_not_asked_about(make_ctx, world):
@@ -287,8 +302,8 @@ def test_the_same_address_is_not_asked_about(make_ctx, world):
 
 
 def test_going_back_and_forward_never_signs_in_twice(make_ctx, world):
-    """Esc from the next section lands on this one's question, and Tab goes forward again
-    from the record: the sign-in is a probe, so no browser opens a second time."""
+    """Esc from the next section lands on this one's question, and Tab goes forward again:
+    the section finds everything connected, asks nothing and opens no browser."""
     own_client()
 
     def after(ctx):
@@ -298,6 +313,29 @@ def test_going_back_and_forward_never_signs_in_twice(make_ctx, world):
         ("Sign in to Google?", "signin"),
         ("Next question", Back()),             # back to Google, now signed in
         ("Sign in to Google?", Forward()),     # and forward again, from the record
+        ("Next question", "done"),
+    ])
+
+    assert run_walk(ctx, [SECTION, Section("next", "Next", after)], {}) is True
+
+    assert ctx.ui.done()
+    assert world.calls == [("google_browser", ALL)]
+
+
+def test_a_sign_in_that_failed_is_not_run_again_on_the_way_back(make_ctx, world):
+    """A probe that raises is not recorded, and would run again when the section replays:
+    the browser would open a second time for a sign-in the owner already gave up on."""
+    own_client()
+    world.google_error = "the browser did not come back within 5 minutes"
+
+    def after(ctx):
+        ctx.ui.text("Next question", default="")
+
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        ("Try the sign-in again?", "skip"),
+        ("Next question", Back()),              # back to "Try the sign-in again?"
+        ("Try the sign-in again?", "skip"),
         ("Next question", "done"),
     ])
 
@@ -324,12 +362,12 @@ def test_a_replayed_section_runs_no_probe_and_asks_nothing(make_ctx, world):
     assert [entry.name for entry in second.log] == [entry.name for entry in first.log]
 
 
-def test_the_fake_world_can_stand_in_for_one_probe(make_ctx, world):
+def test_a_failure_the_probe_hands_back_is_said(make_ctx, world):
     own_client()
     ctx = make_ctx([("Sign in to Google?", DEFAULT), ("Try the sign-in again?", "skip")])
 
     def fail(settings, chosen, announce):
-        raise GoogleSetupError("could not listen on 127.0.0.1")
+        return GoogleSetupError("could not listen on 127.0.0.1")
 
     ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=fail)
     google.run_section(ctx)

@@ -176,6 +176,16 @@ def test_signing_in_again_as_the_same_account_saves_nothing(client, browser):
     assert ConfigStore().stored() == {}
 
 
+def test_agents_tools_the_owner_turned_off_stay_off(client, browser):
+    """Stored false is a choice; false because nobody has signed in yet is not."""
+    ConfigStore().set({"GOOGLE_WORKSPACE_MCP": False})
+
+    lines = login("google", client)
+
+    assert ConfigStore().stored()["GOOGLE_WORKSPACE_MCP"] is False
+    assert any("stay off, as you set them" in line for line in lines)
+
+
 def test_a_client_file_is_installed_and_used(settings, browser, tmp_path):
     source = tmp_path / "c.json"
     source.write_text('{"web": {"client_id": "i", "client_secret": "s"}}')

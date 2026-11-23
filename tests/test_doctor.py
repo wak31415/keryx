@@ -494,6 +494,25 @@ def test_google_says_when_the_agents_tools_are_switched_off(healthy):
     assert check.ok and "while GOOGLE_WORKSPACE_MCP is off" in check.detail
 
 
+def test_google_says_when_the_saved_address_is_not_the_account_that_signed_in(healthy):
+    healthy.user_google_email = "old@example.com"
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert check.ok and "USER_GOOGLE_EMAIL still says old@example.com" in check.detail
+
+
+def test_google_says_when_a_client_with_no_secret_keeps_the_tools_from_agents(healthy):
+    google.write_token(
+        healthy,
+        google.GoogleToken("rt", "client-id", "", google.requested_scopes(["gmail"]), "a@b.c"),
+    )
+
+    check = by_name(run_doctor_checks(healthy))["Google"]
+
+    assert "agents do not get the Google tools from a client with no secret" in check.detail
+
+
 def test_google_signed_in_with_keryxs_own_client_says_so(healthy, tmp_path, monkeypatch):
     path = tmp_path / "google_client.json"
     path.write_text('{"installed": {"client_id": "client-id", "client_secret": "s"},'
