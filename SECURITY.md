@@ -425,9 +425,10 @@ email answers on a call. What it leaves, and what protects it:
 - **The listener is local and short-lived.** With a browser on the same machine, Keryx
   listens on `127.0.0.1` only, on a port the operating system picks, for the length of one
   sign-in. It accepts only the request that carries this sign-in's `state`, answers
-  anything else with an error and keeps waiting, ends any connection that takes longer
-  than five seconds, logs nothing (the request holds the one-time code), and closes as
-  soon as it has its answer or after five minutes.
+  anything else with an error and keeps waiting, serves every connection at once so that
+  one held open cannot keep another waiting, ends any connection that takes longer than
+  five seconds, logs nothing (the request holds the one-time code), and closes as soon as
+  it has its answer or after five minutes.
 - **The sign-in link is never put on a command line.** The link holds this sign-in's
   `state`, and on a shared machine every user can read every process's command line. So
   the browser is opened on the listener's own address (`/start`), which sends it on to

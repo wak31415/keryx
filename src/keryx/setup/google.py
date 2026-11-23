@@ -43,7 +43,7 @@ import time
 import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -73,6 +73,8 @@ CALLBACK_TIMEOUT_S = 300.0
 #: How long one connection to the listener may take, start to finish, so a stalled or
 #: dribbling one cannot hold it.
 CALLBACK_READ_TIMEOUT_S = 5.0
+#: How often the wait looks for the answer a request's thread has set.
+CALLBACK_POLL_S = 0.1
 #: Where the browser is first sent: the listener's own address, which redirects to Google.
 START_PATH = "/start"
 #: What the listener answers itself with when its start page is asked for a second time.
@@ -268,9 +270,15 @@ def _same_state(given: str, expected: str | None) -> bool:
     return bool(expected) and secrets.compare_digest(given.encode(), str(expected).encode())
 
 
-class _Server(HTTPServer):
-    """The listener's socket: the `state` it is waiting for, and the answer once it has it."""
+class _Server(ThreadingHTTPServer):
+    """The listener's socket: the `state` it is waiting for, and the answer once it has it.
 
+    Every connection is served on a thread of its own. Served one at a time, a few
+    connections held open and silent would keep the owner's browser queued behind them,
+    and "the second request for `/start` stops the sign-in" would never get to run.
+    """
+
+    daemon_threads = True
     state: str | None = None
     answer: dict[str, str] | None = None
     #: Where `/start` sends the browser, and whether it has been asked for already.
@@ -316,8 +324,14 @@ class _Callback(BaseHTTPRequestHandler):
         elif not _same_state(answer.get("state", ""), getattr(server, "state", None)):
             self._say(400, "This is not the sign-in Keryx is waiting for.\n")
         else:
-            server.answer = answer
-            self._say(200, REFUSED_PAGE if "error" in answer else CLOSE_PAGE)
+            with server.lock:  # the first answer is the answer, whichever thread has it
+                taken = server.answer is None
+                if taken:
+                    server.answer = answer
+            if not taken:
+                self._say(409, "This sign-in has already ended.\n")
+            else:
+                self._say(200, REFUSED_PAGE if "error" in answer else CLOSE_PAGE)
 
     def _start(self, server: Any) -> None:
         """Send the browser on to Google, once.
@@ -326,14 +340,18 @@ class _Callback(BaseHTTPRequestHandler):
         opened, and something that read its command line. Nobody can tell which came
         first, so the sign-in is stopped rather than finished for the wrong one.
         """
-        target = getattr(server, "start_url", None)
+        with server.lock:
+            target = getattr(server, "start_url", None)
+            again = bool(target) and server.started
+            if target:
+                server.started = True
+            if again and server.answer is None:
+                server.answer = {"error": OPENED_TWICE}
         if not target:
             self._say(404, "Not found.\n")
-        elif getattr(server, "started", False):
-            server.answer = {"error": OPENED_TWICE}
+        elif again:
             self._say(410, TWICE_PAGE)
         else:
-            server.started = True
             self._say(302, "Redirecting to Google.\n", location=target)
 
     def _say(self, status: int, text: str, *, location: str | None = None) -> None:
@@ -358,6 +376,8 @@ class Listener:
         self._server = server
         server.state = None
         server.answer = None
+        #: Requests are served on threads: what they decide and set, they do under this.
+        server.lock = threading.Lock()
 
     @property
     def redirect_uri(self) -> str:
@@ -384,7 +404,9 @@ class Listener:
                     f"run {SIGN_IN} again, with --headless if the browser is on another "
                     "machine"
                 )
-            self._server.timeout = remaining
+            # Each call hands at most one connection to a thread and comes back, so the
+            # answer a thread sets is seen within a poll.
+            self._server.timeout = min(remaining, CALLBACK_POLL_S)
             self._server.handle_request()
         return self._server.answer
 

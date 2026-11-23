@@ -477,7 +477,10 @@ and `keryx/setup/google.py` is the flow. Six rulings:
   command line**, which every user of the machine can read: the browser is opened on the
   listener's `/start`, which redirects to Google once, and a second request for it stops
   the sign-in, because nobody can tell which of the two was the owner (SECURITY.md has the
-  race that remains). With the browser elsewhere the redirect is a dead loopback address
+  race that remains). Every connection is served on its own thread, or a few held open
+  would queue the owner's browser behind them and that second request would never run;
+  `tests/setup/test_google_listener.py` holds this over a real loopback socket, the one
+  place the suite opens one. With the browser elsewhere the redirect is a dead loopback address
   and the owner pastes it back. In the wizard each is a `Probes` field that returns a plain
   value, *a failure included*: a probe that raises is not recorded, and would run the
   sign-in again on Esc.
