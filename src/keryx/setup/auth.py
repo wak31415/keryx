@@ -93,6 +93,8 @@ class LoginOptions:
     callback_url: str | None = None
     #: Google: the services to ask for; None is every one the client offers.
     services: tuple[str, ...] | None = None
+    #: Google: the account the owner means to sign in as, when it is not the one saved.
+    account: str | None = None
 
 
 def login(
@@ -163,14 +165,23 @@ def _google(
         store.set({"GOOGLE_CLIENT_SECRETS_FILE": str(path)}, actor=OWNER)
         settings = settings.model_copy(update={"google_client_secrets_file": path})
         echo(f"Google client saved to {path}")
+        if settings.google_oauth_client_id and settings.google_oauth_client_secret:
+            echo(
+                "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are set and come "
+                "first, so this sign-in uses them, not that file: `keryx config unset "
+                "GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET` to use the file."
+            )
+    account = options.account
     if options.callback_url is not None:
-        result = google.finish_signin(settings, options.callback_url, post=post)
+        result = google.finish_signin(settings, options.callback_url, account=account, post=post)
     else:
         chosen = google.offer(settings, options.services)
-        if chosen.note:
-            echo(chosen.note)
+        for line in chosen.notes:
+            echo(line)
         if not options.headless:
-            result = google.browser_signin(settings, chosen, announce=_announcer(echo), post=post)
+            result = google.browser_signin(
+                settings, chosen, announce=_announcer(echo), account=account, post=post
+            )
         else:
             echo("Open this link on any device and approve it:\n")
             echo(google.start_signin(settings, chosen))
@@ -182,11 +193,17 @@ def _google(
                 )
                 return
             result = google.finish_signin(
-                settings, ask(f"{landed}Paste its whole address here"), post=post
+                settings,
+                ask(f"{landed}Paste its whole address here"),
+                account=account,
+                post=post,
             )
-    for line in google.summary(result):
+    # What the sign-in implies is saved before anything is said about it.
+    notes = _keep(settings, store, result)
+    for line in [*google.summary(result), *notes]:
         echo(line)
-    _keep(settings, store, result, echo)
+    if hint := google.api_hint(result, published=result.whose != google.OWN_CLIENT):
+        echo(hint)
 
 
 def _announcer(echo: Echo) -> Callable[[str, bool], None]:
@@ -204,26 +221,26 @@ def _announcer(echo: Echo) -> Callable[[str, bool], None]:
     return announce
 
 
-def _keep(
-    settings: Settings, store: ConfigStore, result: google.SignInResult, echo: Echo
-) -> None:
-    """Save the address the agents act as, turn their Google tools on the first time, and
-    say what was done."""
+def _keep(settings: Settings, store: ConfigStore, result: google.SignInResult) -> list[str]:
+    """Save the address the agents act as and turn their Google tools on the first time;
+    what was done comes back as lines to say."""
     values: dict[str, Any] = {}
+    notes = []
     if settings.user_google_email != result.email:
         values["USER_GOOGLE_EMAIL"] = result.email
         was = f" (it was {settings.user_google_email})" if settings.user_google_email else ""
-        echo(f"USER_GOOGLE_EMAIL is now {result.email}{was}.")
+        notes.append(f"USER_GOOGLE_EMAIL is now {result.email}{was}.")
     if google.agents_switched_off(settings, store.stored()):
-        echo(
+        notes.append(
             "Agents' Google tools stay off, as you set them: `keryx config set "
             "GOOGLE_WORKSPACE_MCP true` turns them on."
         )
     elif not settings.google_workspace_mcp:
         values["GOOGLE_WORKSPACE_MCP"] = True
-        echo(
+        notes.append(
             "Agents get the Google tools from the next task (`keryx restart` if Keryx is "
             "running); `keryx config set GOOGLE_WORKSPACE_MCP false` turns them off."
         )
     if values:
         store.set(values, actor=OWNER)
+    return notes

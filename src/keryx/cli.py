@@ -1556,6 +1556,14 @@ def auth_login(
             "sign-in started without a terminal.",
         ),
     ] = None,
+    account: Annotated[
+        str | None,
+        typer.Option(
+            "--account",
+            help="google: the address you mean to sign in as, when it is not the one saved. "
+            "A sign-in that comes back as any other account is refused.",
+        ),
+    ] = None,
     services: Annotated[
         str | None,
         typer.Option(
@@ -1586,6 +1594,7 @@ def auth_login(
         client_file=client_file,
         callback_url=callback_url,
         services=wanted,
+        account=account,
     )
     try:
         auth_flow.login(

@@ -69,11 +69,18 @@ def granted(services=ALL, **changes) -> dict:
 
 
 class FakePost:
-    def __init__(self, status=200, body=None):
+    """Google's token endpoint, and its revoke endpoint beside it."""
+
+    def __init__(self, status=200, body=None, revoke_status=200):
         self.response = Response(status, granted() if body is None and status == 200 else body)
         self.calls: list[tuple[str, dict]] = []
+        self.revoked: list[str] = []
+        self.revoke_status = revoke_status
 
     def __call__(self, url, data, timeout):
+        if url == google.REVOKE_URL:
+            self.revoked.append(data["token"])
+            return Response(self.revoke_status, {})
         self.calls.append((url, data))
         return self.response
 
@@ -323,21 +330,176 @@ def test_nothing_usable_granted_fails_and_keeps_no_token(client):
     assert account.read_token(client) is None
 
 
-def test_the_redirects_scope_is_believed_when_the_token_answer_names_none(client):
+def test_a_token_answer_that_names_no_scope_grants_nothing(client):
+    """Only the token endpoint is believed about what was granted: not the redirect, which
+    is whatever the browser sent, and not what was asked for, which the owner may have cut."""
     url = start_signin(client)
-    only_gmail = "%20".join(account.requested_scopes(["gmail"]))
+    everything = "%20".join(account.requested_scopes(ALL))
     body = {key: value for key, value in granted().items() if key != "scope"}
+    post = FakePost(body=body)
 
-    result = finish_signin(client, redirect(url, scope=only_gmail), post=FakePost(body=body))
+    with pytest.raises(GoogleSetupError, match="did not say what was granted"):
+        finish_signin(client, redirect(url, scope=everything), post=post)
 
-    assert result.connected == ("gmail",)
+    assert account.read_token(client) is None
+    assert post.revoked == ["1//rt"]  # and the grant is not left at Google unheld
 
 
-def test_with_no_scope_anywhere_what_was_asked_for_is_what_was_granted(client):
-    url = start_signin(client, offer(client, ["calendar"]))
-    body = {key: value for key, value in granted().items() if key != "scope"}
+@pytest.mark.parametrize(
+    ("body", "says"),
+    [
+        (granted(scope="openid https://www.googleapis.com/auth/userinfo.email"),
+         "nothing was granted"),
+        (granted(id_token=None, access_token=None), "did not say which account"),
+    ],
+)
+def test_a_grant_that_cannot_be_used_is_revoked_not_abandoned(client, body, says):
+    post = FakePost(body=body)
 
-    assert finish_signin(client, redirect(url), post=FakePost(body=body)).connected == ("calendar",)
+    with pytest.raises(GoogleSetupError, match=says):
+        finish_signin(client, redirect(start_signin(client)), post=post)
+
+    assert post.revoked == ["1//rt"]
+
+
+def test_a_refused_grant_is_not_revoked_from_under_a_sign_in_that_is_saved(client):
+    """Google revokes by account and client. Signing in again and leaving everything
+    unticked must not end the sign-in that was working."""
+    finish_signin(client, redirect(start_signin(client)), post=FakePost())
+    before = account.read_token(client)
+    post = FakePost(body=granted(scope="openid", refresh_token="1//second"))
+
+    with pytest.raises(GoogleSetupError, match="nothing was granted"):
+        finish_signin(client, redirect(start_signin(client)), post=post)
+
+    assert post.revoked == [] and account.read_token(client) == before
+
+
+@pytest.mark.parametrize(("older_client", "revoked"), [("cid", []), ("another", ["1//rt"])])
+def test_an_older_gmail_only_sign_in_for_the_same_client_is_not_revoked_either(
+    client, older_client, revoked
+):
+    older = legacy_token_path(client)
+    older.parent.mkdir(parents=True, exist_ok=True)
+    older.write_text(json.dumps({"refresh_token": "old", "client_id": older_client}))
+    post = FakePost(body=granted(scope="openid"))
+
+    with pytest.raises(GoogleSetupError, match="nothing was granted"):
+        finish_signin(client, redirect(start_signin(client)), post=post)
+
+    assert post.revoked == revoked and older.exists()
+
+
+# --- the account that came back ------------------------------------------------------------
+
+
+def test_the_first_sign_in_there_has_been_is_whoever_signed_in(client):
+    assert finish_signin(client, redirect(start_signin(client)), post=FakePost()).email == (
+        "ada@example.com"
+    )
+
+
+def test_an_account_other_than_the_saved_one_is_refused_before_anything_is_saved(client):
+    """However it happened, somebody else finishing this sign-in shows as their account."""
+    client.user_google_email = "owner@example.com"
+    post = FakePost()
+
+    with pytest.raises(GoogleSetupError) as raised:
+        finish_signin(client, redirect(start_signin(client)), post=post)
+
+    message = str(raised.value)
+    assert "signed in as ada@example.com" in message and "saved as owner@example.com" in message
+    assert "--account ada@example.com" in message and "--headless" in message
+    assert account.read_token(client) is None
+    assert not (client.data_dir / "google").exists()
+    assert post.revoked == ["1//rt"]
+
+
+def test_the_saved_account_signs_in_again_whatever_its_case(client):
+    client.user_google_email = "Ada@Example.com"
+
+    assert finish_signin(client, redirect(start_signin(client)), post=FakePost()).connected == ALL
+
+
+def test_naming_the_account_is_how_the_owner_changes_it(client):
+    client.user_google_email = "owner@example.com"
+
+    result = finish_signin(
+        client, redirect(start_signin(client)), account="ada@example.com", post=FakePost()
+    )
+
+    assert result.email == "ada@example.com" and account.read_token(client) is not None
+
+
+def test_a_named_account_that_is_not_the_one_that_signed_in_is_refused(client):
+    post = FakePost()
+
+    with pytest.raises(GoogleSetupError, match="as ada@example.com, not bob@example.com"):
+        finish_signin(
+            client, redirect(start_signin(client)), account="bob@example.com", post=post
+        )
+    assert account.read_token(client) is None and post.revoked == ["1//rt"]
+
+
+def test_revoking_says_whether_google_did(client):
+    assert google.revoke("1//rt", post=FakePost()) is True
+    assert google.revoke("1//rt", post=FakePost(revoke_status=400)) is False
+
+    def down(url, data, timeout):
+        raise httpx.ConnectError("down")
+
+    assert google.revoke("1//rt", post=down) is False
+
+
+# --- keeping it: all or nothing -------------------------------------------------------------
+
+
+def test_a_sign_in_that_cannot_be_written_whole_leaves_the_one_before(client, monkeypatch):
+    finish_signin(client, redirect(start_signin(client)), post=FakePost())
+    before = account.token_path(client).read_text()
+
+    def full(settings, token, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(account, "export_for_mcp", full)
+    other = FakePost(body=granted(refresh_token="1//second"))
+
+    with pytest.raises(GoogleSetupError, match="could not save the sign-in.*No space left"):
+        finish_signin(client, redirect(start_signin(client)), post=other)
+
+    assert account.token_path(client).read_text() == before
+
+
+def test_a_first_sign_in_that_cannot_be_written_whole_leaves_none(client):
+    """The server's directory has something in the way: a directory where the file goes."""
+    (client.data_dir / "google" / "ada@example.com.json").mkdir(parents=True)
+
+    with pytest.raises(GoogleSetupError, match="could not save the sign-in"):
+        finish_signin(client, redirect(start_signin(client)), post=FakePost())
+
+    assert account.read_token(client) is None
+
+
+# --- what Google says is printed plainly ----------------------------------------------------
+
+
+def test_an_error_from_the_redirect_is_printed_without_control_characters(client):
+    url = start_signin(client)
+    nasty = "access_denied%1B%5B2J%07" + "x" * 300
+
+    with pytest.raises(GoogleSetupError) as raised:
+        finish_signin(client, redirect(url, error=nasty), post=FakePost())
+
+    message = str(raised.value)
+    assert message.startswith("Google said: access_denied[2Jx") and len(message) < 100
+    assert "\x1b" not in message and "\x07" not in message
+
+
+def test_an_error_from_the_token_endpoint_is_printed_plainly_too(client):
+    post = FakePost(400, {"error": "invalid_grant\x1b[31m"})
+
+    with pytest.raises(GoogleSetupError, match=r"refused the code \(invalid_grant\[31m\)"):
+        finish_signin(client, redirect(start_signin(client)), post=post)
 
 
 def test_a_client_with_no_secret_sends_none(settings, tmp_path):
@@ -379,7 +541,7 @@ def test_a_sign_in_nobody_can_name_is_refused(client, get):
 
     with pytest.raises(GoogleSetupError, match="did not say which account"):
         finish_signin(client, redirect(url), post=post, get=get)
-    assert account.read_token(client) is None
+    assert account.read_token(client) is None and post.revoked == ["1//rt"]
 
 
 def test_no_access_token_and_no_id_token_asks_nobody(client):

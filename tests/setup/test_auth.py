@@ -105,7 +105,7 @@ def browser(monkeypatch):
     """`browser_signin`, scripted: what it was asked for, and the result it hands back."""
     asked = []
 
-    def signin(settings, chosen, *, announce, post=None):
+    def signin(settings, chosen, *, announce, account=None, post=None):
         asked.append(chosen)
         announce("https://accounts.google.com/o/oauth2/v2/auth?x", True)
         return result(chosen.services)
@@ -145,8 +145,22 @@ def test_services_can_be_chosen(client, browser):
     assert browser[0].services == ("calendar", "docs")
 
 
+def test_the_account_the_owner_names_is_the_one_the_sign_in_is_held_to(client, monkeypatch):
+    seen = []
+
+    def signin(settings, chosen, *, announce, account=None, post=None):
+        seen.append(account)
+        return result()
+
+    monkeypatch.setattr(google, "browser_signin", signin)
+
+    login("google", client, account="ada@example.com")
+
+    assert seen == ["ada@example.com"]
+
+
 def test_a_link_that_did_not_open_is_still_shown(client, monkeypatch):
-    def signin(settings, chosen, *, announce, post=None):
+    def signin(settings, chosen, *, announce, account=None, post=None):
         announce("https://link", False)
         return result()
 
@@ -186,6 +200,25 @@ def test_agents_tools_the_owner_turned_off_stay_off(client, browser):
     assert any("stay off, as you set them" in line for line in lines)
 
 
+def test_a_client_file_beside_a_configured_pair_says_which_one_is_used(
+    client, browser, tmp_path
+):
+    source = tmp_path / "c.json"
+    source.write_text('{"installed": {"client_id": "from-file", "client_secret": "s"}}')
+
+    lines = login("google", client, client_file=source)
+
+    assert browser[0].client.client_id == "cid"  # the pair, as it always has
+    assert any("come first, so this sign-in uses them, not that file" in line for line in lines)
+
+
+def test_own_client_owners_are_told_where_the_newer_apis_are_enabled(client, browser):
+    lines = login("google", client)
+
+    [hint] = [line for line in lines if "API is not enabled" in line]
+    assert "Drive, Docs, Sheets and Slides" in hint and "google.md" in hint
+
+
 def test_a_client_file_is_installed_and_used(settings, browser, tmp_path):
     source = tmp_path / "c.json"
     source.write_text('{"web": {"client_id": "i", "client_secret": "s"}}')
@@ -218,7 +251,7 @@ def test_what_the_published_client_does_not_offer_is_said_first(
 def paste_back(monkeypatch):
     finished = []
 
-    def finish(settings, address, *, post=None):
+    def finish(settings, address, *, account=None, post=None):
         finished.append(address)
         return result(("gmail",), missing=("calendar",))
 
@@ -283,7 +316,7 @@ def test_no_client_at_all_is_an_auth_error_that_says_what_to_do(settings):
 
 
 def test_a_google_sign_in_that_fails_is_an_auth_error(client, monkeypatch):
-    def refuse(settings, chosen, *, announce, post=None):
+    def refuse(settings, chosen, *, announce, account=None, post=None):
         raise google.GoogleSetupError("the browser did not come back")
 
     monkeypatch.setattr(google, "browser_signin", refuse)

@@ -31,6 +31,9 @@ the version starts with 0.
   with `keryx auth login google` replaces the two older sign-ins with one.
 - A sign-in turns the agents' Google tools on the first time only. If you have set
   `GOOGLE_WORKSPACE_MCP` to false, signing in again leaves it off.
+- Signing in as a different Google account from the one you signed in as before is
+  refused unless you say you mean it: `keryx setup` asks, and the command line takes
+  `--account ADDRESS`.
 - The agents' Google tools are attached only once you have signed in, and they can no
   longer open a sign-in of their own in the middle of a task.
 - Turning `check_email` off no longer offers to delete the Google sign-in, because the

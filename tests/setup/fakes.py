@@ -81,6 +81,8 @@ class ScriptedPrompter:
             raise AssertionError(f"expected a question with {fragment!r}, got {kind}: {message!r}")
         if isinstance(answer, BaseException):
             raise answer
+        if isinstance(answer, Lazy):
+            return answer.read()
         return answer
 
     def select(self, message, choices, *, default=None) -> str:
@@ -130,6 +132,14 @@ class ScriptedPrompter:
 
 #: Take whatever the question offers by default.
 DEFAULT = object()
+
+
+class Lazy:
+    """An answer worked out when its question is asked, from what the wizard has done by
+    then: the address to paste for a link that did not exist when the test was written."""
+
+    def __init__(self, read) -> None:
+        self.read = read
 
 
 @dataclass
@@ -189,9 +199,9 @@ class FakeWorld:
             self.calls.append(("task", agent, prompt))
             return self.task_result
 
-        def google_signed_in(settings, asked):
+        def google_grant(settings, asked):
             from keryx.integrations import google
-            from keryx.setup.google import GoogleSetupError, SignInResult
+            from keryx.setup.google import GoogleSetupError, Grant
 
             if self.google_error:
                 return GoogleSetupError(self.google_error)  # a failure is a value, as it is live
@@ -203,25 +213,23 @@ class FakeWorld:
                 scopes=google.requested_scopes(granted),
                 email=self.gmail,
             )
-            path = google.write_token(settings, token)
-            return SignInResult(
-                email=self.gmail,
-                connected=token.connected,
-                missing=tuple(name for name in asked if name not in token.connected),
-                path=path,
-                whose="your own Google client",
-            )
+            # A grant is in memory only: the wizard keeps it, or does not.
+            return Grant(token=token, asked=tuple(asked), whose="your own Google client")
 
         def google_browser(settings, chosen, announce):
             self.calls.append(("google_browser", chosen.services))
             announce("https://accounts.google.com/o/oauth2/v2/auth?fake", True)
-            return google_signed_in(settings, chosen.services)
+            return google_grant(settings, chosen.services)
 
         def google_finish(settings, redirected_to):
             from keryx.integrations.google import SERVICES
 
             self.calls.append(("google_finish", redirected_to))
-            return google_signed_in(settings, tuple(SERVICES))
+            return google_grant(settings, tuple(SERVICES))
+
+        def google_discard(settings, grant):
+            self.calls.append(("google_discard", grant.email))
+            return True
 
         def record(kind, code):
             def run(argv):
@@ -256,6 +264,7 @@ class FakeWorld:
             headless=lambda: self.headless,
             google_browser_signin=google_browser,
             google_finish=google_finish,
+            google_discard=google_discard,
             http_post=post,
             ssh_hosts=lambda: self.calls.append(("ssh_hosts",)) or list(self.ssh_hosts),
             ssh_master_alive=lambda alias: self.calls.append(("master", alias))

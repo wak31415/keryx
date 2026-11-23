@@ -4,6 +4,8 @@ import dataclasses
 import json
 import stat
 
+import pytest
+
 from keryx.config.store import ConfigStore
 from keryx.integrations import google as account
 from keryx.integrations.google import SERVICES
@@ -13,7 +15,7 @@ from keryx.setup.rewind import Recorder
 from keryx.setup.ui import Back, Forward
 from keryx.setup.wizard import Section, run_walk
 
-from .fakes import DEFAULT
+from .fakes import DEFAULT, Lazy
 
 ALL = tuple(SERVICES)
 CLIENT = {"installed": {"client_id": "cid", "client_secret": "csecret"}}
@@ -36,6 +38,16 @@ def published(tmp_path, monkeypatch, **extra):
     path.write_text(json.dumps({"installed": {"client_id": "cid", "client_secret": "csecret"},
                                 **extra}))
     monkeypatch.setattr(account, "PUBLISHED_CLIENT_FILE", path)
+
+
+def landed(ctx, code="c"):
+    """The address the browser lands on for the link the wizard has just shown."""
+
+    def read() -> str:
+        pending = json.loads((ctx.settings.data_dir / "google_signin.json").read_text())
+        return f"http://localhost:1/?state={pending['state']}&code={code}"
+
+    return Lazy(read)
 
 
 def signed_in(ctx, services=ALL, email="sam@example.com"):
@@ -97,20 +109,21 @@ def test_signed_in_with_everything_connected_asks_nothing(make_ctx, world):
 
 def test_a_partial_sign_in_offers_to_sign_in_again(make_ctx, world):
     own_client()
-    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
+    ctx = make_ctx([("signed in to Google as sam@example.com. Sign in again?", DEFAULT)])
     signed_in(ctx, ["gmail"])
 
     google.run_section(ctx)
 
-    assert [choice.label for choice in ctx.ui.choices["Sign in to Google?"]] == [
-        "Keep this sign-in", "Sign in again"
+    [(question, choices)] = ctx.ui.choices.items()
+    assert [(choice.value, choice.label) for choice in choices] == [
+        ("keep", "Keep this sign-in"), ("again", "Sign in again")
     ]  # fmt: skip
     assert world.calls == [("google_browser", ALL)]
 
 
 def test_reviewing_a_complete_sign_in_keeps_it_by_default(make_ctx, world):
     own_client()
-    ctx = make_ctx([("Sign in to Google?", DEFAULT)], review=True)
+    ctx = make_ctx([("Sign in again?", DEFAULT)], review=True)
     signed_in(ctx)
 
     google.run_section(ctx)
@@ -210,12 +223,13 @@ def test_what_keryxs_client_does_not_offer_is_said_once_and_not_asked_for(
 def test_with_no_display_the_address_is_pasted_back(make_ctx, world):
     own_client()
     world.headless = True
-    ctx = make_ctx([("Sign in to Google?", DEFAULT),
-                    ("address you landed on", "http://localhost:1/?state=s&code=c")])
+    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
+    ctx.ui.answers.append(("address you landed on", landed(ctx)))
 
     google.run_section(ctx)
 
-    assert world.calls == [("google_finish", "http://localhost:1/?state=s&code=c")]
+    [(probe, address)] = world.calls
+    assert probe == "google_finish" and address.startswith("http://localhost:1/?state=")
     assert not (ctx.settings.data_dir / "google_signin.json").exists()
     [panel] = ctx.ui.lines("panel")
     assert "open this on any device" in panel and "redirect_uri=http%3A%2F%2Flocalhost%3A1" in panel
@@ -236,9 +250,9 @@ def test_a_blank_address_skips_the_sign_in_and_leaves_no_verifier_behind(make_ct
 def test_a_sign_in_that_fails_can_be_tried_the_other_way_or_left(make_ctx, world):
     own_client()
     world.google_error = "the browser did not come back within 5 minutes"
-    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("Try the sign-in again?", DEFAULT),
-                    ("address you landed on", "http://localhost:1/?x"),
-                    ("Try the sign-in again?", "here"), ("Try the sign-in again?", "skip")])
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("Try the sign-in again?", DEFAULT)])
+    ctx.ui.answers += [("address you landed on", landed(ctx)),
+                       ("Try the sign-in again?", "here"), ("Try the sign-in again?", "skip")]
 
     google.run_section(ctx)
 
@@ -264,17 +278,68 @@ def test_no_client_after_all_is_said_not_raised(make_ctx, world, monkeypatch):
 # --- the address, and the agents' tools ---------------------------------------------------
 
 
-def test_a_different_saved_address_is_replaced_only_after_asking(make_ctx, world):
+def test_an_account_other_than_the_saved_one_is_kept_only_after_a_yes(make_ctx, world):
     own_client()
     ConfigStore().set({"USER_GOOGLE_EMAIL": "old@example.com"})
-    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("Save sam@example.com instead?", False)])
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("Use sam@example.com?", True)])
 
     google.run_section(ctx)
 
-    assert ctx.settings.user_google_email == "old@example.com"
+    assert account.read_token(ctx.settings).email == "sam@example.com"
+    assert ctx.settings.user_google_email == "sam@example.com"
     assert ctx.settings.google_workspace_mcp is True
-    # No is not a way to stay the old account: the sign-in is the new one, and it says so.
-    assert any("Agents act as sam@example.com" in line for line in ctx.ui.lines("warn"))
+    assert ("google_discard", "sam@example.com") not in world.calls
+
+
+def test_an_unexpected_account_is_turned_down_by_default_and_nothing_is_saved(make_ctx, world):
+    """An unexpected account is what somebody else finishing the sign-in looks like."""
+    own_client()
+    ConfigStore().set({"USER_GOOGLE_EMAIL": "old@example.com"})
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("Use sam@example.com?", DEFAULT)])
+
+    google.run_section(ctx)
+
+    assert account.read_token(ctx.settings) is None
+    assert ctx.settings.user_google_email == "old@example.com"
+    assert ConfigStore().stored().get("GOOGLE_WORKSPACE_MCP") is None
+    assert world.calls[-1] == ("google_discard", "sam@example.com")
+    assert any("Nothing was saved" in line for line in ctx.ui.lines("note"))
+
+
+def test_esc_at_that_question_leaves_nothing_half_saved(make_ctx, world):
+    """Nothing is written before the yes, so there is no token without its settings."""
+    own_client()
+    ConfigStore().set({"USER_GOOGLE_EMAIL": "old@example.com"})
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        ("Use sam@example.com?", Back()),
+        ("Sign in to Google?", "skip"),
+    ])
+
+    assert run_walk(ctx, [SECTION], {}) is True
+
+    assert account.read_token(ctx.settings) is None
+    assert ConfigStore().stored() == {
+        "GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs",
+        "USER_GOOGLE_EMAIL": "old@example.com",
+    }  # fmt: skip
+
+
+def test_a_sign_in_that_cannot_be_saved_is_said_and_saves_no_settings(
+    make_ctx, world, monkeypatch
+):
+    own_client()
+
+    def refuse(settings, grant):
+        raise GoogleSetupError("could not save the sign-in (No space left on device)")
+
+    monkeypatch.setattr(google, "keep", refuse)
+    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
+
+    google.run_section(ctx)
+
+    assert ctx.ui.lines("error") == ["could not save the sign-in (No space left on device)"]
+    assert ConfigStore().stored().get("GOOGLE_WORKSPACE_MCP") is None
 
 
 def test_agents_tools_the_owner_turned_off_stay_off(make_ctx, world):
@@ -302,8 +367,35 @@ def test_the_same_address_is_not_asked_about(make_ctx, world):
 
 
 def test_going_back_and_forward_never_signs_in_twice(make_ctx, world):
-    """Esc from the next section lands on this one's question, and Tab goes forward again:
-    the section finds everything connected, asks nothing and opens no browser."""
+    """Esc twice, back past this section, and Tab forward through it again: the section
+    finds everything connected, asks nothing and opens no browser."""
+    own_client()
+
+    def before(ctx):
+        ctx.ui.text("First question", default="")
+
+    def after(ctx):
+        ctx.ui.text("Next question", default="")
+
+    ctx = make_ctx([
+        ("First question", "one"),
+        ("Sign in to Google?", "signin"),
+        ("Next question", Back()),             # back to Google, now signed in
+        ("Sign in again?", Back()),            # and back again, to the section before
+        ("First question", Forward()),         # then forward through both
+        ("Next question", "done"),
+    ])
+    walk = [Section("first", "First", before), SECTION, Section("next", "Next", after)]
+
+    assert run_walk(ctx, walk, {}) is True
+
+    assert ctx.ui.done()
+    assert world.calls == [("google_browser", ALL)]
+
+
+def test_enter_after_going_back_does_not_sign_in_a_second_time(make_ctx, world):
+    """The answer recorded before the sign-in was "sign in". After it, the question is
+    another one with other answers, so Enter keeps the sign-in that was just made."""
     own_client()
 
     def after(ctx):
@@ -311,15 +403,60 @@ def test_going_back_and_forward_never_signs_in_twice(make_ctx, world):
 
     ctx = make_ctx([
         ("Sign in to Google?", "signin"),
-        ("Next question", Back()),             # back to Google, now signed in
-        ("Sign in to Google?", Forward()),     # and forward again, from the record
+        ("Next question", Back()),
+        ("Sign in again?", DEFAULT),           # Enter: whatever is highlighted
         ("Next question", "done"),
     ])
 
     assert run_walk(ctx, [SECTION, Section("next", "Next", after)], {}) is True
 
-    assert ctx.ui.done()
-    assert world.calls == [("google_browser", ALL)]
+    assert ctx.ui.done() and world.calls == [("google_browser", ALL)]
+
+
+def test_an_address_from_an_earlier_link_is_refused_at_the_question(make_ctx, world):
+    """Going back to the address after it was used offers it again, and it is spent."""
+    own_client()
+    world.headless = True
+    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
+    ctx.ui.answers.append(("address you landed on", "http://localhost:1/?state=earlier&code=c"))
+
+    with pytest.raises(AssertionError, match="not from the link above"):
+        google.run_section(ctx)
+
+    assert world.calls == []
+
+
+def test_esc_after_a_pasted_sign_in_does_not_take_the_spent_address_again(make_ctx, world):
+    """Back at the address question there is a new link, and the old address is offered:
+    Enter is refused there and then, not exchanged a second time."""
+    own_client()
+    world.headless = True
+    ConfigStore().set({"USER_GOOGLE_EMAIL": "old@example.com"})
+    ctx = make_ctx([("Sign in to Google?", "signin")])
+    ctx.ui.answers += [
+        ("address you landed on", landed(ctx)),
+        ("Use sam@example.com?", Back()),
+        ("address you landed on", DEFAULT),     # the address from the link before
+    ]
+
+    with pytest.raises(AssertionError, match="not from the link above"):
+        run_walk(ctx, [SECTION], {})
+
+    assert [call[0] for call in world.calls] == ["google_finish"]
+    assert account.read_token(ctx.settings) is None
+
+
+def test_the_address_question_checks_only_that_it_answers_this_link(settings):
+    settings.google_oauth_client_id, settings.google_oauth_client_secret = "cid", "cs"
+    problem = google._from_this_link(settings)
+    assert "not an address" in problem("http://localhost:1/?state=s")  # no link is out yet
+
+    state = google.start_signin(settings).split("state=")[1].split("&")[0]
+
+    assert problem("") is None and "not an address" in problem("http://[::1")
+    assert problem(f"'http://localhost:1/?state={state}&code=c'") is None
+    assert "not from the link above" in problem("http://localhost:1/?state=other&code=c")
+    assert problem("http://localhost:1/?error=access_denied") is None  # Google's no is an answer
 
 
 def test_a_sign_in_that_failed_is_not_run_again_on_the_way_back(make_ctx, world):
@@ -345,20 +482,24 @@ def test_a_sign_in_that_failed_is_not_run_again_on_the_way_back(make_ctx, world)
     assert world.calls == [("google_browser", ALL)]
 
 
-def test_a_replayed_section_runs_no_probe_and_asks_nothing(make_ctx, world):
+def test_a_section_replayed_from_its_record_runs_no_probe(make_ctx, world):
+    """The record holds the sign-in's result, and a replay is handed it back: the same
+    answers, in a section that still has nobody signed in, open no second browser."""
     own_client()
-    ctx = make_ctx([("Sign in to Google?", "signin")])
+    ConfigStore().set({"USER_GOOGLE_EMAIL": "old@example.com"})
+    ctx = make_ctx([("Sign in to Google?", "signin"), ("Use sam@example.com?", False)])
     probes = ctx.probes
     first = Recorder(ctx.ui)
     ctx.ui, ctx.probes = first, first.probes(probes)
     google.run_section(ctx)
     calls = list(world.calls)
+    assert calls == [("google_browser", ALL), ("google_discard", "sam@example.com")]
 
     second = Recorder(first.ui, first.log)
     ctx.ui, ctx.probes, ctx.review = second, second.probes(probes), True
     google.run_section(ctx)
 
-    assert world.calls == calls and first.ui.done()
+    assert world.calls == calls and first.ui.done()  # not signed in twice, not revoked twice
     assert [entry.name for entry in second.log] == [entry.name for entry in first.log]
 
 

@@ -49,12 +49,13 @@ def test_the_default_probes_reach_the_real_implementations(monkeypatch, settings
     monkeypatch.setattr("keryx.setup.agents.run_task", fake)
     monkeypatch.setattr("keryx.setup.agents.is_headless", lambda: True)
     monkeypatch.setattr(
-        "keryx.setup.google.browser_signin",
+        "keryx.setup.google.browser_grant",
         lambda settings, chosen, announce: ("browser", chosen, announce),
     )
     monkeypatch.setattr(
-        "keryx.setup.google.finish_signin", lambda settings, address: ("finished", address)
+        "keryx.setup.google.finish_grant", lambda settings, address: ("finished", address)
     )
+    monkeypatch.setattr("keryx.setup.google.discard", lambda settings, grant: grant == "g")
     probes = Probes()
 
     assert asyncio.run(probes.smoke(settings, "claude")).ok
@@ -62,6 +63,7 @@ def test_the_default_probes_reach_the_real_implementations(monkeypatch, settings
     assert probes.google_browser_signin(settings, "offer", print) == ("browser", "offer", print)
     assert probes.google_finish(settings, "http://localhost:1/?x") == (
         "finished", "http://localhost:1/?x")
+    assert probes.google_discard(settings, "g") is True
     assert probes.headless() is True
 
 
@@ -84,8 +86,8 @@ def test_a_google_sign_in_that_fails_is_handed_back_not_raised(
     def fail(*args, **kwargs):
         raise error
 
-    monkeypatch.setattr("keryx.setup.google.browser_signin", fail)
-    monkeypatch.setattr("keryx.setup.google.finish_signin", fail)
+    monkeypatch.setattr("keryx.setup.google.browser_grant", fail)
+    monkeypatch.setattr("keryx.setup.google.finish_grant", fail)
     probes = Probes()
 
     result = probes.google_browser_signin(settings, "offer", print)

@@ -433,18 +433,29 @@ email answers on a call. What it leaves, and what protects it:
   `state`, and on a shared machine every user can read every process's command line. So
   the browser is opened on the listener's own address (`/start`), which sends it on to
   Google once, and the link itself is shown only on your terminal.
+- **An account nobody expected is never saved silently.** Once you have signed in, Keryx
+  knows your address (`USER_GOOGLE_EMAIL`). A later sign-in that comes back as any other
+  account is refused before anything is written, and the grant is revoked: `keryx setup`
+  asks whether you meant it, with no as the answer if you just press Enter, and the
+  command line refuses and names both addresses, to be run again with `--account` if you
+  did mean it. Every way of finishing somebody else's sign-in ends as *their* account, so
+  this is the check that does not depend on winning a race.
 - **The accepted risk, on a machine you share:** another user can see the listener's
   port and ask for `/start` themselves. If they get there before your browser does, they
   hold the link, and could finish the sign-in with a Google account of their own, so that
-  Keryx's agents would read and write *their* account while you believe it is yours. Two
+  Keryx's agents would read and write *their* account while you believe it is yours. Three
   things stand in the way. `/start` works once: when it is asked for a second time, which
-  is your browser arriving after theirs, Keryx stops the sign-in and saves nothing. And
-  the command always ends by saying which account signed in. Neither is proof against a
-  program that finishes the whole exchange in the moment before your browser opens, so on
-  a machine you share with people you do not trust, sign in with `--headless`: there is no
-  listener and nothing on a command line, the browser lands on an address nothing listens
-  on, and you paste that address back yourself. A client of your own in Personal mode
-  closes it too, because Google refuses every account but yours.
+  is your browser arriving after theirs, Keryx stops the sign-in and saves nothing, and
+  because every connection is served at once they cannot hold your browser back to stop
+  that. A sign-in as an account other than the one you signed in as before is refused, as
+  above. And the command always ends by saying which account signed in. What remains is
+  the **first** sign-in on a machine, when there is no address to compare with, against a
+  program that finishes the whole exchange in the moment before your browser opens, or
+  that exhausts the listener's process so your browser is never served. Then the only
+  sign is the address the command prints. So on a machine you share with people you do
+  not trust, sign in with `--headless`: there is no listener, the browser lands on an
+  address nothing listens on, and you paste that address back yourself. A client of your
+  own in Personal mode closes it too, because Google refuses every account but yours.
 - **An address pasted back is a code in your scrollback.** It is single-use, it expires in
   minutes, and it cannot be exchanged without the verifier, which waits in
   `DATA_DIR/google_signin.json` (0600) until the sign-in finishes.

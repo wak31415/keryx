@@ -340,13 +340,52 @@ def test_auth_login_google_without_a_terminal_prints_a_link_then_finishes_with_t
     assert stored["GOOGLE_WORKSPACE_MCP"] is True
 
 
+def test_auth_login_google_refuses_an_account_nobody_expected_until_it_is_named(
+    home, tmp_path, monkeypatch
+):
+    from urllib.parse import parse_qs, urlparse
+
+    home.set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs",
+              "USER_GOOGLE_EMAIL": "owner@example.com"})
+    posted = []
+
+    def start():
+        first = run("auth", "login", "google", "--headless")
+        [link] = [line for line in first.output.splitlines() if line.startswith("https://")]
+        query = parse_qs(urlparse(link).query)
+
+        def post(url, data, timeout):
+            posted.append(url)
+            return google_answer(query["scope"][0])
+
+        monkeypatch.setattr("keryx.setup.google.httpx.post", post)
+        return f"http://localhost:1/?state={query['state'][0]}&code=c"
+
+    refused = run("auth", "login", "google", "--callback-url", start())
+
+    assert refused.exit_code == 1
+    assert "signed in as ada@example.com" in refused.output
+    assert "saved as owner@example.com" in refused.output
+    assert "--account ada@example.com" in refused.output
+    assert not (tmp_path / "keryx" / "google_token.json").exists()
+    assert posted[-1] == "https://oauth2.googleapis.com/revoke"
+    assert home.stored()["USER_GOOGLE_EMAIL"] == "owner@example.com"
+
+    named = run("auth", "login", "google", "--account", "ada@example.com",
+                "--callback-url", start())
+
+    assert named.exit_code == 0, named.output
+    assert "USER_GOOGLE_EMAIL is now ada@example.com (it was owner@example.com)." in named.output
+    assert (tmp_path / "keryx" / "google_token.json").is_file()
+
+
 def test_auth_login_google_with_a_browser_here_is_one_command(home, monkeypatch):
     from keryx.setup import google
 
     home.set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
     asked = []
 
-    def signin(settings, chosen, *, announce, post=None):
+    def signin(settings, chosen, *, announce, account=None, post=None):
         asked.append(chosen.services)
         announce("https://accounts.google.com/x", True)
         return google.SignInResult(

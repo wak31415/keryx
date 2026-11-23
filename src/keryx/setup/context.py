@@ -64,10 +64,10 @@ def _task(settings: Settings, agent: str, prompt: str) -> Awaitable[RunResult]:
 
 
 def _google_browser_signin(settings: Settings, chosen: Any, announce: Any) -> Any:
-    from keryx.setup.google import GoogleSetupError, browser_signin
+    from keryx.setup.google import GoogleSetupError, browser_grant
 
     try:
-        return browser_signin(settings, chosen, announce=announce)
+        return browser_grant(settings, chosen, announce=announce)
     except GoogleSetupError as error:
         return error
     except KeyboardInterrupt:
@@ -76,12 +76,18 @@ def _google_browser_signin(settings: Settings, chosen: Any, announce: Any) -> An
 
 
 def _google_finish(settings: Settings, redirected_to: str) -> Any:
-    from keryx.setup.google import GoogleSetupError, finish_signin
+    from keryx.setup.google import GoogleSetupError, finish_grant
 
     try:
-        return finish_signin(settings, redirected_to)
+        return finish_grant(settings, redirected_to)
     except GoogleSetupError as error:
         return error
+
+
+def _google_discard(settings: Settings, grant: Any) -> bool:
+    from keryx.setup.google import discard
+
+    return discard(settings, grant)
 
 
 def _install_service(settings: Settings, echo: Callable[[str], None]) -> None:
@@ -126,12 +132,14 @@ class Probes:
     #: `keryx service install`; raises `ServiceError` with what to fix.
     install_service: Callable[[Settings, Callable[[str], None]], None] = _install_service
     headless: Callable[[], bool] = _headless
-    #: The Google sign-in with a browser on this machine (`setup.google.browser_signin`:
+    #: The Google sign-in with a browser on this machine (`setup.google.browser_grant`:
     #: listener, browser, exchange), and the exchange that ends a pasted-back one. Each
-    #: returns a `SignInResult`, or the `GoogleSetupError` it ended in *as a value*: a
-    #: result is recorded and replayed, and a raise would run the sign-in again on Esc.
+    #: returns a `Grant` that nothing has saved yet, or the `GoogleSetupError` it ended in
+    #: *as a value*: a result is recorded and replayed, and a raise would run the sign-in
+    #: again on Esc. `google_discard` revokes a grant the owner turned down.
     google_browser_signin: Callable[[Settings, Any, Any], Any] = _google_browser_signin
     google_finish: Callable[[Settings, str], Any] = _google_finish
+    google_discard: Callable[[Settings, Any], bool] = _google_discard
     http_post: Callable[..., Any] = httpx.post
     #: `~/.ssh/config`, read locally (`plugins.ssh_hosts`): never a connection.
     ssh_hosts: Callable[[], list] = _ssh_hosts

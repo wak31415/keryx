@@ -320,6 +320,12 @@ def read_token(settings: Settings) -> GoogleToken | None:
     return _token(_read_json(token_path(settings)))
 
 
+def token_from(path: Path, *, email: str = "") -> GoogleToken | None:
+    """Any credential file with a refresh token in it, as a token: an older sign-in's, or
+    one the agents' MCP server holds. None when it could not refresh."""
+    return _token(_read_json(path), email=email)
+
+
 def write_token(settings: Settings, token: GoogleToken) -> Path:
     """Save `token` as the one Google credential, atomically, readable by the owner alone."""
     return write_private(token_path(settings), json.dumps(token.as_dict()))

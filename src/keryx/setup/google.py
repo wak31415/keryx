@@ -80,6 +80,11 @@ START_PATH = "/start"
 #: What the listener answers itself with when its start page is asked for a second time.
 OPENED_TWICE = "opened_twice"
 REQUEST_TIMEOUT_S = 30.0
+REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+#: Where an owner ends a grant by hand, when Keryx could not.
+PERMISSIONS_URL = "https://myaccount.google.com/permissions"
+#: How much of an error code somebody else wrote is ever printed.
+MAX_ERROR_CHARS = 80
 
 SIGN_IN = "`keryx auth login google`"
 CLOSE_PAGE = "Keryx has Google's answer. You can close this tab and go back to the terminal.\n"
@@ -145,6 +150,11 @@ class Offer:
     services: tuple[str, ...]
     #: Services left out because Keryx's published client is not approved for them yet.
     withheld: tuple[str, ...] = ()
+
+    @property
+    def notes(self) -> list[str]:
+        """What to say before the link: what is left out, in a line; nothing when nothing is."""
+        return [line for line in (self.note,) if line]
 
     @property
     def note(self) -> str | None:
@@ -240,10 +250,25 @@ def finish_signin(
     settings: Settings,
     redirected_to: str,
     *,
+    account: str | None = None,
     post: Callable[..., Any] | None = None,
     get: Callable[..., Any] | None = None,
 ) -> "SignInResult":
-    """Finish the sign-in `start_signin` began, from the address the browser landed on."""
+    """Finish the sign-in `start_signin` began, from the address the browser landed on, and
+    keep it: refused when the account is not the one expected (`admit`)."""
+    grant = finish_grant(settings, redirected_to, post=post, get=get)
+    admit(settings, grant, account, post=post)
+    return keep(settings, grant)
+
+
+def finish_grant(
+    settings: Settings,
+    redirected_to: str,
+    *,
+    post: Callable[..., Any] | None = None,
+    get: Callable[..., Any] | None = None,
+) -> "Grant":
+    """Exchange the code in the address the browser landed on. Nothing is saved yet."""
     try:
         saved = json.loads(_pending_path(settings).read_text(encoding="utf-8"))
         pending = Pending(**{**saved, "services": tuple(saved["services"])})
@@ -254,7 +279,7 @@ def finish_signin(
     except ValueError:
         raise GoogleSetupError("that is not an address; copy the whole address bar") from None
     answer = {key: values[0] for key, values in query.items()}
-    return _complete(settings, pending, answer, post=post, get=get)
+    return exchange(settings, pending, answer, post=post, get=get)
 
 
 def discard_pending(settings: Settings) -> None:
@@ -438,11 +463,31 @@ def browser_signin(
     chosen: Offer | None = None,
     *,
     announce: Announce,
+    account: str | None = None,
     timeout_s: float = CALLBACK_TIMEOUT_S,
     post: Callable[..., Any] | None = None,
     get: Callable[..., Any] | None = None,
 ) -> "SignInResult":
-    """The whole sign-in with a browser on this machine: listen, open, wait, exchange.
+    """The whole sign-in with a browser on this machine, kept: refused when the account is
+    not the one expected (`admit`)."""
+    grant = browser_grant(
+        settings, chosen, announce=announce, timeout_s=timeout_s, post=post, get=get
+    )
+    admit(settings, grant, account, post=post)
+    return keep(settings, grant)
+
+
+def browser_grant(
+    settings: Settings,
+    chosen: Offer | None = None,
+    *,
+    announce: Announce,
+    timeout_s: float = CALLBACK_TIMEOUT_S,
+    post: Callable[..., Any] | None = None,
+    get: Callable[..., Any] | None = None,
+) -> "Grant":
+    """A sign-in with a browser on this machine: listen, open, wait, exchange. Nothing is
+    saved yet.
 
     The browser is opened on the listener's start page, never on the consent link itself:
     a browser's command line can be read by every user of the machine, and the link holds
@@ -459,10 +504,25 @@ def browser_signin(
         answer = listener.wait(pending.state, timeout_s)
     finally:
         listener.close()
-    return _complete(settings, pending, answer, post=post, get=get)
+    return exchange(settings, pending, answer, post=post, get=get)
 
 
 # --- the exchange -------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Grant:
+    """What Google granted, in memory: a sign-in that has not been kept yet."""
+
+    token: GoogleToken
+    #: The services the sign-in asked for.
+    asked: tuple[str, ...]
+    #: Whose client it was signed in with, for the sentence that says so.
+    whose: str
+
+    @property
+    def email(self) -> str:
+        return self.token.email
 
 
 @dataclass(frozen=True)
@@ -485,6 +545,12 @@ def _json(response: Any) -> dict[str, Any]:
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
+
+
+def _plain(text: Any) -> str:
+    """Something Google (or whoever answered for it) said, safe to print: no control
+    characters, and no longer than an error code has any reason to be."""
+    return "".join(char for char in str(text) if char.isprintable())[:MAX_ERROR_CHARS]
 
 
 def _id_token_email(id_token: Any) -> str:
@@ -513,18 +579,62 @@ def _userinfo_email(access_token: Any, get: Callable[..., Any]) -> str:
     return str(_json(response).get("email") or "") if response.status_code == 200 else ""
 
 
-def _complete(
+def revoke(refresh_token: str, *, post: Callable[..., Any] | None = None) -> bool:
+    """Ask Google to end the grant a refresh token stands for; True when it says it has.
+
+    Never raises: a grant that could not be revoked is said, not a reason to keep a file.
+    Google ends the whole grant, for that account and that client, not the one token.
+    """
+    post = post or httpx.post
+    try:
+        response = post(REVOKE_URL, data={"token": refresh_token}, timeout=REQUEST_TIMEOUT_S)
+    except httpx.HTTPError:
+        return False
+    return response.status_code == 200
+
+
+def _shares_a_saved_grant(settings: Settings, token: GoogleToken) -> bool:
+    """Whether revoking `token` could end a sign-in that is saved: Google revokes by
+    account and client, so one for the same client, and not known to be another account's,
+    would go with it."""
+    saved = [google.read_token(settings)]
+    legacy = legacy_token_path(settings)
+    if legacy.is_file():
+        saved.append(google.token_from(legacy))
+    return any(
+        one is not None
+        and one.client_id == token.client_id
+        and (not one.email or not token.email or one.email.lower() == token.email.lower())
+        for one in saved
+    )
+
+
+def discard(
+    settings: Settings, grant: "Grant | GoogleToken", *, post: Callable[..., Any] | None = None
+) -> bool:
+    """Give up a grant that will not be kept, revoking it at Google so that nothing is left
+    there with nobody holding it. Not revoked when that would take a saved sign-in with it:
+    signing in again as the same account and then leaving everything unticked must not end
+    the sign-in that was working. True when it was revoked."""
+    token = grant.token if isinstance(grant, Grant) else grant
+    if _shares_a_saved_grant(settings, token):
+        return False
+    return revoke(token.refresh_token, post=post)
+
+
+def exchange(
     settings: Settings,
     pending: Pending,
     answer: Mapping[str, str],
     *,
     post: Callable[..., Any] | None = None,
     get: Callable[..., Any] | None = None,
-) -> SignInResult:
-    """Exchange the code in Google's `answer` and keep what was granted.
+) -> Grant:
+    """Exchange the code in Google's `answer` for a grant. Nothing is saved: `keep` does.
 
     `post` and `get` are `httpx`'s, looked up when called so that nothing bound at import
-    time can reach the network from a test that patched them.
+    time can reach the network from a test that patched them. A grant that turns out to be
+    unusable is revoked before the refusal, not left at Google with nobody holding it.
     """
     post, get = post or httpx.post, get or httpx.get
     if answer.get("error") == OPENED_TWICE:
@@ -534,7 +644,7 @@ def _complete(
             "address back instead"
         )
     if answer.get("error"):
-        raise GoogleSetupError(f"Google said: {answer['error']}")
+        raise GoogleSetupError(f"Google said: {_plain(answer['error'])}")
     if not _same_state(answer.get("state", ""), pending.state):
         raise GoogleSetupError(
             f"that address belongs to a different sign-in; start again with {SIGN_IN}"
@@ -562,42 +672,104 @@ def _complete(
     body = _json(response)
     if response.status_code != 200 or not body.get("refresh_token"):
         raise GoogleSetupError(
-            f"Google refused the code ({body.get('error', response.status_code)}); "
+            f"Google refused the code ({_plain(body.get('error', response.status_code))}); "
             f"start again with {SIGN_IN}"
         )
-    # What Google says it granted, which granular consent can make less than was asked.
-    granted = str(body.get("scope") or answer.get("scope") or "").split()
-    scopes = tuple(granted) or google.requested_scopes(pending.services)
-    email = _id_token_email(body.get("id_token")) or _userinfo_email(
-        body.get("access_token"), get
-    )
+    discard_pending(settings)
+    # Only what the token endpoint says it granted is believed. Granular consent can make
+    # that less than was asked, and the redirect's own `scope` is whatever the browser sent.
     token = GoogleToken(
         refresh_token=body["refresh_token"],
         client_id=client.client_id,
         client_secret=client.client_secret,
-        scopes=scopes,
-        email=email,
+        scopes=tuple(str(body.get("scope") or "").split()),
+        email=_id_token_email(body.get("id_token"))
+        or _userinfo_email(body.get("access_token"), get),
     )
-    if not token.connected:
+    refusal = None
+    if not token.scopes:
+        refusal = f"Google's answer did not say what was granted; try {SIGN_IN} again"
+    elif not token.connected:
+        refusal = "nothing was granted: tick what Keryx may use on Google's screen and try again"
+    elif not token.email:
+        refusal = f"Google did not say which account signed in; try {SIGN_IN} again"
+    if refusal is not None:
+        discard(settings, token, post=post)
+        raise GoogleSetupError(refusal)
+    return Grant(token=token, asked=pending.services, whose=client.whose)
+
+
+def unexpected_account(settings: Settings, grant: Grant, account: str | None = None) -> str | None:
+    """The address this sign-in was expected to be, when it is not: the one asked for by
+    name, else the one saved from the sign-in before. None when it is the account
+    expected, or the first there has been."""
+    expected = (account or settings.user_google_email or "").strip()
+    return expected if expected and expected.lower() != grant.email.lower() else None
+
+
+def admit(
+    settings: Settings,
+    grant: Grant,
+    account: str | None = None,
+    *,
+    post: Callable[..., Any] | None = None,
+) -> None:
+    """Refuse a sign-in that came back as an account nobody expected, before anything is
+    saved, and revoke it.
+
+    An unexpected account is how every way of finishing somebody else's sign-in shows: a
+    link read off the machine and approved as another account ends here, as that account.
+    So it is never taken silently. `account` is the owner saying which one they mean.
+    """
+    expected = unexpected_account(settings, grant, account)
+    if expected is None:
+        return
+    discard(settings, grant, post=post)
+    if account:
         raise GoogleSetupError(
-            "nothing was granted: tick what Keryx may use on Google's screen and try again"
+            f"Google signed in as {grant.email}, not {expected}, so nothing was saved; sign "
+            f"in as {expected}, or pass --account {grant.email}"
         )
-    if not email:
-        raise GoogleSetupError(f"Google did not say which account signed in; try {SIGN_IN} again")
-    path = google.write_token(settings, token)
-    google.export_for_mcp(settings, token, only=True)
+    raise GoogleSetupError(
+        f"Google signed in as {grant.email}, but your Google address is saved as "
+        f"{expected}, so nothing was saved. If {grant.email} is the account you mean, run "
+        f"`keryx auth login google --account {grant.email}`. If it is not, something else "
+        "on this machine may have finished the sign-in: run it again with --headless"
+    )
+
+
+def keep(settings: Settings, grant: Grant) -> SignInResult:
+    """Make `grant` the sign-in: the one token and its copy for the agents' MCP server,
+    both or neither. A sign-in that cannot be written leaves the one before it in place."""
+    path = google.token_path(settings)
+    try:
+        before = path.read_text(encoding="utf-8") if path.is_file() else None
+        google.write_token(settings, grant.token)
+        try:
+            google.export_for_mcp(settings, grant.token, only=True)
+        except OSError:
+            if before is None:
+                path.unlink(missing_ok=True)
+            else:
+                write_private(path, before)
+            raise
+    except OSError as exc:
+        raise GoogleSetupError(
+            f"could not save the sign-in ({exc.strerror or type(exc).__name__}); the one "
+            "before it, if any, is unchanged"
+        ) from None
     # One token now. The Gmail-only one an older sign-in left is spent once this one reads
     # Gmail; until it does, that file is still what `check_email` answers from.
-    if token.reads_gmail:
-        legacy_token_path(settings).unlink(missing_ok=True)
-    discard_pending(settings)
-    connected = token.connected
+    if grant.token.reads_gmail:
+        with contextlib.suppress(OSError):
+            legacy_token_path(settings).unlink(missing_ok=True)
+    connected = grant.token.connected
     return SignInResult(
-        email=email,
+        email=grant.email,
         connected=connected,
-        missing=tuple(name for name in pending.services if name not in connected),
+        missing=tuple(name for name in grant.asked if name not in connected),
         path=path,
-        whose=client.whose,
+        whose=grant.whose,
     )
 
 
@@ -616,6 +788,26 @@ def summary(result: SignInResult) -> list[str]:
     return lines
 
 
+#: `OAuthClient.whose` for a client the owner made, whose Cloud project is theirs to set up.
+OWN_CLIENT = "your own Google client"
+#: The services a Cloud project made by the older guide has no API enabled for.
+NEWER_APIS = ("drive", "docs", "sheets", "slides")
+
+
+def api_hint(result: SignInResult, *, published: bool) -> str | None:
+    """Where to enable the APIs, said once to an owner whose own Cloud project may predate
+    them: granting a scope does not enable its API, and the older guide enabled only Gmail
+    and Calendar. Keryx's own client has every API on; nothing can be asked without a call
+    to Google, so it is said rather than detected."""
+    newer = [name for name in NEWER_APIS if name in result.connected]
+    if published or not newer:
+        return None
+    return (
+        f"If an agent reports that the {labels(newer)} API is not enabled, enable it in your "
+        f"Google Cloud project: the links are in {guide_path()}."
+    )
+
+
 def service_lines(connected: Sequence[str], offered: Sequence[str]) -> list[tuple[bool, str]]:
     """One line per service on offer: whether it is connected, and what that enables."""
     return [
@@ -629,6 +821,10 @@ def service_lines(connected: Sequence[str], offered: Sequence[str]) -> list[tupl
 # --- the wizard section -------------------------------------------------------------------
 
 SKIP, SIGN_IN_NOW = "skip", "signin"
+#: The answers once somebody is signed in. Different values from the two above, and a
+#: different question: an answer recorded before the sign-in must not be offered after it,
+#: where "sign in" would mean doing it all a second time.
+KEEP, AGAIN = "keep", "again"
 HERE, ELSEWHERE = "here", "elsewhere"
 
 
@@ -643,8 +839,9 @@ def run_section(ctx: "SetupContext") -> None:
 def connect(ctx: "SetupContext") -> None:
     """Sign in to Google, unless everything on offer is connected already.
 
-    The same question whether or not somebody is signed in, so going back through the
-    wizard replays its answer, and the sign-in itself is a probe that is never run twice.
+    The sign-in is a probe, so going back through the wizard replays its result and never
+    runs it twice. Once it is kept, everything it implies is saved before anything else is
+    asked, so no question left unanswered can leave a token without its settings.
     """
     from keryx.setup.ui import Choice
 
@@ -655,32 +852,62 @@ def connect(ctx: "SetupContext") -> None:
     done = token is not None and all(name in token.connected for name in offered)
     if token is not None:
         _show(ctx, token.connected, offered, f"Google: signed in as {token.email or 'you'}")
-    if done and not ctx.review:
-        return
-    # With no client to hand, signing in starts with making one in the Google Cloud
-    # console: worth it by default only for Codex, whose tasks have no Google otherwise.
-    wanted = client is not None or "codex" in settings.enabled_agents
-    choice = ui.select(
-        "Sign in to Google?",
-        [
-            Choice(SKIP, "Keep this sign-in" if token is not None else "Skip for now"),
-            Choice(SIGN_IN_NOW, "Sign in again" if token is not None else "Sign in",
-                   hint="one consent screen"),
-        ],
-        default=SIGN_IN_NOW if wanted and not done else SKIP,
-    )
-    if choice == SKIP:
-        if token is None:
+        if done and not ctx.review:
+            return
+        if ui.select(
+            f"You are signed in to Google as {token.email or 'an unnamed account'}. Sign in "
+            "again?",
+            [Choice(KEEP, "Keep this sign-in"),
+             Choice(AGAIN, "Sign in again", hint="one consent screen")],
+            default=KEEP if done else AGAIN,
+        ) == KEEP:
+            return
+    else:
+        # With no client to hand, signing in starts with making one in the Google Cloud
+        # console: worth it by default only for Codex, whose tasks have no Google otherwise.
+        wanted = client is not None or "codex" in settings.enabled_agents
+        if ui.select(
+            "Sign in to Google?",
+            [Choice(SKIP, "Skip for now"),
+             Choice(SIGN_IN_NOW, "Sign in", hint="one consent screen")],
+            default=SIGN_IN_NOW if wanted else SKIP,
+        ) == SKIP:
             ui.note(f"Left for later: `keryx setup` comes back to it, or {SIGN_IN}.")
-        return
+            return
     if client is None and not _own_client(ctx):
         return
-    result = _sign_in(ctx)
-    if result is None:
+    grant = _sign_in(ctx)
+    if grant is None or not _admitted(ctx, grant):
         return
+    try:
+        result = keep(ctx.settings, grant)
+    except GoogleSetupError as exc:
+        ui.error(str(exc))
+        return
+    _keep(ctx, result)
     ui.success(f"Google: signed in as {result.email} with {result.whose}")
     _show(ctx, result.connected, [*result.connected, *result.missing])
-    _keep(ctx, result)
+    if hint := api_hint(result, published=grant.whose != OWN_CLIENT):
+        ui.note(hint)
+
+
+def _admitted(ctx: "SetupContext", grant: Grant) -> bool:
+    """Whether this sign-in may be kept: asked only when it came back as an account other
+    than the one saved, which is how somebody else's finishing it would show. A no revokes
+    it, as a probe, so going back does not revoke twice."""
+    ui = ctx.ui
+    expected = unexpected_account(ctx.settings, grant)
+    if expected is None:
+        return True
+    if ui.confirm(
+        f"Google signed in as {grant.email}, but your Google address is saved as "
+        f"{expected}. Use {grant.email}?",
+        default=False,
+    ):
+        return True
+    ctx.probes.google_discard(ctx.settings, grant)
+    ui.note(f"Nothing was saved, and the sign-in as {grant.email} was given up.")
+    return False
 
 
 def _show(
@@ -709,8 +936,9 @@ def _own_client(ctx: "SetupContext") -> bool:
         return ctx.save({"GOOGLE_CLIENT_SECRETS_FILE": str(path)})
 
 
-def _sign_in(ctx: "SetupContext") -> SignInResult | None:
-    """Run the sign-in the way that fits this machine; another way, or none, if it fails."""
+def _sign_in(ctx: "SetupContext") -> Grant | None:
+    """Run the sign-in the way that fits this machine; another way, or none, if it fails.
+    What comes back is a grant in memory: nothing is saved until it is admitted and kept."""
     from keryx.setup.ui import Choice
 
     ui = ctx.ui
@@ -719,8 +947,8 @@ def _sign_in(ctx: "SetupContext") -> SignInResult | None:
     except GoogleSetupError as exc:
         ui.error(str(exc))
         return None
-    if chosen.note:
-        ui.note(chosen.note)
+    for line in chosen.notes:
+        ui.note(line)
     if chosen.client.published:
         ui.markdown(guide(CONSENT_GUIDE))
     way = ELSEWHERE if ctx.probes.headless() else HERE
@@ -738,11 +966,14 @@ def _sign_in(ctx: "SetupContext") -> SignInResult | None:
                     f"{url}\n\nApprove it. The page you land on will not load: copy its "
                     "whole address and paste it below.",
                 )
-                address = ui.text("The address you landed on (blank to skip)")
+                address = ui.text(
+                    "The address you landed on (blank to skip)",
+                    validate=_from_this_link(ctx.settings),
+                )
                 if not address:
                     return None
                 result = ctx.probes.google_finish(ctx.settings, address)
-            if isinstance(result, SignInResult):
+            if isinstance(result, Grant):
                 return result
             ui.error(str(result))
             way = ui.select(
@@ -760,6 +991,25 @@ def _sign_in(ctx: "SetupContext") -> SignInResult | None:
     finally:
         # Finished or given up, nothing of a pasted-back sign-in waits on disk.
         discard_pending(ctx.settings)
+
+
+def _from_this_link(settings: Settings) -> Callable[[str], str | None]:
+    """Refuse, at the question, an address that is not the answer to the link just shown:
+    one pasted from an earlier link, or offered again after going back, is already spent."""
+
+    def problem(value: str) -> str | None:
+        if not value.strip():
+            return None
+        try:
+            saved = json.loads(_pending_path(settings).read_text(encoding="utf-8"))
+            query = parse_qs(urlparse(value.strip().strip("'\"")).query)
+        except (OSError, ValueError):
+            return "That is not an address: copy the whole address bar."
+        if query.get("error") or _same_state(query.get("state", [""])[0], saved.get("state")):
+            return None
+        return "That address is not from the link above: open it, and paste where it lands."
+
+    return problem
 
 
 def _announcer(ctx: "SetupContext") -> Announce:
@@ -781,19 +1031,11 @@ def agents_switched_off(settings: Settings, stored: Mapping[str, Any]) -> bool:
 
 
 def _keep(ctx: "SetupContext", result: SignInResult) -> None:
-    """Save the address the agents act as, and turn their Google tools on the first time."""
+    """Save what a kept sign-in implies, at once and with nothing asked: the address the
+    agents act as, and their Google tools, turned on the first time."""
     ui, settings = ctx.ui, ctx.settings
-    current = settings.user_google_email
-    if current != result.email:
-        if not current or ui.confirm(
-            f"You signed in as {result.email}, and your Google address is saved as "
-            f"{current}. Save {result.email} instead?",
-            default=True,
-        ):
-            ctx.save({"USER_GOOGLE_EMAIL": result.email})
-        else:
-            ui.warn(f"Agents act as {result.email}, the account that signed in, whatever is "
-                    f"saved. To use {current}, sign in again as that account.")
+    if settings.user_google_email != result.email:
+        ctx.save({"USER_GOOGLE_EMAIL": result.email})
     if agents_switched_off(settings, ctx.store.stored()):
         ui.note("Agents' Google tools stay off, as you set them: `keryx config set "
                 "GOOGLE_WORKSPACE_MCP true` turns them on.")

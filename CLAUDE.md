@@ -30,10 +30,11 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   `--from-env VAR`), `config unset KEY…`, `config path [--shell]` (every directory),
   `config lock|unlock KEY` (what the running service may change)
 - Sign-ins: `uv run keryx auth login claude|codex|google [--headless] [--services a,b]
-  [--client-file PATH] [--callback-url URL]` (google is one sign-in for everything; with
-  `--headless` it prints a link and takes back the address the browser landed on, and with
-  no terminal that is two commands; `gmail` and `google-workspace` still mean it, for one
-  release), `uv run keryx auth status [--json] [--smoke]`
+  [--account ADDRESS] [--client-file PATH] [--callback-url URL]` (google is one sign-in
+  for everything; with `--headless` it prints a link and takes back the address the
+  browser landed on, and with no terminal that is two commands; `--account` says which
+  account is meant when it is not the saved one; `gmail` and `google-workspace` still mean
+  it, for one release), `uv run keryx auth status [--json] [--smoke]`
 - Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`); `scripts/dev.sh` adds
   the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
@@ -434,7 +435,7 @@ Three rulings:
 `keryx auth login google` (and the wizard's Google section) connects Gmail, Calendar, Drive,
 Docs, Sheets and Slides at once, for everything: `check_email` and the coding agents alike.
 `keryx/integrations/google.py` is the account (scopes, client, token, the agents' server)
-and `keryx/setup/google.py` is the flow. Six rulings:
+and `keryx/setup/google.py` is the flow. Seven rulings:
 
 - **One table says what is asked for.** `SERVICES` maps each service to the scopes it
   requests and what they enable, and nothing else restates a scope. Every scope has to be
@@ -482,11 +483,25 @@ and `keryx/setup/google.py` is the flow. Six rulings:
   `tests/setup/test_google_listener.py` holds this over a real loopback socket, the one
   place the suite opens one. With the browser elsewhere the redirect is a dead loopback address
   and the owner pastes it back. In the wizard each is a `Probes` field that returns a plain
-  value, *a failure included*: a probe that raises is not recorded, and would run the
-  sign-in again on Esc.
-- **A sign-in turns the agents' tools on once.** `GOOGLE_WORKSPACE_MCP` is set by the first
-  sign-in, and never again once the owner has stored a value for it
-  (`agents_switched_off`): false is how they keep the sign-in for email answers only.
+  value (the grant), *a failure included*: a probe that raises is not recorded, and would
+  run the sign-in again on Esc.
+- **A sign-in is a grant in memory until it is kept.** `exchange` gets it and saves
+  nothing; `keep` writes the token and its copy, both or neither, and leaves the sign-in
+  before it in place when it cannot. Between the two is `admit`: a grant that came back as
+  an account other than the saved `USER_GOOGLE_EMAIL` is refused and revoked (the wizard
+  asks, defaulting to no; the command line wants `--account`), because an unexpected
+  account is how every way of finishing somebody else's sign-in shows. Only the token
+  endpoint is believed about what was granted: an answer with no `scope` grants nothing.
+  A grant that is refused is revoked rather than left at Google unheld, except when a
+  saved sign-in shares it (Google revokes by account and client, so that would end the
+  one that works).
+- **A sign-in turns the agents' tools on once, and at once.** What a kept sign-in implies
+  is saved before anything further is asked or said: the address, and
+  `GOOGLE_WORKSPACE_MCP`, which is set by the first sign-in and never again once the owner
+  has stored a value for it (`agents_switched_off`): false is how they keep the sign-in
+  for email answers only. Once somebody is signed in the wizard asks a different question
+  with different answers, so an answer recorded before the sign-in is never offered after
+  it, where it would mean signing in a second time.
 
 An install from before this keeps working until its owner signs in again, and nothing of
 its is rewritten: `check_email` still reads an older `gmail_token.json` while no Google
