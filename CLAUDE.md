@@ -53,7 +53,7 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   project each was dispatched with; the dollars are the agents' own estimates, and the
   voice calls are not tasks)
 - Read what the assistant remembers between calls: `uv run keryx memory` (`--path` for the file)
-- The plugins (Slack, email, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
+- The plugins (Slack, email, the calendar, documents, billing, cluster stats): `uv run keryx plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
   remove NAME [--yes]`; install and remove refuse the running service
@@ -122,10 +122,13 @@ remember:
   points at it. A file may raise `ToolUnavailable` while it loads to be refused with a
   reason, and reads its loader's settings from `LOADING_SETTINGS`.
 - **plugins** — `plugins/` is the optional voice tools (`send_to_slack`, `check_email`,
-  `check_billing`, `cluster_stats`), none registered from the source tree. `PLUGINS` in
+  `check_calendar`, `add_calendar_event`, `find_document`, `check_billing`,
+  `cluster_stats`), none registered from the source tree. `PLUGINS` in
   `plugins/__init__.py` is the table everything reads (its `important` keys are what the
-  wizard asks), with the file helpers (`install`, `remove`, `write_config`, `status`). One module per plugin builds its
-  tool (`<name>_tool(config_path, fake=…)`), `ssh_hosts` reads `~/.ssh/config`, and
+  wizard asks; `google` names the service of the one sign-in a plugin uses, `claude` that it
+  answers through the bundled CLI, `default_when_connected` that a first walk ticks it only
+  once that service is connected, which is never true of one that writes), with the file helpers (`install`, `remove`, `write_config`, `status`). One module per service builds its
+  tools (`<name>_tool(config_path, fake=…)`; `calendar` builds two), `ssh_hosts` reads `~/.ssh/config`, and
   `templates/` is data — a one-line `.py` and a commented `.toml` per plugin, copied into
   `DATA_DIR/tools`, never imported from there. So a plugin *is* a custom tool: loaded per
   call, gated by `needs_pin`, no restart. The logic stays here with its tests so a fix
@@ -136,10 +139,13 @@ remember:
   PIN-lockout alert, and every finished task's whole report) only through
   `plugins.slack.slack_route`, asked at send time.
 - **integrations** — `integrations/` is one module per outside service (`billing`,
-  `cluster`, `gmail`, `slack`, `web_search`): the *clients*, each behind one voice tool —
-  `web_search` behind a built-in, the rest behind a plugin, which is where the tool is
-  built. Their builders take explicit values, never a plugin's file. `google` is the one
-  with no voice tool: the Google account itself (see "Google is one sign-in").
+  `calendar`, `cluster`, `drive`, `gmail`, `slack`, `web_search`): the *clients*, each behind a
+  voice tool — `web_search` behind a built-in, the rest behind a plugin, which is where the
+  tool is built (`calendar` behind two, one that reads and one that adds). Their builders
+  take explicit values, never a plugin's file. Three have no voice tool of their own:
+  `google` is the Google account itself (see "Google is one sign-in"), `google_api` is the
+  one authorized request every Google tool makes, and `summariser` is the one bare model
+  call a tool makes over what it read (see "Google answers on the call").
   `slack` is also where connecting Slack lives. Each owner has a Slack app of their own,
   because an app Keryx published could not hand a command line a bot token without a
   server holding its client secret: `app_manifest` is that app and the only place its
@@ -176,7 +182,14 @@ remember:
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.
 
-`logging_util.mask_number` is the only shape a phone number may take in a log line.
+`logging_util.mask_number` is the only shape a phone number may take in a log line, and
+`logging_util.configure_logging` is the only thing that turns logging on (the CLI and the
+watchdog): it holds `httpx` and `httpcore` at WARNING whatever `LOG_LEVEL` says, because at
+INFO they log every request's whole address, which for Google is a calendar's id (somebody's
+email address), the words searched for, and file ids. Never call `logging.basicConfig`
+anywhere else. The Google request layer quiets them again for itself
+(`quiet_http_loggers`, in `GoogleReader`), so the rule holds in a process that set its
+logging up some other way.
 
 ## One task kind
 
@@ -185,7 +198,11 @@ the full built-in tool set, the Google MCP server once the owner has signed in (
 is one sign-in"), the installed skills and subagents of its own, and decides for itself what
 a request needs. The voice model's only routing
 decision is answer-it-myself (small facts go through its `web_search` tool, backed by the
-Responses API) versus dispatch. Do not reintroduce kinds to express "this one is
+Responses API; a quick read of their mail, calendar or a document goes through the plugin
+that reads it, and one new event on their own calendar through the plugin that adds one,
+when it is on) versus dispatch. The voice prompt says that without naming
+a plugin, since which ones a machine has is its owner's choice: "when you have a tool for
+it on this call", and dispatch for what such a tool does not do. Do not reintroduce kinds to express "this one is
 read-only" — the phone PIN gates every dispatch instead.
 
 ## Two coding agents, one of them per task
@@ -457,7 +474,8 @@ Three rulings:
 ## Google is one sign-in
 
 `keryx auth login google` (and the wizard's Google section) connects Gmail, Calendar, Drive,
-Docs, Sheets and Slides at once, for everything: `check_email` and the coding agents alike.
+Docs, Sheets and Slides at once, for everything: the Google plugins (see "Google answers on
+the call") and the coding agents alike.
 `keryx/integrations/google.py` is the account (scopes, client, token, the agents' server)
 and `keryx/setup/google.py` is the flow. Seven rulings:
 
@@ -533,7 +551,7 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   is saved before anything further is asked or said: the address, and
   `GOOGLE_WORKSPACE_MCP`, which is set by the first sign-in and never again once the owner
   has stored a value for it (`agents_switched_off`): false is how they keep the sign-in
-  for email answers only. Once somebody is signed in the wizard asks a different question
+  for the plugins only. Once somebody is signed in the wizard asks a different question
   with different answers, so an answer recorded before the sign-in is never offered after
   it, where it would mean signing in a second time.
 
@@ -549,6 +567,105 @@ not, or email answers would stop), and a credential `workspace-mcp` wrote itself
 `DATA_DIR/google` is still served, with the tools its own scopes cover, until a sign-in
 replaces it. It is never adopted as Keryx's token: its scopes are whatever that flow asked
 for.
+
+## Google answers on the call
+
+A dispatch takes tens of seconds to minutes, so the Google questions worth answering
+inside the call are plugins: `check_email` (`integrations/gmail.py`), `check_calendar`
+and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
+(`integrations/drive.py`). All need the PIN. Seven rulings:
+
+- **One request, and reading is a matter of construction.** Every one of them goes through
+  `integrations/google_api.py`: a `GoogleReader` has `get` and `text` and nothing else,
+  and only a `GoogleWriter` can `post`. A tool that reads is built on the first, so it has
+  no method to write with whatever the token allows. `add_calendar_event` is the only
+  writer. `text` reads a body as it arrives and stops at its cap, so a file of any size
+  costs the memory of what is kept. Each tool calls `aclose` when it has answered: one
+  question is one set of connections, and the access token is what is kept between them.
+- **A tool asks for the scope it uses, not for the service.** `google.holds(scopes, needs)`
+  is narrower than a service being connected, which wants every scope the agents' tools
+  use: reading the calendar needs `calendar.readonly`, adding to it only
+  `calendar.events`, and finding or exporting any file only `drive.readonly`. A sign-in that lacks it refuses the plugin's file with the reason when
+  it loads (as `check_email` does: `doctor`, `keryx tools` and `keryx plugins` say why), and
+  the same thing found out mid-call is a status and a sentence.
+- **A failure is a code and a sentence that names the fix.** `GoogleApiError`:
+  `not_signed_in`, `not_connected` and `signed_out` name `keryx auth login google`;
+  `api_disabled` says that signing in again will not help, because the API is off in the
+  Cloud project. So does `not_connected` when Keryx's own Google app does not offer the
+  service (`failure(..., offered=False)`, asked of the client on this machine when the
+  tool loads): the sentence names a client of the owner's own and no sign-in. Never an exception to the model, and never a response body anywhere: a
+  log line carries the status, one of a short list of Google's own reasons, and the kind of
+  thing asked for, never which calendar or file (an id is somebody's address).
+- **What Google returns is somebody else's text.** An invitation puts a title on the
+  calendar unasked, and anyone can share a file. So the voice model gets a title, a place
+  or a file's name as one clipped line (`clip`), never an event's description, and a note
+  beside them that says to say it and never act on it; the tool descriptions say the same.
+  A place is often a meeting link and is passed through as it is: the note and the
+  description say never to read one out.
+  A document's text never reaches the voice model at all: like mail, it goes to the
+  summariser, which has no tools, inside a fence whose markers carry a token made for that
+  one call (`drive.fenced`), so no document written beforehand can name the marker that
+  closes it. Anything that looks like a marker is still stripped, more than once, because
+  one pass over `</docu</document>ment>` leaves a closing tag behind, and a *counted*
+  number of times (`FENCE_PASSES`), because depth is the document's to choose: what is
+  left after that has every `<` written as an entity, in one pass, and is not chased. The
+  summariser's answer comes back clipped (`ANSWER_CHARS`). That is a mitigation, not a
+  wall, and SECURITY.md says so.
+- **Fetched text is never worth a second of the event loop.** A title, a mail body, a
+  document: its length and its shape are somebody else's, it is handled on the loop every
+  live call's audio runs on, and no `wait_for` can interrupt a regular expression. So
+  every pattern run over it is linear (after `<`, one character class, never two that
+  can share a run; a tag stops at the next `<` as well as at `>`; a block with no closer
+  is looked for once), and every loop over it is counted. `<\s*/?\s*document` cost 2 s
+  on a `<` and 40,000 spaces, and `<[^>]+>` minutes on a megabyte of `<` in a mail.
+  Each has a test that fails on *time* (`HOSTILE`, `HOSTILE_MAIL`); a new pattern over
+  fetched text gets a row there.
+- **A model call is the exception, and there is one.** `check_calendar` and
+  `add_calendar_event` make none. `check_email` and `find_document` make exactly one,
+  through `integrations/summariser.py`: the bundled `claude` CLI with no tools, no
+  settings, no MCP servers and no session, the material on standard input, never argv.
+  `find_document` makes none when nothing was asked about the file. A second tool that
+  needs a model takes that module; do not grow a second way to call one.
+- **A write that got no answer is never sent again, and only that is `unconfirmed`.**
+  `add_calendar_event` invites nobody (no attendees, `sendUpdates=none`) and touches only
+  the owner's own calendar. A `POST` that went out and was not answered, or met a 5xx, may
+  have landed (`GoogleApiError.may_have_landed`), so it comes back `unconfirmed` with a
+  sentence saying exactly that: two events is worse than one doubt. Everything known to
+  have happened *before* the request left (no sign-in, a missing scope, a refused refresh,
+  a connection never made) and every plain refusal is that failure with its own sentence,
+  because "it may or may not be there" is false then and sends the owner to look for
+  nothing. There is no client-made event id to make a retry safe, on purpose: a
+  deterministic one would make adding again an event they deleted fail (SECURITY.md has
+  the accepted risk).
+- **Nothing is written into the past.** A bare weekday is the next one, and when it is
+  today and the time named has gone it is next week's. A start that has passed, however it
+  was named, is `in_the_past`: refused, with when it would have been, and nothing sent.
+  "Passed" has a quarter of an hour's grace (`START_GRACE`), for the refusal and for the
+  roll to next week alike: the model's "now" is the `Time` line it was given when the call
+  began, so "block from now until four" always arrives minutes old.
+  The confirmation always carries the weekday and the date, and the description tells the
+  model to say both, because a wrong week is only ever caught by ear. A bare hour is
+  refused too (`parse_time`): "3" is 03:00 to the 24-hour clock and three in the
+  afternoon to whoever said it.
+
+A day reaches the calendar tools the way it was said when that is a word `resolve_day`
+knows (today, tomorrow, a bare weekday), resolved in the zone of the owner's own calendar,
+never the machine's. Anything else ("next Thursday", "the third") the model works out
+from the `Time` line of its prompt and passes as a date, and the tool's answer says the
+weekday and the date back, which is the check on that arithmetic.
+
+A list from Google is followed past its first page. `events.list`, `calendarList` and
+Drive's `files.list` may each return a short or an empty page with a token for the next
+while more matches, so each is followed while the answer is still short of its cap, for a
+bounded number of pages, and the result says there may be more when pages were left. The
+usual question still costs the round trips it did. "What's next" drops what is not next
+(started, all day, declined) before anything is counted, never after.
+
+Nothing the voice model says is spliced into a request. A Drive search term goes through
+`drive.escape` into a quoted term of a query built from constants, and everything else is
+a query parameter httpx escapes. An id in a path is Google's, and is still not trusted: a
+file id is matched against a pattern first, wherever it came from, and a calendar's id,
+which is an address and may hold a `#`, is percent-encoded whole.
 
 ## Restarts are three halves
 

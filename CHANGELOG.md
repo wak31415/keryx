@@ -18,6 +18,22 @@ the version starts with 0.
   simply not connected, and the command says which services are.
 - **`keryx auth logout google`** revokes Keryx's access at Google and deletes the sign-in
   from this machine.
+- **Your calendar on the call: the `check_calendar` plugin.** "What's on tomorrow", "what's
+  my next meeting", "when is the dentist" are answered in a second or two from Google
+  Calendar itself, with no task dispatched. It reads every calendar you have ticked in
+  Google Calendar, in your calendar's time zone, and needs the PIN.
+  `keryx plugins install check_calendar`, or `keryx setup`, which ticks it the first time
+  through once Calendar is connected.
+- **`add_calendar_event`, a plugin of its own**, so reading your calendar can be on without
+  anything on the phone being able to write to it. One event on your own calendar, timed or
+  all day, with nobody invited; the assistant says back what it created. Anything more
+  (guests, repeats, changes) is still a task for a coding agent.
+- **Your documents on the call: the `find_document` plugin.** "Find the doc about the
+  offsite" searches Google Drive by name and by text. "What does my planning doc say about
+  hiring" also reads the best match and answers from it in a few seconds, with one model
+  call, the way `check_email` does for mail. Docs, Sheets, Slides and text files can be
+  read; a PDF is found and said to need a task. It needs the PIN, Drive in your Google
+  sign-in and the `claude` extra.
 - Agents get Drive, Docs, Sheets and Slides as well as Gmail and Calendar, and both Claude
   and Codex get them the same way.
 - When a release ships Keryx's own Google app, signing in needs no Google Cloud project.
@@ -35,6 +51,9 @@ the version starts with 0.
   Gmail and Calendar APIs enabled. After signing in again, enable Drive, Docs, Sheets and
   Slides there too (the links are in the guide `keryx setup` shows, and the sign-in names
   it), or those tools answer "API not enabled".
+- The assistant answers a quick question about your mail, your calendar or a document
+  itself when the plugin that reads it is on, and no longer hands it to a coding agent
+  first. Replying, changing an event and editing a file are still tasks.
 - A sign-in turns the agents' Google tools on the first time only. If you have set
   `GOOGLE_WORKSPACE_MCP` to false, signing in again leaves it off.
 - A coding agent finishing a Google sign-in gives the address on standard input
@@ -53,6 +72,13 @@ the version starts with 0.
 
 ### Fixed
 
+- `keryx.log` no longer records the address of every Google request. The HTTP client
+  logged each one in full at the default log level, which for `check_email` meant message
+  and thread ids and the search that was run. Requests are still counted in Keryx's own
+  lines.
+- An email written for the purpose could stall the whole service while `check_email` read
+  its body: a body of nothing but `<`, or of script tags that never close, took time that
+  grew with the square of its length. Reading a body now takes time in proportion to it.
 - `keryx auth status` reported Gmail as missing however it was signed in.
 - `--headless` was ignored by both Google sign-ins.
 

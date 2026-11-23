@@ -90,7 +90,9 @@ def test_every_service_gets_a_line(make_ctx, world):
         ctx.ui.lines("success")
     )
     assert [line for line in ctx.ui.lines("success") if line.endswith("a call")] == [
-        "Gmail: connected — agents read, label, draft and send mail, and email answers on a call"
+        "Gmail: connected — agents read, label, draft and send mail, and email answers on a call",
+        "Calendar: connected — agents see your calendars and create or change events, and "
+        "calendar answers on a call",
     ]
     assert ctx.ui.lines("warn") == [
         "Drive: not connected", "Docs: not connected", "Sheets: not connected",

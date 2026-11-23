@@ -121,7 +121,8 @@ Two of those are worth knowing before you switch:
   Calendar, Drive, Docs, Sheets and Slides. Without it, Claude still has whatever its
   claude.ai connectors carry, which live on the Anthropic account, and Codex has nothing;
   `doctor` says so until you have signed in. `GOOGLE_WORKSPACE_MCP=false` keeps the
-  sign-in for email answers on a call and takes the tools away from both, and
+  sign-in for the answers on a call (the email, calendar and document plugins) and takes
+  the tools away from both, and
   `keryx auth logout google` ends the sign-in altogether.
 - **The approval bridge** (`keryx approvals`) is for Claude Code sessions on your own
   screen that stop and ask you something. It has nothing to do with which agent Keryx

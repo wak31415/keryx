@@ -29,9 +29,10 @@ than filtered. A query of several terms ANDed that finds nothing is loosened to 
 terms on its own, and the model is told that only part of it matched.
 
 Either way the mail goes to a Claude model through the bundled `claude` CLI — no tools, no
-settings, no MCP servers, low effort — with their question, and comes back as a few spoken
-sentences. On the owner's inbox a busy day was 4.5–6 s end to end (measured 2026-09-27,
-Opus 5.5 at low effort; Sonnet 5 was as fast).
+settings, no MCP servers, low effort (`keryx.integrations.summariser`, which `find_document`
+shares) — with their question, and comes back as a few spoken sentences. On the owner's
+inbox a busy day was 4.5–6 s end to end (measured 2026-09-27, Opus 5.5 at low effort;
+Sonnet 5 was as fast).
 
 Read-only by construction: `GmailApi` has only `get`, whatever the token would allow. The
 credential is Keryx's Google token (`data_dir/google_token.json`, 0600, written by `keryx
@@ -44,12 +45,10 @@ The credential is sent only to Google and never logged; failures come back as an
 import asyncio
 import base64
 import html
-import json
 import logging
-import os
 import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.utils import getaddresses
@@ -59,14 +58,18 @@ from typing import Any, Literal, Protocol
 
 import httpx
 
-from keryx.agents.auth import child_env, redact, resolve_auth
 from keryx.config import Settings, secure_file
 from keryx.integrations import google
-from keryx.integrations.google import TOKEN_URL
+from keryx.integrations.google_api import GMAIL, GoogleApiError, GoogleReader
+from keryx.integrations.summariser import (
+    Summariser,
+    SummaryError,
+    build_summariser,
+    summariser_problem,
+)
 
 log = logging.getLogger("keryx.integrations.gmail")
 
-GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 #: The Gmail-only token `keryx auth login gmail` wrote before there was one Google sign-in.
 #: Still read when there is no Google token; removed by the next sign-in.
 LEGACY_TOKEN_FILE = "gmail_token.json"
@@ -87,11 +90,8 @@ MAX_SEARCH_THREADS = 5
 MAX_ALTERNATIVES = 6
 MAX_BODY_CHARS = 2000
 CONCURRENCY = 16
-REQUEST_TIMEOUT_S = 15.0
 #: The whole answer, fetch and model together. It is a wait inside a phone call.
 ANSWER_TIMEOUT_S = 30.0
-#: Refresh the access token this long before Google says it expires.
-EXPIRY_MARGIN_S = 60.0
 
 NO_REPLY = re.compile(
     r"no-?reply|do-?not-?reply|notifications?@|mailer-daemon|calendar-notification", re.I
@@ -106,8 +106,14 @@ _FILTER_TERM = re.compile(
     r"larger|smaller):",
     re.I,
 )
-_TAG = re.compile(r"<[^>]+>")
-_SCRIPT = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
+#: Each is linear in the text it is run over, which is somebody else's and as long as they
+#: like. A tag stops at the next `<` as well as at `>`, or a body of nothing but `<` is
+#: rescanned from every one of them; `<[^>]+>` took minutes on a megabyte of it.
+_TAG = re.compile(r"<[^<>]+>")
+_BLOCK_OPEN = re.compile(r"<(script|style)\b[^<>]*>", re.I)
+_BLOCK_CLOSE = {
+    name: re.compile(rf"</{name}\s*>", re.I) for name in ("script", "style")
+}
 
 Day = Literal["today", "yesterday"]
 ErrorCode = Literal["not_configured", "signed_out", "gmail_failed", "model_failed", "timeout"]
@@ -181,6 +187,8 @@ class GmailApi(Protocol):
 
     async def get(self, path: str, params: Mapping[str, Any] | None = None) -> dict: ...
 
+    async def aclose(self) -> None: ...
+
 
 def legacy_token_path(settings: Settings) -> Path:
     return settings.data_dir / LEGACY_TOKEN_FILE
@@ -201,10 +209,11 @@ class HttpGmail(GmailApi):
 
     The token file is the one `keryx auth login google` writes, or the Gmail-only one an
     older sign-in left (the same keys a `google.oauth2.credentials.Credentials.to_json()`
-    has, so any of them works). A token whose scopes do not let Gmail be read, and a refresh
-    Google refuses (`invalid_grant`: revoked, or a Testing-mode app past its seven days), are
-    `signed_out`, which the voice turns into "run keryx auth login google". A client with no
-    secret sends none: an empty `client_secret` is refused where a missing one may not be.
+    has, so any of them works). The request itself is `google_api.GoogleReader`, which
+    every Google voice tool shares; this is what its failures are called here. A token
+    whose scopes do not let Gmail be read, and a refresh Google refuses (`invalid_grant`:
+    revoked, or a Testing-mode app past its seven days), are `signed_out`, which the voice
+    turns into "run keryx auth login google".
     """
 
     def __init__(
@@ -214,86 +223,34 @@ class HttpGmail(GmailApi):
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._path = path
-        self._client = client
-        self._clock = clock
-        self._access: str | None = None
-        self._expires_at = 0.0
-        self._lock = asyncio.Lock()
-
-    def _http(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S)
-        return self._client
-
-    async def _token(self, *, force: bool = False) -> str:
-        async with self._lock:
-            if self._access and not force and self._clock() < self._expires_at:
-                return self._access
-            try:
-                creds = json.loads(self._path.read_text(encoding="utf-8"))
-                data = {
-                    "client_id": creds["client_id"],
-                    "refresh_token": creds["refresh_token"],
-                    "grant_type": "refresh_token",
-                }
-                if creds.get("client_secret"):
-                    data["client_secret"] = creds["client_secret"]
-                token_url = creds.get("token_uri") or TOKEN_URL
-                scopes = creds.get("scopes")
-            except (OSError, ValueError, KeyError) as exc:
-                raise EmailError("not_configured", f"unreadable {self._path.name}") from exc
-            if isinstance(scopes, list) and not google.reads_gmail(scopes):
-                raise EmailError("signed_out", "the sign-in does not include Gmail")
-            try:
-                response = await self._http().post(token_url, data=data)
-            except httpx.HTTPError as exc:
-                raise EmailError("gmail_failed", f"token refresh: {type(exc).__name__}") from exc
-            if response.status_code != 200:
-                code = _json(response).get("error", response.status_code)
-                if code in ("invalid_grant", "unauthorized_client", "invalid_client"):
-                    raise EmailError("signed_out", f"token refresh refused: {code}")
-                raise EmailError("gmail_failed", f"token refresh: {code}")
-            body = _json(response)
-            self._access = body.get("access_token")
-            if not self._access:
-                raise EmailError("gmail_failed", "token refresh returned no access token")
-            lifetime = float(body.get("expires_in", 3600))
-            self._expires_at = self._clock() + lifetime - EXPIRY_MARGIN_S
-            return self._access
+        self._api = GoogleReader(
+            path, GMAIL, needs=(google.GMAIL_READONLY,), client=client, clock=clock
+        )
 
     async def get(self, path: str, params: Mapping[str, Any] | None = None) -> dict:
-        for attempt in range(2):
-            token = await self._token(force=attempt > 0)
-            try:
-                response = await self._http().get(
-                    f"{GMAIL}/{path}",
-                    params=params,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            except httpx.HTTPError as exc:
-                raise EmailError("gmail_failed", f"{path}: {type(exc).__name__}") from exc
-            if response.status_code == 401:
-                if attempt == 0:
-                    continue  # an access token revoked early: refresh once, then believe it
-                raise EmailError("signed_out", f"{path}: HTTP 401 after a refresh")
-            if response.status_code != 200:
-                raise EmailError("gmail_failed", f"{path}: HTTP {response.status_code}")
-            return _json(response)
-        raise AssertionError("unreachable")  # pragma: no cover
+        try:
+            return await self._api.get(path, params)
+        except GoogleApiError as exc:
+            raise EmailError(_email_code(exc), exc.detail) from exc
+
+    async def aclose(self) -> None:
+        await self._api.aclose()
+
+
+def _email_code(exc: GoogleApiError) -> ErrorCode:
+    """What `check_email` calls a Google failure: three things it can say apart."""
+    if exc.code == "not_signed_in":
+        return "not_configured"
+    # A scope the saved sign-in lacks is known before anything is sent. A 403 from Gmail
+    # itself stays "didn't answer", as it always was.
+    if exc.code == "signed_out" or (exc.code == "not_connected" and exc.status is None):
+        return "signed_out"
+    return "gmail_failed"
 
 
 def signed_in(settings: Settings) -> bool:
     """Whether there is a sign-in Gmail can be read with."""
     return credentials_path(settings) is not None
-
-
-def _json(response: httpx.Response) -> dict:
-    try:
-        body = response.json()
-    except ValueError:
-        return {}
-    return body if isinstance(body, dict) else {}
 
 
 # ---------------------------------------------------------------------------- threads
@@ -444,6 +401,31 @@ def worth_reading(email: Email, me: str) -> int:
     return score if (personal or "IMPORTANT" in email.labels) else 0
 
 
+def _without_blocks(markup: str) -> str:
+    """`markup` without its `<script>` and `<style>` blocks, each from its opening tag to
+    the first tag that closes it.
+
+    One pass. A lazy `.*?</script>` looks for the closer afresh from every opener, and
+    when there is none it looks to the end each time. Here a kind of block that has no
+    closer left is not looked for again.
+    """
+    kept: list[str] = []
+    at = 0
+    closes = dict(_BLOCK_CLOSE)
+    for opener in _BLOCK_OPEN.finditer(markup):
+        closer = closes.get(opener[1].lower())
+        if opener.start() < at or closer is None:
+            continue
+        end = closer.search(markup, opener.end())
+        if end is None:
+            del closes[opener[1].lower()]  # none from here on, so none further on either
+            continue
+        kept += [markup[at : opener.start()], " "]
+        at = end.end()
+    kept.append(markup[at:])
+    return "".join(kept)
+
+
 def body_text(payload: dict) -> str:
     """A message's own words: its text/plain part, else its HTML stripped; no quoted history."""
     plain: list[str] = []
@@ -462,7 +444,7 @@ def body_text(payload: dict) -> str:
     if plain:
         text = "\n".join(plain)
     else:
-        text = html.unescape(_TAG.sub(" ", _SCRIPT.sub(" ", "\n".join(rich))))
+        text = html.unescape(_TAG.sub(" ", _without_blocks("\n".join(rich))))
     if match := _QUOTE_START.search(text):
         text = text[: match.start()]
     text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
@@ -678,85 +660,6 @@ async def search(api: GmailApi, query: str, *, loosen: bool = True) -> Found:
     return Found(emails, loosened)
 
 
-# ------------------------------------------------------------------------------ model
-
-
-class Summariser(Protocol):
-    """One model call: some email and a question in, a few spoken sentences out."""
-
-    async def summarise(self, system: str, prompt: str) -> str: ...
-
-
-Runner = Callable[[Sequence[str], str, dict[str, str]], Any]
-
-
-async def _run_cli(argv: Sequence[str], stdin: str, env: dict[str, str]) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={**os.environ, **env},
-    )
-    try:
-        out, err = await process.communicate(stdin.encode())
-    except asyncio.CancelledError:
-        process.kill()
-        await process.wait()
-        raise
-    return process.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
-
-
-class ClaudeCliSummariser(Summariser):
-    """The bundled `claude` CLI in print mode, stripped to one model call.
-
-    No tools, no settings, no MCP servers, no session written: nothing but the model. It
-    signs in the way every Claude subagent does (`CLAUDE_AUTH`: an API key, a token, or the
-    stored subscription login), handed over in the environment only.
-    """
-
-    def __init__(
-        self,
-        cli: str,
-        settings: Settings,
-        *,
-        model: str,
-        effort: str,
-        run: Callable[..., Any] = _run_cli,
-    ) -> None:
-        self._cli = cli
-        self._settings = settings
-        self._model = model
-        self._effort = effort
-        self._run = run
-
-    async def summarise(self, system: str, prompt: str) -> str:
-        from keryx.agents.claude import CLAUDE_AUTH
-
-        auth = resolve_auth(CLAUDE_AUTH, self._settings, probe=False)
-        argv = [
-            self._cli, "-p",
-            "--model", self._model,
-            "--effort", self._effort,
-            "--output-format", "json",
-            "--setting-sources", "",
-            "--strict-mcp-config",
-            "--tools", "",
-            "--no-session-persistence",
-            "--system-prompt", system,
-        ]  # fmt: skip
-        code, out, err = await self._run(argv, prompt, child_env(auth))
-        try:
-            result = json.loads(out) if out.strip() else {}
-        except ValueError:
-            result = {}
-        text = str(result.get("result") or "").strip()
-        if code != 0 or result.get("is_error") or not text:
-            why = redact((err or str(result.get("result") or ""))[-300:], [auth.secret])
-            raise EmailError("model_failed", f"claude exited {code}: {why}")
-        return text
-
-
 # ----------------------------------------------------------------------------- answer
 
 
@@ -785,6 +688,9 @@ class EmailReader:
             )
         except TimeoutError as exc:
             raise EmailError("timeout", f"over {self._timeout_s:.0f}s") from exc
+        finally:
+            # One question is one set of connections: none is left open behind the call.
+            await self._api.aclose()
 
     async def _answer(self, question: str, query: str | None, day: Day | None) -> dict:
         started = time.monotonic()
@@ -820,7 +726,10 @@ class EmailReader:
         fetched = time.monotonic() - started
         if emails:
             prompt = asked + header + "\n\n" + "\n\n---\n\n".join(e.render() for e in emails)
-            answer = await self._summariser.summarise(system, prompt)
+            try:
+                answer = await self._summariser.summarise(system, prompt)
+            except SummaryError as exc:
+                raise EmailError("model_failed", exc.detail) from exc
         log.info(
             "check_email (%s): %d threads, %d read in full; gmail %.1fs, total %.1fs",
             "day" if day else "search",
@@ -838,11 +747,7 @@ def email_problem(settings: Settings) -> str | None:
         if google.read_token(settings) is not None:
             return "Gmail is not part of your Google sign-in: `keryx auth login google`"
         return "not signed in to Google: `keryx auth login google`"
-    from keryx.agents.registry import BACKENDS, install_command, installed
-
-    if not installed("claude") or BACKENDS["claude"].find_cli() is None:
-        return f"the claude CLI is not installed: `{install_command('claude')}`"
-    return None
+    return summariser_problem(settings)
 
 
 def build_email_reader(settings: Settings, *, model: str, effort: str) -> EmailReader:
@@ -851,11 +756,8 @@ def build_email_reader(settings: Settings, *, model: str, effort: str) -> EmailR
     It needs a Google sign-in that reads Gmail and the `claude` CLI; ask `email_problem`
     first.
     """
-    from keryx.agents.registry import BACKENDS
-
     path = credentials_path(settings)
-    cli = BACKENDS["claude"].find_cli()
-    assert path is not None and cli is not None, "email_problem says so first"
+    assert path is not None, "email_problem says so first"
     secure_file(path)
-    summariser = ClaudeCliSummariser(cli, settings, model=model, effort=effort)
+    summariser = build_summariser(settings, model=model, effort=effort)
     return EmailReader(HttpGmail(path), summariser)

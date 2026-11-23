@@ -1,0 +1,16 @@
+# find_document: a file found in your Google Drive on a call, and a question about it
+# answered in a few seconds from one export and one model call. Changes here count from
+# the next call; no restart.
+#
+# It reads Drive with your Google sign-in (`keryx auth login google`) and only ever reads,
+# and it answers through the bundled claude CLI (the claude extra). Finding a file uses no
+# model at all; these two settings are for a question about what is in it.
+# `keryx plugins remove find_document` turns this off and leaves the sign-in alone.
+
+# The model that answers.
+model = {model}
+
+# How hard it thinks: low, medium or high. Low keeps the answer to a few seconds, which
+# is waited for inside a call.
+effort = {effort}
+{extra}

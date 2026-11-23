@@ -82,6 +82,9 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
     for name, values in {
         "send_to_slack": {"channel_id": "D123"},
         "check_email": {},
+        "check_calendar": {},
+        "add_calendar_event": {"default_minutes": 45},
+        "find_document": {"effort": "medium"},
         "check_billing": {"monthly_budget": 40},
         "cluster_stats": {"clusters": {"alpha": "gpu"}},
     }.items():
@@ -637,6 +640,13 @@ def test_every_plugin_on_names_what_it_does(healthy):
 
     assert checks["send_to_slack"].detail == "on — posts to D123"
     assert checks["check_email"].detail == "on — claude-opus-5-5, low effort"
+    assert checks["check_calendar"].detail == (
+        "on — reads every calendar ticked in Google Calendar, up to 25 events an answer"
+    )
+    assert checks["add_calendar_event"].detail == (
+        "on — one event on your own calendar, 45 minutes when no end is said, nobody invited"
+    )
+    assert checks["find_document"].detail == "on — claude-opus-5-5, medium effort"
     assert checks["check_billing"].detail == "on — auto, budget $40"
     assert checks["cluster_stats"].detail == "on — alpha through the built-in guard"
     assert all(checks[name].section == "plugins" for name in plugins.PLUGINS)
@@ -707,13 +717,56 @@ def test_a_google_sign_in_does_not_nag_about_email_answers_being_off(healthy):
     assert check.state == "missing" and "off (optional)" in check.detail
 
 
-def test_email_signed_in_without_the_claude_cli_is_refused_with_how(healthy, monkeypatch):
+def test_a_calendar_plugin_reading_only_their_own_says_so(healthy):
+    plugins.write_config(healthy, "check_calendar", {"calendars": "primary", "max_events": 5})
+
+    check = by_name(run_doctor_checks(healthy))["check_calendar"]
+
+    assert check.detail == "on — reads your own calendar, up to 5 events an answer"
+
+
+def test_a_calendar_plugin_on_without_calendar_in_the_sign_in_says_which(healthy):
+    sign_in(healthy, ("gmail",))
+
+    checks = by_name(run_doctor_checks(healthy))
+
+    for name in ("check_calendar", "add_calendar_event"):
+        assert (checks[name].ok, checks[name].state, checks[name].severity) == (
+            False, "failed", "soft",
+        )
+        assert checks[name].detail == (
+            "on but refused: Calendar is not part of your Google sign-in: "
+            "`keryx auth login google`"
+        )
+
+
+def test_a_google_sign_in_does_not_nag_about_calendar_answers_being_off(healthy):
+    plugins.remove(healthy, "check_calendar")
+
+    check = by_name(run_doctor_checks(healthy))["check_calendar"]
+
+    assert check.state == "missing" and "off (optional)" in check.detail
+
+
+@pytest.mark.parametrize("name", ["check_email", "find_document"])
+def test_signed_in_without_the_claude_cli_is_refused_with_how(healthy, monkeypatch, name):
     with_agent(monkeypatch, "claude", cli=None)
 
-    check = by_name(run_doctor_checks(healthy))["check_email"]
+    check = by_name(run_doctor_checks(healthy))[name]
 
     assert (check.ok, check.severity) == (False, "soft")
     assert "uv sync --extra claude" in check.detail
+
+
+def test_documents_on_without_drive_in_the_sign_in_says_which(healthy):
+    sign_in(healthy, ("gmail", "calendar"))
+
+    check = by_name(run_doctor_checks(healthy))["find_document"]
+
+    assert (check.ok, check.state) == (False, "failed")
+    assert check.detail == (
+        "on but refused: Drive is not part of your Google sign-in: `keryx auth login google`"
+    )
 
 
 # --- formatting ------------------------------------------------------------

@@ -548,7 +548,8 @@ class Settings(BaseSettings):
         False,
         "Give every subagent Google tools (the workspace-mcp server) for the services your "
         "Google sign-in connected. `keryx auth login google` turns it on; set it to false "
-        "to keep the sign-in for email answers only.",
+        "to keep the sign-in for the answers on a call only (the email, calendar and "
+        "document plugins).",
         group="google",
     )
 

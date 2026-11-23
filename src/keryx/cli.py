@@ -56,7 +56,7 @@ from keryx.install import (
     release,
 )
 from keryx.integrations.google import parse_services as parse_google_services
-from keryx.logging_util import LOG_FORMAT, mask_number
+from keryx.logging_util import LOG_FORMAT, configure_logging, mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
 from keryx.realtime.openai import OpenAIRealtimeClient
@@ -194,7 +194,7 @@ def _configure(**overrides: object) -> Settings:
     if overrides:
         settings = settings.model_copy(update=overrides)
     settings.ensure_dirs()
-    logging.basicConfig(level=settings.log_level.upper(), format=LOG_FORMAT)
+    configure_logging(settings.log_level.upper())
     return settings
 
 
@@ -253,7 +253,7 @@ def _configure_readonly(*, quiet: bool = True) -> Settings:
     level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
     if quiet and level != logging.DEBUG:
         level = max(level, logging.WARNING)
-    logging.basicConfig(level=level, format=LOG_FORMAT)
+    configure_logging(level)
     return settings
 
 
@@ -991,17 +991,18 @@ def plugins_list(
         }, indent=2))
         return
     typer.echo(f"# {settings.custom_tools_dir}")
+    width = max(len(name) for name in plugins.PLUGINS) + 1
     for status in found:
         spec = plugins.PLUGINS[status.name]
         state = "on" if status.on else ("refused" if status.installed else "off")
-        typer.echo(f"{status.name:<16} {state:<8} {spec.summary}")
+        typer.echo(f"{status.name:<{width}} {state:<8} {spec.summary}")
         if status.refused:
-            typer.echo(f"{'':<16} {status.refused}")
+            typer.echo(f"{'':<{width}} {status.refused}")
         if status.installed or status.config_file.exists():
             shown = {key: (status.values or {}).get(key) for key in spec.important}
             settings_line = ", ".join(f"{key}={_plain(value)}" for key, value in shown.items())
-            typer.echo(f"{'':<16} {status.config_file}" + (f"  ({settings_line})"
-                                                            if settings_line else ""))
+            typer.echo(f"{'':<{width}} {status.config_file}" + (f"  ({settings_line})"
+                                                                 if settings_line else ""))
 
 
 @plugins_app.command("hosts")

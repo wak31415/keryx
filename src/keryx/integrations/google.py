@@ -11,7 +11,8 @@ Everything Google in Keryx hangs off one sign-in (`keryx auth login google`, the
   at `keryx/data/google_client.json` that may not be there at all.
 - **`GoogleToken`** is `DATA_DIR/google_token.json` (0600): the refresh token, the client
   that minted it, the scopes Google literally granted, and the account's address. It is the
-  one token Keryx owns. `check_email` reads it (`keryx.integrations.gmail`).
+  one token Keryx owns. The Google voice tools read it, through the one request in
+  `keryx.integrations.google_api`.
 - **`mcp_server`** is how the coding agents get the same sign-in: `export_for_mcp` copies
   the token into the credential file the `workspace-mcp` server reads, and the server is
   started pinned, on the connected services only, with no OAuth client in its environment,
@@ -86,12 +87,14 @@ SERVICES: dict[str, Service] = {
     "calendar": Service(
         "Calendar",
         (CALENDAR_READONLY, CALENDAR_EVENTS),
-        "agents see your calendars and create or change events",
+        "agents see your calendars and create or change events, and calendar answers on a "
+        "call",
     ),
     "drive": Service(
         "Drive",
         (DRIVE_READONLY, DRIVE_FILE),
-        "agents find and read your files, and create or change the ones Keryx made",
+        "agents find and read your files, and create or change the ones Keryx made, and "
+        "document answers on a call",
     ),
     "docs": Service("Docs", (DOCUMENTS,), "agents read and edit documents", needs=("drive",)),
     "sheets": Service(
@@ -174,10 +177,18 @@ def connected_services(scopes: Any) -> tuple[str, ...]:
     return tuple(name for name in SERVICES if all(s in held for s in needed_scopes(name)))
 
 
+def holds(scopes: Any, needed: Any) -> bool:
+    """Whether `scopes` grant every scope in `needed`, a broader one standing in for the
+    narrower ones under it. What one voice tool asks, where a *service* being connected
+    asks for everything the agents' tools use."""
+    held = covered(scopes)
+    return all(scope in held for scope in needed)
+
+
 def reads_gmail(scopes: Any) -> bool:
     """Whether `scopes` let Gmail be read: this sign-in's `gmail.modify`, or an older
     Gmail-only sign-in's `gmail.readonly`."""
-    return GMAIL_READONLY in covered(scopes)
+    return holds(scopes, (GMAIL_READONLY,))
 
 
 def labels(services: Any) -> str:

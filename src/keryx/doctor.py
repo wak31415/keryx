@@ -806,8 +806,16 @@ def _plugin_detail(status: plugins.Status) -> str:
         where = values.get("channel_id") or "the MCP server's channel"
         server = values.get("mcp_server")
         return f"posts to {where}" + (f"; subagents use the {server} MCP server" if server else "")
-    if status.name == "check_email":
+    if status.name in ("check_email", "find_document"):
         return f"{values.get('model')}, {values.get('effort')} effort"
+    if status.name == "check_calendar":
+        which = "your own calendar" if values.get("calendars") == "primary" else (
+            "every calendar ticked in Google Calendar"
+        )
+        return f"reads {which}, up to {values.get('max_events'):g} events an answer"
+    if status.name == "add_calendar_event":
+        return (f"one event on your own calendar, {values.get('default_minutes'):g} minutes "
+                "when no end is said, nobody invited")
     if status.name == "check_billing":
         budget = values.get("monthly_budget")
         return f"{values.get('provider')}" + (f", budget ${budget:g}" if budget else "")

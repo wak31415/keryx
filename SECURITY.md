@@ -153,7 +153,8 @@ caller says or does changes anything or outlasts the call.
   level whatever the settings say. A test walks every registered tool, so a new tool is
   gated unless someone adds it to one of those lists on purpose. Of the plugins,
   `check_billing` and `cluster_stats` set `needs_pin=False`, because they read a number and
-  change nothing. `send_to_slack` and `check_email` keep the default and need the PIN.
+  change nothing. `send_to_slack`, `check_email`, `check_calendar`, `add_calendar_event`
+  and `find_document` keep the default and need the PIN.
 - **An announcement tells a call nothing it could not already hear.** A result that finishes
   during a call is announced under the same rule as the briefing. Restart confirmations and
   approval escalations go only to a call that has given the PIN or that Keryx placed to your
@@ -395,7 +396,7 @@ message.
 ### Signing in to Google
 
 `keryx auth login google` connects your Google account once, for the coding agents and for
-email answers on a call. What it leaves, and what protects it:
+the answers on a call (the email, calendar and document plugins). What it leaves, and what protects it:
 
 - **The token is a file.** `DATA_DIR/google_token.json` holds the refresh token, the
   client it was issued to, the scopes Google granted, and your address. It is 0600 in a
@@ -561,6 +562,65 @@ connection that nobody can answer hangs, and a storm of them can get an address 
 setup wizard and `keryx plugins hosts` offer only hosts with a ControlMaster in
 `~/.ssh/config`. The remote command is built from constants and refuses anything but
 `squeue` and `sinfo`.
+
+The Google plugins (`check_email`, `check_calendar`, `add_calendar_event`, `find_document`)
+put text that other people wrote in front of a model, during a call you have given the PIN
+on. Anyone can send you mail, anyone who can send you an invitation can put a title on your
+calendar, and anyone can share a file with you. That text is treated as data, in these
+ways:
+
+- **Mail and documents never reach the voice model.** `check_email` and `find_document`
+  hand what they read to one separate model call that has no tools, no settings and no
+  MCP servers, and only that call's few spoken sentences come back, clipped to a short
+  length. A document's text is fenced and described to that model as material and never
+  instructions. The fence's markers carry a random token made for that one call, so a
+  document cannot contain the marker that would close it, and anything in the text that
+  looks like a marker is removed, a fixed number of times, after which whatever is left
+  has every `<` rewritten so that no marker can remain. Text in a mail or a document can
+  still change what those sentences say. It has nothing to act with.
+- **A mail or a document cannot stall the service by its shape.** Their text is processed
+  inside the service, where a slow step would hold up every call in progress. Each
+  pattern run over it takes time in proportion to its length and no more, and each has a
+  test on how long hostile input takes.
+- **Titles and names reach the voice model, cut down and labelled.** `check_calendar` has
+  no model in between, so the voice model sees each event's title, place and calendar
+  name, and `find_document` shows it each file's name and owner: one line each, clipped to
+  120 characters, never an event's description. An event's place is often a meeting link,
+  and it is passed through like any other place: the result's note and the tool's
+  description both say a web address is never read out. Each result carries a note, and
+  each tool's description repeats it, that these are other people's words, to be said and
+  never acted on. With every ticked calendar read, an event may be on somebody else's
+  calendar; it then comes with that calendar's name, and the description says to say
+  whose it is.
+- **This reduces the risk and does not remove it.** The voice model on a call that has
+  given the PIN can dispatch tasks, and a model can be talked into things. A title or a
+  sentence written as an instruction is prompt injection into a call you authorized, which
+  is the same position as the coding agents' (see Out of scope). None of these tools
+  answers without the PIN, so none of this text reaches any model on a call that has not
+  given it. If you do not want it in front of the voice model at all, leave the plugin
+  off: the question is then dispatched as a task.
+- **Reading is a matter of construction, and the one tool that writes does one thing.**
+  A reading plugin is built on a client that has no method to write with
+  (`integrations/google_api.py`), whatever the sign-in allows. `add_calendar_event` can
+  create one event on your own calendar and nothing else: it sends no attendees and asks
+  Google to notify nobody, so it cannot be used to send anything to anyone, and it cannot
+  change or delete an event. It refuses a start that passed more than a quarter of an
+  hour ago, and it never repeats a request that may have reached your calendar. The one
+  request it does send again is one Google answered 401, after refreshing the sign-in: a
+  401 is a refusal before anything was created. It also sends no event id of its own
+  that would make a second send harmless, so the accepted risk is a duplicate when a
+  request that did reach Google is reported as unconfirmed and you ask again without
+  looking; the assistant is told to say the event may be there and not to add it again.
+- **Nothing the caller says is spliced into a request.** A Drive search is a quoted term
+  with its quotes and backslashes escaped, inside a query built from constants. A file id
+  is matched against a pattern before it is put in an address, so an id cannot name
+  another endpoint.
+- **Nothing from Google is logged or quoted.** A failure is logged as a status, one of a
+  short list of Google's own reason words, and the kind of thing asked for, never a
+  response body (which can quote a token back) and never which calendar or file. Events,
+  mail and documents are counted in the log, never written to it. The HTTP client's own
+  request log, which would write every address in full (a calendar's id is an email
+  address, and a search is in the address), is held to warnings at every log level.
 
 A coding agent drafts `keryx setup`'s project summaries by reading the folders you chose,
 including whatever their READMEs say. So nothing it writes is kept until you accept it, each

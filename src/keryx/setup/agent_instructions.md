@@ -35,8 +35,9 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    token, finds them by that address, turns `send_to_slack` on and sends them one test
    message; ask whether it arrived. If it could not find them, it says what to run
    instead.
-4. **Plugins, if they want them.** `keryx plugins --json` lists the four optional voice
-   tools — Slack, email, billing, cluster stats — each on or off, and why one is refused.
+4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
+   Slack, email, reading the calendar, adding to it, documents, billing, cluster stats —
+   each on or off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a
    ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin`,
