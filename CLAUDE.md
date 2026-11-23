@@ -16,7 +16,7 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
 - Install, in a clone: `uv sync` (every coding agent, via the default `agents` group); one
   agent only: `uv sync --no-group agents --extra codex` (or `claude`); with pip,
   `keryx-voice[all|claude|codex]`
-- Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 96%)
+- Run tests: `uv run pytest -q` (coverage: `uv run pytest -q --cov`, floor 97%)
 - Lint: `uv run ruff check src tests`
 - Run the CLI: `uv run keryx --help`
 - Set a machine up: `uv run keryx setup [--all]` (the wizard: walks only the sections still
@@ -1157,7 +1157,7 @@ inside functions, not imported at module scope, so the suite runs without them.
   everything the owner asked for out loud rather than typed — the one thing `git log`
   cannot otherwise recover.
 - Clean and minimal over clever; TDD, with `uv run pytest -q` and
-  `uv run ruff check src tests` pristine before a commit. Coverage has a floor (96%) and it
+  `uv run ruff check src tests` pristine before a commit. Coverage has a floor (97%) and it
   is a ratchet: raise it when the measured number moves up, never lower it to pass.
 - All four of Keryx's directories are 0700 and the files under them 0600
   (`config.secure_dir` / `secure_file` / `write_private`). Anything new that writes there
