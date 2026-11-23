@@ -159,7 +159,12 @@ remember:
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
   `retention`, which prunes exactly those artefacts.
 
-`logging_util.mask_number` is the only shape a phone number may take in a log line.
+`logging_util.mask_number` is the only shape a phone number may take in a log line, and
+`logging_util.configure_logging` is the only thing that turns logging on (the CLI and the
+watchdog): it holds `httpx` and `httpcore` at WARNING whatever `LOG_LEVEL` says, because at
+INFO they log every request's whole address, which for Google is a calendar's id (somebody's
+email address), the words searched for, and file ids. Never call `logging.basicConfig`
+anywhere else.
 
 ## One task kind
 

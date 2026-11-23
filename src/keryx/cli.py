@@ -56,7 +56,7 @@ from keryx.install import (
     release,
 )
 from keryx.integrations.google import parse_services as parse_google_services
-from keryx.logging_util import LOG_FORMAT, mask_number
+from keryx.logging_util import LOG_FORMAT, configure_logging, mask_number
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.plugins import ssh_hosts
 from keryx.realtime.openai import OpenAIRealtimeClient
@@ -194,7 +194,7 @@ def _configure(**overrides: object) -> Settings:
     if overrides:
         settings = settings.model_copy(update=overrides)
     settings.ensure_dirs()
-    logging.basicConfig(level=settings.log_level.upper(), format=LOG_FORMAT)
+    configure_logging(settings.log_level.upper())
     return settings
 
 
@@ -253,7 +253,7 @@ def _configure_readonly(*, quiet: bool = True) -> Settings:
     level = logging.getLevelNamesMapping().get(settings.log_level.upper(), logging.INFO)
     if quiet and level != logging.DEBUG:
         level = max(level, logging.WARNING)
-    logging.basicConfig(level=level, format=LOG_FORMAT)
+    configure_logging(level)
     return settings
 
 

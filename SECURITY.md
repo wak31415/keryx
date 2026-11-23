@@ -593,7 +593,9 @@ ways:
 - **Nothing from Google is logged or quoted.** A failure is logged as a status, one of a
   short list of Google's own reason words, and the kind of thing asked for, never a
   response body (which can quote a token back) and never which calendar or file. Events,
-  mail and documents are counted in the log, never written to it.
+  mail and documents are counted in the log, never written to it. The HTTP client's own
+  request log, which would write every address in full (a calendar's id is an email
+  address, and a search is in the address), is held to warnings at every log level.
 
 A coding agent drafts `keryx setup`'s project summaries by reading the folders you chose,
 including whatever their READMEs say. So nothing it writes is kept until you accept it, each

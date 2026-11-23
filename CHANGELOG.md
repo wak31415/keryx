@@ -68,6 +68,10 @@ the version starts with 0.
 
 ### Fixed
 
+- `keryx.log` no longer records the address of every Google request. The HTTP client
+  logged each one in full at the default log level, which for `check_email` meant message
+  and thread ids and the search that was run. Requests are still counted in Keryx's own
+  lines.
 - `keryx auth status` reported Gmail as missing however it was signed in.
 - `--headless` was ignored by both Google sign-ins.
 
