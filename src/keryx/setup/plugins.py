@@ -58,11 +58,18 @@ from keryx.integrations.slack import (
     new_app_url,
     token_kinds,
 )
+from keryx.plugins import slack_check
 from keryx.setup import google, slack
 from keryx.setup.context import SetupContext
 from keryx.setup.ui import Choice
 
 INSTALL, TEMPLATE, CANCEL = "install", "template", "cancel"
+#: Set in `ctx.memo` by the Slack step when it raised the level to read in this walk.
+RAISED_TO_READ = "slack raised to read"
+SLACK_ANSWERS = (
+    'Turn on Slack answers (check_slack) too? "Anything waiting for me on Slack?" is then '
+    "answered on a call, reading Slack as you only when you ask"
+)
 #: The option under a partition list that asks for one by name instead.
 TYPE_ONE = "\0type"
 
@@ -106,6 +113,11 @@ def run_section(ctx: SetupContext) -> None:
     # question, not three.
     sign_in_offered = False
     for name, spec in plugins.PLUGINS.items():
+        if (name == slack_check.TOOL and name not in picked and not on[name]
+                and ctx.memo.get(RAISED_TO_READ) and ui.confirm(SLACK_ANSWERS, default=True)):
+            # The Slack step has just raised a workspace to read: what reads it is offered
+            # once, here, as a sign-in to Google offers the plugins that use it.
+            picked = [*picked, name]
         if name in picked and spec.google:
             sign_in_offered = run_google(ctx, name, offer=not sign_in_offered) or sign_in_offered
         elif name in picked:
@@ -271,6 +283,8 @@ def run_slack(ctx: SetupContext) -> None:
              "url": team.url}
     if not _finish(ctx, slack.PLUGIN, saved):
         return
+    if access is Access.READ and access is not was:
+        ctx.memo[RAISED_TO_READ] = True
     # It is on now. From here it either sends a test or says why it did not.
     if not (token and channel):
         whose = "channel is" if token else "token and the channel are"
@@ -527,6 +541,20 @@ def run_google(ctx: SetupContext, name: str, *, offer: bool = True) -> bool:
     return offered
 
 
+def run_check_slack(ctx: SetupContext) -> None:
+    """`check_slack` reads with a workspace's user token: on when one is at `read`, and
+    left off, with what would turn it on, when none is."""
+    if not slack_check.reading(ctx.settings):
+        ctx.ui.note(
+            f"{slack_check.TOOL} reads Slack as you, which needs a workspace at the read "
+            "level, so it is left off: choose read in the Slack step (`keryx setup` again) "
+            "or run `keryx auth login slack --access read`, and then `keryx plugins install "
+            f"{slack_check.TOOL}`."
+        )
+        return
+    _finish(ctx, slack_check.TOOL, {})
+
+
 def run_billing(ctx: SetupContext) -> None:
     ui = ctx.ui
     values = current_values(ctx, "check_billing")
@@ -637,6 +665,7 @@ def _partition(ctx: SetupContext, alias: str, default: str, alive: bool) -> str:
 
 STEPS = {
     "send_to_slack": run_slack,
+    "check_slack": run_check_slack,
     "check_billing": run_billing,
     "cluster_stats": run_cluster,
 }

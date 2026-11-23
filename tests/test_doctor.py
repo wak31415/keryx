@@ -69,6 +69,8 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
         owner_name="Sam",
         projects_root=tmp_path / "projects",
         slack_bot_token="xoxb-test",
+        slack_app_token="xapp-test",
+        slack_user_token="xoxp-test",
         openai_admin_key="sk-admin-test",
     )
     sign_in(settings)
@@ -81,7 +83,9 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
     # only when a tool is called).
     with_agent(monkeypatch, "claude", cli="/bin/claude")
     for name, values in {
-        "send_to_slack": {"channel_id": "D123"},
+        "send_to_slack": {"channel_id": "D123", "access": "read", "owner_id": "U0OWNER",
+                          "team_id": "T0ACME", "bot_user_id": "U0KERYX"},
+        "check_slack": {},
         "check_email": {},
         "check_calendar": {},
         "add_calendar_event": {"default_minutes": 45},
@@ -640,6 +644,10 @@ def test_every_plugin_on_names_what_it_does(healthy):
     checks = by_name(run_doctor_checks(healthy))
 
     assert checks["send_to_slack"].detail == "on — posts to D123"
+    assert checks["check_slack"].detail == (
+        "on — reads Slack as you, only when you ask; claude-opus-5-5 answers a question "
+        "about what it read"
+    )
     assert checks["check_email"].detail == "on — claude-opus-5-5, low effort"
     assert checks["check_calendar"].detail == (
         "on — reads every calendar ticked in Google Calendar, up to 25 events an answer"

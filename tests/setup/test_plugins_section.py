@@ -109,6 +109,8 @@ SLACK = ("Which plugins", ["send_to_slack"])
 TOKEN, WHERE, TEST = "Bot token", "Where to send", "Send a test message"
 LEVEL, APP_TOKEN, USER_TOKEN = "What may Keryx see", "App-level token", "User token"
 OWNER = "Your own member id"
+#: The offer of `check_slack`, made once when the level has just been raised to read.
+ANSWERS = "Turn on Slack answers"
 #: The level every install had before there were levels, taken as it is offered.
 ANNOUNCE = (LEVEL, DEFAULT)
 #: A stand-in for whatever the wizard walks next, so Esc and Tab have somewhere to come from.
@@ -467,7 +469,7 @@ def test_read_is_three_tokens_and_the_user_token_says_who_and_where(make_ctx, wo
     world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
                               Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
     ctx = make_ctx([SLACK, (LEVEL, "read"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
-                    (USER_TOKEN, "xoxp-1"), (WHERE, DEFAULT), (TEST, False)])
+                    (USER_TOKEN, "xoxp-1"), (WHERE, DEFAULT), (TEST, False), (ANSWERS, False)])
 
     section.run_section(ctx)
 
@@ -494,7 +496,7 @@ def test_a_user_token_from_another_workspace_is_asked_for_again_and_never_saved(
     ]
     ctx = make_ctx([SLACK, (LEVEL, "read"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
                     (USER_TOKEN, "xoxp-other"), (USER_TOKEN, "xoxp-down"),
-                    (USER_TOKEN, "xoxp-mine"), (WHERE, DEFAULT), (TEST, False)])
+                    (USER_TOKEN, "xoxp-mine"), (WHERE, DEFAULT), (TEST, False), (ANSWERS, False)])
 
     section.run_section(ctx)
 
@@ -578,7 +580,7 @@ def test_a_kept_bot_token_with_no_workspace_on_file_still_holds_a_user_token_to_
     ctx = already_set_up(make_ctx, channel="U0OWNER")
     ctx.ui.answers = [SLACK, (LEVEL, "read"), (TOKEN, DEFAULT), (APP_TOKEN, "xapp-1"),
                       (USER_TOKEN, "xoxp-other"), (USER_TOKEN, "xoxp-mine"), (WHERE, DEFAULT),
-                      (TEST, False)]
+                      (TEST, False), (ANSWERS, False)]
 
     section.run_section(ctx)
 
@@ -661,7 +663,7 @@ def test_a_user_token_that_is_not_the_owners_on_file_is_asked_for_again(make_ctx
     ctx = conversing(make_ctx)
     ctx.ui.answers = [SLACK, (LEVEL, "read"), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
                       (USER_TOKEN, "xoxp-theirs"), (USER_TOKEN, "xoxp-mine"), (WHERE, DEFAULT),
-                      (TEST, False)]
+                      (TEST, False), (ANSWERS, False)]
 
     section.run_section(ctx)
 
@@ -757,6 +759,51 @@ def test_the_first_time_it_says_how_a_second_workspace_is_added(make_ctx, world)
     section.run_section(ctx)
 
     assert any("keryx auth login slack --workspace NAME" in line for line in ctx.ui.lines("note"))
+
+
+def test_raising_to_read_offers_slack_answers_once_and_turns_them_on(make_ctx, world):
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
+                              Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
+    ctx = make_ctx([SLACK, (LEVEL, "read"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (USER_TOKEN, "xoxp-1"), (WHERE, DEFAULT), (TEST, False), (ANSWERS, DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and on(ctx, "check_slack")
+    assert "check_slack is on, from the next call" in ctx.ui.lines("success")
+    assert any("Keryx reads Slack as you only when you ask about messages" in line
+               for line in ctx.ui.lines("note"))
+
+
+def test_slack_answers_ticked_without_a_workspace_at_read_are_left_off_with_what_to_do(
+    make_ctx, world
+):
+    ctx = make_ctx([("Which plugins", ["check_slack"])])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and not on(ctx, "check_slack")
+    assert any("needs a workspace at the read level" in line
+               and "keryx auth login slack --access read" in line
+               for line in ctx.ui.lines("note"))
+
+
+def test_slack_answers_ticked_with_a_workspace_at_read_are_turned_on_and_asked_nothing(
+    make_ctx, world
+):
+    ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    plugins.write_config(ctx.settings, "send_to_slack", {
+        "access": "read", "owner_id": "U0OWNER", "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
+    ConfigStore().mark_walked("plugins")
+    ctx.ui.answers = [("Which plugins", ["send_to_slack", "check_slack"]), (LEVEL, DEFAULT),
+                      (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT), (USER_TOKEN, DEFAULT),
+                      (WHERE, DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and on(ctx, "check_slack") and slack_calls(world) == []
 
 
 # --- slack, beside an MCP server that carries it ------------------------------------------

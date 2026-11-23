@@ -1277,7 +1277,7 @@ def test_plugins_lists_every_one_off_on_a_fresh_machine(settings_stub):
     assert result.exit_code == 0, result.output
     found = json.loads(result.output)["plugins"]
     assert [(one["name"], one["on"]) for one in found] == [
-        ("send_to_slack", False), ("check_email", False),
+        ("send_to_slack", False), ("check_slack", False), ("check_email", False),
         ("check_calendar", False), ("add_calendar_event", False),
         ("find_document", False), ("check_billing", False), ("cluster_stats", False),
     ]

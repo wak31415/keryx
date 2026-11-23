@@ -782,7 +782,12 @@ _UNUSED_SECRET = {
 
 #: What turns a plugin on from nothing, where `keryx plugins install NAME` cannot: Slack's
 #: needs a token and somewhere to send first, and its sign-in gets both and turns it on.
-_FIRST_TIME = {"send_to_slack": "keryx auth login slack"}
+_FIRST_TIME = {
+    "send_to_slack": "keryx auth login slack",
+    # It reads with a user token, which only a workspace at the read level has.
+    "check_slack": "keryx auth login slack --access read` and then `keryx plugins install "
+                   "check_slack",
+}
 
 
 def _secret_without_plugin(settings: Settings, name: str) -> str | None:
@@ -806,6 +811,9 @@ def _plugin_detail(status: plugins.Status) -> str:
         where = values.get("channel_id") or "the MCP server's channel"
         server = values.get("mcp_server")
         return f"posts to {where}" + (f"; subagents use the {server} MCP server" if server else "")
+    if status.name == "check_slack":
+        return (f"reads Slack as you, only when you ask; {values.get('model')} answers a "
+                "question about what it read")
     if status.name in ("check_email", "find_document"):
         return f"{values.get('model')}, {values.get('effort')} effort"
     if status.name == "check_calendar":

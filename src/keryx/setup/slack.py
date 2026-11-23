@@ -107,10 +107,11 @@ SHORT = {
     Access.READ: "also answers a mention in a conversation it was added to, and reads "
                  "Slack as you when you ask it about messages",
 }
-#: Said at `read` until something reads with the token.
+#: Said at `read`: when Slack is read as the owner, and what turns that on.
 READ_NOTE = (
-    "Nothing reads Slack as you yet: this release checks the user token and keeps it for "
-    "the tools that will."
+    "Keryx reads Slack as you only when you ask about messages: on a call once "
+    "`keryx plugins install check_slack` has turned that on, and in a task through "
+    "`keryx slack`, which a coding agent runs when your request is about Slack."
 )
 
 #: The steps in Slack, after the link. Markdown; `plain` is the same without the marks.
