@@ -37,12 +37,12 @@ set the connection up, and `owner_id` (the one member whose messages may start w
 no PIN) is established once, and only by something Slack said of that person: at `read`
 and above the user token's own member, and at `converse` the member an address is looked
 up to be (the one given at connect, else the Google address on file). Never from where
-reports go, which may be a colleague's member id. After that nothing changes it in
-place: not `--email` or the wizard's "where to send", which only ever choose where
-reports go; not a user token, which is refused when it is somebody else's; not a bot token from another workspace,
-which is refused too. There is no option for it. `keryx auth logout slack` and a new
-login is the one way to connect as somebody else. `OWNER_LINE` names the member on every
-connect at `converse` or above.
+reports go, which may be a colleague's member id. After that nothing changes it in place:
+not `--email` or the wizard's "where to send", which only ever choose where reports go;
+not a user token, which is refused when it is somebody else's; not a bot token from
+another workspace, which is refused too. There is no option for it. `keryx auth logout
+slack` and a new login is the one way to connect as somebody else. `OWNER_LINE` names the
+member on every connect at `converse` or above.
 
 A second workspace is the same flow with `--workspace NAME`: its own app from the same
 manifest, its own level, tokens, member id and destination (`plugins.slack`), and
