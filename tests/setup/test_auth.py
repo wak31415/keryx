@@ -334,17 +334,55 @@ def test_slack_is_missing_until_it_is_on_and_failed_with_a_token_nothing_uses(se
     half = auth.status(settings.model_copy(update={"slack_bot_token": "xoxb-1"}), ConfigStore())
 
     assert half["slack"]["state"] == "failed"
-    assert "send_to_slack is off" in half["slack"]["detail"]
+    assert "slack_report is off" in half["slack"]["detail"]
 
 
 def test_slack_that_is_on_is_ok_and_says_where_it_posts(settings):
     settings = settings.model_copy(update={"slack_bot_token": "xoxb-1"})
-    plugins.write_config(settings, "send_to_slack", {"channel_id": "U0OWNER"})
-    plugins.install(settings, "send_to_slack")
+    plugins.write_config(settings, "slack_report", {"channel_id": "U0OWNER"})
+    plugins.install(settings, "slack_report")
 
     entry = auth.status(settings, ConfigStore())["slack"]
 
-    assert entry == {"state": "ok", "detail": "on — posts to U0OWNER", "optional": True}
+    assert entry == {
+        "state": "ok", "detail": "on — posts to U0OWNER", "optional": True,
+        "workspaces": [{"name": "default", "team": "", "label": "your first workspace",
+                        "access": "announce", "listens": False, "missing": []}],
+    }
+    assert auth.slack_lines(entry) == ["your first workspace: announce level, posts only"]
+
+
+def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
+    settings = settings.model_copy(update={
+        "slack_bot_token": "xoxb-1", "slack_app_token": "xapp-1",
+        "slack_workspace_tokens": {"work": {"bot": "xoxb-w"}},
+    })
+    plugins.write_config(settings, "slack_report", {
+        "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+        "workspaces": {"work": {"access": "read", "channel_id": "U0WORK", "owner_id": "U0WORK",
+                                "team_id": "T0WORK", "bot_user_id": "U0WORKBOT"}},
+    })
+    plugins.install(settings, "slack_report")
+
+    entry = auth.status(settings, ConfigStore())["slack"]
+
+    # The first thing wrong is what the one line says; every workspace is under it.
+    assert entry["state"] == "failed" and entry["optional"] is True
+    assert entry["detail"] == (
+        "at the read level, but without its app token or its user token — "
+        "`keryx auth login slack --workspace work --access read`"
+    )
+    assert auth.slack_lines(entry) == [
+        "Acme: converse level, acts when you mention the app",
+        "work: read level, without its app token or its user token",
+    ]
+    assert "xoxb" not in str(entry) and "xapp" not in str(entry)
+
+
+def test_slack_that_is_off_lists_no_workspace(settings):
+    assert auth.status(settings, ConfigStore())["slack"]["workspaces"] == []
+    assert auth.slack_lines({"state": "ok", "detail": ""}) == []
 
 
 def test_a_slack_login_with_no_token_prints_the_link_that_makes_the_app(settings):
@@ -354,11 +392,11 @@ def test_a_slack_login_with_no_token_prints_the_link_that_makes_the_app(settings
 
 def test_a_slack_login_that_cannot_go_on_is_an_auth_error(settings):
     with pytest.raises(AuthError, match="no token on standard input"):
-        login("slack", settings, token=" \n")
+        login("slack", settings, tokens=" \n")
 
 
 def test_a_token_is_never_in_what_the_options_print():
-    assert "xoxb-secret" not in repr(LoginOptions(token="xoxb-secret"))
+    assert "xoxb-secret" not in repr(LoginOptions(tokens="xoxb-secret"))
 
 
 def test_nothing_else_can_be_signed_in_to(settings):

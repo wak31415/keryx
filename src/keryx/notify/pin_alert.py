@@ -7,7 +7,7 @@ never hear about is a PIN being guessed that they cannot change:
 
 - **spoken** into a live session that is already *authorized* — them, on the phone past the
   PIN or at their own microphone. Never into one that is not: that is where the guessing is.
-- **Slack**, while the `send_to_slack` plugin is on, which is their written channel —
+- **Slack**, while the `slack_report` plugin is on, which is their written channel —
   asked for at alert time (`slack`), so turning it on needs no restart.
 - **a text**, only through `safe_send_sms` and so only when `TwilioOut.can_text`.
 

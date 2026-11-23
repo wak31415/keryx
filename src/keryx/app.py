@@ -25,6 +25,10 @@ delivered is what `Briefer` puts at the top of the next call.
 
 And it builds the `PinGuard`, the count of wrong PINs that every phone session shares, with
 the `PinLockoutAlerter` that tells the owner when that count locks PIN entry.
+
+Last, the `SlackInbox`: what the owner types to their Keryx app on Slack, where a workspace
+is at a level that lets Keryx hear it. Built here and, like the approval bridge, started
+only by `keryx serve`: it opens a connection to Slack, and a CLI command must not.
 """
 
 from dataclasses import dataclass, field
@@ -42,11 +46,12 @@ from keryx.notify.notifier import Notifier
 from keryx.notify.pin_alert import PinLockoutAlerter
 from keryx.notify.twilio_out import TwilioOut
 from keryx.pin_guard import PinGuard
-from keryx.plugins.slack import slack_sender
+from keryx.plugins.slack import report_route, slack_sender
 from keryx.realtime.base import ProviderFactory
 from keryx.realtime.openai import OpenAIRealtimeClient
 from keryx.restart.coordinator import RestartCoordinator
 from keryx.session import SessionRegistry
+from keryx.slack_inbox import SlackInbox
 from keryx.stream_tokens import StreamTokenStore
 from keryx.tasks.manager import TaskManager
 from keryx.tasks.store import TaskStore
@@ -87,6 +92,8 @@ class AppState:
     #: Wrong PINs across every call; one per process, so every phone session counts into it.
     pin_guard: PinGuard | None = None
     pin_alerts: PinLockoutAlerter | None = None
+    #: Built here, and listening to nothing until `start()`, which only `keryx serve` calls.
+    slack_inbox: SlackInbox | None = None
 
 
 def build_app_state(settings: Settings) -> AppState:
@@ -154,7 +161,8 @@ def build_app_state(settings: Settings) -> AppState:
         stream_tokens,
         inline_waits,
         restart,
-        slack=lambda: slack_sender(settings),
+        # Asked when a report is posted, so Slack turned on since startup is honoured.
+        reports=lambda task: report_route(settings, task),
     )
     state.notifier.start()
     state.pin_guard = PinGuard.for_settings(settings)
@@ -163,6 +171,7 @@ def build_app_state(settings: Settings) -> AppState:
         bus, sessions, twilio_out, settings, slack=lambda: slack_sender(settings)
     )
     state.pin_alerts.start()
+    state.slack_inbox = SlackInbox(settings, manager)
     return state
 
 
@@ -176,6 +185,8 @@ async def shutdown_app_state(state: AppState) -> None:
         state.pin_alerts.stop()
     if state.approvals is not None:
         await state.approvals.stop()
+    if state.slack_inbox is not None:
+        await state.slack_inbox.stop()
     if state.restart is not None:
         await state.restart.shutdown()
     if state.manager is not None:

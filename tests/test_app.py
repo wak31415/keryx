@@ -59,6 +59,36 @@ async def test_build_app_state_wires_the_notifier(state):
     assert state.twilio_out.configured is False  # no Twilio credentials in these settings
 
 
+async def test_the_slack_inbox_is_built_and_listens_to_nothing_until_serve_starts_it(state):
+    """Like the approval bridge: a CLI command that builds the state opens no connection."""
+    from keryx.slack_inbox import SlackInbox
+
+    assert isinstance(state.slack_inbox, SlackInbox)
+    assert state.slack_inbox._listeners == {}
+    # Nothing is connected on this machine, so starting it listens to nothing either.
+    assert state.slack_inbox.start() == []
+
+
+async def test_a_report_is_routed_by_the_plugin_as_it_stands_when_the_task_finishes(
+    settings, tmp_path
+):
+    from keryx import plugins
+    from keryx.plugins.slack import ReportRoute
+
+    settings = settings.model_copy(update={"slack_bot_token": "xoxb-test"})
+    built = build_app_state(settings)
+    try:
+        task = Task(id=1, kind=TaskKind.AGENT, description="x")
+        assert built.notifier._reports(task) is None
+        # Turned on since startup: honoured with no restart.
+        plugins.write_config(settings, "slack_report", {"channel_id": "U0OWNER"})
+        plugins.install(settings, "slack_report")
+        route = built.notifier._reports(task)
+        assert isinstance(route, ReportRoute) and route.workspace == "default"
+    finally:
+        await shutdown_app_state(built)
+
+
 async def test_build_app_state_wires_the_restart_coordinator(state):
     """It shares the session registry, so it can see a call it must not interrupt."""
     assert isinstance(state.restart, RestartCoordinator)

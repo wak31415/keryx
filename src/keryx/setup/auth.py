@@ -11,9 +11,11 @@ the address they land on: at a terminal that is still one command, and without o
 coding agent relaying the link — it is two, the second with `--callback-url`. `gmail` and
 `google-workspace` are the names the two older sign-ins had, and run this one.
 
-Slack is always two steps (`setup/slack.py`): alone it prints the link that creates the
-owner's Slack app, and with the bot token on standard input it checks it, finds where to
-send and turns `send_to_slack` on.
+Slack is always two steps (`setup/slack.py`): alone it says what the chosen access level
+lets Keryx see and prints the link that creates the owner's Slack app (or, for an app there
+is, the manifest that raises its level), and with the level's tokens on standard input it
+checks each, finds where to send and turns `slack_report` on. Lowering a level needs no
+token and is done at once. `--workspace NAME` is a further workspace, with its own app.
 """
 
 import asyncio
@@ -42,14 +44,14 @@ SIGN_INS = {
     "google": (GOOGLE_CHECK,),
     "twilio": ("Twilio credentials",),
     #: The plugin's own check: on, off, or a token with the plugin off.
-    "slack": ("send_to_slack",),
+    "slack": ("slack_report",),
 }
 #: The names the two older Google sign-ins had: still accepted by `login`, and still
 #: reported by `status`, for one release.
 GOOGLE_ALIASES = ("gmail", "google-workspace")
 LOGINS = ("claude", "codex", "google", *GOOGLE_ALIASES, "slack")
 #: What `logout` can end: a grant Keryx holds, and the files a sign-in left.
-LOGOUTS = ("google",)
+LOGOUTS = ("google", "slack")
 #: Sign-ins Keryx runs without: `doctor` calls each optional, with a soft check that is
 #: `missing` until somebody signs in. One that has failed (a Google sign-in that connected
 #: nothing, a Slack token with its plugin off) is reported as failed, and marked, so
@@ -73,6 +75,7 @@ def status(
         report[name] = _entry(name, found)
         if name in OPTIONAL:
             report[name]["optional"] = True
+    report["slack"]["workspaces"] = _slack_workspaces(settings)
     token = read_token(settings)
     report["google"]["services"] = list(token.connected) if token is not None else []
     for alias in GOOGLE_ALIASES:
@@ -105,6 +108,32 @@ def status(
     return report
 
 
+def _slack_workspaces(settings: Settings) -> list[dict[str, Any]]:
+    """Each connected Slack workspace: its level, and what that level still lacks."""
+    from keryx.plugins.slack import connected
+
+    try:
+        found = connected(settings)
+    except Exception:  # settings that do not parse are `doctor`'s to report
+        return []
+    return [
+        {"name": each.name, "team": each.team, "label": each.label,
+         "access": str(each.access), "listens": each.listens, "missing": list(each.missing)}
+        for each in found
+    ]
+
+
+def slack_lines(entry: dict[str, Any]) -> list[str]:
+    """What `auth status` prints under Slack: one line per workspace, its level first."""
+    lines = []
+    for each in entry.get("workspaces", []):
+        name = each["label"]
+        state = (f"without {' or '.join(each['missing'])}" if each["missing"]
+                 else ("acts when you mention the app" if each["listens"] else "posts only"))
+        lines.append(f"{name}: {each['access']} level, {state}")
+    return lines
+
+
 def _entry(name: str, found: list[Check]) -> dict[str, Any]:
     if not found:
         # An agent that is not enabled has no doctor check: say so rather than guess.
@@ -122,11 +151,15 @@ class LoginOptions:
     services: tuple[str, ...] | None = None
     #: Google: the account the owner means to sign in as, when it is not the one saved.
     account: str | None = None
-    #: Slack: the bot token read from standard input (None: print the link instead), the
-    #: address to find the owner by, and whether to send one test message.
-    token: str | None = field(default=None, repr=False)
+    #: Slack: what standard input held, one token to a line (None: say what the level
+    #: means and print the link instead), the address to find the owner by, whether to
+    #: send one test message, which workspace (None: the first) and which access level
+    #: (None: the one it has).
+    tokens: str | None = field(default=None, repr=False)
     email: str | None = None
     test: bool = True
+    workspace: str | None = None
+    access: str | None = None
 
 
 def login(
@@ -166,11 +199,24 @@ def logout(
     *,
     echo: Echo,
     sign_out: Callable[[Settings], Any] | None = None,
+    store: ConfigStore | None = None,
+    workspace: str | None = None,
 ) -> None:
     """End the sign-in `name` names: revoke it where it was granted, and remove what it
-    left on this machine. `sign_out` is `google.sign_out`, looked up when called."""
+    left on this machine. `sign_out` is `google.sign_out`, looked up when called.
+
+    Slack is one workspace at a time (`workspace`; none is the first): its tokens and its
+    settings are forgotten, and nothing is revoked, because the app is the owner's own.
+    """
     if name not in LOGOUTS:
         raise AuthError(f"nothing called {name!r} to sign out of; one of: {', '.join(LOGOUTS)}")
+    if name == "slack":
+        try:
+            slack.logout(settings, store or ConfigStore(),
+                         workspace=slack.workspace_name(workspace), echo=echo)
+        except slack.SlackSetupError as exc:
+            raise AuthError(str(exc)) from None
+        return
     out = (sign_out or google.sign_out)(settings)
     if not out.removed:
         echo("Not signed in to Google: there is nothing to remove.")
@@ -216,12 +262,26 @@ def _agent_login(
 
 
 def _slack(settings: Settings, store: ConfigStore, *, options: LoginOptions, echo: Echo) -> None:
-    if options.token is None:
-        slack.start(settings, echo)
-        return
     try:
+        workspace = slack.workspace_name(options.workspace)
+        access = slack.parse_access(options.access)
+        if options.tokens is None:
+            # Taking access away needs nothing from Slack, so it is done here and now.
+            lowered = access is not None and slack.lower(
+                settings, store, workspace=workspace, access=access, echo=echo
+            )
+            if not lowered:
+                slack.start(settings, echo, workspace=workspace, access=access)
+            return
         slack.connect(
-            settings, store, token=options.token, email=options.email, test=options.test, echo=echo
+            settings,
+            store,
+            tokens=options.tokens,
+            email=options.email,
+            test=options.test,
+            echo=echo,
+            workspace=workspace,
+            access=access,
         )
     except slack.SlackSetupError as exc:
         raise AuthError(str(exc)) from None

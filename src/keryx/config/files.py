@@ -170,7 +170,9 @@ def dump_toml(data: dict[str, Any], header: str = "") -> str:
     """`data` as TOML: scalars and arrays first, then one table per nested dict.
 
     Only the shapes settings take — strings, numbers, booleans, arrays of those, and one
-    level of tables — which is why this is twenty lines rather than a dependency.
+    level of tables — which is why this is twenty lines rather than a dependency. Anything
+    deeper is refused rather than written as the text of a dict: a file every build of
+    Keryx on the machine rewrites has to hold only what every one of them writes back.
     """
     lines = [f"# {line}".rstrip() for line in header.splitlines()]
     if lines:
@@ -208,4 +210,6 @@ def toml_value(value: Any) -> str:
         return repr(value)
     if isinstance(value, list | tuple):
         return "[" + ", ".join(toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        raise TypeError("a table inside a table is deeper than Keryx writes")
     return _toml_string(str(value))

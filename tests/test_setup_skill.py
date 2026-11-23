@@ -84,6 +84,13 @@ def test_the_skill_connects_slack_without_ever_holding_its_token(flat):
     assert "ask them whether it arrived" in flat
 
 
+def test_the_skill_leaves_the_slack_access_level_to_them(flat):
+    """Above announce a Slack message can start work with no PIN: never the agent's call."""
+    assert "The access level is theirs to choose, and it comes first" in flat
+    assert "Never choose `converse`, `read` or `write` for them" in flat
+    assert "without the phone PIN" in flat
+
+
 def test_the_skill_leaves_the_pin_to_them_and_hands_over_to_setup(flat):
     assert "Never choose a PIN for them" in flat
     assert "Run `keryx setup`" in flat

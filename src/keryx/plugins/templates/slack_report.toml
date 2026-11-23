@@ -1,0 +1,48 @@
+# slack_report: "send me that on Slack" posts to your DM, and a PIN lockout is posted there
+# too. Changes here count from the next call; no restart.
+#
+# The tokens are secrets, so they are not in this file: they are in secrets.toml, set by
+# `keryx auth login slack` (the bot token alone can also come from the MCP server below).
+# `keryx plugins remove slack_report` turns all of this off.
+
+# Where it posts. Your member id (U…) reaches you in your messages from the app, and
+# `keryx auth login slack` finds it from your address; a channel's id (in the
+# conversation's details) works too. Blank: the SLACK_CHANNEL_ID in the MCP server's
+# config below.
+channel_id = {channel_id}
+
+# What Keryx may see in this workspace, which is also what your Slack app was created
+# with. announce: it posts and reads nothing. converse: it is also sent the direct messages
+# you type to the Keryx app itself, and acts on one that mentions the app (@Keryx): a new
+# message starts work and a reply under a task's report resumes that task, without the
+# phone PIN. read: you can also mention it in a conversation it was added to, where it
+# answers in that thread, and it reads Slack as you when you ask it about messages.
+# write: it can also send a message as you, to a person or a channel, when you ask.
+# Lowering it here takes effect at once; raising it needs the app changed in Slack and
+# more tokens, which is `keryx auth login slack --access LEVEL`.
+access = {access}
+
+# Your own member id in this workspace. At converse and above, only messages from this
+# member are ever acted on. It is settled when the workspace is connected and nothing
+# changes it afterwards: `keryx auth logout slack` and a new login connects as somebody
+# else.
+owner_id = {owner_id}
+
+# The workspace this is, and the Keryx app's own member id there, as Slack gave them when
+# the token was checked. At converse and above a message is acted on only when it is
+# from the workspace with this id and mentions the app by that member id (@Keryx).
+team = {team}
+team_id = {team_id}
+bot_user_id = {bot_user_id}
+
+# The user-scope MCP server in ~/.claude.json (in $CLAUDE_CONFIG_DIR, when that is set)
+# that gives subagents Slack. Named, subagents are told to use it, and a missing token or
+# channel is read from its config. Blank: none.
+mcp_server = {mcp_server}
+{extra}
+
+# Further workspaces, one [workspace-NAME] table each with the same settings as the
+# top of this file, written by `keryx auth login slack --workspace NAME` and removed by
+# `keryx auth logout slack --workspace NAME`. Everything is sent to the workspace at the
+# top unless one of these is named.
+{workspaces}

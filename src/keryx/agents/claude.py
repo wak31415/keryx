@@ -192,7 +192,7 @@ def _options(context: AgentContext, settings: Settings, resume: str | None) -> C
         options["allowed_tools"] = list(GOOGLE_MCP_TOOLS)
     # With neither key nor token set, the spawned CLI falls back to the user's stored
     # Claude subscription login — the default, so subagents don't bill per token.
-    if env := child_env(context.auth):
+    if env := {**context.task_env, **child_env(context.auth)}:
         options["env"] = env
     return ClaudeAgentOptions(**options)
 

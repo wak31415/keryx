@@ -44,7 +44,7 @@ from keryx.agents.registry import resolve_model
 from keryx.config import Settings, secure_file
 from keryx.events import EventBus, TaskCompleted, TaskFailed, TaskProgress, TaskStarted
 from keryx.projects import discover_projects
-from keryx.tasks.models import Task, TaskKind, TaskStatus
+from keryx.tasks.models import SlackThread, Task, TaskKind, TaskStatus
 from keryx.tasks.store import MAX_UNREPORTED, TaskStore
 
 log = logging.getLogger("keryx.tasks.manager")
@@ -309,6 +309,7 @@ class TaskManager:
         cwd: str | None = None,
         internal: bool = False,
         agent: str | None = None,
+        slack: SlackThread | None = None,
     ) -> Task:
         """Create a `queued` task and schedule it.
 
@@ -326,6 +327,10 @@ class TaskManager:
 
         `agent` is the coding agent to run it on; None is `AGENT_BACKEND`. It is fixed for
         the life of the task, and one that is not enabled raises `AgentUnavailableError`.
+
+        `slack` is the thread the request was typed in, when it was typed to the app on
+        Slack: the row is born knowing it, so the report is posted there, wherever that is,
+        and the same message delivered twice finds the task it already started.
         """
         agent = agent or self._settings.agent_backend
         if agent not in self._settings.enabled_agents:
@@ -357,6 +362,11 @@ class TaskManager:
                 origin_caller=origin_caller,
                 origin_session_id=origin_session_id,
                 internal=internal,
+                slack_workspace=slack.workspace if slack else None,
+                slack_channel=slack.channel if slack else None,
+                slack_thread_ts=slack.ts if slack else None,
+                slack_team_id=(slack.team_id or None) if slack else None,
+                slack_seen=(slack.asked_at or slack.ts) if slack else None,
             )
         )
         self._done_events[created.id] = asyncio.Event()
@@ -373,8 +383,16 @@ class TaskManager:
         return created
 
     async def _check_daily_cap(self) -> None:
-        midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        """Raise `TaskLimitError` once today's runs have reached `daily_task_cap`.
+
+        A run is a task dispatched today, or a task re-run today by a reply on Slack. A
+        follow-up on the phone is not counted, as it never was: it needs a call Keryx
+        placed or the PIN. A Slack reply needs neither, so it is counted like a dispatch.
+        """
+        now = datetime.now(UTC)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         count = await self._store.count_created_since(midnight)
+        count += await self._store.count_slack_reruns_on(now.date().isoformat())
         if count >= self._settings.daily_task_cap:
             raise TaskLimitError(self._settings.daily_task_cap, count)
 
@@ -649,6 +667,25 @@ class TaskManager:
     async def search(self, terms: Sequence[str], *, limit: int = 5) -> list[Task]:
         """Tasks whose description or summary contains every term, newest first."""
         return await self._store.search(terms, limit=limit)
+
+    async def task_in_slack_thread(self, thread: SlackThread) -> Task | None:
+        """The task that lives in `thread`, if one does."""
+        return await self._store.find_by_slack_thread(
+            thread.workspace, thread.channel, thread.ts, team_id=thread.team_id)
+
+    async def followup_from_slack(self, task_id: int, text: str, ts: str) -> Task:
+        """`followup`, for a reply the owner typed on Slack at `ts`: counted against the
+        daily cap like a dispatch, and remembered so the same message is taken once.
+
+        Raises `TaskLimitError` past the cap, with nothing sent, and whatever `followup`
+        raises. The phone's follow-ups do not come this way and are not counted.
+        """
+        await self._check_daily_cap()
+        task = await self.followup(task_id, text)
+        await self._store.heard_on_slack(
+            task_id, ts, rerun_on=datetime.now(UTC).date().isoformat()
+        )
+        return task
 
     async def tasks_for_session(self, session_id: str) -> list[Task]:
         """The tasks one voice session dispatched, oldest first."""

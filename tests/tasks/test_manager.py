@@ -1211,3 +1211,79 @@ async def test_with_every_stream_blocked_a_cancel_and_the_database_still_run(set
 
     assert created.id is not None
     assert (interrupted, closed) == ("interrupt sent", "closed")
+
+
+# --- a task asked for on Slack -------------------------------------------------------------
+
+
+async def test_a_task_dispatched_from_slack_is_born_knowing_its_thread(make_harness):
+    from keryx.tasks.models import SlackThread
+
+    harness = make_harness()
+    thread = SlackThread("work", "D0WORK", "1700000000.000100")
+
+    task = await dispatch(harness.manager, origin_channel="slack", slack=thread)
+
+    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts, task.slack_seen) == (
+        "work", "D0WORK", "1700000000.000100", "1700000000.000100"
+    )
+    assert (await harness.manager.task_in_slack_thread(thread)).id == task.id
+
+
+async def test_a_task_asked_for_by_a_reply_remembers_the_reply_and_lives_in_its_thread(
+    make_harness,
+):
+    """Asked and answered in the same thread, whatever conversation that is in."""
+    from keryx.tasks.models import SlackThread
+
+    harness = make_harness()
+    asked = SlackThread("work", "C0SHARED", "1700000000.000100", asked_at="1700000000.000700")
+
+    task = await dispatch(harness.manager, origin_channel="slack", slack=asked)
+
+    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts, task.slack_seen) == (
+        "work", "C0SHARED", "1700000000.000100", "1700000000.000700"
+    )
+    assert (await harness.manager.task_in_slack_thread(asked)).id == task.id
+
+
+async def test_a_reply_from_slack_is_counted_against_the_daily_cap_like_a_dispatch(make_harness):
+    """Nothing else stands between a Slack message and a run: no PIN, no keypress."""
+    harness = make_harness(daily_task_cap=3)
+    task = await dispatch(harness.manager, origin_channel="slack")
+    await wait_for_status(harness.manager, task.id, TaskStatus.DONE)
+
+    await harness.manager.followup_from_slack(task.id, "again", "1700000000.000200")
+    await wait_for_status(harness.manager, task.id, TaskStatus.DONE)
+    await harness.manager.followup_from_slack(task.id, "and again", "1700000000.000300")
+    await wait_for_status(harness.manager, task.id, TaskStatus.DONE)
+
+    # One dispatch and two re-runs: the cap of three is reached for everything.
+    with pytest.raises(TaskLimitError):
+        await harness.manager.followup_from_slack(task.id, "once more", "1700000000.000400")
+    with pytest.raises(TaskLimitError):
+        await dispatch(harness.manager)
+    stored = await harness.manager.get(task.id)
+    assert stored.slack_reruns == 2
+    assert stored.slack_seen == "1700000000.000200 1700000000.000300"
+    assert len(harness.runner.opened) == 3
+
+
+async def test_a_follow_up_on_the_phone_is_not_counted(make_harness):
+    harness = make_harness(daily_task_cap=1)
+    task = await dispatch(harness.manager)
+    await wait_for_status(harness.manager, task.id, TaskStatus.DONE)
+
+    for _ in range(3):
+        await harness.manager.followup(task.id, "again")
+        await wait_for_status(harness.manager, task.id, TaskStatus.DONE)
+
+    assert len(harness.runner.opened) == 4
+
+
+async def test_a_task_dispatched_anywhere_else_has_no_thread(make_harness):
+    harness = make_harness()
+
+    task = await dispatch(harness.manager)
+
+    assert (task.slack_workspace, task.slack_channel, task.slack_thread_ts) == (None, None, None)

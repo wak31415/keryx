@@ -106,3 +106,12 @@ def test_tables_come_after_every_plain_key():
 
 def test_the_header_is_a_comment():
     assert dump_toml({}, header="hello").startswith("# hello\n")
+
+
+def test_a_table_inside_a_table_is_refused_rather_than_written_as_text():
+    """Every build of Keryx on a machine rewrites these files, and one from before a
+    deeper shape would write it back as the text of a dict. So nothing deeper is written."""
+    with pytest.raises(TypeError, match="deeper than Keryx writes"):
+        dump_toml({"T": {"work": {"bot": "b"}}})
+    with pytest.raises(TypeError):
+        dump_toml({"T": {"a": {"b": {"c": "three deep"}}}})

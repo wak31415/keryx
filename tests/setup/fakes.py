@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from keryx.agents.base import RunResult
-from keryx.integrations.slack import Member, SlackResult, Workspace
+from keryx.integrations.slack import Connection, Member, SlackResult, Workspace
 from keryx.issues import GhStatus
 from keryx.notify.twilio_out import TwilioError, TwilioNumber
 from keryx.setup.context import Probes
@@ -194,11 +194,17 @@ class FakeWorld:
                                                      account="octocat")])
     #: What Slack says of each token it is shown, in order (the last one repeats), who it
     #: finds by an address, and whether it takes a message. A token is never in `calls`.
-    slack_workspaces: list = field(default_factory=lambda: [Workspace(team="Acme")])
+    slack_workspaces: list = field(
+        default_factory=lambda: [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")]
+    )
     slack_member: Member = field(
         default_factory=lambda: Member(user_id="U0OWNER", name="Sam Doe")
     )
     slack_sent: SlackResult = field(default_factory=SlackResult)
+    #: What Slack says of each app-level token it is asked to open a connection with.
+    slack_connections: list = field(
+        default_factory=lambda: [Connection(url="wss://slack.example/?ticket=t")]
+    )
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
@@ -214,6 +220,11 @@ class FakeWorld:
         def slack_post(token, channel, text):
             self.calls.append(("slack_post", channel, text))
             return self.slack_sent
+
+        def slack_connection(token):
+            self.calls.append(("slack_open",))
+            many = len(self.slack_connections) > 1
+            return self.slack_connections.pop(0) if many else self.slack_connections[0]
 
         async def smoke(settings, agent):
             self.calls.append(("smoke", agent))
@@ -295,4 +306,5 @@ class FakeWorld:
             slack_auth_test=slack_auth_test,
             slack_member=slack_member,
             slack_post=slack_post,
+            slack_connection=slack_connection,
         )

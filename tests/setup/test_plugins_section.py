@@ -4,6 +4,7 @@ The ssh hosts are made up and answered by `FakeWorld`; nothing here reads a real
 `~/.ssh/config` or runs ssh.
 """
 
+import json
 import tomllib
 
 import pytest
@@ -12,12 +13,29 @@ from keryx import plugins
 from keryx.agents import registry
 from keryx.config.store import ConfigStore
 from keryx.integrations import google as account
+from keryx.integrations import slack as slack_api
 from keryx.integrations.gmail import legacy_token_path
-from keryx.integrations.slack import Member, SlackResult, Workspace, new_app_url
+from keryx.integrations.slack import (
+    Access,
+    Connection,
+    Member,
+    SlackResult,
+    Workspace,
+    app_manifest,
+    new_app_url,
+)
 from keryx.plugins.ssh_hosts import SshHost
 from keryx.setup import plugins as section
 from keryx.setup import wizard
-from keryx.setup.slack import MEMBER_ID_HINT, TEST_MESSAGE
+from keryx.setup.slack import (
+    CONVERSE_TEST_MESSAGE,
+    LISTEN_NOTE,
+    MEANING,
+    MEMBER_ID_HINT,
+    OWNER_LINE,
+    READ_NOTE,
+    TEST_MESSAGE,
+)
 from keryx.setup.ui import Back, Forward
 
 from .fakes import DEFAULT
@@ -46,8 +64,8 @@ def test_a_first_walk_ticks_slack_and_email(make_ctx):
     section.run_section(ctx)
 
     choices = {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
-    assert [name for name, c in choices.items() if c.checked] == ["send_to_slack", "check_email"]
-    assert choices["send_to_slack"].hint.endswith(" (recommended)")
+    assert [name for name, c in choices.items() if c.checked] == ["slack_report", "check_email"]
+    assert choices["slack_report"].hint.endswith(" (recommended)")
     assert "·" not in "".join(choice.hint for choice in choices.values())
     assert "recommended" not in choices["cluster_stats"].hint
 
@@ -88,8 +106,13 @@ def test_one_that_is_on_and_cannot_be_ticked_is_not_turned_off_for_it(make_ctx, 
 # --- slack -------------------------------------------------------------------------------
 
 
-SLACK = ("Which plugins", ["send_to_slack"])
+SLACK = ("Which plugins", ["slack_report"])
 TOKEN, WHERE, TEST = "Bot token", "Where to send", "Send a test message"
+LEVEL, APP_TOKEN, USER_TOKEN = "What may Keryx see", "App-level token", "User token"
+#: The offer of `slack_read`, made once when the level has just been raised to read.
+ANSWERS = "Turn on reading Slack"
+#: The level every install had before there were levels, taken as it is offered.
+ANNOUNCE = (LEVEL, DEFAULT)
 #: A stand-in for whatever the wizard walks next, so Esc and Tab have somewhere to come from.
 NEXT = "Next section"
 
@@ -110,24 +133,25 @@ def slack_walk(ctx):
 
 def asked(ctx) -> list[str]:
     """Each question in the order it was put on the terminal, by its first words."""
-    names = ("Which plugins", TOKEN, WHERE, TEST, NEXT, "Save it without checking")
+    names = ("Which plugins", LEVEL, TOKEN, APP_TOKEN, USER_TOKEN, WHERE, TEST, NEXT,
+             "Save it without checking")
     return [next(name for name in names if name in message) for _, message in ctx.ui.asked]
 
 
 def test_slack_is_a_link_a_pasted_token_and_an_address(make_ctx, world):
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, DEFAULT)])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, DEFAULT)])
 
     section.run_section(ctx)
 
     assert ctx.ui.done()  # no channel id was asked for
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1"}
-    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
-    assert on(ctx, "send_to_slack")
+    assert toml(ctx, "slack_report")["channel_id"] == "U0OWNER"
+    assert on(ctx, "slack_report")
     assert ctx.ui.lines("link") == [new_app_url()]
     assert "Install to Workspace" in ctx.ui.lines("markdown")[0]
     assert "connected to the Acme workspace" in ctx.ui.lines("success")
     assert "found Sam Doe: messages go to you, from the Keryx app" in ctx.ui.lines("success")
-    assert "send_to_slack is on, from the next call" in ctx.ui.lines("success")
+    assert "slack_report is on, from the next call" in ctx.ui.lines("success")
     assert "sent: it is in Slack, under Apps" in ctx.ui.lines("success")
     assert any("The rest of its settings are in" in line for line in ctx.ui.lines("note"))
     assert not any("keryx restart" in line for line in ctx.ui.lines("note"))
@@ -138,7 +162,7 @@ def test_slack_is_a_link_a_pasted_token_and_an_address(make_ctx, world):
 
 def test_the_address_offered_is_the_google_one(make_ctx, world):
     ConfigStore().set({"USER_GOOGLE_EMAIL": "sam@example.com"})
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, DEFAULT), (TEST, False)])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, DEFAULT), (TEST, False)])
 
     section.run_section(ctx)
 
@@ -148,8 +172,8 @@ def test_the_address_offered_is_the_google_one(make_ctx, world):
 
 def test_a_token_slack_refuses_is_asked_for_again_and_never_shown(make_ctx, world):
     world.slack_workspaces = [Workspace(error="invalid_auth"), Workspace(team="Acme")]
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-wrong"), (TOKEN, "xoxb-right"), (WHERE, "sam@x.io"),
-                    (TEST, False)])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-wrong"), (TOKEN, "xoxb-right"),
+                    (WHERE, "sam@x.io"), (TEST, False)])
 
     section.run_section(ctx)
 
@@ -174,7 +198,7 @@ def test_a_token_that_could_not_be_checked_is_not_called_refused_and_may_be_save
 ):
     """Slack never said no: an outage, a rate limit or a proxy must not trap the owner."""
     world.slack_workspaces = [Workspace(error=error)]
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), ("Save it without checking", False),
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), ("Save it without checking", False),
                     (TOKEN, "xoxb-2"), ("Save it without checking", True),
                     (WHERE, "D123"), (TEST, False)])
 
@@ -183,74 +207,76 @@ def test_a_token_that_could_not_be_checked_is_not_called_refused_and_may_be_save
     assert ctx.ui.done()
     assert ctx.ui.lines("error") == [said, said]
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-2"}
-    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+    assert toml(ctx, "slack_report")["channel_id"] == "D123"
 
 
 @pytest.mark.parametrize("code", ["users_not_found", "missing_scope"])
 def test_an_address_slack_cannot_find_falls_back_to_an_id_typed_by_hand(make_ctx, world, code):
     """`missing_scope` is an app made the old way, with `chat:write` and nothing else."""
     world.slack_member = Member(error=code)
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (WHERE, "D123"),
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (WHERE, "D123"),
                     (TEST, DEFAULT)])
 
     section.run_section(ctx)
 
     assert any(code in line for line in ctx.ui.lines("warn"))
     assert MEMBER_ID_HINT in ctx.ui.lines("note")
-    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+    assert toml(ctx, "slack_report")["channel_id"] == "D123"
     assert ("slack_post", "D123", TEST_MESSAGE) in world.calls
 
 
 def test_an_id_typed_straight_away_asks_slack_nothing_about_an_address(make_ctx, world):
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, " D123 "), (TEST, False)])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, " D123 "), (TEST, False)])
 
     section.run_section(ctx)
 
     assert slack_calls(world) == [("slack_auth",)]
-    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+    assert toml(ctx, "slack_report")["channel_id"] == "D123"
 
 
 def test_where_to_send_is_required_and_is_an_address_or_a_bare_id(make_ctx):
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, "")])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "")])
     with pytest.raises(AssertionError, match="Required"):
         section.run_section(ctx)
+    # A walk that stops half-way has saved nothing: a token alone is not a connection.
+    assert ConfigStore()._secrets() == {} and not on(ctx, "slack_report")
 
-    ctx = make_ctx([SLACK, (TOKEN, DEFAULT), (WHERE, "#general")])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "#general")])
     with pytest.raises(AssertionError, match="bare word"):
         section.run_section(ctx)
 
 
 def test_a_test_message_slack_refuses_is_said_and_undoes_nothing(make_ctx, world):
     world.slack_sent = SlackResult(error="channel_not_found")
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True)])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True)])
 
     section.run_section(ctx)
 
     (warning,) = ctx.ui.lines("warn")
     assert "(channel_not_found)" in warning and "saved" in warning
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1"}
-    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
-    assert on(ctx, "send_to_slack")
+    assert toml(ctx, "slack_report")["channel_id"] == "U0OWNER"
+    assert on(ctx, "slack_report")
 
 
 def already_set_up(make_ctx, *, channel="D123", review=False):
     ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-old"})
     ctx = make_ctx([], review=review)
-    plugins.write_config(ctx.settings, "send_to_slack", {"channel_id": channel})
-    plugins.install(ctx.settings, "send_to_slack")
+    plugins.write_config(ctx.settings, "slack_report", {"channel_id": channel})
+    plugins.install(ctx.settings, "slack_report")
     return ctx
 
 
 def test_slack_already_set_up_is_asked_nothing_new_and_slack_is_not_called(make_ctx, world):
     ctx = already_set_up(make_ctx)
-    ctx.ui.answers = [SLACK, (TOKEN, DEFAULT), (WHERE, DEFAULT)]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, DEFAULT), (WHERE, DEFAULT)]
 
     section.run_section(ctx)
 
     assert ctx.ui.done()
     assert slack_calls(world) == [] and not ctx.ui.lines("link")
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
-    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+    assert toml(ctx, "slack_report")["channel_id"] == "D123"
     # It is on, and it says why nothing was sent to show it.
     assert "Nothing changed, so no test message was sent." in ctx.ui.lines("note")
 
@@ -258,7 +284,7 @@ def test_slack_already_set_up_is_asked_nothing_new_and_slack_is_not_called(make_
 def test_reviewing_slack_that_is_set_up_offers_a_test_and_sends_none_by_default(make_ctx, world):
     """A review asks again about what is set, as every section does; Enter changes nothing."""
     ctx = already_set_up(make_ctx, review=True)
-    ctx.ui.answers = [SLACK, (TOKEN, DEFAULT), (WHERE, DEFAULT), (TEST, DEFAULT)]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, DEFAULT), (WHERE, DEFAULT), (TEST, DEFAULT)]
 
     section.run_section(ctx)
 
@@ -268,17 +294,17 @@ def test_reviewing_slack_that_is_set_up_offers_a_test_and_sends_none_by_default(
 def test_a_token_with_nowhere_to_send_yet_is_kept_and_the_member_found(make_ctx, world):
     """A token saved with `keryx config set` and nothing else: only the address is asked."""
     ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-old"})
-    ctx = make_ctx([SLACK, (TOKEN, DEFAULT), (WHERE, "sam@x.io"), (TEST, False)])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, DEFAULT), (WHERE, "sam@x.io"), (TEST, False)])
 
     section.run_section(ctx)
 
     assert slack_calls(world) == [("slack_member", "sam@x.io")]
-    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
+    assert toml(ctx, "slack_report")["channel_id"] == "U0OWNER"
 
 
 def test_a_new_channel_for_a_kept_token_offers_the_test(make_ctx, world):
     ctx = already_set_up(make_ctx)
-    ctx.ui.answers = [SLACK, (TOKEN, DEFAULT), (WHERE, " C456 "), (TEST, DEFAULT)]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, DEFAULT), (WHERE, " C456 "), (TEST, DEFAULT)]
 
     section.run_section(ctx)
 
@@ -292,12 +318,12 @@ def test_a_new_channel_for_a_kept_token_offers_the_test(make_ctx, world):
 def test_a_new_token_is_not_offered_the_old_apps_direct_message(make_ctx, world):
     ConfigStore().set({"USER_GOOGLE_EMAIL": "sam@example.com"})
     ctx = already_set_up(make_ctx, channel="D0OLDAPP")
-    ctx.ui.answers = [SLACK, (TOKEN, "xoxb-new"), (WHERE, DEFAULT), (TEST, DEFAULT)]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, "xoxb-new"), (WHERE, DEFAULT), (TEST, DEFAULT)]
 
     section.run_section(ctx)
 
     assert any("D0OLDAPP" in line and "not offered" in line for line in ctx.ui.lines("note"))
-    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
+    assert toml(ctx, "slack_report")["channel_id"] == "U0OWNER"
     assert slack_calls(world) == [
         ("slack_auth",), ("slack_member", "sam@example.com"),
         ("slack_post", "U0OWNER", TEST_MESSAGE),
@@ -307,22 +333,605 @@ def test_a_new_token_is_not_offered_the_old_apps_direct_message(make_ctx, world)
 def test_a_new_token_keeps_a_member_id_as_what_is_offered(make_ctx, world):
     ConfigStore().set({"USER_GOOGLE_EMAIL": "sam@example.com"})
     ctx = already_set_up(make_ctx, channel="U0MEMBER")
-    ctx.ui.answers = [SLACK, (TOKEN, "xoxb-new"), (WHERE, DEFAULT), (TEST, DEFAULT)]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, "xoxb-new"), (WHERE, DEFAULT), (TEST, DEFAULT)]
 
     section.run_section(ctx)
 
-    assert toml(ctx, "send_to_slack")["channel_id"] == "U0MEMBER"
+    assert toml(ctx, "slack_report")["channel_id"] == "U0MEMBER"
     assert slack_calls(world) == [("slack_auth",), ("slack_post", "U0MEMBER", TEST_MESSAGE)]
 
 
 def test_a_token_that_replaces_another_says_a_running_keryx_needs_a_restart(make_ctx, world):
     ctx = already_set_up(make_ctx, channel="U0MEMBER")
-    ctx.ui.answers = [SLACK, (TOKEN, "xoxb-new"), (WHERE, DEFAULT), (TEST, False)]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, "xoxb-new"), (WHERE, DEFAULT), (TEST, False)]
 
     section.run_section(ctx)
 
     assert ("A Keryx that started with the old token keeps it until `keryx restart`."
             in ctx.ui.lines("note"))
+
+
+# --- slack: the access level comes first ---------------------------------------------------
+
+
+def test_the_level_is_asked_first_and_says_what_keryx_will_see_before_the_link(make_ctx, world):
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, "sam@x.io"), (TEST, True)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and asked(ctx)[:2] == ["Which plugins", LEVEL]
+    choices = ctx.ui.choices["What may Keryx see in your Slack?"]
+    assert [c.value for c in choices] == ["announce", "converse", "read", "write"]
+    assert "reads nothing" in choices[0].hint
+    assert "without the PIN" in choices[1].hint and "reads Slack as you" in choices[2].hint
+    meant = ctx.ui.said.index(("note", MEANING[Access.CONVERSE]))
+    assert meant < [kind for kind, _ in ctx.ui.said].index("link")
+    assert ctx.ui.lines("link") == [new_app_url(Access.CONVERSE)]
+    assert "4. Under **Basic Information**, **App-Level Tokens**" in ctx.ui.lines("markdown")[0]
+
+
+def test_converse_is_two_tokens_each_checked_and_the_owner_is_who_the_address_found(
+    make_ctx, world
+):
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")]
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, "sam@x.io"), (TEST, True)])
+
+    section.run_section(ctx)
+
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1"}
+    saved = toml(ctx, "slack_report")
+    assert (saved["access"], saved["owner_id"], saved["channel_id"]) == (
+        "converse", "U0OWNER", "U0OWNER"
+    )
+    assert (saved["team"], saved["team_id"]) == ("Acme", "T0ACME")
+    assert slack_calls(world) == [
+        ("slack_auth",), ("slack_open",), ("slack_member", "sam@x.io"),
+        ("slack_post", "U0OWNER", TEST_MESSAGE + CONVERSE_TEST_MESSAGE),
+    ]
+    assert LISTEN_NOTE in ctx.ui.lines("note")
+    assert not any("xapp-1" in text or "xoxb-1" in text for _, text in ctx.ui.said)
+
+
+def test_an_app_token_slack_refuses_is_asked_for_again_and_says_what_it_needs(make_ctx, world):
+    world.slack_connections = [Connection(error="invalid_auth"), Connection(url="wss://x/?t=1")]
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-wrong"),
+                    (APP_TOKEN, "xapp-right"), (WHERE, "sam@x.io"), (TEST, False)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert any("connections:write" in line and "(invalid_auth)" in line
+               for line in ctx.ui.lines("error"))
+    assert ConfigStore()._secrets()["SLACK_APP_TOKEN"] == "xapp-right"
+
+
+def test_above_announce_a_token_that_could_not_be_checked_is_never_saved_unchecked(
+    make_ctx, world
+):
+    """Every message is held to the workspace Slack names, so Slack has to have named it."""
+    world.slack_connections = [Connection(error="http_503"), Connection(url="wss://x/?t=1")]
+    world.slack_workspaces = [Workspace(error="http_503"),
+                              Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")]
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (TOKEN, "xoxb-1"),
+                    (APP_TOKEN, "xapp-1"), (APP_TOKEN, "xapp-1"), (WHERE, "sam@x.io"),
+                    (TEST, False)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert "Save it without checking" not in " ".join(message for _, message in ctx.ui.asked)
+    assert "At this level it has to be checked: try again when Slack answers." in (
+        ctx.ui.lines("note")
+    )
+    assert any("At this level it has to be" in line for line in ctx.ui.lines("error"))
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1"}
+
+
+def test_a_level_abandoned_half_way_has_saved_none_of_it(make_ctx, world):
+    """All of its tokens or none: the bot token is not saved while the app token is not."""
+    world.slack_connections = [Connection(error="invalid_auth")]
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-wrong")])
+
+    with pytest.raises(AssertionError, match="unscripted secret"):
+        section.run_section(ctx)
+
+    assert ConfigStore()._secrets() == {} and not on(ctx, "slack_report")
+    assert not plugins.config_path(ctx.settings, "slack_report").exists()
+
+
+def test_a_slack_file_that_cannot_be_written_has_still_saved_the_tokens_and_says_so(
+    make_ctx, world, monkeypatch
+):
+    """As on the command line: the tokens go first, in one write, and the error is shown."""
+    def refuse(settings, name, values):
+        raise plugins.PluginConfigError("slack_report: channel_id must be a bare word")
+
+    monkeypatch.setattr(plugins, "write_config", refuse)
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, "sam@x.io")])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and ctx.ui.lines("error")
+    assert "saved SLACK_BOT_TOKEN, SLACK_APP_TOKEN" in ctx.ui.lines("success")
+
+
+def test_an_app_token_must_be_one(make_ctx):
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xoxb-again")])
+
+    with pytest.raises(AssertionError, match="An app-level token starts xapp-"):
+        section.run_section(ctx)
+
+
+def test_read_is_three_tokens_and_the_user_token_says_who_and_where(make_ctx, world):
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
+                              Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
+    ctx = make_ctx([SLACK, (LEVEL, "read"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (USER_TOKEN, "xoxp-1"), (WHERE, DEFAULT), (TEST, False), (ANSWERS, False)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert ConfigStore()._secrets() == {
+        "SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1", "SLACK_USER_TOKEN": "xoxp-1",
+    }
+    saved = toml(ctx, "slack_report")
+    assert (saved["access"], saved["owner_id"], saved["channel_id"]) == ("read", "U0SAM", "U0SAM")
+    assert READ_NOTE in ctx.ui.lines("note")
+    assert "it is yours: you are U0SAM there" in ctx.ui.lines("success")
+    assert slack_calls(world) == [("slack_auth",), ("slack_open",), ("slack_auth",)]
+    assert "5. Under **OAuth & Permissions**, copy the **User OAuth Token**" in (
+        ctx.ui.lines("markdown")[0]
+    )
+
+
+def test_a_user_token_from_another_workspace_is_asked_for_again_and_never_saved(make_ctx, world):
+    world.slack_workspaces = [
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
+        Workspace(team="Other", team_id="T0OTHER", user_id="U0ELSE"),
+        Workspace(error="http_503"),
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"),
+    ]
+    ctx = make_ctx([SLACK, (LEVEL, "read"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (USER_TOKEN, "xoxp-other"), (USER_TOKEN, "xoxp-down"),
+                    (USER_TOKEN, "xoxp-mine"), (WHERE, DEFAULT), (TEST, False), (ANSWERS, False)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert ctx.ui.lines("error") == [
+        "That user token cannot be used: it belongs to another workspace than the bot "
+        "token (Other)",
+        "That user token cannot be used: it could not be checked (Slack answered HTTP 503)",
+    ]
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-mine"
+    assert toml(ctx, "slack_report")["owner_id"] == "U0SAM"
+
+
+def test_the_first_time_above_announce_where_to_send_also_says_who_they_are(make_ctx, world):
+    """No question can change the owner, so the one that establishes it must name them:
+    a channel says nothing about who is asking."""
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, "C0CHANNEL")])
+
+    with pytest.raises(AssertionError, match="this is also who you are"):
+        section.run_section(ctx)
+
+    assert ConfigStore()._secrets() == {}
+    assert not any("Your own member id" in message for _, message in ctx.ui.asked)
+
+
+def test_with_an_owner_on_file_a_channel_is_a_destination_like_any_other(make_ctx, world):
+    ctx = conversing(make_ctx)
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
+                      (WHERE, "C0CHANNEL"), (TEST, False)]
+
+    section.run_section(ctx)
+
+    saved = toml(ctx, "slack_report")
+    assert ctx.ui.done() and (saved["channel_id"], saved["owner_id"]) == ("C0CHANNEL", "U0OWNER")
+    assert any(line.startswith("Reports go to C0CHANNEL, which is not your direct messages")
+               for line in ctx.ui.lines("note"))
+
+
+def test_a_member_id_typed_as_the_destination_is_the_owner_and_nothing_more_is_asked(
+    make_ctx, world
+):
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, "U0SAM"), (TEST, False)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and toml(ctx, "slack_report")["owner_id"] == "U0SAM"
+
+
+def test_raising_the_level_shows_the_manifest_for_the_app_there_is_and_no_new_app_link(
+    make_ctx, world
+):
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    ctx.ui.answers = [SLACK, (LEVEL, "converse"), (TOKEN, DEFAULT), (APP_TOKEN, "xapp-1"),
+                      (WHERE, DEFAULT), (TEST, False)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and not ctx.ui.lines("link")
+    assert ("Slack is connected at the announce level, so the app you have is changed, not "
+            "made again.") in ctx.ui.lines("note")
+    steps = ctx.ui.lines("markdown")[0]
+    assert "Do not create a second one." in steps and "**Reinstall to Workspace**" in steps
+    assert "Bot User OAuth Token" not in steps and "App-Level Tokens" in steps
+    title, _, body = ctx.ui.lines("panel")[0].partition("\n")
+    assert title == "The manifest" and json.loads(body) == app_manifest(Access.CONVERSE)
+    # The install is from before levels, so Slack is asked once which workspace it is.
+    assert slack_calls(world) == [("slack_auth",), ("slack_open",)]
+    saved = toml(ctx, "slack_report")
+    assert (saved["access"], saved["owner_id"]) == ("converse", "U0OWNER")
+    assert saved["team"] == "Acme"
+    assert LISTEN_NOTE in ctx.ui.lines("note")
+
+
+def test_a_kept_bot_token_with_no_workspace_on_file_still_holds_a_user_token_to_its_own(
+    make_ctx, world
+):
+    """An install from before levels: its workspace is asked for, so the check has teeth."""
+    world.slack_workspaces = [
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
+        Workspace(team="Other", team_id="T0OTHER", user_id="U0ELSE"),
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM"),
+    ]
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    ctx.ui.answers = [SLACK, (LEVEL, "read"), (TOKEN, DEFAULT), (APP_TOKEN, "xapp-1"),
+                      (USER_TOKEN, "xoxp-other"), (USER_TOKEN, "xoxp-mine"), (WHERE, DEFAULT),
+                      (TEST, False), (ANSWERS, False)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert ctx.ui.lines("error") == [
+        "That user token cannot be used: it belongs to another workspace than the bot "
+        "token (Other)",
+    ]
+    saved = toml(ctx, "slack_report")
+    assert (saved["team_id"], saved["owner_id"]) == ("T0ACME", "U0SAM")
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-mine"
+
+
+def test_a_workspace_slack_cannot_name_right_now_is_not_raised_above_announce(make_ctx, world):
+    world.slack_workspaces = [Workspace(error="http_503")]
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    ctx.ui.answers = [SLACK, (LEVEL, "converse"), (TOKEN, DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert any("did not say which workspace this is" in line and "Nothing was saved" in line
+               for line in ctx.ui.lines("error"))
+    assert toml(ctx, "slack_report").get("access", "announce") == "announce"
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
+
+
+# --- slack: where to send is never whose messages are acted on ----------------------------
+
+
+def conversing(make_ctx, **more):
+    """An install at converse whose owner is U0OWNER, in the workspace the fakes name."""
+    ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", **more})
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    plugins.write_config(ctx.settings, "slack_report", {
+        "access": "read" if more else "converse", "owner_id": "U0OWNER", "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
+    return ctx
+
+
+def test_the_wizard_refuses_another_workspaces_bot_token_as_the_command_line_does(
+    make_ctx, world
+):
+    """One owner, fixed at connect: a token from another workspace would bring another
+    owner with it, so it is refused in the command line's own sentence and nothing more
+    is asked or saved."""
+    ctx = conversing(make_ctx)
+    before = toml(ctx, "slack_report")
+    world.slack_workspaces = [Workspace(team="Other Co", team_id="T0OTHER", user_id="U0OTHERBOT")]
+    world.slack_member = Member(user_id="U0EVE", name="Eve Other")
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, "xoxb-other-workspace")]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done(), "no further question: not the app token, not where to send"
+    assert ctx.ui.lines("error") == [
+        "That bot token is for Other Co, and Acme is connected here: `keryx auth logout "
+        "slack` first, then log in again. Nothing was saved."]
+    assert toml(ctx, "slack_report") == before
+    assert ConfigStore()._secrets()["SLACK_BOT_TOKEN"] != "xoxb-other-workspace"
+
+
+def test_at_read_another_workspaces_tokens_never_name_a_new_owner(make_ctx, world):
+    ctx = conversing(make_ctx, SLACK_USER_TOKEN="xoxp-old")
+    world.slack_workspaces = [
+        Workspace(team="Other Co", team_id="T0OTHER", user_id="U0OTHERBOT"),
+        Workspace(team="Other Co", team_id="T0OTHER", user_id="U0EVE"),
+    ]
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, "xoxb-other-workspace")]
+
+    section.run_section(ctx)
+
+    after = toml(ctx, "slack_report")
+    assert ctx.ui.done() and (after["owner_id"], after["team_id"]) == ("U0OWNER", "T0ACME")
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-old"
+
+
+def test_the_wizard_and_the_command_line_ask_one_function_about_another_workspace():
+    """So that neither can let through what the other refuses."""
+    import inspect
+
+    from keryx.setup import plugins as wizard
+    from keryx.setup import slack as command_line
+
+    assert "another_workspace(" in inspect.getsource(wizard.run_slack)
+    assert "another_workspace(" in inspect.getsource(command_line.connect)
+
+
+def test_sending_to_a_colleague_never_makes_them_the_owner(make_ctx, world):
+    world.slack_member = Member(user_id="U0COLLEAGUE", name="Col League")
+    ctx = conversing(make_ctx)
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
+                      (WHERE, "colleague@x.io"), (TEST, False)]
+
+    section.run_section(ctx)
+
+    saved = toml(ctx, "slack_report")
+    assert ctx.ui.done()
+    assert (saved["channel_id"], saved["owner_id"]) == ("U0COLLEAGUE", "U0OWNER")
+    assert OWNER_LINE.format(who="U0OWNER") in ctx.ui.lines("note")
+
+
+def test_the_first_owner_is_named_in_a_line_of_its_own(make_ctx, world):
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, "sam@x.io"), (TEST, False)])
+
+    section.run_section(ctx)
+
+    assert OWNER_LINE.format(who="U0OWNER") in ctx.ui.lines("note")
+
+
+def test_at_announce_nobody_is_made_the_owner(make_ctx, world):
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, False)])
+
+    section.run_section(ctx)
+
+    assert toml(ctx, "slack_report")["owner_id"] == ""
+    assert not any("acted on" in line for line in ctx.ui.lines("note"))
+
+
+def test_a_user_token_that_is_not_the_owners_on_file_is_asked_for_again(make_ctx, world):
+    """A token is never how the owner changes: that is `--owner`, said out loud."""
+    world.slack_workspaces = [
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0ELSE"),
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER"),
+    ]
+    ctx = conversing(make_ctx)
+    ctx.ui.answers = [SLACK, (LEVEL, "read"), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
+                      (USER_TOKEN, "xoxp-theirs"), (USER_TOKEN, "xoxp-mine"), (WHERE, DEFAULT),
+                      (TEST, False), (ANSWERS, False)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert ctx.ui.lines("error") == [
+        "That user token cannot be used: it belongs to U0ELSE, and the member whose "
+        "messages Keryx acts on is U0OWNER: paste your own (`keryx auth logout slack` and a "
+        "new login connects as somebody else)"
+    ]
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-mine"
+    assert toml(ctx, "slack_report")["owner_id"] == "U0OWNER"
+
+
+def test_a_token_typed_again_after_going_back_is_not_shown_to_slack_twice(make_ctx, world):
+    """Nothing is on file to recognise it by, since nothing is saved until the end."""
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, Back()), (APP_TOKEN, Back()), (TOKEN, "xoxb-1"),
+                    (APP_TOKEN, "xapp-1"), (WHERE, "sam@x.io"), (TEST, False), (NEXT, True)])
+
+    assert slack_walk(ctx)
+
+    assert slack_calls(world) == [("slack_auth",), ("slack_open",), ("slack_member", "sam@x.io")]
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1"}
+
+
+def test_a_lower_level_forgets_the_tokens_it_no_longer_uses_and_asks_slack_nothing(
+    make_ctx, world
+):
+    ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    plugins.write_config(ctx.settings, "slack_report", {"access": "read", "owner_id": "U0OWNER"})
+    ctx.ui.answers = [SLACK, (LEVEL, "announce"), (TOKEN, DEFAULT), (WHERE, DEFAULT),
+                      (TEST, False)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and slack_calls(world) == []
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
+    assert toml(ctx, "slack_report")["access"] == "announce"
+    assert ("SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten: the announce level does not "
+            "use them.") in ctx.ui.lines("note")
+    assert not ctx.ui.lines("link") and not ctx.ui.lines("panel")
+
+
+def test_a_level_already_set_up_keeps_every_token_and_asks_slack_nothing(make_ctx, world):
+    ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    plugins.write_config(ctx.settings, "slack_report", {
+        "access": "read", "owner_id": "U0OWNER", "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
+                      (USER_TOKEN, DEFAULT), (WHERE, DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and slack_calls(world) == []
+    assert "Nothing changed, so no test message was sent." in ctx.ui.lines("note")
+    assert toml(ctx, "slack_report")["access"] == "read"
+
+
+def test_a_kept_user_token_with_no_member_on_file_is_asked_of_slack_once(make_ctx, world):
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
+    ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
+    ctx = already_set_up(make_ctx, channel="C0CHANNEL")
+    plugins.write_config(ctx.settings, "slack_report", {
+        "access": "read", "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
+                      (USER_TOKEN, DEFAULT), (WHERE, DEFAULT), (TEST, False)]
+
+    section.run_section(ctx)
+
+    assert slack_calls(world) == [("slack_auth",)]
+    assert toml(ctx, "slack_report")["owner_id"] == "U0SAM"
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-old"
+
+
+def test_esc_past_the_app_token_does_not_ask_slack_about_either_token_twice(make_ctx, world):
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (WHERE, Back()), (APP_TOKEN, DEFAULT), (WHERE, "sam@x.io"), (TEST, False),
+                    (NEXT, True)])
+
+    assert slack_walk(ctx)
+
+    assert asked(ctx) == ["Which plugins", LEVEL, TOKEN, APP_TOKEN, WHERE, APP_TOKEN, WHERE,
+                          TEST, NEXT]
+    assert slack_calls(world) == [("slack_auth",), ("slack_open",), ("slack_member", "sam@x.io")]
+    assert toml(ctx, "slack_report")["access"] == "converse"
+
+
+def test_the_first_time_it_says_how_a_second_workspace_is_added(make_ctx, world):
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, False)])
+
+    section.run_section(ctx)
+
+    assert any("keryx auth login slack --workspace NAME" in line for line in ctx.ui.lines("note"))
+
+
+def test_raising_to_read_offers_slack_answers_once_and_turns_them_on(make_ctx, world):
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
+                              Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
+    ctx = make_ctx([SLACK, (LEVEL, "read"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (USER_TOKEN, "xoxp-1"), (WHERE, DEFAULT), (TEST, False), (ANSWERS, DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and on(ctx, "slack_read")
+    assert "slack_read is on, from the next call" in ctx.ui.lines("success")
+    assert any("Keryx reads Slack as you only when you ask about messages" in line
+               for line in ctx.ui.lines("note"))
+
+
+SENDING = "Turn on sending as you"
+
+
+def test_raising_to_write_offers_what_that_level_unlocks_and_sending_is_not_a_yes_by_default(
+    make_ctx, world
+):
+    world.slack_workspaces = [
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM",
+                  scopes=(*slack_api.USER_SCOPES, *slack_api.WRITE_USER_SCOPES)),
+    ]
+    ctx = make_ctx([SLACK, (LEVEL, "write"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (USER_TOKEN, "xoxp-1"), (WHERE, DEFAULT), (TEST, False),
+                    (ANSWERS, DEFAULT), (SENDING, DEFAULT)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and toml(ctx, "slack_report")["access"] == "write"
+    assert on(ctx, "slack_read") and not on(ctx, "slack_message"), "reading yes, sending no"
+    notes = ctx.ui.lines("note")
+    assert any("send messages as you, in your name, to other people" in line for line in notes)
+    assert any("other people read it as written by you" in line for line in notes)
+
+
+def test_saying_yes_to_sending_turns_it_on(make_ctx, world):
+    world.slack_workspaces = [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
+                              Workspace(team="Acme", team_id="T0ACME", user_id="U0SAM")]
+    ctx = make_ctx([SLACK, (LEVEL, "write"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (USER_TOKEN, "xoxp-1"), (WHERE, DEFAULT), (TEST, False),
+                    (ANSWERS, False), (SENDING, True)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and on(ctx, "slack_message") and not on(ctx, "slack_read")
+    assert "slack_message is on, from the next call" in ctx.ui.lines("success")
+
+
+def test_raising_read_to_write_checks_the_kept_user_token_again_for_what_it_may_do(
+    make_ctx, world
+):
+    """The app has to be reinstalled first: a token that may not post yet is asked for
+    again, and nothing is saved at write until one may."""
+    world.slack_workspaces = [
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER",
+                  scopes=slack_api.USER_SCOPES),
+        Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER",
+                  scopes=(*slack_api.USER_SCOPES, *slack_api.WRITE_USER_SCOPES)),
+    ]
+    ctx = conversing(make_ctx, SLACK_USER_TOKEN="xoxp-old")
+    ctx.ui.answers = [SLACK, (LEVEL, "write"), (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT),
+                      (USER_TOKEN, DEFAULT), (USER_TOKEN, "xoxp-new"), (WHERE, DEFAULT),
+                      (TEST, False), (SENDING, False)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and toml(ctx, "slack_report")["access"] == "write"
+    assert any("it may not yet do what the write level needs (it lacks chat:write, im:write)"
+               in line for line in ctx.ui.lines("error"))
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-new"
+    assert not any(ANSWERS in message for _, message in ctx.ui.asked), "read was on before"
+
+
+def test_sending_ticked_without_a_workspace_at_write_is_left_off_with_what_to_do(
+    make_ctx, world
+):
+    ctx = make_ctx([("Which plugins", ["slack_message"])])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and not on(ctx, "slack_message")
+    assert any("needs a workspace at the write level" in line
+               and "keryx auth login slack --access write" in line
+               for line in ctx.ui.lines("note"))
+
+
+def test_slack_answers_ticked_without_a_workspace_at_read_are_left_off_with_what_to_do(
+    make_ctx, world
+):
+    ctx = make_ctx([("Which plugins", ["slack_read"])])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and not on(ctx, "slack_read")
+    assert any("needs a workspace at the read level" in line
+               and "keryx auth login slack --access read" in line
+               for line in ctx.ui.lines("note"))
+
+
+def test_slack_answers_ticked_with_a_workspace_at_read_are_turned_on_and_asked_nothing(
+    make_ctx, world
+):
+    ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    plugins.write_config(ctx.settings, "slack_report", {
+        "access": "read", "owner_id": "U0OWNER", "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
+    ConfigStore().mark_walked("plugins")
+    ctx.ui.answers = [("Which plugins", ["slack_report", "slack_read"]), (LEVEL, DEFAULT),
+                      (TOKEN, DEFAULT), (APP_TOKEN, DEFAULT), (USER_TOKEN, DEFAULT),
+                      (WHERE, DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and on(ctx, "slack_read") and slack_calls(world) == []
 
 
 # --- slack, beside an MCP server that carries it ------------------------------------------
@@ -331,20 +940,29 @@ def test_a_token_that_replaces_another_says_a_running_keryx_needs_a_restart(make
 @pytest.fixture
 def chat_server(make_ctx):
     ctx = make_ctx([])
-    plugins.write_config(ctx.settings, "send_to_slack", {"mcp_server": "chat"})
+    plugins.write_config(ctx.settings, "slack_report", {"mcp_server": "chat"})
     return ctx
+
+
+def test_above_announce_an_mcp_servers_token_will_not_do(chat_server):
+    """Listening needs the app's own tokens: the server's token is another app's."""
+    ctx = chat_server
+    ctx.ui.answers = [SLACK, (LEVEL, "converse"), (TOKEN, "")]
+
+    with pytest.raises(AssertionError, match="needs the token of its own app"):
+        section.run_section(ctx)
 
 
 def test_an_mcp_server_that_carries_the_route_needs_no_token(chat_server, world):
     ctx = chat_server
-    ctx.ui.answers = [SLACK, (TOKEN, ""), (WHERE, "")]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, ""), (WHERE, "")]
 
     section.run_section(ctx)
 
     assert ctx.ui.done()
     assert any("blank" in line and "chat MCP server" in line for line in ctx.ui.lines("note"))
     assert ConfigStore()._secrets() == {} and slack_calls(world) == []
-    assert on(ctx, "send_to_slack")
+    assert on(ctx, "slack_report")
     assert ("No test message was sent: the token and the channel are the chat MCP server's."
             in ctx.ui.lines("note"))
 
@@ -352,28 +970,29 @@ def test_an_mcp_server_that_carries_the_route_needs_no_token(chat_server, world)
 def test_a_token_beside_an_mcp_server_must_bring_its_own_destination(chat_server, world):
     """Blank would pair the new token with the server's channel, which is its app's own."""
     ctx = chat_server
-    ctx.ui.answers = [SLACK, (TOKEN, "xoxb-1"), (WHERE, "")]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "")]
 
     with pytest.raises(AssertionError, match="needs somewhere of its own"):
         section.run_section(ctx)
 
-    assert not on(ctx, "send_to_slack")
+    assert not on(ctx, "slack_report")
 
 
 def test_a_token_beside_an_mcp_server_says_what_that_does_to_the_route(chat_server, world):
     ctx = chat_server
-    ctx.ui.answers = [SLACK, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, DEFAULT)]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, DEFAULT)]
 
     section.run_section(ctx)
 
-    assert toml(ctx, "send_to_slack") == {"channel_id": "U0OWNER", "mcp_server": "chat"}
+    saved = toml(ctx, "slack_report")
+    assert (saved["channel_id"], saved["mcp_server"]) == ("U0OWNER", "chat")
     assert any("not with the chat MCP server's" in line and "subagents still" in line
                for line in ctx.ui.lines("note"))
 
 
 def test_with_no_token_of_its_own_an_address_cannot_be_looked_up(chat_server):
     ctx = chat_server
-    ctx.ui.answers = [SLACK, (TOKEN, ""), (WHERE, "sam@x.io")]
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, ""), (WHERE, "sam@x.io")]
 
     with pytest.raises(AssertionError, match="no token of its own"):
         section.run_section(ctx)
@@ -383,23 +1002,23 @@ def test_a_kept_token_beside_an_mcp_server_may_still_use_the_servers_channel(mak
     """An install that already ran this way is asked nothing new and changed in nothing."""
     ConfigStore().set({"SLACK_BOT_TOKEN": "xoxb-old"})
     ctx = make_ctx([])
-    plugins.write_config(ctx.settings, "send_to_slack", {"mcp_server": "chat"})
-    ctx.ui.answers = [SLACK, (TOKEN, DEFAULT), (WHERE, "")]
+    plugins.write_config(ctx.settings, "slack_report", {"mcp_server": "chat"})
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, DEFAULT), (WHERE, "")]
 
     section.run_section(ctx)
 
     assert ctx.ui.done() and slack_calls(world) == []
-    assert toml(ctx, "send_to_slack")["channel_id"] == ""
+    assert toml(ctx, "slack_report")["channel_id"] == ""
     assert ("No test message was sent: the channel is the chat MCP server's."
             in ctx.ui.lines("note"))
 
 
 def test_a_slack_file_that_cannot_be_written_sends_no_test(make_ctx, world, monkeypatch):
     def refuse(settings, name, values):
-        raise plugins.PluginConfigError("send_to_slack: channel_id must be a bare word")
+        raise plugins.PluginConfigError("slack_report: channel_id must be a bare word")
 
     monkeypatch.setattr(plugins, "write_config", refuse)
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io")])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io")])
 
     section.run_section(ctx)
 
@@ -414,24 +1033,24 @@ def test_a_slack_file_that_cannot_be_written_sends_no_test(make_ctx, world, monk
 
 
 def test_esc_before_anything_is_written_does_not_ask_slack_about_the_token_twice(make_ctx, world):
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, Back()), (TOKEN, DEFAULT),
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, Back()), (TOKEN, DEFAULT),
                     (WHERE, "sam@x.io"), (TEST, False), (NEXT, True)])
 
     assert slack_walk(ctx)
 
     assert slack_calls(world) == [("slack_auth",), ("slack_member", "sam@x.io")]
-    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
+    assert toml(ctx, "slack_report")["channel_id"] == "U0OWNER"
 
 
 def test_esc_at_the_test_offer_goes_back_to_where_to_send_and_offers_the_test_again(
     make_ctx, world
 ):
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, Back()),
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, Back()),
                     (WHERE, DEFAULT), (TEST, True), (NEXT, True)])
 
     assert slack_walk(ctx)
 
-    assert asked(ctx) == ["Which plugins", TOKEN, WHERE, TEST, WHERE, TEST, NEXT]
+    assert asked(ctx) == ["Which plugins", LEVEL, TOKEN, WHERE, TEST, WHERE, TEST, NEXT]
     assert ("slack_post", "U0OWNER", TEST_MESSAGE) in world.calls
     assert slack_calls(world).count(("slack_auth",)) == 1
 
@@ -441,7 +1060,7 @@ def test_esc_from_the_next_section_lands_on_the_test_offer(make_ctx, world, foun
     """Whether the destination was found by address or typed by hand after a miss."""
     world.slack_member = Member(user_id="U0OWNER") if found else Member(error="users_not_found")
     where = [(WHERE, "sam@x.io")] + ([] if found else [(WHERE, "D123")])
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), *where, (TEST, True), (NEXT, Back()),
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), *where, (TEST, True), (NEXT, Back()),
                     (TEST, False), (NEXT, True)])
 
     assert slack_walk(ctx)
@@ -454,29 +1073,30 @@ def test_esc_from_the_next_section_lands_on_the_test_offer(make_ctx, world, foun
 def test_esc_from_the_next_section_after_an_unchanged_walk_goes_back_a_question(make_ctx, world):
     """To the last one it asked; and going back is a review, which offers the test too."""
     ctx = already_set_up(make_ctx)
-    ctx.ui.answers = [SLACK, (TOKEN, DEFAULT), (WHERE, DEFAULT), (NEXT, Back()),
+    ctx.ui.answers = [SLACK, ANNOUNCE, (TOKEN, DEFAULT), (WHERE, DEFAULT), (NEXT, Back()),
                       (WHERE, DEFAULT), (TEST, DEFAULT), (NEXT, True)]
 
     assert slack_walk(ctx)
 
-    assert asked(ctx) == ["Which plugins", TOKEN, WHERE, NEXT, WHERE, TEST, NEXT]
+    assert asked(ctx) == ["Which plugins", LEVEL, TOKEN, WHERE, NEXT, WHERE, TEST, NEXT]
     assert slack_calls(world) == []
-    assert toml(ctx, "send_to_slack")["channel_id"] == "D123"
+    assert toml(ctx, "slack_report")["channel_id"] == "D123"
 
 
 def test_tab_after_the_step_has_saved_stops_at_nothing_of_slacks(make_ctx, world):
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True), (NEXT, Back()),
-                    (TEST, Forward()), (NEXT, True)])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
+                    (NEXT, Back()), (TEST, Forward()), (NEXT, True)])
 
     assert slack_walk(ctx)
 
-    assert asked(ctx) == ["Which plugins", TOKEN, WHERE, TEST, NEXT, TEST, NEXT]
+    assert asked(ctx) == ["Which plugins", LEVEL, TOKEN, WHERE, TEST, NEXT, TEST, NEXT]
     assert [call[0] for call in slack_calls(world)] == ["slack_auth", "slack_member", "slack_post"]
 
 
 def test_tab_from_the_first_question_passes_a_slack_step_already_walked(make_ctx, world):
-    ctx = make_ctx([SLACK, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True), (NEXT, Back()),
-                    (TEST, Back()), (WHERE, Back()), (TOKEN, Forward()), (NEXT, True)])
+    ctx = make_ctx([SLACK, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
+                    (NEXT, Back()), (TEST, Back()), (WHERE, Back()), (TOKEN, Forward()),
+                    (NEXT, True)])
 
     assert slack_walk(ctx)
 
@@ -582,7 +1202,7 @@ def test_reading_the_calendar_and_documents_is_ticked_once_their_service_is_conn
 
     choices = choices_of(ctx)
     assert [name for name, c in choices.items() if c.checked] == [
-        "send_to_slack", "check_email", "check_calendar", "find_document",
+        "slack_report", "check_email", "check_calendar", "find_document",
     ]
     assert "recommended" in choices["check_calendar"].hint
     assert "recommended" in choices["find_document"].hint
@@ -783,7 +1403,7 @@ def test_going_back_after_the_sign_in_never_signs_in_a_second_time(make_ctx, wor
 # after the sign-in is kept. Walked together, going back must reach neither Slack nor
 # Google a second time.
 
-BOTH = ("Which plugins", ["send_to_slack", "check_email", "check_calendar", "find_document"])
+BOTH = ("Which plugins", ["slack_report", "check_email", "check_calendar", "find_document"])
 SIGN_IN = "Sign in to Google?"
 
 
@@ -795,7 +1415,7 @@ def test_slack_and_the_google_plugins_walk_together_each_asked_its_own_questions
     make_ctx, world
 ):
     ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
-    ctx = make_ctx([BOTH, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
+    ctx = make_ctx([BOTH, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
                     (SIGN_IN, DEFAULT), (NEXT, True)])
 
     assert slack_walk(ctx)
@@ -803,7 +1423,7 @@ def test_slack_and_the_google_plugins_walk_together_each_asked_its_own_questions
     assert ctx.ui.done()
     assert outside_calls(world) == ["slack_auth", "slack_member", "slack_post", "google_browser"]
     assert all(on(ctx, name) for name in BOTH[1])
-    assert toml(ctx, "send_to_slack")["channel_id"] == "U0OWNER"
+    assert toml(ctx, "slack_report")["channel_id"] == "U0OWNER"
 
 
 def test_esc_after_both_reaches_neither_slack_nor_google_a_second_time(make_ctx, world):
@@ -811,7 +1431,7 @@ def test_esc_after_both_reaches_neither_slack_nor_google_a_second_time(make_ctx,
     sign-in is kept, so that question is no longer asked: the replay answers Slack's three
     from the record, runs none of its calls again, and the walk goes on."""
     ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
-    ctx = make_ctx([BOTH, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
+    ctx = make_ctx([BOTH, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
                     (SIGN_IN, DEFAULT), (NEXT, Back()), (NEXT, True)])
 
     assert slack_walk(ctx)
@@ -828,7 +1448,7 @@ def test_esc_into_slacks_step_with_google_behind_it_asks_slack_again_and_google_
     """Back twice from the next section: past the sign-in, which is gone, to Slack's test
     offer. Slack's questions are still the ones recorded; Google is not signed in again."""
     ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
-    ctx = make_ctx([BOTH, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
+    ctx = make_ctx([BOTH, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
                     (SIGN_IN, Back()), (TEST, False), (SIGN_IN, DEFAULT), (NEXT, True)])
 
     assert slack_walk(ctx)
@@ -841,7 +1461,7 @@ def test_esc_into_slacks_step_with_google_behind_it_asks_slack_again_and_google_
 
 def test_tab_through_both_once_walked_stops_at_nothing_of_either(make_ctx, world):
     ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
-    ctx = make_ctx([BOTH, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
+    ctx = make_ctx([BOTH, ANNOUNCE, (TOKEN, "xoxb-1"), (WHERE, "sam@x.io"), (TEST, True),
                     (SIGN_IN, DEFAULT), (NEXT, Back()), (NEXT, Back()), (TEST, Forward()),
                     (NEXT, True)])
 
@@ -859,7 +1479,7 @@ def test_the_checklist_ticks_slack_email_and_what_google_has_connected(make_ctx)
 
     choices = {c.value: c for c in ctx.ui.choices["Which plugins should Keryx have?"]}
     assert [name for name, c in choices.items() if c.checked] == [
-        "send_to_slack", "check_email", "check_calendar", "find_document",
+        "slack_report", "check_email", "check_calendar", "find_document",
     ]
     assert all("·" not in c.hint for c in choices.values())
 

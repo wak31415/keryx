@@ -129,6 +129,9 @@ class AgentAdapter(Protocol):
 
 # ----------------------------------------------------------------------------- context
 
+#: The environment variable an agent's process finds its task's number in.
+TASK_ID_ENV = "KERYX_TASK_ID"
+
 
 @dataclass(frozen=True)
 class AgentContext:
@@ -144,6 +147,8 @@ class AgentContext:
     #: A reader, not a value, because the server writes a fresh access token into that file
     #: while the task runs.
     mcp_secret_source: Callable[[], Sequence[str]] | None = None
+    #: The task this agent is working on, which its process is told in `TASK_ID_ENV`.
+    task_id: int | None = None
 
     @classmethod
     def build(
@@ -158,7 +163,7 @@ class AgentContext:
         """`mcp_servers` is every server but Google's, which is added here when the owner
         has signed in and turned it on, so each backend gets it the same way."""
         from keryx.integrations.google import mcp_server
-        from keryx.plugins.slack import slack_route
+        from keryx.plugins.slack import can_read, can_report, can_write, slack_route
 
         slack = slack_route(settings)
         servers = dict(mcp_servers or {})
@@ -170,6 +175,9 @@ class AgentContext:
             instructions=render_subagent_suffix(
                 task,
                 slack_mcp_server=slack.mcp_server if slack is not None else None,
+                slack_read=can_read(settings),
+                slack_report=can_report(settings),
+                slack_write=can_write(settings),
                 owner=settings.owner_label,
                 assistant=settings.assistant_name,
                 tools_dir=settings.custom_tools_dir,
@@ -179,7 +187,16 @@ class AgentContext:
             auth=resolve_auth(auth, settings, probe=False),
             mcp_servers=servers,
             mcp_secret_source=(lambda: google.secrets) if google is not None else None,
+            task_id=task.id,
         )
+
+    @property
+    def task_env(self) -> dict[str, str]:
+        """What says, in the agent's own environment, which task it is: every backend
+        puts it there, so a command of Keryx's that the agent runs can hold it to its own
+        task (`keryx slack report` posts to this task's thread and no other's). Not a
+        secret, and not a wall: an agent has a shell, and can unset a variable."""
+        return {TASK_ID_ENV: str(self.task_id)} if self.task_id is not None else {}
 
     @property
     def mcp_secrets(self) -> tuple[str, ...]:

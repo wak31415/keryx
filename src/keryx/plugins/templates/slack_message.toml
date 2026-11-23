@@ -1,0 +1,15 @@
+# slack_message: "tell Sam I'm running late", "reply in that thread that it's fixed": one
+# message sent as you, to a person, a channel or a thread, on a call. Changes here count
+# from the next call; no restart.
+#
+# It needs a Slack workspace at the write level (`keryx auth login slack --access write`),
+# whose user token it sends with, so the message is yours and other people read it as
+# yours. It needs the PIN, and it never sends on the first ask: you hear who it goes to
+# and the exact words, and it is sent only after you say yes. It posts a new message or a
+# reply in a thread and nothing else: no edit, no delete, no file, and never @channel,
+# @here or @everyone. `keryx plugins remove slack_message` turns this off and leaves the
+# workspace as it is; lowering the workspace to read takes the capability away
+# altogether.
+#
+# There is nothing to set here.
+{extra}

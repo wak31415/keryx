@@ -56,7 +56,8 @@ def _isolated_env(monkeypatch, tmp_path):
     `KERYX_HOME` too, pointed at a directory of the test's own: `Settings` reads
     `config.toml` and `secrets.toml` from it, and the developer's real ones must never take
     part in a test — nor be written by one. `KERYX_ACTOR` goes because a suite run by a
-    subagent of the live service inherits `service`, and would be refused as one.
+    subagent of the live service inherits `service`, and would be refused as one; and
+    `KERYX_TASK_ID` with it.
 
     `HOME`, every `XDG_*_HOME` and the working directory move into the test's own
     directory as well: every default Keryx has for where it keeps things is derived from
@@ -70,6 +71,9 @@ def _isolated_env(monkeypatch, tmp_path):
         monkeypatch.setenv(name, str(home / relative))
     monkeypatch.setenv("KERYX_HOME", str(tmp_path / "keryx-home"))
     monkeypatch.delenv(ACTOR_ENV, raising=False)
+    # And which task that subagent is working on, for the same reason: a command would
+    # hold a test to the real task's number.
+    monkeypatch.delenv("KERYX_TASK_ID", raising=False)
     # The Claude CLI's own directory is derived from `HOME` unless this moves it.
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     # And the working directory: a `.env` in the checkout the suite runs from must never
@@ -77,6 +81,22 @@ def _isolated_env(monkeypatch, tmp_path):
     working = tmp_path / "cwd"
     working.mkdir()
     monkeypatch.chdir(working)
+
+
+@pytest.fixture(autouse=True)
+def _broken_files_are_not_tolerated_by_the_next_test():
+    """Put `tolerate_broken_files` back after every test.
+
+    A command that reads past a configuration file that does not parse (`config get`,
+    `doctor`, the watchdog) sets it for the rest of its process, which is one command. The
+    suite is one process for every command, so without this the test after such a command
+    loads a broken file without a word.
+    """
+    from keryx.config.settings import tolerate_broken_files
+
+    token = tolerate_broken_files.set(False)
+    yield
+    tolerate_broken_files.reset(token)
 
 
 @pytest.fixture(autouse=True)

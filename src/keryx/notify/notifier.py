@@ -8,9 +8,14 @@ Four stages, in order, on every `TaskCompleted` / `TaskFailed`:
 2. **Text** it, unless it was already delivered: a live *phone* session announced it, or
    somebody was holding the line for it. Otherwise a local (wake-word) session hearing it
    does not count: they may well have walked away from the Mac.
-3. **Post** the subagent's report to their Slack DM, while the `send_to_slack` plugin is
+3. **Post** the subagent's report to their Slack DM, while the `slack_report` plugin is
    on — whatever else reached them, because a call carries a sentence and they want the
    rest in writing. The call-back then says it is there, and follow-ups are answered from it.
+   Where the first report landed becomes the task's thread (`Task.slack_thread_ts`), and
+   every later report of that task is a reply there, so a reply the owner types under it
+   finds the task (`keryx.slack_inbox`). A task asked for on Slack already has its
+   thread, the one the owner asked in, and answers there, wherever that is: nothing is
+   texted about it, because the thread they wrote in is where they are looking.
 4. **Call back**, if they asked to be called and have not had it already. The call
    carries a fresh single-use stream token whose `extra` tells the new session why it
    opened, so Keryx leads with the result instead of "hello?". If the phone it would ring
@@ -42,7 +47,6 @@ from keryx.config import Settings
 from keryx.continuity.transcripts import read_tail
 from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from keryx.inline_waits import InlineWaits
-from keryx.integrations.slack import SlackSender
 from keryx.notify.callback import (
     CALLBACK_TOKEN_TTL_S,
     HISTORY_PREAMBLE,
@@ -52,6 +56,7 @@ from keryx.notify.callback import (
 from keryx.notify.deliver import Announced, announce_to_live_sessions, safe_send_sms
 from keryx.notify.reports import report_token
 from keryx.notify.twilio_out import TwilioOut, stream_twiml
+from keryx.plugins.slack import SLACK_CHANNEL, ReportRoute
 from keryx.session import SessionRegistry, VoiceSession
 from keryx.stream_tokens import StreamTokenStore, outbound_extra
 from keryx.tasks.manager import report_header
@@ -121,7 +126,7 @@ class Notifier:
         inline_waits: InlineWaits,
         restart: "RestartCoordinator | None" = None,
         *,
-        slack: Callable[[], SlackSender | None] | None = None,
+        reports: Callable[[Task], ReportRoute | None] | None = None,
     ) -> None:
         self._bus = bus
         self._store = store
@@ -131,7 +136,8 @@ class Notifier:
         self._stream_tokens = stream_tokens
         self._inline_waits = inline_waits
         self._restart = restart
-        self._slack = slack
+        #: Where a task's report goes on Slack, asked at post time (`plugins.slack.report_route`).
+        self._reports = reports
         self._removals: list[Callable[[], None]] = []
         #: task id → the call-back waiting for the call on its number to end: that session,
         #: the sessions that heard the result, and `_call_back`'s arguments.
@@ -252,7 +258,8 @@ class Notifier:
         were not there for either — the digest at the top of their next call, which is what
         `reported_at` exists to keep honest.
         """
-        if delivered:
+        if delivered or task.origin_channel == SLACK_CHANNEL:
+            # Asked for on Slack: the answer goes in that thread, and the phone stays quiet.
             return
         try:
             to = self._sms_recipient(task)
@@ -291,8 +298,8 @@ class Notifier:
         line carries its error, since what a failed run last wrote is rarely the reason.
         """
         try:
-            sender = self._slack() if self._slack is not None else None
-            if sender is None:
+            route = self._reports(task) if self._reports is not None else None
+            if route is None:
                 return False
             report = ""
             if task.report_path:
@@ -307,7 +314,34 @@ class Notifier:
                 header, body = FAILED_TEXT.format(task_id=task.id, detail=detail), report
             else:
                 header, body = f"Task {task.id} finished", report or detail
-            return await sender.send(f"**{header}**\n\n{body}".strip(), fallback=header)
+            text = f"**{header}**\n\n{body}".strip()
+            posted = await route.poster.post(
+                text, fallback=header, thread_ts=route.thread_ts, broadcast=route.broadcast
+            )
+            moved = False
+            if posted.gone and route.thread_ts is not None and route.usual is not None:
+                # The thread is gone for good (its conversation, or the app that opened
+                # it): the report goes as a message of its own in the same workspace, and
+                # that is where the task lives from now on. Anything Slack may get over
+                # (a timeout, a rate limit) leaves the thread where it is: this report is
+                # then not on Slack, and is still in the task for a call to read out.
+                posted = await route.usual.post(text, fallback=header)
+                moved = True
+            # A long report whose first piece landed has started a thread, whatever became
+            # of the rest: that is still where the task lives.
+            if (route.thread_ts is None or moved) and posted.ts:
+                # The first report: where it landed is this task's thread from now on.
+                try:
+                    await self._store.update(
+                        task.id,
+                        slack_workspace=route.workspace,
+                        slack_channel=posted.channel,
+                        slack_thread_ts=posted.ts,
+                        slack_team_id=route.team_id or None,
+                    )
+                except Exception:
+                    log.exception("could not record where task %s was posted", task.id)
+            return posted.ok
         except Exception:
             log.exception("could not post the report of task %s to Slack", task.id)
             return False

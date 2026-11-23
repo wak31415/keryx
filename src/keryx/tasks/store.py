@@ -17,11 +17,20 @@ from datetime import datetime
 from pathlib import Path
 
 from keryx.config import secure_file
-from keryx.tasks.models import ProjectUsage, Task, TaskStatus, to_utc_iso
+from keryx.tasks.models import (
+    SLACK_SEEN_MAX,
+    ProjectUsage,
+    Task,
+    TaskStatus,
+    slack_ts_key,
+    to_utc_iso,
+)
+
+_ts_key = slack_ts_key
 
 log = logging.getLogger("keryx.tasks.store")
 
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 8
 
 #: How many unreported tasks a call opens with. The owner is on a phone: past a handful, the
 #: digest stops being a briefing and becomes a recital, and the rest keep until next time.
@@ -71,6 +80,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     input_tokens INTEGER,
     output_tokens INTEGER,
     cost_usd REAL,
+    slack_workspace TEXT,
+    slack_channel TEXT,
+    slack_thread_ts TEXT,
+    slack_team_id TEXT,
+    slack_seen TEXT,
+    slack_reruns INTEGER NOT NULL DEFAULT 0,
+    slack_reruns_on TEXT,
     created_at TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT
@@ -83,6 +99,11 @@ _CREATE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (c
 #: yet said out loud — so it gets an index rather than a scan of every task ever run.
 _CREATE_UNREPORTED_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_tasks_unreported ON tasks (reported_at, internal, status)"
+)
+
+#: A reply typed in a Slack thread is looked up by the thread it is in.
+_CREATE_SLACK_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_tasks_slack_thread ON tasks (slack_channel, slack_thread_ts)"
 )
 
 #: v1 -> v2 (2026-08-24): a task remembers the call it came from, and what the call-back
@@ -114,6 +135,25 @@ _V5_COLUMNS = ("agent TEXT NOT NULL DEFAULT 'claude'",)
 #: v5 -> v6 (2026-09-26): what a task spent, in tokens and (where the agent prices a call)
 #: dollars. Nullable: nothing before this recorded it, and "unknown" is not "free".
 _V6_COLUMNS = ("input_tokens INTEGER", "output_tokens INTEGER", "cost_usd REAL")
+
+#: v6 -> v7 (2026-11-23): a task remembers the Slack thread it lives in, so a reply typed
+#: there finds it. Nullable: most tasks have none until their first report is posted.
+_V7_COLUMNS = (
+    "slack_workspace TEXT",
+    "slack_channel TEXT",
+    "slack_thread_ts TEXT",
+)
+
+#: v7 -> v8 (2026-11-23): the Slack messages a task has acted on, and how often a Slack
+#: reply re-ran it today. (Earlier cuts of v7 and v8 on this branch also added
+#: `slack_last_ts` and `slack_asked_channel`/`slack_asked_ts`; a database that met one
+#: keeps the column, unread: see `models.RETIRED_COLUMNS`.)
+_V8_COLUMNS = (
+    "slack_team_id TEXT",
+    "slack_seen TEXT",
+    "slack_reruns INTEGER NOT NULL DEFAULT 0",
+    "slack_reruns_on TEXT",
+)
 
 
 class TaskStore:
@@ -164,6 +204,7 @@ class TaskStore:
                 conn.execute(_CREATE_TASKS_SQL)
                 conn.execute(_CREATE_INDEX_SQL)
                 conn.execute(_CREATE_UNREPORTED_INDEX_SQL)
+                conn.execute(_CREATE_SLACK_INDEX_SQL)
                 conn.execute(
                     "INSERT INTO schema_version (version) VALUES (?)", (_SCHEMA_VERSION,)
                 )
@@ -171,6 +212,10 @@ class TaskStore:
                 return
 
             version = row["version"]
+            if version == _SCHEMA_VERSION:
+                # v8 grew while it was unreleased: a database that met an earlier cut of
+                # it is brought up to the whole of it, for the price of one PRAGMA.
+                self._add_missing(conn, _V8_COLUMNS)
             if version >= _SCHEMA_VERSION:
                 return
             if version < 2:
@@ -197,10 +242,23 @@ class TaskStore:
             if version < 6:
                 for column in _V6_COLUMNS:
                     conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+            if version < 7:
+                for column in _V7_COLUMNS:
+                    conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
+                conn.execute(_CREATE_SLACK_INDEX_SQL)
+            if version < 8:
+                self._add_missing(conn, _V8_COLUMNS)
             conn.execute("UPDATE schema_version SET version = ?", (_SCHEMA_VERSION,))
             log.info(
                 "migrated tasks schema v%d -> v%d at %s", version, _SCHEMA_VERSION, self._path
             )
+
+    @staticmethod
+    def _add_missing(conn: sqlite3.Connection, columns: tuple[str, ...]) -> None:
+        present = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+        for column in columns:
+            if column.split()[0] not in present:
+                conn.execute(f"ALTER TABLE tasks ADD COLUMN {column}")
 
     async def create(self, task: Task) -> Task:
         """Insert `task` and return a copy with `id` assigned; `task` itself is untouched."""
@@ -370,6 +428,76 @@ class TaskStore:
                         TaskStatus.RUNNING.value,
                     ),
                 )
+
+    async def find_by_slack_thread(
+        self, workspace: str, channel: str, thread_ts: str, *, team_id: str = ""
+    ) -> Task | None:
+        """The task that lives in the thread hanging from `thread_ts` in `channel`, in the
+        workspace Slack knows as `team_id`.
+
+        The newest, should two ever share a thread. Housekeeping never has one. A task
+        whose thread was recorded in another team is not found, whatever the workspace is
+        called here: the name may have come to mean another one.
+        """
+        return await asyncio.to_thread(
+            self._find_by_slack_thread_sync, workspace, channel, thread_ts, team_id
+        )
+
+    def _find_by_slack_thread_sync(
+        self, workspace: str, channel: str, thread_ts: str, team_id: str
+    ) -> Task | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM tasks WHERE slack_channel = ? AND slack_thread_ts = ? "
+                "AND slack_workspace = ? AND COALESCE(slack_team_id, '') = ? "
+                "AND internal = 0 ORDER BY id DESC LIMIT 1",
+                (channel, thread_ts, workspace, team_id),
+            ).fetchone()
+        return Task.from_row(row) if row is not None else None
+
+    async def heard_on_slack(self, task_id: int, ts: str, *, rerun_on: str | None = None) -> None:
+        """Remember that `task_id` acted on the Slack message at `ts`.
+
+        The last `SLACK_SEEN_MAX` are kept. `rerun_on` is the UTC date when the message
+        re-ran the task: the day's count goes up by one, starting again on a new day. One
+        statement's worth of reading and writing under the lock, and only these columns.
+        """
+        await asyncio.to_thread(self._heard_on_slack_sync, task_id, ts, rerun_on)
+
+    def _heard_on_slack_sync(self, task_id: int, ts: str, rerun_on: str | None) -> None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT slack_seen, slack_reruns, slack_reruns_on FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(task_id)
+            seen = [each for each in (row["slack_seen"] or "").split() if each != ts] + [ts]
+            # Kept in the order of the messages, not of their arrival: once the memory
+            # is full, what is dropped is the oldest message, and anything older than
+            # all that is left is known to be a repeat (`models.seen_on_slack`).
+            seen.sort(key=_ts_key)
+            reruns, day = row["slack_reruns"], row["slack_reruns_on"]
+            if rerun_on is not None:
+                reruns, day = (reruns + 1 if day == rerun_on else 1), rerun_on
+            self._conn.execute(
+                "UPDATE tasks SET slack_seen = ?, slack_reruns = ?, slack_reruns_on = ? "
+                "WHERE id = ?",
+                (" ".join(seen[-SLACK_SEEN_MAX:]), reruns, day, task_id),
+            )
+
+    async def count_slack_reruns_on(self, day: str) -> int:
+        """How many times a Slack reply re-ran a task on `day` (a UTC date)."""
+        return await asyncio.to_thread(self._count_slack_reruns_on_sync, day)
+
+    def _count_slack_reruns_on_sync(self, day: str) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(SUM(slack_reruns), 0) AS n FROM tasks "
+                "WHERE slack_reruns_on = ? AND internal = 0",
+                (day,),
+            ).fetchone()
+        return row["n"]
 
     async def list_for_session(self, session_id: str, *, limit: int = 20) -> list[Task]:
         """The tasks one voice session dispatched, oldest first. Housekeeping excluded."""

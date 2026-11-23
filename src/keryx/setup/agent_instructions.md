@@ -26,17 +26,27 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `--account ADDRESS`. Only when the first command
    says there is no Google OAuth client does the person have to make one (the steps:
    `{google_guide}`), which you then pass once with `--client-file PATH`.
-   For Slack, `keryx auth login slack` prints a link and three steps: relay them; the
+   For Slack, `keryx auth login slack` first says the four access levels (what Keryx
+   may see there, where it can be set to work from, and at the highest that it can send
+   messages as them) and then prints a link and its steps. The level is the person's to
+   choose: read them what it printed and ask. Never choose `converse`, `read` or `write`
+   for them, since at those a Slack message of theirs that mentions the app can start
+   work without the phone PIN, and at `write` Keryx can post in their name; with no
+   answer it is `announce`, which the commands here set up (a higher one adds `--access
+   LEVEL` to both, and its extra tokens to standard input, one to a line). Relay the link
+   and the steps; the
    person creates and installs the Slack app it describes and copies its bot token. That
    token is not yours to see: they run `keryx auth login slack --stdin --email ADDRESS`
    themselves, with the address they use in Slack, and it asks for the token hidden
    (only with the token already in a variable of your environment do you run it:
    `printenv VAR | keryx auth login slack --stdin --email ADDRESS`). It checks the
-   token, finds them by that address, turns `send_to_slack` on and sends them one test
+   token, finds them by that address, turns `slack_report` on and sends them one test
    message; ask whether it arrived. If it could not find them, it says what to run
    instead.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
-   Slack, email, reading the calendar, adding to it, documents, billing, cluster stats —
+   Slack, reading Slack (which needs a workspace at the `read` level), sending Slack
+   messages as them (the `write` level, and its own yes), email, reading the
+   calendar, adding to it, documents, billing, cluster stats —
    each on or off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a
