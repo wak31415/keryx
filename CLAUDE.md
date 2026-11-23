@@ -445,6 +445,9 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   the owner untick any scope, so the token keeps exactly what was granted, and a service is
   connected only when every scope it needs was. Reading Gmail is the one test with two
   answers (`reads_gmail`): this sign-in's `gmail.modify`, or an older one's `gmail.readonly`.
+  A sign-in replaces the token, so it asks again for whatever is connected now
+  (`offer`): `--services calendar` adds Calendar and ends nothing. Taking access away is
+  its own act, `keryx auth logout google`.
 - **One token, and Keryx owns it.** `DATA_DIR/google_token.json` (0600, `write_private`) is
   the only Google credential Keryx writes. The agents' `workspace-mcp` server reads a
   *copy* of it (`export_for_mcp`, into `DATA_DIR/google/<address>.json`), rewritten only

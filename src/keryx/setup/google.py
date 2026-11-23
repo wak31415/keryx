@@ -150,11 +150,32 @@ class Offer:
     services: tuple[str, ...]
     #: Services left out because Keryx's published client is not approved for them yet.
     withheld: tuple[str, ...] = ()
+    #: Services nobody named that are asked for again because they are connected now.
+    kept: tuple[str, ...] = ()
+    #: Services connected now that this client may not ask for, and so will not be after.
+    lost: tuple[str, ...] = ()
 
     @property
     def notes(self) -> list[str]:
-        """What to say before the link: what is left out, in a line; nothing when nothing is."""
-        return [line for line in (self.note,) if line]
+        """What to say before the link, a line each: what is asked for again unasked, what
+        this sign-in will end, and what is left out. Nothing when there is nothing to say."""
+        lines = []
+        if self.kept:
+            one = len(self.kept) == 1
+            lines.append(
+                f"{labels(self.kept)} {'is' if one else 'are'} connected now and "
+                f"{'is' if one else 'are'} asked for again, so that this sign-in adds to "
+                f"{'it' if one else 'them'}; `keryx auth logout google` is how access is "
+                "taken away."
+            )
+        if self.lost:
+            one = len(self.lost) == 1
+            lines.append(
+                f"{labels(self.lost)} {'is' if one else 'are'} connected now and will not be "
+                f"after this sign-in: {self.client.whose} does not offer "
+                f"{'it' if one else 'them'}."
+            )
+        return [*lines, *([self.note] if self.note else [])]
 
     @property
     def note(self) -> str | None:
@@ -172,6 +193,9 @@ class Offer:
 def offer(settings: Settings, wanted: Sequence[str] | None = None) -> Offer:
     """What a sign-in for `wanted` asks for: every service the client offers when None.
 
+    A sign-in replaces the token, so it also asks again for whatever is connected now and
+    the client offers: signing in for one more service adds it, and ends nothing.
+
     Raises with what to do when there is no client at all, or when a service asked for by
     name is one Keryx's published client may not request.
     """
@@ -188,9 +212,14 @@ def offer(settings: Settings, wanted: Sequence[str] | None = None) -> Offer:
             f"Keryx's Google app does not offer {what} yet: that needs your own Google "
             f"client ({own_client_hint()})"
         )
+    token = google.read_token(settings)
+    now = token.connected if token is not None else ()
+    lost = tuple(name for name in now if name not in client.services)
     if wanted is None:
-        return Offer(client, client.services, client.withheld)
-    return Offer(client, tuple(name for name in SERVICES if name in wanted))
+        return Offer(client, client.services, client.withheld, lost=lost)
+    kept = tuple(name for name in now if name in client.services and name not in wanted)
+    services = tuple(name for name in SERVICES if name in wanted or name in kept)
+    return Offer(client, services, kept=kept, lost=lost)
 
 
 # --- the consent link ---------------------------------------------------------------------

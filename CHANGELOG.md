@@ -31,6 +31,8 @@ the version starts with 0.
   with `keryx auth login google` replaces the two older sign-ins with one.
 - A sign-in turns the agents' Google tools on the first time only. If you have set
   `GOOGLE_WORKSPACE_MCP` to false, signing in again leaves it off.
+- Signing in again adds to what is connected. `keryx auth login google --services
+  calendar` keeps Gmail and the rest and adds Calendar, and says so.
 - Signing in as a different Google account from the one you signed in as before is
   refused unless you say you mean it: `keryx setup` asks, and the command line takes
   `--account ADDRESS`.

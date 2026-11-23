@@ -155,6 +155,51 @@ def test_a_published_client_that_offers_nothing_is_refused(settings, tmp_path, m
         offer(settings)
 
 
+# --- signing in again adds, and never takes away -------------------------------------------
+
+
+def connected(settings, services):
+    account.write_token(
+        settings,
+        account.GoogleToken("rt", "cid", "cs", account.requested_scopes(services), "a@b.c"),
+    )
+
+
+def test_asking_for_one_service_keeps_what_is_connected_already(client):
+    """A sign-in replaces the token, so asking for Calendar alone would end the rest."""
+    connected(client, ["gmail", "drive", "docs"])
+
+    chosen = offer(client, ["calendar"])
+
+    assert chosen.services == ("gmail", "calendar", "drive", "docs")
+    assert chosen.notes == [
+        "Gmail, Drive and Docs are connected now and are asked for again, so that this "
+        "sign-in adds to them; `keryx auth logout google` is how access is taken away."
+    ]
+
+
+def test_asking_for_what_is_connected_already_says_nothing(client):
+    connected(client, ["calendar"])
+
+    assert offer(client, ["calendar"]).notes == []
+    assert offer(client).notes == []  # everything is asked for anyway
+
+
+def test_what_the_client_does_not_offer_cannot_be_kept_and_that_is_said(
+    settings, tmp_path, monkeypatch
+):
+    published(tmp_path, monkeypatch, keryx_services=["calendar"])
+    connected(settings, ["gmail", "calendar"])
+
+    chosen = offer(settings)
+
+    assert chosen.services == ("calendar",)
+    assert any(
+        line.startswith("Gmail is connected now and will not be after this sign-in")
+        for line in chosen.notes
+    )
+
+
 # --- the link -----------------------------------------------------------------------------
 
 
