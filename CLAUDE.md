@@ -740,7 +740,7 @@ Eleven rulings:
 
 - **Keryx acts when the owner writes to it: in the app's own direct messages every
   message is a request, and anywhere else only one that mentions it.** The owner's
-  rulings (2026-11-23: a mention; 2026-11-24: "dm to the app don't need @keryx
+  rulings (both of 2026-11-23: first a mention; then "dm to the app don't need @keryx
   mentions"). A request is always from the workspace's `owner_id`. In the app's own
   direct-message conversation that is all it takes, a reply in a thread there included,
   so a reply under a report resumes its task with no mention. That it *is* that

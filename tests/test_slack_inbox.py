@@ -514,7 +514,7 @@ async def test_a_request_is_dispatched_as_its_text_alone_and_its_thread_is_the_m
 
 
 async def test_a_direct_message_with_no_mention_starts_work_and_a_reply_resumes_it(world):
-    """The owner's ruling of 2026-11-24: in the app's own direct messages, no mention."""
+    """The owner's ruling of 2026-11-23: in the app's own direct messages, no mention."""
     await world.inbox.handle("default", payload("look into the flaky test"))
     [task] = await world.tasks()
     assert (task.description, task.slack_channel, task.slack_thread_ts) == (

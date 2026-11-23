@@ -7,7 +7,7 @@ event it hears comes to `SlackInbox.handle`.
 
 **A message is a `Request` when it is the owner's and it is meant for Keryx.** The owner
 is the one member id the workspace's settings name. Meant for Keryx is one of two things
-(the owner's rulings of 2026-11-23 and 2026-11-24):
+(the owner's two rulings of 2026-11-23):
 
 - **In the app's own direct messages, every message of theirs is.** A message there can
   only be for the app, so no mention is asked for: a new message starts work, and a reply
@@ -205,7 +205,7 @@ def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
     text = event.get("text")
     asked, addressed = own_words(text if isinstance(text, str) else "", workspace.bot_user_id)
     # In the app's direct messages every message of the owner's is a request (the
-    # owner's ruling of 2026-11-24): a message there can only be meant for the app.
+    # owner's ruling of 2026-11-23): a message there can only be meant for the app.
     # Everywhere else, only one that mentions it in the owner's own words.
     if not (addressed or direct):
         return Dropped("no_mention")
