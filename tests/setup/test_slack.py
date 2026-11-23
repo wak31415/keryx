@@ -855,3 +855,10 @@ def test_each_token_has_a_prefix_that_is_said_when_it_is_wrong():
     assert slack.token_problem("xoxb-1", "app") == "An app-level token starts xapp-"
     assert slack.token_problem("xoxb-1", "user") == "A user token starts xoxp-"
     assert slack.token_problem("nope") == "A bot token starts xoxb-"
+
+
+def test_one_line_that_starts_xox_is_still_taken_as_the_bot_token(settings):
+    """As it always was: a rotating bot token does not start xoxb-."""
+    connect(settings, FakeSlack(), token="xoxe.xoxb-1-very-secret", test=False)
+
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxe.xoxb-1-very-secret"}

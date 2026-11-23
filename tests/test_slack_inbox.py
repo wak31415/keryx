@@ -280,6 +280,19 @@ async def test_a_message_delivered_again_after_a_restart_still_starts_one_task(w
     assert world.slack.posts == []
 
 
+async def test_only_so_many_messages_are_remembered_and_an_old_one_is_still_caught(
+    world, monkeypatch
+):
+    monkeypatch.setattr("keryx.slack_inbox.MAX_SEEN", 2)
+    for n in range(3):
+        await world.inbox.handle("default", payload(f"job {n}", ts=f"1700000000.00010{n}"))
+
+    await world.inbox.handle("default", payload("job 0", ts="1700000000.000100"))
+
+    # Forgotten by this process, and still one task: the task remembers its own message.
+    assert len(world.inbox._seen) == 2 and len(await world.tasks()) == 3
+
+
 async def test_the_daily_cap_applies_and_is_said_in_one_sentence_in_the_thread(
     make_world, conversing
 ):

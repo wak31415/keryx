@@ -283,6 +283,26 @@ async def test_stopping_the_listener_stops_what_was_acting_on_events():
     assert not [task for task in asyncio.all_tasks() if task.get_name() == "slack-events-work"]
 
 
+async def test_stopping_it_mid_connection_closes_the_socket():
+    waiting = asyncio.Event()
+
+    class Quiet(FakeSocket):
+        async def recv(self):
+            waiting.set()
+            await asyncio.Event().wait()
+
+    world = World()
+    world.sockets = [Quiet([])]
+    socket = world.sockets[0]
+    running = asyncio.create_task(world.listener().run())
+    await waiting.wait()
+
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert socket.closed and world.delays == []
+
+
 async def test_the_real_connection_keeps_the_librarys_own_log_off_the_address(monkeypatch):
     seen = {}
 

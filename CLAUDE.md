@@ -739,7 +739,9 @@ Eight rulings:
   owner's message), else when the first report is posted (the thread is that report, at
   the channel and `ts` *Slack answered with*, since a member id lands in a `D…`). Every
   later report is a reply there, so a reply typed there always finds the task
-  (`TaskStore.find_by_slack_thread`). **Each message is acted on once**: Slack delivers an
+  (`TaskStore.find_by_slack_thread`). Only a thread that can no longer be posted to (its
+  token replaced by another app's) is given up for a new message, which is then the
+  thread. **Each message is acted on once**: Slack delivers an
   event again when its acknowledgement was lost, and `Task.slack_last_ts` is the latest
   message a task has taken, which survives a restart.
 - **A task asked for on Slack answers in its thread and leaves the phone alone.** No
@@ -752,9 +754,11 @@ Eight rulings:
   the websocket library's own logger for it is held at WARNING. So a failure is logged by
   its *kind*. `SocketModeListener.run` acknowledges every envelope at once, answers a
   `disconnect` with a new connection, backs off to five minutes and never raises. Only
-  `keryx serve` starts one (`SlackInbox.start`), per workspace at `converse` or above, so
-  a level raised under a running service is heard from its next start; the settings are
-  read again for every message, so a level lowered is honoured at once.
+  `keryx serve` starts one (`SlackInbox.start`), per workspace at `converse` or above, and
+  only once a restart has been confirmed and the queue picked up (`cli._settle_then_listen`:
+  a task started sooner would be counted as work that restart interrupted). So a level
+  raised under a running service is heard from its next start; the settings are read
+  again for every message, so a level lowered is honoured at once.
 
 Search at `read` is one constant, `integrations.slack.SEARCH_SCOPES`: the legacy
 `search:read`, not the Real-time Search API's granular scopes, because that API's terms

@@ -334,11 +334,6 @@ async def _serve(settings: Settings) -> None:
     # a failure to bind is logged and the bridge simply stays off (keryx/approvals).
     if state.approvals is not None:
         await state.approvals.start()
-    # What the owner types to their Slack app, where a workspace's level lets Keryx hear
-    # it: a connection outwards per workspace, which never stops the server from starting.
-    if state.slack_inbox is not None:
-        for name in state.slack_inbox.start():
-            typer.echo(f"listening to Slack for your messages in {name}")
     server = _build_server(state)
     server_task = asyncio.create_task(server.serve(), name="phone-server")
     typer.echo(f"phone server on http://{settings.host}:{settings.port}")
@@ -347,7 +342,7 @@ async def _serve(settings: Settings) -> None:
     # server is really listening. It is deliberately not one of the `tasks` below: finishing
     # is what it does, and that must not bring the server down with it.
     callback_task = asyncio.create_task(
-        _confirm_then_drain(state, ready=lambda: wait_until_serving(server)),
+        _settle_then_listen(state, ready=lambda: wait_until_serving(server)),
         name="restart-callback",
     )
 
@@ -367,6 +362,29 @@ async def _serve(settings: Settings) -> None:
             await callback_task
         # Subagents outlive a session but not the process: stop them and close the store.
         await shutdown_app_state(state)
+
+
+async def _settle_then_listen(state: AppState, *, ready) -> None:
+    """Confirm a restart and pick the queue back up, and only then start hearing Slack.
+
+    In that order: a message that started a task while a restart was still being confirmed
+    would be counted among the work that restart interrupted. Hearing Slack is a
+    connection outwards per workspace whose level allows it (`keryx.slack_inbox`), and
+    nothing about it may stop the server: a failure here is logged and Slack stays unheard.
+    """
+    try:
+        await _confirm_then_drain(state, ready=ready)
+    except Exception:
+        log.exception("the startup housekeeping failed")
+    if state.slack_inbox is None:
+        return
+    try:
+        listening = state.slack_inbox.start()
+    except Exception:
+        log.exception("could not start listening to Slack")
+        return
+    for name in listening:
+        typer.echo(f"listening to Slack for your messages in {name}")
 
 
 async def _confirm_then_drain(state: AppState, *, ready) -> None:

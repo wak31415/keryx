@@ -1418,3 +1418,73 @@ def test_tools_json_is_one_document(settings_stub):
         "refused": [],
     }
 
+
+
+# --- keryx serve: hearing Slack starts last ------------------------------------------------
+
+
+class _StartupState:
+    """As much of an `AppState` as the startup sequence touches, recording its order."""
+
+    def __init__(self, *, listening=("default",), restart_error=None, slack_error=None):
+        self.order: list[str] = []
+        state = self
+
+        class Restart:
+            async def resume(self, wait_ready):
+                state.order.append("restart confirmed")
+                if restart_error is not None:
+                    raise restart_error
+
+        class Manager:
+            async def resume_queued(self):
+                state.order.append("queue picked up")
+                return []
+
+        class Inbox:
+            def start(self):
+                state.order.append("slack heard")
+                if slack_error is not None:
+                    raise slack_error
+                return list(listening)
+
+        self.restart, self.manager, self.slack_inbox = Restart(), Manager(), Inbox()
+
+
+async def test_slack_is_heard_only_after_a_restart_is_confirmed_and_the_queue_picked_up(capsys):
+    """A message that started a task sooner would be counted as work the restart interrupted."""
+    from keryx.cli import _settle_then_listen
+
+    state = _StartupState(listening=("default", "work"))
+
+    await _settle_then_listen(state, ready=None)
+
+    assert state.order == ["restart confirmed", "queue picked up", "slack heard"]
+    said = capsys.readouterr().out
+    assert "listening to Slack for your messages in default" in said
+    assert "listening to Slack for your messages in work" in said
+
+
+async def test_startup_housekeeping_that_fails_does_not_leave_slack_unheard(caplog):
+    from keryx.cli import _settle_then_listen
+
+    state = _StartupState(restart_error=RuntimeError("no record"))
+
+    await _settle_then_listen(state, ready=None)
+
+    assert state.order == ["restart confirmed", "slack heard"]
+    assert "the startup housekeeping failed" in caplog.text
+
+
+async def test_slack_that_cannot_be_heard_never_stops_the_server(caplog, capsys):
+    from keryx.cli import _settle_then_listen
+
+    state = _StartupState(slack_error=RuntimeError("no"))
+    await _settle_then_listen(state, ready=None)
+    assert "could not start listening to Slack" in caplog.text
+    assert "listening to Slack" not in capsys.readouterr().out
+
+    silent = _StartupState()
+    silent.slack_inbox = None
+    await _settle_then_listen(silent, ready=None)
+    assert silent.order == ["restart confirmed", "queue picked up"]

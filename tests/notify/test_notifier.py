@@ -835,6 +835,40 @@ async def test_a_failure_asked_for_on_slack_is_said_in_its_thread_too(harness):
     assert harness.twilio.sms == []
 
 
+async def test_a_thread_that_can_no_longer_be_posted_to_gets_a_message_of_its_own(harness):
+    """A token since replaced by another app's cannot reach the old thread."""
+    task = await harness.task(slack_workspace="default", slack_channel="D0OLDAPP",
+                              slack_thread_ts="1600000000.000100")
+    answers = [None, Posted("D0OWNER", "1700000000.000700")]
+
+    async def post(text, *, fallback=None, thread_ts=None, broadcast=False):
+        harness.slack.threads.append((thread_ts, broadcast))
+        return answers.pop(0)
+
+    harness.slack.post = post
+
+    await harness.finished(task, "found it")
+
+    assert harness.slack.threads == [("1600000000.000100", True), (None, False)]
+    stored = await harness.store.get(task.id)
+    assert (stored.slack_channel, stored.slack_thread_ts) == ("D0OWNER", "1700000000.000700")
+
+
+async def test_a_thread_and_a_fallback_that_both_fail_are_not_said_to_be_there(harness):
+    task = await harness.task(slack_workspace="default", slack_channel="D0OLDAPP",
+                              slack_thread_ts="1600000000.000100", callback_requested=True,
+                              callback_number=CALLER)
+    harness.slack.landed = None
+
+    await harness.finished(task, "found it")
+
+    assert harness.slack.threads == [("1600000000.000100", True), (None, False)]
+    assert (await harness.store.get(task.id)).slack_thread_ts == "1600000000.000100"
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
+    assert SLACK_PREAMBLE not in context
+
+
 async def test_a_report_slack_refuses_has_no_thread_and_is_not_said_to_be_there(harness):
     harness.slack.landed = None
     task = await harness.task(callback_requested=True, callback_number=CALLER)

@@ -37,6 +37,7 @@ call-back, and nothing here may ever raise into the event bus.
 """
 
 import asyncio
+import dataclasses
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -314,13 +315,19 @@ class Notifier:
                 header, body = FAILED_TEXT.format(task_id=task.id, detail=detail), report
             else:
                 header, body = f"Task {task.id} finished", report or detail
+            text = f"**{header}**\n\n{body}".strip()
             posted = await route.poster.post(
-                f"**{header}**\n\n{body}".strip(),
-                fallback=header,
-                thread_ts=route.thread_ts,
-                broadcast=route.broadcast,
+                text, fallback=header, thread_ts=route.thread_ts, broadcast=route.broadcast
             )
-            if posted is None:
+            if posted is None and route.thread_ts is not None:
+                # The thread could not be posted to (a token since replaced by another
+                # app's cannot reach it): the report still goes, as a message of its own,
+                # and that is where the task lives from now on.
+                unthreaded = dataclasses.replace(task, slack_channel=None, slack_thread_ts=None)
+                route = self._reports(unthreaded)
+                if route is not None:
+                    posted = await route.poster.post(text, fallback=header)
+            if posted is None or route is None:
                 return False
             if route.thread_ts is None and posted.ts:
                 # The first report: where it landed is this task's thread from now on.
