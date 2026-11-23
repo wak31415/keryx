@@ -26,15 +26,19 @@ from keryx.setup import slack
 from keryx.setup.slack import (
     CONVERSE_TEST_MESSAGE,
     LISTEN_NOTE,
-    MEANING,
     OWNER_LINE,
     READ_NOTE,
-    TEST_MESSAGE,
     SlackApi,
     SlackSetupError,
+    meaning,
 )
+from keryx.setup.slack import test_message as said_to_test
 
 TOKEN = "xoxb-very-secret"
+#: What the app is called when nobody has named the assistant: Lyra, the default.
+LYRA = "Lyra"
+#: The one message that shows a connection arriving, at `announce`.
+TEST_MESSAGE = said_to_test(Access.ANNOUNCE, LYRA)
 #: What Slack says of the bot token of an app in a second workspace.
 LAB = Workspace(team="Lab", team_id="T0LAB", user_id="U0KERYX")
 
@@ -88,7 +92,7 @@ def test_with_no_token_it_prints_the_link_the_steps_and_the_next_command(setting
     slack.start(settings, lines.append)
 
     text = "\n".join(lines)
-    assert new_app_url() in lines  # on a line of its own, to be relayed whole
+    assert new_app_url(assistant="Lyra") in lines  # on a line of its own, to be relayed whole
     assert "1. Open the link" in text and "3. Under OAuth & Permissions" in text
     assert ("4. Under OAuth & Permissions, the same page as the bot token, copy the User "
             "OAuth Token (xoxp-…). It says which member you are.") in text
@@ -107,7 +111,7 @@ def test_settings_that_do_not_parse_do_not_stop_the_link(settings):
 
     slack.start(settings, lines.append)
 
-    assert new_app_url() in lines
+    assert new_app_url(assistant="Lyra") in lines
 
 
 def test_no_test_message_when_it_is_not_wanted_and_it_says_none_was_sent(settings):
@@ -358,22 +362,22 @@ def test_with_nothing_chosen_every_level_is_said_in_plain_words_before_the_link(
     text = said(settings)
 
     for level in Access:
-        assert f"  {level}: {MEANING[level]}" in text
-    assert text.index(MEANING[Access.READ]) < text.index(new_app_url())
+        assert f"  {level}: {meaning(level, LYRA)}" in text
+    assert text.index(meaning(Access.READ, LYRA)) < text.index(new_app_url(assistant="Lyra"))
     assert ("What follows is announce; --access converse or --access read or --access write "
             "chooses another.") in text
-    assert "reads nothing there" in MEANING[Access.ANNOUNCE]
-    assert "direct messages you type to the Keryx app" in MEANING[Access.CONVERSE]
-    assert "without the phone PIN" in MEANING[Access.CONVERSE]
-    assert "read Slack as you" in MEANING[Access.READ]
+    assert "reads nothing there" in meaning(Access.ANNOUNCE, LYRA)
+    assert "direct messages you type to the Lyra app" in meaning(Access.CONVERSE, LYRA)
+    assert "without the phone PIN" in meaning(Access.CONVERSE, LYRA)
+    assert "read Slack as you" in meaning(Access.READ, LYRA)
 
 
 def test_a_chosen_level_says_what_it_sees_then_its_own_link_steps_and_command(settings):
     text = said(settings, access=Access.CONVERSE)
 
-    assert text.startswith(f"Access level converse: {MEANING[Access.CONVERSE]}")
-    assert new_app_url(Access.CONVERSE) in text.splitlines()
-    assert new_app_url() not in text
+    assert text.startswith(f"Access level converse: {meaning(Access.CONVERSE, LYRA)}")
+    assert new_app_url(Access.CONVERSE, assistant="Lyra") in text.splitlines()
+    assert new_app_url(assistant="Lyra") not in text
     assert "4. Under Basic Information, App-Level Tokens, click Generate Token and Scopes" in text
     assert "connections:write" in text
     assert "5. Under OAuth & Permissions, the same page as the bot token" in text
@@ -389,7 +393,7 @@ def test_a_chosen_level_says_what_it_sees_then_its_own_link_steps_and_command(se
 def test_read_asks_for_three_tokens_and_no_address_and_says_nothing_reads_yet(settings):
     text = said(settings, access=Access.READ)
 
-    assert new_app_url(Access.READ) in text.splitlines()
+    assert new_app_url(Access.READ, assistant="Lyra") in text.splitlines()
     assert "5. Under OAuth & Permissions, the same page as the bot token, copy the User" in text
     assert READ_NOTE in text
     assert "keryx auth login slack --stdin --access read\n" in text
@@ -405,12 +409,12 @@ def test_raising_the_level_of_an_app_there_is_never_makes_a_second_one(settings)
 
     assert "api.slack.com/apps?new_app=1" not in text
     assert "Acme is connected at the announce level, so the app you have is changed" in text
-    assert "pick the Keryx app you already have. Do not create a second one." in text
+    assert "pick the app you already have for Keryx. Do not create a second one." in text
     assert "2. Open App Manifest, replace what is there with the manifest below" in text
     assert "3. Open Install App and click Reinstall to Workspace" in text
     assert "4. Under Basic Information, App-Level Tokens" in text and "5." not in text
-    manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("The bot token")]
-    assert json.loads(manifest) == app_manifest(Access.CONVERSE)
+    manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("Saving it")]
+    assert json.loads(manifest) == app_manifest(Access.CONVERSE, assistant="Lyra")
     assert "The bot token stays as it is." in text
     assert "hand the app-level token over on standard input" in text
     assert "keryx auth login slack --stdin --access converse\n" in text
@@ -422,14 +426,33 @@ def test_a_workspace_connected_at_that_level_is_told_so_and_never_shown_the_link
 
     for text in (said(settings), said(settings, access=Access.CONVERSE)):
         assert text.startswith(f"Acme is connected at the converse level: "
-                               f"{MEANING[Access.CONVERSE]}")
+                               f"{meaning(Access.CONVERSE, LYRA)}")
         assert "api.slack.com/apps?new_app=1" not in text and "Create your Slack app" not in text
         assert "Only messages from U0OWNER are acted on there: every one typed to the" in text
-        assert "and elsewhere only one that mentions it (@Keryx)" in text
+        assert "and elsewhere only one that mentions it (@Lyra)" in text
         assert "keryx auth login slack --access announce or --access read" in text
         assert "To replace a token: keryx auth login slack --stdin, with the new one" in text
         assert "To disconnect it: keryx auth logout slack" in text
         assert "**" not in text and "`" not in text
+
+
+def test_a_connected_workspace_is_always_shown_the_manifest_that_renames_its_app(settings):
+    """Slack learns the app's name only from a manifest, and is never asked what it is
+    called: so after `ASSISTANT_NAME` changes, the next login shows the manifest with the
+    new name and how to save it, and says the old name stands until then."""
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    settings = settings.model_copy(update={"assistant_name": "Jarvis"})
+
+    text = said(settings)
+
+    assert ("The app is called Jarvis in Slack, after your assistant, once its manifest "
+            "says so: one made under another name keeps it until then.") in text
+    assert "open https://api.slack.com/apps, pick the app, open App Manifest" in text
+    manifest = json.loads(text[text.index("click Save Changes:") + len("click Save Changes:"):])
+    assert manifest == app_manifest(Access.CONVERSE, assistant="Jarvis")
+    assert manifest["display_information"]["name"] == "Jarvis"
+    assert "every one typed to the Jarvis app itself" in text and "@Jarvis" in text
+    assert "api.slack.com/apps?new_app=1" not in text
 
 
 def test_a_connected_workspace_that_lacks_something_is_told_what(settings):
@@ -480,10 +503,10 @@ def test_converse_takes_three_tokens_in_any_order_and_the_user_token_says_who_is
         "connected to the Acme workspace at the converse level; SLACK_BOT_TOKEN, "
         "SLACK_APP_TOKEN and SLACK_USER_TOKEN saved"
     )
-    assert LISTEN_NOTE in lines
+    assert LISTEN_NOTE.format(app=LYRA) in lines
     assert fake.calls == [
         ("auth", TOKEN), ("auth", USER), ("open", APP),
-        ("post", "U0OWNER", TEST_MESSAGE + CONVERSE_TEST_MESSAGE),
+        ("post", "U0OWNER", said_to_test(Access.CONVERSE, LYRA)),
     ]
     assert not any("secret" in line for line in lines)
 
@@ -585,7 +608,7 @@ def test_read_knows_the_owner_from_the_user_token_and_needs_no_address(settings)
     }
     assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == ("U0SAM", "U0SAM")
     assert "you are U0SAM there: reports go to you" in lines
-    assert READ_NOTE in lines and LISTEN_NOTE in lines
+    assert READ_NOTE in lines and LISTEN_NOTE.format(app=LYRA) in lines
     assert lines[0].endswith("SLACK_BOT_TOKEN, SLACK_APP_TOKEN and SLACK_USER_TOKEN saved")
     assert not any(call[0] == "member" for call in fake.calls)
 
@@ -680,7 +703,7 @@ def test_where_reports_go_never_makes_anybody_the_owner(settings, channel):
 
     assert (saved(settings)["owner_id"], saved(settings)["channel_id"]) == ("U0OWNER", channel)
     assert f"it keeps sending to {channel}" in lines
-    assert OWNER_LINE.format(who="U0OWNER") in lines
+    assert OWNER_LINE.format(who="U0OWNER", app=LYRA) in lines
 
 
 def test_the_owner_is_recorded_at_announce_too_and_nothing_says_messages_are_acted_on(settings):
@@ -814,10 +837,10 @@ def test_lowering_asks_slack_nothing_and_forgets_the_tokens_at_once(settings):
 
     assert done and ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
     assert saved(settings)["access"] == "announce"
-    assert lines[0] == f"Acme is now at the announce level: {MEANING[Access.ANNOUNCE]}"
+    assert lines[0] == f"Acme is now at the announce level: {meaning(Access.ANNOUNCE, LYRA)}"
     assert lines[1] == "SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten."
     assert "A running Keryx stops acting on your messages there at once." in lines[2]
-    assert json.loads(lines[3]) == app_manifest(Access.ANNOUNCE)
+    assert json.loads(lines[3]) == app_manifest(Access.ANNOUNCE, assistant="Lyra")
     assert [each.access for each in workspaces(settings)] == [Access.ANNOUNCE]
 
 
@@ -862,7 +885,7 @@ def test_a_further_workspace_has_its_own_app_tokens_owner_and_destination(settin
     assert lines[0] == (
         "connected to the Lab workspace as lab, at the converse level; its tokens are saved"
     )
-    assert ("post", "U0LAB", TEST_MESSAGE + CONVERSE_TEST_MESSAGE) in fake.calls
+    assert ("post", "U0LAB", said_to_test(Access.CONVERSE, LYRA)) in fake.calls
     assert not any("secret" in line for line in lines)
 
 
@@ -917,7 +940,7 @@ def test_the_link_for_a_further_workspace_names_it_on_the_next_command(settings)
 
     text = said(settings, workspace="lab", access=Access.CONVERSE)
 
-    assert new_app_url(Access.CONVERSE) in text
+    assert new_app_url(Access.CONVERSE, assistant="Lyra") in text
     assert "keryx auth login slack --stdin --workspace lab --access converse\n" in text
 
 
@@ -1082,10 +1105,10 @@ def test_above_announce_a_bot_token_slack_names_no_member_for_is_refused(setting
 
 
 def test_each_level_says_where_keryx_can_be_set_to_work_from_and_what_it_sees():
-    assert "reads nothing" in MEANING[Access.ANNOUNCE]
-    converse, read = MEANING[Access.CONVERSE], MEANING[Access.READ]
-    assert "direct messages you type to the Keryx app itself: nothing else" in converse
-    assert "Every message you type there is a request, with no @Keryx needed" in converse
+    assert "reads nothing" in meaning(Access.ANNOUNCE, LYRA)
+    converse, read = meaning(Access.CONVERSE, LYRA), meaning(Access.READ, LYRA)
+    assert "direct messages you type to the Lyra app itself: nothing else" in converse
+    assert "Every message you type there is a request, with no @Lyra needed" in converse
     assert "Only your own member id is checked" in converse
     assert "without the phone PIN" in converse
     assert "any conversation it has been added to" in read
@@ -1103,9 +1126,10 @@ def test_write_says_plainly_before_the_link_that_keryx_can_then_send_as_you(sett
     text = said(settings, access=Access.WRITE)
 
     assert "Keryx can also send messages as you, in your name, to other people and to" in (
-        MEANING[Access.WRITE])
-    assert "you have said yes" in MEANING[Access.WRITE]
-    assert text.index(MEANING[Access.WRITE]) < text.index(new_app_url(Access.WRITE))
+        meaning(Access.WRITE, LYRA))
+    assert "you have said yes" in meaning(Access.WRITE, LYRA)
+    assert text.index(meaning(Access.WRITE, LYRA)) < text.index(
+        new_app_url(Access.WRITE, assistant="Lyra"))
     assert slack.WRITE_NOTE in text and slack.READ_NOTE in text
     assert "other people read it as written by you" in slack.WRITE_NOTE
     assert "The user token says which member you are: reports go to you" in text
@@ -1187,14 +1211,64 @@ def test_lowering_write_to_read_says_what_stops_and_never_that_the_user_token_is
 def test_what_is_said_at_connect_states_the_direct_message_rule(settings):
     """A direct message to the app needs no mention: the test message, the note about
     listening and the owner line all say so, since they are what the owner reads."""
-    assert "with no @Keryx needed" in CONVERSE_TEST_MESSAGE
+    assert "with no @Lyra needed" in said_to_test(Access.CONVERSE, LYRA)
     assert "a reply under a report resumes that task" in CONVERSE_TEST_MESSAGE
-    assert "every message you type to the Keryx app is a request" in LISTEN_NOTE
-    said = OWNER_LINE.format(who="U0OWNER")
-    assert "every one typed to the Keryx app itself" in said
-    assert "elsewhere only one that mentions it (@Keryx)" in said
-    assert "also acts on every message you send the Keryx app itself" in slack.SHORT[
-        Access.CONVERSE]
+    assert "every message you type to the Lyra app is a request" in LISTEN_NOTE.format(app=LYRA)
+    said = OWNER_LINE.format(who="U0OWNER", app=LYRA)
+    assert "every one typed to the Lyra app itself" in said
+    assert "elsewhere only one that mentions it (@Lyra)" in said
+    assert "also acts on every message you send the Lyra app itself" in slack.short(
+        Access.CONVERSE, LYRA)
+
+
+# --- the app carries the assistant's name -------------------------------------------------------
+
+
+def test_everything_that_says_what_to_type_in_slack_follows_the_assistants_name(settings):
+    """The level descriptions, the steps, the link's manifest, the owner line, the note
+    about listening and the test message: an owner whose assistant is Jarvis is told to
+    type to the Jarvis app and to mention @Jarvis, and never @Keryx."""
+    jarvis = settings.model_copy(update={"assistant_name": "Jarvis"})
+
+    shown = said(jarvis, access=Access.READ)
+
+    assert "the direct messages you type to the Jarvis app itself" in said(
+        jarvis, access=Access.CONVERSE)
+    assert "You can also mention the app (@Jarvis)" in shown
+    assert "with yours already filled in and named Jarvis, after your assistant" in shown
+    assert new_app_url(Access.READ, assistant="Jarvis") in shown.splitlines()
+    assert "@Keryx" not in shown and "Keryx app" not in shown
+
+    fake = FakeSlack()
+    lines = connect(jarvis, fake, token=f"{TOKEN}\n{APP}", access=Access.CONVERSE)
+
+    assert OWNER_LINE.format(who="U0OWNER", app="Jarvis") in lines
+    assert LISTEN_NOTE.format(app="Jarvis") in lines
+    assert ("post", "U0OWNER", said_to_test(Access.CONVERSE, "Jarvis")) in fake.calls
+    assert not any("@Keryx" in line or "Keryx app" in line for line in lines)
+
+
+def test_what_the_app_posts_to_show_it_arrives_does_not_call_itself_keryx():
+    """The app is the assistant in Slack: under the name Lyra, "Keryx is connected" would
+    read as somebody else's message. It names nothing but what the owner would type."""
+    for access in Access:
+        text = said_to_test(access, "Lyra")
+        assert "Keryx" not in text and text.startswith("Connected. ")
+        assert "{" not in text
+    assert "@Lyra" not in said_to_test(Access.ANNOUNCE, "Lyra")
+    assert "with no @Lyra needed" in said_to_test(Access.WRITE, "Lyra")
+
+
+def test_the_steps_that_change_an_app_say_that_saving_the_manifest_renames_it(settings):
+    settings = connected_at(settings)
+    settings = settings.model_copy(update={"assistant_name": "Jarvis"})
+
+    text = said(settings, access=Access.CONVERSE)
+
+    assert "pick the app you already have for Keryx. Do not create a second one." in text
+    assert ("Saving it also names the app Jarvis, after your assistant: Slack shows the "
+            "name it was made with until then.") in text
+    assert text.index("The manifest:") < text.index("Saving it also names the app Jarvis")
 
 
 # --- an install from before user tokens ---------------------------------------------------------
@@ -1212,8 +1286,8 @@ def test_an_older_install_is_shown_how_to_update_the_app_it_has(settings):
     assert "from before Keryx asked for a user token. Nothing about it stops working." in text
     lines = text.splitlines()
     for step in (
-        "1. Open https://api.slack.com/apps and pick the Keryx app you already have. Do not "
-        "create a second one.",
+        "1. Open https://api.slack.com/apps and pick the app you already have for Keryx. Do "
+        "not create a second one.",
         "2. Open App Manifest, replace what is there with the manifest below, and click "
         "Save Changes.",
         "3. Open Install App and click Reinstall to Workspace, then Allow: the new "
@@ -1223,8 +1297,8 @@ def test_an_older_install_is_shown_how_to_update_the_app_it_has(settings):
     ):
         assert step in lines
     assert "5." not in text
-    manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("The bot token")]
-    assert json.loads(manifest) == app_manifest(Access.ANNOUNCE)
+    manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("Saving it")]
+    assert json.loads(manifest) == app_manifest(Access.ANNOUNCE, assistant="Lyra")
     assert "hand the user token over on standard input" in text
     assert "keryx auth login slack --stdin\n" in text
     assert text.endswith("The user token says which member you are: reports keep going to "

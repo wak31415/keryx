@@ -111,8 +111,8 @@ keryx auth login slack --stdin  # theirs to run: it asks for each token hidden
 **The access level is theirs to choose, and it comes first**, because it decides the app
 the link creates. The first command prints what each level lets Keryx see and where it can
 be set to work from: `announce` (it posts, and reads nothing), `converse` (it is also sent
-what they type to the Keryx app, and every message of theirs there, with no `@Keryx`
-needed, can resume or start work *without the phone PIN*), `read` (they can also mention it in a
+what they type to the app, which is named after their assistant, and every message of
+theirs there, with no mention needed, can resume or start work *without the phone PIN*), `read` (they can also mention it in a
 conversation it was added to, where it answers in that thread for the others there to
 read too, and it reads Slack as them when they ask about messages) and `write` (it can
 also send messages as them, to other people and channels).

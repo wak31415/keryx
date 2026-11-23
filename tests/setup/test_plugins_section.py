@@ -27,17 +27,21 @@ from keryx.plugins.ssh_hosts import SshHost
 from keryx.setup import plugins as section
 from keryx.setup import wizard
 from keryx.setup.slack import (
-    CONVERSE_TEST_MESSAGE,
     LISTEN_NOTE,
-    MEANING,
     OWNER_LINE,
     OWNER_NOTED,
     READ_NOTE,
-    TEST_MESSAGE,
+    meaning,
 )
+from keryx.setup.slack import test_message as said_to_test
 from keryx.setup.ui import Back, Forward
 
 from .fakes import DEFAULT
+
+#: What the app is called when nobody has named the assistant: Lyra, the default.
+LYRA = "Lyra"
+#: The one message that shows a connection arriving, at `announce`.
+TEST_MESSAGE = said_to_test(Access.ANNOUNCE, LYRA)
 
 HOSTS = [
     SshHost("alpha", "login.alpha.example", "me", True, "/tmp/cm-alpha"),
@@ -152,7 +156,7 @@ def test_slack_is_a_link_and_two_pasted_tokens_and_nothing_is_asked_about_where(
     assert (saved["channel_id"], saved["owner_id"], saved["access"]) == (
         "U0OWNER", "U0OWNER", "announce")
     assert on(ctx, "slack_report")
-    assert ctx.ui.lines("link") == [new_app_url()]
+    assert ctx.ui.lines("link") == [new_app_url(assistant="Lyra")]
     assert "Install to Workspace" in ctx.ui.lines("markdown")[0]
     assert "the same page as the bot token" in ctx.ui.lines("markdown")[0]
     assert "connected to the Acme workspace" in ctx.ui.lines("success")
@@ -270,7 +274,11 @@ def test_an_install_from_before_user_tokens_walks_through_untouched(make_ctx, wo
     assert any("from before Keryx asked for a user token" in line
                for line in ctx.ui.lines("note"))
     title, _, body = ctx.ui.lines("panel")[0].partition("\n")
-    assert title == "The manifest" and json.loads(body) == app_manifest(Access.ANNOUNCE)
+    assert title == "The manifest"
+    assert json.loads(body) == app_manifest(Access.ANNOUNCE, assistant="Lyra")
+    # Saving it is also what renames the app after the assistant.
+    assert ("Saving it also names the app Lyra, after your assistant: Slack shows the name "
+            "it was made with until then.") in ctx.ui.lines("note")
     assert "Do not create a second one." in ctx.ui.lines("markdown")[0]
     assert "**User OAuth Token**" in ctx.ui.lines("markdown")[0]
     assert "Bot User OAuth Token" not in ctx.ui.lines("markdown")[0]
@@ -360,10 +368,31 @@ def test_the_level_is_asked_first_and_says_what_keryx_will_see_before_the_link(m
     assert [c.value for c in choices] == ["announce", "converse", "read", "write"]
     assert "reads nothing" in choices[0].hint
     assert "without the PIN" in choices[1].hint and "reads Slack as you" in choices[2].hint
-    meant = ctx.ui.said.index(("note", MEANING[Access.CONVERSE]))
+    meant = ctx.ui.said.index(("note", meaning(Access.CONVERSE, LYRA)))
     assert meant < [kind for kind, _ in ctx.ui.said].index("link")
-    assert ctx.ui.lines("link") == [new_app_url(Access.CONVERSE)]
+    assert ctx.ui.lines("link") == [new_app_url(Access.CONVERSE, assistant="Lyra")]
     assert "4. Under **Basic Information**, **App-Level Tokens**" in ctx.ui.lines("markdown")[0]
+
+
+def test_the_wizards_slack_step_follows_the_assistants_name(make_ctx, world):
+    """The link's manifest, the options, what the level means, the steps, the owner line
+    and the test message: an assistant called Jarvis has a Jarvis app, mentioned @Jarvis."""
+    ctx = make_ctx([SLACK, (LEVEL, "converse"), (TOKEN, "xoxb-1"), (APP_TOKEN, "xapp-1"),
+                    (USER_TOKEN, "xoxp-1"), (TEST, True)])
+    ctx.save({"ASSISTANT_NAME": "Jarvis"})
+
+    section.run_section(ctx)
+
+    assert ctx.ui.lines("link") == [new_app_url(Access.CONVERSE, assistant="Jarvis")]
+    choices = ctx.ui.choices["What may Keryx see in your Slack?"]
+    assert "every message you send the Jarvis app itself" in choices[1].hint
+    assert meaning(Access.CONVERSE, "Jarvis") in ctx.ui.lines("note")
+    assert "named Jarvis, after your assistant" in ctx.ui.lines("markdown")[0]
+    assert OWNER_LINE.format(who="U0OWNER", app="Jarvis") in ctx.ui.lines("note")
+    assert LISTEN_NOTE.format(app="Jarvis") in ctx.ui.lines("note")
+    assert slack_calls(world)[-1] == (
+        "slack_post", "U0OWNER", said_to_test(Access.CONVERSE, "Jarvis"))
+    assert not any("@Keryx" in text or "Keryx app" in text for _, text in ctx.ui.said)
 
 
 def test_converse_is_three_tokens_each_checked_and_the_owner_is_whose_the_user_token_is(
@@ -383,10 +412,10 @@ def test_converse_is_three_tokens_each_checked_and_the_owner_is_whose_the_user_t
     assert (saved["team"], saved["team_id"]) == ("Acme", "T0ACME")
     assert slack_calls(world) == [
         ("slack_auth",), ("slack_open",), ("slack_auth",),
-        ("slack_post", "U0OWNER", TEST_MESSAGE + CONVERSE_TEST_MESSAGE),
+        ("slack_post", "U0OWNER", said_to_test(Access.CONVERSE, LYRA)),
     ]
-    assert LISTEN_NOTE in ctx.ui.lines("note")
-    assert OWNER_LINE.format(who="U0OWNER") in ctx.ui.lines("note")
+    assert LISTEN_NOTE.format(app=LYRA) in ctx.ui.lines("note")
+    assert OWNER_LINE.format(who="U0OWNER", app=LYRA) in ctx.ui.lines("note")
     assert not any(secret in text for secret in ("xapp-1", "xoxb-1", "xoxp-1")
                    for _, text in ctx.ui.said)
 
@@ -543,7 +572,8 @@ def test_raising_the_level_shows_the_manifest_for_the_app_there_is_and_no_new_ap
     assert "Bot User OAuth Token" not in steps and "App-Level Tokens" in steps
     assert "**User OAuth Token**" in steps
     title, _, body = ctx.ui.lines("panel")[0].partition("\n")
-    assert title == "The manifest" and json.loads(body) == app_manifest(Access.CONVERSE)
+    assert title == "The manifest"
+    assert json.loads(body) == app_manifest(Access.CONVERSE, assistant="Lyra")
     # The install is from before levels, so Slack is asked once which workspace it is;
     # and the user token says who they are, which where reports go never does.
     assert slack_calls(world) == [("slack_auth",), ("slack_open",), ("slack_auth",)]
@@ -551,7 +581,7 @@ def test_raising_the_level_shows_the_manifest_for_the_app_there_is_and_no_new_ap
     assert (saved["access"], saved["owner_id"], saved["channel_id"]) == (
         "converse", "U0OWNER", "U0COLLEAGUE")
     assert saved["team"] == "Acme"
-    assert LISTEN_NOTE in ctx.ui.lines("note")
+    assert LISTEN_NOTE.format(app=LYRA) in ctx.ui.lines("note")
 
 
 def test_a_kept_bot_token_with_no_workspace_on_file_still_holds_a_user_token_to_its_own(
@@ -661,7 +691,7 @@ def test_the_first_owner_is_named_in_a_line_of_its_own(make_ctx, world):
 
     section.run_section(ctx)
 
-    assert OWNER_LINE.format(who="U0OWNER") in ctx.ui.lines("note")
+    assert OWNER_LINE.format(who="U0OWNER", app=LYRA) in ctx.ui.lines("note")
 
 
 def test_the_owner_is_recorded_at_announce_too_so_raising_the_level_changes_nothing(

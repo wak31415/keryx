@@ -223,21 +223,25 @@ def run_slack(ctx: SetupContext) -> None:
     before = ctx.current(slack.TOKEN_KEY)
     server, on_file = values["mcp_server"], values["channel_id"]
     was = Access(values["access"])
+    # What the app is called: the assistant's name, fitted for Slack.
+    assistant = ctx.settings.assistant_name
+    app = slack.app_of(ctx.settings)
     access = Access(ui.select(
         SLACK_ACCESS,
-        [Choice(str(level), level.capitalize(), hint=slack.SHORT[level]) for level in LEVELS],
+        [Choice(str(level), level.capitalize(), hint=slack.short(level, app))
+         for level in LEVELS],
         default=str(was),
     ))
     needed = token_kinds(access)
     above = access.reaches(Access.CONVERSE)
-    ui.note(slack.MEANING[access])
+    ui.note(slack.meaning(access, app))
     if access.reaches(Access.READ):
         ui.note(slack.READ_NOTE)
     if access.reaches(Access.WRITE):
         ui.note(slack.WRITE_NOTE)
     if not before:
-        ui.link(new_app_url(access))
-        ui.markdown(slack.guide(access))
+        ui.link(new_app_url(access, assistant=assistant))
+        ui.markdown(slack.guide(access, app=app))
         if server and access is Access.ANNOUNCE:
             ui.note(f"Leave the token blank to go on using the {server} MCP server's token "
                     "and channel.")
@@ -249,8 +253,9 @@ def run_slack(ctx: SetupContext) -> None:
                 f"Slack is connected at the {was} level, from before Keryx asked for a user "
                 "token. A user token is how Slack says which member you are, so the app "
                 "you have is updated, not made again.")
-        ui.markdown(slack.guide(access, raising=True, have=have))
-        ui.panel("The manifest", manifest_json(access))
+        ui.markdown(slack.guide(access, app=app, raising=True, have=have))
+        ui.panel("The manifest", manifest_json(access, assistant=assistant))
+        ui.note(slack.RENAME_NOTE.format(app=app))
     token, team = _slack_token(ctx, before, server, access)
     if team is None:
         # A token that was kept, or one saved unchecked: the workspace is the one on file.
@@ -313,7 +318,7 @@ def run_slack(ctx: SetupContext) -> None:
         ui.note((f"It keeps sending to {channel}. " if kept else
                  f"Reports go to you ({channel}). ") + slack.ELSEWHERE)
     if owner:
-        ui.note((slack.OWNER_LINE if above else slack.OWNER_NOTED).format(who=owner))
+        ui.note((slack.OWNER_LINE if above else slack.OWNER_NOTED).format(who=owner, app=app))
     keys = {kind: ctx.current(key) for kind, key in slack.TOKEN_KEYS.items()}
     changed = (access is not was or channel != on_file or owner != values["owner_id"]
                or any(tokens[kind] != keys[kind] for kind in tokens))
@@ -338,7 +343,7 @@ def run_slack(ctx: SetupContext) -> None:
         ui.note(f"{slack.PLUGIN} now posts with this token to {channel}, not with the "
                 f"{server} MCP server's token and channel; subagents still use that server.")
     if above and changed:
-        ui.note(slack.LISTEN_NOTE)
+        ui.note(slack.LISTEN_NOTE.format(app=app))
         if not (slack.is_member(channel) or channel.startswith("D")):
             ui.note(slack.CHANNEL_NOTE.format(channel=channel))
     if not before:
@@ -350,7 +355,7 @@ def run_slack(ctx: SetupContext) -> None:
     if not ui.confirm("Send a test message to Slack now?", default=changed):
         return
     with ui.spinner("Sending…"):
-        sent = ctx.probes.slack_post(token, channel, slack.test_message(access))
+        sent = ctx.probes.slack_post(token, channel, slack.test_message(access, app))
     if sent.ok:
         ui.success("sent: it is in Slack, under Apps")
     else:

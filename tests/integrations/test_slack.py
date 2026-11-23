@@ -239,6 +239,68 @@ def test_the_manifest_is_a_bot_that_can_message_and_a_user_token_that_sees_nothi
     assert set(manifest["features"]) == {"app_home", "bot_user"}
 
 
+# --- the app carries the assistant's name --------------------------------------------------
+
+
+@pytest.mark.parametrize("assistant", ["Lyra", "Jarvis", "Mary Ann", "O'Neil", "Лира"])
+def test_the_app_carries_the_assistants_name_as_it_stands(assistant):
+    assert slack.app_name(assistant) == assistant
+    manifest = app_manifest(assistant=assistant)
+
+    assert manifest["display_information"]["name"] == assistant
+    assert manifest["features"]["bot_user"]["display_name"] == assistant
+
+
+def test_a_name_too_long_for_slack_is_cut_to_the_apps_limit():
+    """`display_information.name` takes 35 characters, the least of the two limits."""
+    long = "Bartholomew Maximilian Featherstonehaugh the Third"
+
+    fitted = slack.app_name(long)
+
+    assert fitted == "Bartholomew Maximilian Featherstone"
+    assert len(fitted) == slack.APP_NAME_MAX == 35
+    # Never a space left hanging where the cut fell.
+    assert slack.app_name("A" * 34 + " B") == "A" * 34
+    assert app_manifest(assistant=long)["features"]["bot_user"]["display_name"] == fitted
+
+
+@pytest.mark.parametrize(("assistant", "fitted"), [
+    ("<!channel> Lyra", "channel Lyra"),
+    ("@Lyra & *co*", "Lyra co"),
+    ("Ly`ra` <@U0OWNER|x>", "Lyra U0OWNERx"),
+    ("  Lyra\n\tthe   second ", "Lyra the second"),
+    ("Lyra 🎙 2.0", "Lyra 2.0"),
+])
+def test_characters_the_bot_name_may_not_carry_are_dropped(assistant, fitted):
+    """What is kept is letters, digits, spaces, and - ' . _: nothing Slack reads as markup,
+    since the name is also written into what the owner is shown and what the app posts."""
+    assert slack.app_name(assistant) == fitted
+    assert app_manifest(assistant=assistant)["display_information"]["name"] == fitted
+
+
+@pytest.mark.parametrize("assistant", ["", "   ", "!!!", "<@>", "-.-", "🎙", None])
+def test_a_name_with_nothing_usable_left_is_keryx(assistant):
+    assert slack.app_name(assistant) == "Keryx"
+    assert app_manifest(assistant=assistant or "")["display_information"]["name"] == "Keryx"
+
+
+@pytest.mark.parametrize("assistant", ["Slackbot", "here", "Channel", "Every-one", "s.l.a.c.k.bot"])
+def test_a_name_whose_username_slack_keeps_for_itself_is_keryx(assistant):
+    """Slack makes the bot's username from the display name and refuses a reserved one."""
+    assert slack.app_name(assistant) == "Keryx"
+
+
+def test_with_no_name_given_the_app_is_keryx():
+    assert app_manifest() == app_manifest(assistant="")
+    assert app_manifest()["display_information"]["name"] == "Keryx"
+    assert json.loads(manifest_json(Access.READ, assistant="Lyra")) == app_manifest(
+        Access.READ, assistant="Lyra")
+    query = urllib.parse.parse_qs(
+        urllib.parse.urlsplit(new_app_url(Access.CONVERSE, assistant="Lyra")).query)
+    assert json.loads(query["manifest_json"][0]) == app_manifest(
+        Access.CONVERSE, assistant="Lyra")
+
+
 def test_the_new_app_link_carries_the_whole_manifest_url_encoded():
     link = new_app_url()
 

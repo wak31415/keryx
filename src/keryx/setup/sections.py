@@ -241,6 +241,10 @@ def run_owner(ctx: SetupContext) -> None:
         assistant = ask_assistant_name(ui, settings.assistant_name)
         if assistant != settings.assistant_name:
             values["ASSISTANT_NAME"] = assistant
+            if ctx.current("SLACK_BOT_TOKEN"):
+                # Slack learns the app's name only from its manifest.
+                ui.note("Your Slack app keeps the name it has until its manifest is saved "
+                        f"again: `keryx auth login slack` prints it, named {assistant}.")
         name = ui.text(f'What should {assistant} call you? (blank for "the owner")',
                        default=settings.owner_name or "")
         if name != (settings.owner_name or ""):

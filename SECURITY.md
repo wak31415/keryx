@@ -67,7 +67,7 @@ anything behind, or reach a coding agent. In particular:
   placed it to a number that is not yours (see
   [Calls Keryx places itself](#calls-keryx-places-itself)).
 - A Slack message being acted on that is not from your own member id, or does not mention
-  your Keryx app, or that reaches Keryx at the `announce` level; a report posted anywhere
+  your app, or that reaches Keryx at the `announce` level; a report posted anywhere
   but your own destination or the thread you asked in; Keryx posting anything with your
   user token below the `write` level, or at `write` doing anything with it but posting one
   message (an edit, a deletion, a reaction, a file, a channel-wide mention); or the
@@ -296,17 +296,18 @@ nothing but the workspace's custom emoji, and Keryx uses it once, when you conne
 **At `converse`, a Slack message can start work on your machine without the phone PIN.**
 That is the trade you make by choosing it, so it is said plainly. Keryx opens a connection
 out to Slack (Socket Mode; nothing new is reachable from the internet) and is sent the
-direct messages typed to your Keryx app.
+direct messages typed to your app, which carries your assistant's name (Lyra by default).
 
-- **In your direct messages with the Keryx app, the only check is your member id.**
+- **In your direct messages with the app, the only check is your member id.**
   Every message there from the one member id stored as yours for that workspace is a
-  request. No `@Keryx` is needed, and nothing else is checked: not the PIN, not a
+  request. No mention is needed, and nothing else is checked: not the PIN, not a
   mention, not what the message says. A new message starts a task with a coding agent
   that has your full access; a reply under a task's report continues that task. So
   "thanks" typed there is a request too, and each one counts against the daily task cap.
 - **Everywhere else Keryx acts only when you mention it.** At `read`, in a conversation
   the app has been added to, a message is acted on only if it is from your member id
-  and mentions the app (`@Keryx`). With no mention nothing happens: no reaction, no
+  and mentions the app (`@Lyra`). A mention is of the app's member id, never of its
+  name, so what the app is called changes nothing here. With no mention nothing happens: no reaction, no
   reply.
 - **Keryx never writes to itself as you.** At `write` Keryx can send messages in your
   name; it refuses to send one to its own app, by any name, because that message would
@@ -337,7 +338,7 @@ direct messages typed to your Keryx app.
   spoof. A message from your own member id is not: it needs your Slack account, or
   something that can post as you.
 - **The accepted risk is whoever can act as you in that workspace.** Anyone signed in as
-  you, on any device, can start work on your machine by mentioning your Keryx app. So can
+  you, on any device, can start work on your machine by mentioning your app. So can
   any app that holds a user token able to post as you. **So can whoever controls sign-in
   to that workspace: an employer's or a school's Slack administrator can reset your
   password, add a session, or install such an app.** If you connect a workspace somebody

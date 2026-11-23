@@ -372,6 +372,19 @@ async def test_the_app_itself_is_never_a_recipient_however_it_is_named(with_app,
     assert "a message to Keryx itself" in str(refused.value)
 
 
+@pytest.mark.parametrize("to", ["Lyra", "@lyra", "the lyra", APP, "D0APP"])
+async def test_the_app_is_never_a_recipient_under_the_assistants_name_either(api, to):
+    """The app is called after the assistant, and what it goes by is asked of Slack by
+    its member id: no name is written into the check."""
+    api.names[APP] = "Lyra"
+    api.channels.append({"id": "D0APP", "is_im": True, "user": APP})
+
+    with pytest.raises(Unclear) as refused:
+        await recipient(reader(api), to, app=APP)
+
+    assert refused.value.status == "refused"
+
+
 async def test_somebody_whose_name_is_not_the_apps_is_still_found(with_app):
     found = await recipient(reader(with_app), "Sam Lee", app=APP)
 

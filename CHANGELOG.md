@@ -11,12 +11,18 @@ the version starts with 0.
 
 - **Write back on Slack.** Your Slack app now has an access level, chosen before the app
   is created: `announce` (as before: Keryx posts and reads nothing), `converse`, `read`
-  or `write`. At `converse`, every message you send the Keryx app itself is a request,
-  with no `@Keryx` needed: a new message starts a task, and a reply under a task's report
+  or `write`. At `converse`, every message you send the app itself is a request,
+  with no mention needed: a new message starts a task, and a reply under a task's report
   continues that task. Nobody else's message does anything. Anywhere else Keryx acts
   only on a message of yours that mentions it. Keryx marks a message it has acted on with 👀. None of this needs the phone PIN, and
   `SECURITY.md` describes the trade; a reply that re-runs a task counts against the daily
   task cap. It listens over Socket Mode, so nothing new is exposed to the internet.
+- **Your Slack app carries your assistant's name.** The app the link creates is called
+  Lyra, Jarvis or whatever `ASSISTANT_NAME` says (fitted to what Slack takes, and Keryx
+  when nothing usable is left), and everything that tells you what to type follows it:
+  `@Lyra`, not `@Keryx`. What the app posts about itself in Slack no longer says "Keryx".
+  An app made earlier keeps its name until its manifest is saved again, which `keryx auth
+  login slack` prints with the steps.
 - **Ask from any conversation, at `read`.** Add the app to a channel and mention it there.
   It reacts to your message and answers in that thread, where the others in the
   conversation read the answer too. Ask in your direct messages with the app for anything

@@ -389,7 +389,7 @@ def test_slack_that_is_off_lists_no_workspace(settings):
 
 
 def test_a_slack_login_with_no_token_prints_the_link_that_makes_the_app(settings):
-    assert new_app_url() in login("slack", settings)
+    assert new_app_url(assistant="Lyra") in login("slack", settings)
     assert ConfigStore().stored() == {}
 
 

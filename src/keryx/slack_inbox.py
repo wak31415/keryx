@@ -82,8 +82,11 @@ lost, and promises no order. A message is a repeat when its task remembers actin
 it; never merely because a later one arrived first.
 
 On Slack Keryx is brief: a reaction on the message it acted on (a reaction notifies
-nobody), then the report when the work is done. A refusal is one sentence. The service
-speaks as Keryx here, never by the assistant's name. What a message says is never logged.
+nobody), then the report when the work is done. A refusal is one sentence, and it names
+nobody: the app carries the assistant's name there (`integrations.slack.app_name`), so
+what it posts in its own conversation is the assistant speaking, and a sentence that
+began "Keryx …" under that name would read as somebody else's. What a message says is
+never logged.
 """
 
 import asyncio
@@ -109,14 +112,14 @@ log = logging.getLogger("keryx.slack.inbox")
 #: How many messages this process remembers having seen, to drop one delivered twice.
 MAX_SEEN = 512
 
-NOTHING_TO_RESUME = "Keryx has no task in this thread to resume; ask again to start one."
+NOTHING_TO_RESUME = "There is no task in this thread to resume; ask again to start one."
 CANCELLED = "Task {task_id} was cancelled, so there is nothing here to resume."
 STARTING = "Task {task_id} is only just starting, so send that again in a moment."
-NOT_PASSED_ON = "Keryx could not confirm that reached task {task_id}."
-CAP_REACHED = "Keryx has reached today's task limit ({cap}), so this was not started."
-NOT_STARTED = "Keryx could not start that."
-TEXT_ONLY = "Keryx reads text only: send that again as a message without the file."
-NOTHING_ASKED = "Keryx was given nothing to do there: say what you want in words of your own."
+NOT_PASSED_ON = "That could not be confirmed to have reached task {task_id}."
+CAP_REACHED = "Today's task limit ({cap}) is reached, so this was not started."
+NOT_STARTED = "That could not be started."
+TEXT_ONLY = "Only text is read here: send that again as a message without the file."
+NOTHING_ASKED = "There was nothing to do in that: say what you want in words of your own."
 
 #: The events a request may arrive as, and the subtypes of a message that may be one: an
 #: ordinary message has none, a reply "also sent to the channel" is `thread_broadcast`, and

@@ -110,6 +110,26 @@ def test_keeping_the_assistants_name_saves_nothing_for_it(make_ctx):
     assert "ASSISTANT_NAME" not in ConfigStore().stored()
 
 
+def test_renaming_the_assistant_says_the_slack_app_keeps_its_name_until_its_manifest_is_saved(
+    make_ctx,
+):
+    """The app in Slack carries the assistant's name, and Slack learns it only from the
+    manifest: said once, where the name changes, and only when Slack is connected."""
+    answers = [("assistant be called", "Jarvis"), ("What should Jarvis call you", "Ada"),
+               ("mobile numbers", ""), ("Set the PIN", "call")]
+    plain = make_ctx(answers)
+    sections.run_owner(plain)
+    assert not any("Slack" in line for line in plain.ui.lines("note"))
+
+    ConfigStore().unset(["ASSISTANT_NAME"])
+    connected = make_ctx(answers, review=True)
+    connected.save({"SLACK_BOT_TOKEN": "xoxb-1"})
+    sections.run_owner(connected)
+
+    assert ("Your Slack app keeps the name it has until its manifest is saved again: "
+            "`keryx auth login slack` prints it, named Jarvis.") in connected.ui.lines("note")
+
+
 def test_a_name_of_their_own_is_checked_before_it_is_kept(make_ctx):
     ctx = make_ctx(
         [("assistant be called", "other"), ("Its name", "  friday  "), ("call you", ""),

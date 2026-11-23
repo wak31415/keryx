@@ -383,8 +383,43 @@ def bot_events(access: Access) -> tuple[str, ...]:
     return BOT_EVENTS + (READ_BOT_EVENTS if access.reaches(Access.READ) else ())
 
 
-def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
-    """The Slack app each owner creates, at the level they chose.
+#: What the app is called when the assistant's name leaves nothing Slack would take.
+SERVICE_NAME = "Keryx"
+#: `display_information.name` takes 35 characters and `bot_user.display_name` 80 (Slack's
+#: manifest reference): one name is used for both, so the smaller limit is the limit.
+APP_NAME_MAX = 35
+#: Punctuation a name keeps, beside letters, digits and spaces. Slack makes the bot's
+#: username from the display name by keeping `a-z`, `0-9`, `-`, `_` and `.`; the
+#: apostrophe is a name's own. Nothing Slack reads as markup is among them.
+_NAME_MARKS = "-'’._"
+#: Usernames Slack keeps for itself (it refuses a display name whose username is
+#: reserved). The reference does not list them: these are Slackbot and the words a
+#: message uses to mention everybody, compared with every mark taken out.
+_RESERVED_USERNAMES = frozenset({"slackbot", "slack", "here", "channel", "everyone", "group"})
+
+
+def app_name(assistant: str | None) -> str:
+    """What the owner's Slack app and its bot are called: the assistant's name, fitted.
+
+    The app is the assistant's presence in Slack, so it carries `ASSISTANT_NAME`, and the
+    same name is what the owner is told to mention and what the app says of itself. The
+    fitting, in order: only letters and digits of any script, spaces and `- ' . _` are
+    kept, because the name is written into messages and nothing in it may be markup;
+    runs of spaces become one; it is cut to `APP_NAME_MAX`. A name with no letter or
+    digit left, or whose username Slack keeps for itself, is `SERVICE_NAME`.
+    """
+    kept = "".join(char if char.isalnum() or char in _NAME_MARKS else " "
+                   if char.isspace() else "" for char in assistant or "")
+    name = " ".join(kept.split())[:APP_NAME_MAX].rstrip()
+    username = "".join(char for char in name.lower() if char.isalnum())
+    if not username or username in _RESERVED_USERNAMES:
+        return SERVICE_NAME
+    return name
+
+
+def app_manifest(access: Access = Access.ANNOUNCE, *, assistant: str = "") -> dict:
+    """The Slack app each owner creates, at the level they chose, called after their
+    assistant (`app_name`; with none given, `SERVICE_NAME`).
 
     The only place it is written down. At every level the install also issues the owner
     a user token (`user_scopes`): it is how Slack says who installed the app, and below
@@ -399,9 +434,10 @@ def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
     (`WRITE_USER_SCOPES`).
     """
     converse = access.reaches(Access.CONVERSE)
+    name = app_name(assistant)
     manifest: dict = {
         "display_information": {
-            "name": "Keryx",
+            "name": name,
             "description": "Messages from your Keryx phone assistant",
         },
         "features": {
@@ -410,7 +446,7 @@ def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
                 "messages_tab_enabled": True,
                 "messages_tab_read_only_enabled": not converse,
             },
-            "bot_user": {"display_name": "Keryx"},
+            "bot_user": {"display_name": name},
         },
         "oauth_config": {"scopes": {"bot": list(bot_scopes(access)),
                                     "user": list(user_scopes(access))}},
@@ -423,14 +459,14 @@ def app_manifest(access: Access = Access.ANNOUNCE) -> dict:
     return manifest
 
 
-def manifest_json(access: Access = Access.ANNOUNCE) -> str:
+def manifest_json(access: Access = Access.ANNOUNCE, *, assistant: str = "") -> str:
     """The manifest as JSON to paste into an existing app's App Manifest page."""
-    return json.dumps(app_manifest(access), indent=2)
+    return json.dumps(app_manifest(access, assistant=assistant), indent=2, ensure_ascii=False)
 
 
-def new_app_url(access: Access = Access.ANNOUNCE) -> str:
+def new_app_url(access: Access = Access.ANNOUNCE, *, assistant: str = "") -> str:
     """The link that opens Slack's "create an app" page with `app_manifest` filled in."""
-    manifest = json.dumps(app_manifest(access), separators=(",", ":"))
+    manifest = json.dumps(app_manifest(access, assistant=assistant), separators=(",", ":"))
     return f"{NEW_APP_URL}?new_app=1&manifest_json={urllib.parse.quote(manifest, safe='')}"
 
 

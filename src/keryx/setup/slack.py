@@ -50,6 +50,14 @@ being on file.
 A second workspace is the same flow with `--workspace NAME`: its own app from the same
 manifest, its own level, tokens, member id and destination (`plugins.slack`), and
 `keryx auth logout slack [--workspace NAME]` (`logout`) forgets one.
+
+**The app carries the assistant's name** (`app_of`: `ASSISTANT_NAME`, fitted by
+`integrations.slack.app_name`), so everything here that tells the owner what to type in
+Slack is written with `{app}` and filled with it: the level descriptions, the steps, the
+owner line, the test message. Keryx stays the name of the service that posts, reads and
+listens. Slack learns a name only from a manifest, so an app keeps the one it was made
+with until its manifest is saved again, and a workspace that is connected is always
+shown that manifest (`_already`).
 """
 
 import json
@@ -89,18 +97,18 @@ TOKEN_NAMES = {BOT: "bot token", APP: "app-level token", USER: "user token"}
 APPS_URL = "https://api.slack.com/apps"
 
 #: What Keryx can see at each level, and where it can be set to work from, in plain
-#: words: said before the link is shown.
+#: words: said before the link is shown. `{app}` is what the app is called (`meaning`).
 MEANING = {
     Access.ANNOUNCE: "Keryx posts to you on Slack and reads nothing there.",
     Access.CONVERSE: (
-        "Keryx posts to you, and is sent the direct messages you type to the Keryx app "
+        "Keryx posts to you, and is sent the direct messages you type to the {app} app "
         "itself: nothing else in Slack. Every message you type there is a request, with "
-        "no @Keryx needed: a new message starts work, and a reply under a task's report "
+        "no @{app} needed: a new message starts work, and a reply under a task's report "
         "resumes that task, both without the phone PIN. Only your own member id is "
         "checked."
     ),
     Access.READ: (
-        "Everything in converse. You can also mention the app (@Keryx) in any conversation "
+        "Everything in converse. You can also mention the app (@{app}) in any conversation "
         "it has been added to: every message that mentions it there is sent to Keryx, "
         "anyone's but yours is dropped, and yours is answered in that thread, where the "
         "others in the conversation read the answer too. And Keryx can read Slack as you, "
@@ -118,7 +126,7 @@ MEANING = {
 #: The same in a few words, beside each option of the wizard's question.
 SHORT = {
     Access.ANNOUNCE: "Keryx posts to you and reads nothing",
-    Access.CONVERSE: "also acts on every message you send the Keryx app itself: each "
+    Access.CONVERSE: "also acts on every message you send the {app} app itself: each "
                      "can resume or start work without the PIN",
     Access.READ: "also answers your mention in a conversation it was added to, there, "
                  "and reads Slack as you when you ask it about messages",
@@ -142,15 +150,17 @@ WRITE_NOTE = (
 
 #: The steps in Slack, after the link. Markdown; `plain` is the same without the marks.
 STEPS = (
-    "Open the link: it is Slack's page for a new app, with Keryx's already filled in. "
-    "Pick your workspace and click through to **Create**.",
+    "Open the link: it is Slack's page for a new app, with yours already filled in and "
+    "named {app}, after your assistant. Pick your workspace and click through to "
+    "**Create**.",
     "Click **Install to Workspace**, then **Allow**.",
     "Under **OAuth & Permissions**, copy the **Bot User OAuth Token** (`xoxb-…`).",
 )
 #: The steps that change the app there is, in place of the first two above: to raise its
 #: level, or to give an app made before user tokens the one it now needs.
 RAISE_STEPS = (
-    f"Open {APPS_URL} and pick the Keryx app you already have. Do not create a second one.",
+    f"Open {APPS_URL} and pick the app you already have for Keryx. Do not create a "
+    "second one.",
     "Open **App Manifest**, replace what is there with the manifest below, and click "
     "**Save Changes**.",
     "Open **Install App** and click **Reinstall to Workspace**, then **Allow**: the new "
@@ -165,14 +175,21 @@ TOKEN_STEPS = {
           "OAuth Token** (`xoxp-…`). It says which member you are.",
 }
 
+#: What the app posts to show it arrives. The app is the assistant in Slack, so it does
+#: not call itself Keryx: it names nothing but what the owner would type (`@{app}`).
 TEST_MESSAGE = (
-    "Keryx is connected. What you ask for in writing on a call arrives here, and so does "
-    "each finished task's report."
+    "Connected. What you ask for in writing on a call arrives here, and so does each "
+    "finished task's report."
 )
 #: Added to it where a message typed back is acted on.
 CONVERSE_TEST_MESSAGE = (
-    " Anything you type here sets Keryx to work, with no @Keryx needed: a reply under a "
+    " Anything you type here is a request, with no @{app} needed: a reply under a "
     "report resumes that task, and a new message starts one."
+)
+#: Said with every manifest for an app there already is: Slack learns a name only there.
+RENAME_NOTE = (
+    "Saving it also names the app {app}, after your assistant: Slack shows the name it "
+    "was made with until then."
 )
 
 #: Said where the destination is printed: the one way reports go anywhere else.
@@ -196,12 +213,12 @@ RESTART_NOTE = "A Keryx that started with the old token keeps it until `keryx re
 #: Said when a workspace starts being listened to, or its listening changes.
 LISTEN_NOTE = (
     "Keryx starts listening for your messages there at its next start: `keryx restart`. "
-    "From then on every message you type to the Keryx app is a request."
+    "From then on every message you type to the {app} app is a request."
 )
 #: Said at `converse` and above, every time: whose messages may start work with no PIN.
 OWNER_LINE = (
-    "Only messages from {who} are acted on there: every one typed to the Keryx app "
-    "itself, and elsewhere only one that mentions it (@Keryx). That member id is taken "
+    "Only messages from {who} are acted on there: every one typed to the {app} app "
+    "itself, and elsewhere only one that mentions it (@{app}). That member id is taken "
     "to be you, for as long as this workspace is connected."
 )
 #: Said when the destination is a channel: only the app's direct messages are heard.
@@ -264,23 +281,40 @@ def workspace_name(value: str | None) -> str:
     return name
 
 
-def steps(access: Access, *, raising: bool = False, have: tuple[str, ...] = ()) -> list[str]:
+def app_of(settings: Settings) -> str:
+    """What the owner's Slack app is called: their assistant's name, fitted for Slack."""
+    return slack.app_name(settings.assistant_name)
+
+
+def meaning(access: Access, app: str) -> str:
+    """What `access` lets Keryx see, said of an app called `app`."""
+    return MEANING[access].format(app=app)
+
+
+def short(access: Access, app: str) -> str:
+    """The same in a few words, beside the wizard's option."""
+    return SHORT[access].format(app=app)
+
+
+def steps(access: Access, *, app: str, raising: bool = False,
+          have: tuple[str, ...] = ()) -> list[str]:
     """What to do in Slack for `access`, as Markdown lines without their numbers.
 
-    `raising` is the app there is, changed in place; `have` is the tokens already on
-    file, which that leaves as they are and which are not asked for again.
+    `app` is what the app is called. `raising` is the app there is, changed in place;
+    `have` is the tokens already on file, which that leaves as they are and which are not
+    asked for again.
     """
     lines = list(RAISE_STEPS if raising else STEPS[:2])
     lines += [TOKEN_STEPS[kind] for kind in token_kinds(access) if kind not in have]
-    return lines
+    return [line.format(app=app) for line in lines]
 
 
-def guide(access: Access = Access.ANNOUNCE, *, raising: bool = False,
+def guide(access: Access = Access.ANNOUNCE, *, app: str, raising: bool = False,
           have: tuple[str, ...] = ()) -> str:
     """The steps, as Markdown for the wizard, which shows the link above them."""
     return "\n".join(
         f"{number}. {step}"
-        for number, step in enumerate(steps(access, raising=raising, have=have), 1)
+        for number, step in enumerate(steps(access, app=app, raising=raising, have=have), 1)
     )
 
 
@@ -338,6 +372,7 @@ def start(
     except SlackSetupError:
         saved, first_missing = SlackWorkspace(workspace), True
     connected = bool(saved.token(BOT))
+    app = app_of(settings)
     if workspace != DEFAULT and first_missing:
         echo(f"{workspace} would be added beside your first workspace, and there is none "
              "yet: run this without --workspace first.\n")
@@ -347,20 +382,20 @@ def start(
     lacking = [kind for kind in token_kinds(access) if not saved.token(kind)]
     if connected and access is current and lacking != [USER]:
         # Whole, or without something its level runs on, which `_already` says.
-        _already(saved, echo)
+        _already(saved, echo, app=app, assistant=settings.assistant_name)
         return
     # The app there is, is changed and never made again: to raise its level, or (at the
     # level it has) to give it the user token an app made before them never issued.
     raising = connected and access.reaches(current)
     have = tuple(kind for kind in token_kinds(access) if saved.token(kind)) if raising else ()
     if chosen:
-        echo(f"Access level {access}: {MEANING[access]}")
+        echo(f"Access level {access}: {meaning(access, app)}")
     else:
         # Nothing is connected and no level was named: say all three before the link,
         # because the level decides the app that link creates.
         echo("What Keryx may see in your Slack is decided now, because it decides the app:\n")
         for level in slack.LEVELS:
-            echo(f"  {level}: {MEANING[level]}")
+            echo(f"  {level}: {meaning(level, app)}")
         others = " or ".join(f"--access {level}" for level in slack.LEVELS if level is not access)
         echo(f"\nWhat follows is {access}; {others} chooses another.")
     if access.reaches(Access.READ):
@@ -378,15 +413,16 @@ def start(
              "changed, not made again:\n")
     else:
         echo("Create your Slack app from this link:\n")
-        echo(slack.new_app_url(access))
+        echo(slack.new_app_url(access, assistant=settings.assistant_name))
         echo("")
-    for number, step in enumerate(steps(access, raising=raising, have=have), 1):
+    for number, step in enumerate(steps(access, app=app, raising=raising, have=have), 1):
         echo(f"{number}. {plain(step)}")
     if raising:
         echo("\nThe manifest:\n")
-        echo(slack.manifest_json(access))
+        echo(slack.manifest_json(access, assistant=settings.assistant_name))
+        echo("\n" + RENAME_NOTE.format(app=app))
         if BOT in have:
-            echo("\nThe bot token stays as it is.")
+            echo("The bot token stays as it is.")
     wanted = [kind for kind in token_kinds(access) if kind not in have]
     many = len(wanted) > 1
     command = f"keryx auth login slack --stdin{_flags(workspace, access, current)}"
@@ -409,15 +445,18 @@ def start(
     echo(f"The user token says which member you are: {where}, and nothing else is asked.")
 
 
-def _already(saved: SlackWorkspace, echo: Callable[[str], None]) -> None:
+def _already(saved: SlackWorkspace, echo: Callable[[str], None], *, app: str,
+             assistant: str) -> None:
     """What a workspace that is connected at the level asked for is told: how it stands,
-    and the three things that change it. Never the link that makes a second app."""
+    the three things that change it, and its manifest, which is the one way the app in
+    Slack is renamed after the assistant. Never the link that makes a second app."""
     named = "" if saved.name == DEFAULT else f" --workspace {saved.name}"
-    echo(f"{saved.label} is connected at the {saved.access} level: {MEANING[saved.access]}")
+    echo(f"{saved.label} is connected at the {saved.access} level: "
+         f"{meaning(saved.access, app)}")
     if saved.missing:
         echo(f"It is without {' or '.join(saved.missing)}.")
     if saved.access.reaches(Access.CONVERSE) and saved.owner_id:
-        echo(OWNER_LINE.format(who=saved.owner_id))
+        echo(OWNER_LINE.format(who=saved.owner_id, app=app))
         echo(f"To connect as somebody else: keryx auth logout slack{named}, then log in "
              "again.")
     others = [level for level in slack.LEVELS if level is not saved.access]
@@ -428,6 +467,13 @@ def _already(saved: SlackWorkspace, echo: Callable[[str], None]) -> None:
         "on standard input"
         f"\nTo disconnect it: keryx auth logout slack{named}"
     )
+    # Slack is never asked what the app is called, so the manifest is always shown: it is
+    # the same app with nothing else changed, and saving it needs no reinstall.
+    echo(f"\nThe app is called {app} in Slack, after your assistant, once its manifest "
+         "says so: one made under another name keeps it until then. To rename it, open "
+         f"{APPS_URL}, pick the app, open App Manifest, replace what is there with this, "
+         "and click Save Changes:\n")
+    echo(slack.manifest_json(saved.access, assistant=assistant))
 
 
 def lower(
@@ -459,7 +505,8 @@ def lower(
     dropped = [kind for kind in saved.tokens if kind not in kept]
     _save_tokens(store, settings, workspace, kept)
     _write_workspace(settings, values, workspace, {"access": str(access)})
-    echo(f"{saved.label} is now at the {access} level: {MEANING[access]}")
+    app = app_of(settings)
+    echo(f"{saved.label} is now at the {access} level: {meaning(access, app)}")
     if dropped:
         names = " and ".join(_stored_as(workspace, kind) for kind in dropped)
         echo(f"{names} {'are' if len(dropped) > 1 else 'is'} forgotten.")
@@ -476,7 +523,7 @@ def lower(
                  "still acts on the messages you type to the app.")
     echo(f"{stops} The app in Slack keeps the permissions it was made with: to take those "
          "away too, paste this manifest into its App Manifest page and reinstall it:\n")
-    echo(slack.manifest_json(access))
+    echo(slack.manifest_json(access, assistant=settings.assistant_name))
     return True
 
 
@@ -745,6 +792,7 @@ def connect(
                 "connections:write scope, and Socket Mode on in the app. Nothing was saved"
             )
     named = "" if workspace == DEFAULT else f" --workspace {workspace}"
+    app = app_of(settings)
     acted_on = _owner(standing=standing, token_owner=token_owner, named=named)
     # Where reports go: where they went, while that still goes with this token; else to
     # the owner themselves.
@@ -767,7 +815,8 @@ def connect(
         echo(f"you are {channel} there: reports go to you")
     echo(ELSEWHERE if workspace == DEFAULT else ELSEWHERE_NAMED.format(
         name=workspace, file=plugins.config_path(settings, PLUGIN).name))
-    echo((OWNER_LINE if access.reaches(Access.CONVERSE) else OWNER_NOTED).format(who=acted_on))
+    echo((OWNER_LINE if access.reaches(Access.CONVERSE) else OWNER_NOTED).format(
+        who=acted_on, app=app))
     try:
         _write_workspace(settings, values, workspace, {
             "channel_id": channel,
@@ -788,7 +837,7 @@ def connect(
         echo(f"note: {PLUGIN} now posts with this token to {channel}, not with the "
              f"{server} MCP server's token and channel; subagents still use that server")
     if access.reaches(Access.CONVERSE):
-        echo(LISTEN_NOTE)
+        echo(LISTEN_NOTE.format(app=app))
         if not (is_member(channel) or slack.is_dm(channel)):
             echo(CHANNEL_NOTE.format(channel=channel))
     if access.reaches(Access.READ):
@@ -804,7 +853,7 @@ def connect(
     if not test:
         echo("no test message was sent (--no-test), so nothing has shown it arrives")
         return
-    sent = api.post_text(token, channel, test_message(access))
+    sent = api.post_text(token, channel, test_message(access, app))
     if not sent.ok:
         raise SlackSetupError(
             f"everything is saved, but the test message to {channel} did not go through: "
@@ -832,9 +881,11 @@ def _owner(*, standing: str, token_owner: str, named: str) -> str:
     return token_owner
 
 
-def test_message(access: Access) -> str:
-    """The one message that shows it arriving, saying what a reply to it does."""
-    return TEST_MESSAGE + (CONVERSE_TEST_MESSAGE if access.reaches(Access.CONVERSE) else "")
+def test_message(access: Access, app: str) -> str:
+    """The one message that shows it arriving, saying what a reply to it does. `app` is
+    what the app is called, which is what the owner would type to mention it."""
+    said = TEST_MESSAGE + (CONVERSE_TEST_MESSAGE if access.reaches(Access.CONVERSE) else "")
+    return said.format(app=app)
 
 
 def _a(name: str) -> str:

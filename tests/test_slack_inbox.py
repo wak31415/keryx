@@ -243,6 +243,30 @@ def test_outside_the_apps_direct_messages_nothing_is_a_request_without_a_mention
     assert owner_request(mention(text, thread_ts=LATER), one) == Dropped("no_mention")
 
 
+@pytest.mark.parametrize("name", ["Lyra", "Jarvis", "Keryx"])
+def test_what_the_app_is_called_has_no_part_in_what_sets_it_to_work(reading, name):
+    """The app carries the assistant's name, and a mention is of its member id: the name
+    typed after an @ is words, and the label Slack writes beside the id is ignored."""
+    one = workspace_of(reading)
+
+    assert owner_request(mention(f"@{name} do it"), one) == Dropped("no_mention")
+    assert owner_request(mention(f"<@{BOT}|{name.lower()}> do it"), one).text == "do it"
+
+
+def test_no_sentence_the_app_posts_in_its_own_conversation_calls_itself_keryx():
+    """Under the assistant's name, "Keryx could not start that" reads as somebody else's
+    message: what the app says there is the assistant speaking, and names nobody."""
+    from keryx import slack_inbox
+
+    posted = [slack_inbox.NOTHING_TO_RESUME, slack_inbox.CANCELLED, slack_inbox.STARTING,
+              slack_inbox.NOT_PASSED_ON, slack_inbox.CAP_REACHED, slack_inbox.NOT_STARTED,
+              slack_inbox.TEXT_ONLY, slack_inbox.NOTHING_ASKED]
+
+    assert not any("Keryx" in sentence for sentence in posted)
+    assert slack_inbox.NOTHING_ASKED == (
+        "There was nothing to do in that: say what you want in words of your own.")
+
+
 # --- the app's own direct messages need no mention --------------------------------------------
 
 
@@ -588,7 +612,7 @@ async def test_direct_messages_with_no_mention_count_against_the_daily_cap_and_t
     assert len(await world.tasks()) == 1
     assert world.slack.posts == [
         ("xoxb-first", DM, LATER,
-         "Keryx has reached today's task limit (1), so this was not started."),
+         "Today\'s task limit (1) is reached, so this was not started."),
     ]
 
 
@@ -633,7 +657,7 @@ async def test_the_daily_cap_applies_and_is_said_in_one_sentence_in_the_thread(
     assert len(await world.tasks()) == 1
     assert world.slack.posts == [
         ("xoxb-first", DM, LATER,
-         "Keryx has reached today's task limit (1), so this was not started."),
+         "Today\'s task limit (1) is reached, so this was not started."),
     ]
     assert world.slack.posts[0][3] == CAP_REACHED.format(cap=1)
     assert world.slack.reactions == [("xoxb-first", DM, TS)]
@@ -876,7 +900,7 @@ async def test_a_reply_that_re_runs_the_agent_counts_against_the_daily_cap(
 
     assert len(world.runner.opened) == 2
     assert world.slack.posts == [
-        ("xoxb-first", DM, TS, "Keryx has reached today's task limit (2), so this was not "
+        ("xoxb-first", DM, TS, "Today\'s task limit (2) is reached, so this was not "
                                "started."),
     ]
     assert len(world.slack.reactions) == 2
@@ -982,7 +1006,7 @@ async def test_a_refusal_for_a_shared_request_is_said_in_its_thread_too(make_wor
 
     assert world.slack.posts == [
         ("xoxb-first", SHARED, LATER,
-         "Keryx has reached today's task limit (1), so this was not started."),
+         "Today\'s task limit (1) is reached, so this was not started."),
     ]
 
 

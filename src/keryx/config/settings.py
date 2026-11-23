@@ -283,7 +283,8 @@ class Settings(BaseSettings):
         "What the assistant on the phone is called: the name it answers to and introduces "
         "itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, "
         f"spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or "
-        f"`{DEFAULT_VOICE}`.",
+        f"`{DEFAULT_VOICE}`. Your Slack app is called by it too, from the next time its "
+        "manifest is saved (`keryx auth login slack` prints it).",
         group="voice",
         service_writable=True,
     )

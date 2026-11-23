@@ -33,7 +33,7 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 |---|---|---|---|
 | `OPENAI_API_KEY` | *required* (secret) | never | OpenAI API key with Realtime access. The only setting Keryx cannot start without. |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
-| `ASSISTANT_NAME` | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. |
+| `ASSISTANT_NAME` | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. Your Slack app is called by it too, from the next time its manifest is saved (`keryx auth login slack` prints it). |
 | `OPENAI_VOICE` | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. |
 | `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
 | `TRANSCRIPTION_LANGUAGE` | `` | yes | The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the call log's transcription — which `recall` and the memory read. Empty lets the transcriber guess each turn. The voice model itself hears the audio either way. |

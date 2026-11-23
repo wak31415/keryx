@@ -26,7 +26,7 @@ delivered is what `Briefer` puts at the top of the next call.
 And it builds the `PinGuard`, the count of wrong PINs that every phone session shares, with
 the `PinLockoutAlerter` that tells the owner when that count locks PIN entry.
 
-Last, the `SlackInbox`: what the owner types to their Keryx app on Slack, where a workspace
+Last, the `SlackInbox`: what the owner types to their app on Slack, where a workspace
 is at a level that lets Keryx hear it. Built here and, like the approval bridge, started
 only by `keryx serve`: it opens a connection to Slack, and a CLI command must not.
 """

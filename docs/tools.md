@@ -48,7 +48,7 @@ connected. `add_calendar_event` writes, so it is never ticked for you.
 
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|
-| `slack_report` | Keryx sends you a written message on Slack, as Keryx — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too. With more than one workspace connected it takes a `workspace`, and sends to your first one unless you name another. It was `send_to_slack`, and a machine that installed it under that name needs to do nothing | yes | your Slack app's tokens (`keryx auth login slack`), or the MCP server's |
+| `slack_report` | Keryx sends you a written message on Slack, from your app — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too. With more than one workspace connected it takes a `workspace`, and sends to your first one unless you name another. It was `send_to_slack`, and a machine that installed it under that name needs to do nothing | yes | your Slack app's tokens (`keryx auth login slack`), or the MCP server's |
 | `slack_read` | read your Slack as you, in a few seconds. Every argument is a filter and they combine: a `conversation` (a channel's name, a person's name, or a ref), a `thread`, `text` to look for, `from` a person, `only` what is `waiting` on you (a best effort) or what `mentions` you, how many `days` back, and a `question` answered in one model call over what it found. With none it says what is waiting. A name that could mean several things is asked about, never guessed | yes | a Slack workspace at the `read` level (`keryx auth login slack --access read`) |
 | `slack_message` | send one message **as you**, to a person, a channel, or as a reply in a thread. It never sends on the first ask: you hear who it goes to and the exact words, and it is sent only after you say yes. No edit, no delete, no file, and never `@channel` or `@here` | yes | a Slack workspace at the `write` level (`keryx auth login slack --access write`) |
 | `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | your Google sign-in (`keryx auth login google`) and the `claude` extra |
@@ -154,12 +154,16 @@ decides the app: what Keryx may see in your Slack, and where you can set it to w
 | Level | Where you can ask Keryx for something | What Keryx can see | What you paste |
 |---|---|---|---|
 | `announce` (the default) | nowhere on Slack: it only posts to you | nothing | the bot token (`xoxb-`) and your user token (`xoxp-`), which says which member you are and can see nothing but custom emoji |
-| `converse` | your direct messages with the Keryx app | the messages you type to the app itself, and nothing else | and the app-level token (`xapp-`) |
+| `converse` | your direct messages with the app | the messages you type to the app itself, and nothing else | and the app-level token (`xapp-`) |
 | `read` | also any conversation you have added the app to, and it answers there | also every message that mentions it there (anyone's but yours is dropped); and Slack as you (every conversation you are in, their lists, the member list, search), only when you ask about messages | the same three; the user token can now read |
 | `write` | the same places | the same; and it can **send messages as you**, to other people and channels, when you ask for that message | the same three, after the app is reinstalled |
 
+The app is named after your assistant (Lyra by default, which is the name the examples
+here use). If you rename your assistant, Slack goes on showing the old name until the
+app's manifest is saved again: `keryx auth login slack` prints it, with the steps.
+
 `keryx setup` → Plugins asks the level, then shows a link that opens Slack's own page for
-a new app, with Keryx's already filled in for that level: pick your workspace, create it,
+a new app, with yours already filled in for that level: pick your workspace, create it,
 install it, and copy the tokens the level needs. Paste each once, at a hidden prompt.
 Keryx checks each with Slack, tells you which workspace it connected to, and learns
 which member you are from your user token, so there is no address to give and no channel
@@ -176,19 +180,19 @@ shows how to update the app you have: paste the new manifest into it, reinstall 
 copy the User OAuth Token from the same page as the bot token. Reports keep going where
 they went.
 
-**In your direct messages with the Keryx app, just type.** At `converse` and above,
-every message you send the app itself is a request, with no `@Keryx` needed: `look into
+**In your direct messages with the app, just type.** At `converse` and above,
+every message you send the app itself is a request, with no `@Lyra` needed: `look into
 the flaky test`. A new message starts a task; a reply under a task's report continues
 that task. That includes a "thanks", so keep that conversation for requests. Anywhere
 else (at `read`, a channel the app is in) Keryx acts only when the message is yours and
-mentions it: `@Keryx summarise this thread`. Nobody else's message does anything, in
+mentions it: `@Lyra summarise this thread`. Nobody else's message does anything, in
 either place. Keryx puts an 👀 on a message it has acted on and says nothing else until the work is
 done. None of this needs the phone PIN, and [SECURITY.md](../SECURITY.md) says what that
 trade is; each reply that sets a task going again counts against the daily task cap.
 Keryx starts listening when it starts, so run `keryx restart` after choosing the level.
 
 **At `read` you can ask from anywhere, and about anything you can see.** Add the app to
-a channel and mention it there: `@Keryx summarise this thread`. It reacts to your message
+a channel and mention it there: `@Lyra summarise this thread`. It reacts to your message
 and **answers in that thread**, where the others in the conversation can read the answer
 too, so ask in your direct messages with the app for anything you would not say in front
 of them. On a call, the `slack_read` plugin answers "anything waiting for me on Slack?",

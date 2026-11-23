@@ -187,8 +187,8 @@ remember:
   `slack_context` is where everything read from Slack is fenced as context.
   `slack` is also where connecting Slack lives. Each owner has a Slack app of their own,
   because an app Keryx published could not hand a command line a bot token without a
-  server holding its client secret: `app_manifest(access)` is that app at each access
-  level and the only place its scopes are written, `new_app_url` is Slack's link that
+  server holding its client secret: `app_manifest(access, assistant=…)` is that app at
+  each access level, named after the assistant, and the only place its scopes are written, `new_app_url` is Slack's link that
   opens it ready to create, and `auth_test`, `open_connection` and `post_text` are what
   setup does with the pasted tokens (`setup/slack.py`, and the wizard's Slack step
   through three `Probes` fields). `slack_socket` is the Socket Mode
@@ -294,13 +294,27 @@ The service is **Keryx**: the package, the command, the directories, the units, 
 the repository, and everything the service says in its own voice — the watchdog's alert,
 a text, a refusal, the approval broker's note to Claude Code. The **assistant** on the phone
 is whatever `ASSISTANT_NAME` says (`keryx/persona.py`): Lyra by default, Jarvis as the
-other built-in persona, or any name of the owner's. Three rulings:
+other built-in persona, or any name of the owner's. Four rulings:
 
 - **Messages from the service say Keryx; the assistant's own speech uses its name.** A
   prompt says `{assistant}` wherever the assistant means itself (the voice prompt, the first
   call, the memory update, the subagent suffix). Python wording the voice model hears — a
   tool description, a call-back context — says "you" or "yourself" instead, so no name is
   threaded through it.
+- **On Slack the app is the assistant, so what it posts in its own conversation does not
+  say Keryx.** The owner's Slack app and its bot carry `ASSISTANT_NAME`
+  (`integrations.slack.app_name` fits it: letters, digits, spaces and `- ' . _` kept, cut
+  to Slack's 35, and Keryx when nothing usable is left or Slack keeps the username for
+  itself), so a refusal that began "Keryx could not…" under the name Lyra would read as
+  somebody else's message. The sentences the app posts about itself there — the inbox's
+  refusals (`slack_inbox`), the test message — name nobody, or name only what the owner
+  would type (`@{app}`). Everything said *about* the app to the owner follows the name too:
+  `setup/slack.py` writes `{app}` wherever it says what to type in Slack. Terminal output,
+  logs, `doctor`, the docs and a report's own body still say Keryx, and nothing about
+  triggering reads the name: a mention is of the bot's member id, and the write path asks
+  Slack what that member goes by. Slack learns a name only from a manifest, so an app
+  keeps the one it was made with until its manifest is saved again; a connected workspace
+  is always shown that manifest by `keryx auth login slack`.
 - **A persona is a name and a voice.** `PERSONAS` gives each built-in its Realtime voice
   (Lyra `marin`, Jarvis `cedar`), and any other name speaks in `OPENAI_VOICE`, or `marin`.
   `Settings.voice` is what a call uses: `OPENAI_VOICE` when set, else the persona's. A voice
