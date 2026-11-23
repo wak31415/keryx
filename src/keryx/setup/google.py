@@ -619,7 +619,11 @@ def revoke(refresh_token: str, *, post: Callable[..., Any] | None = None) -> boo
         response = post(REVOKE_URL, data={"token": refresh_token}, timeout=REQUEST_TIMEOUT_S)
     except httpx.HTTPError:
         return False
-    return response.status_code == 200
+    # `invalid_token` is a grant that is already gone, which is what was wanted: the second
+    # token of one grant gets it, since the first revoke ended them both.
+    return response.status_code == 200 or (
+        response.status_code == 400 and _json(response).get("error") == "invalid_token"
+    )
 
 
 def _shares_a_saved_grant(settings: Settings, token: GoogleToken) -> bool:
@@ -649,6 +653,37 @@ def discard(
     if _shares_a_saved_grant(settings, token):
         return False
     return revoke(token.refresh_token, post=post)
+
+
+@dataclass(frozen=True)
+class SignOut:
+    """What signing out came to."""
+
+    removed: tuple[Path, ...]
+    #: Whether Google confirmed every grant ended; None when there was none to end.
+    revoked: bool | None
+
+
+def sign_out(settings: Settings, *, post: Callable[..., Any] | None = None) -> SignOut:
+    """End every Google grant Keryx holds, and remove everything a sign-in left here.
+
+    The token, a sign-in in progress, the copies in the agents' server's directory (every
+    account's), and the Gmail-only token of an older sign-in. The files go whether or not
+    Google confirms the revoke: a sign-out that leaves the credential behind is not one.
+    """
+    files = [
+        google.token_path(settings),
+        _pending_path(settings),
+        legacy_token_path(settings),
+        *google.credential_files(settings),
+    ]
+    found = tuple(path for path in files if path.is_file())
+    tokens = [google.token_from(path) for path in found]
+    grants = dict.fromkeys(token.refresh_token for token in tokens if token is not None)
+    results = [revoke(refresh_token, post=post) for refresh_token in grants]
+    for path in found:
+        path.unlink(missing_ok=True)
+    return SignOut(removed=found, revoked=all(results) if results else None)
 
 
 def exchange(

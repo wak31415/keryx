@@ -34,7 +34,8 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   for everything; with `--headless` it prints a link and takes back the address the
   browser landed on, and with no terminal that is two commands; `--account` says which
   account is meant when it is not the saved one; `gmail` and `google-workspace` still mean
-  it, for one release), `uv run keryx auth status [--json] [--smoke]`
+  it, for one release), `uv run keryx auth logout google` (revokes the grant at Google and
+  removes every file a sign-in left), `uv run keryx auth status [--json] [--smoke]`
 - Run the agent: `uv run keryx serve` (`--demo` / `--host` / `--port`); `scripts/dev.sh` adds
   the Cloudflare tunnel
 - Approval bridge: `uv run keryx approvals` (`--limit N`, `--disable` / `--enable` for
@@ -381,7 +382,7 @@ stay protected in `secrets.toml`. Four rulings:
   `permissions.NEVER_OFF` but never set it to 0 ("no limit") or above `NEVER_OFF_CEILING`
   times its default, which is no limit by another name, and every write is checked
   against the whole store, so nothing it saves can stop `keryx serve` from starting. The
-  commands that write what the service may not — `auth login`, `memory seed`, `setup`,
+  commands that write what the service may not — `auth login|logout`, `memory seed`, `setup`,
   `config lock|unlock`, `service install|uninstall`, `upgrade`, `forget`, `approvals
   --enable|--install-hook|--uninstall-hook`, `plugins install|remove` — refuse outright under
   `KERYX_ACTOR=service`, and the tasks setup itself dispatches (the smoke test, project
@@ -505,6 +506,11 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   for email answers only. Once somebody is signed in the wizard asks a different question
   with different answers, so an answer recorded before the sign-in is never offered after
   it, where it would mean signing in a second time.
+
+`keryx auth logout google` is the one way access is taken away (`sign_out`): every grant
+Keryx holds is revoked at Google, and the token, its copies, a sign-in in progress and an
+older sign-in's files are removed whether or not Google answers. Google's user-data policy
+wants an app to offer exactly this, so do not fold it into something else.
 
 An install from before this keeps working until its owner signs in again, and nothing of
 its is rewritten: `check_email` still reads an older `gmail_token.json` while no Google

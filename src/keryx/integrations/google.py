@@ -363,7 +363,7 @@ def export_for_mcp(settings: Settings, token: GoogleToken, *, only: bool = False
         return None
     path = mcp_credential_path(settings, token.email)
     if only:
-        for other in _credential_files(settings):
+        for other in credential_files(settings):
             if other != path:
                 other.unlink(missing_ok=True)
     wanted = {**{key: getattr(token, key) for key in _IDENTITY_KEYS}, "scopes": list(token.scopes)}
@@ -380,7 +380,7 @@ def export_for_mcp(settings: Settings, token: GoogleToken, *, only: bool = False
 _NOT_CREDENTIALS = frozenset({"oauth_states"})
 
 
-def _credential_files(settings: Settings) -> dict[Path, str]:
+def credential_files(settings: Settings) -> dict[Path, str]:
     """Each credential file in the server's directory, with the address it is named for.
 
     As the server's own `list_users` reads the directory: a `.json` file whose name is an
@@ -405,7 +405,7 @@ def _older_mcp_credential(settings: Settings) -> tuple[Path, GoogleToken] | None
     Read, never written and never adopted as Keryx's token: its scopes are whatever that
     flow asked for.
     """
-    files = _credential_files(settings)
+    files = credential_files(settings)
     wanted = (settings.user_google_email or "").strip()
     sanitised = re.sub(r"[^a-zA-Z0-9@._-]", "_", wanted).lower()
     named = {

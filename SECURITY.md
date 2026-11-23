@@ -402,7 +402,14 @@ email answers on a call. What it leaves, and what protects it:
   editing your Docs, Sheets and Slides. In Drive itself, Keryx can change only the files
   it created. A coding agent you dispatch can use all of it, and prompt injection into a
   task you authorized is still inherent. You can leave any service unticked on Google's
-  screen, and revoke the whole sign-in at <https://myaccount.google.com/permissions>.
+  screen.
+- **`keryx auth logout google` ends it.** It revokes Keryx's access at Google and deletes
+  everything a sign-in left on this machine: the token, its copy for the agents' tools,
+  a sign-in in progress, and anything an older sign-in left. The files are deleted even
+  when Google cannot be reached, and then the command says so and names
+  <https://myaccount.google.com/permissions>, where you can end the grant yourself at any
+  time. A sign-in that Keryx refuses (nothing granted, an unexpected account) is revoked
+  the same way rather than left at Google with nobody holding it.
 - **The agents' tools cannot sign in.** The server is started with the token's location
   and no OAuth client (one set in Keryx's own environment is blanked on the way), so it
   can refresh and use what you granted and can never open a consent screen of its own
@@ -490,7 +497,7 @@ This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as
 shell, and can edit `config.toml` directly, as it can edit any of your files. What the rule
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
-service-writable keys. `auth login`, `memory seed`, `setup`, `service`, `upgrade`,
+service-writable keys. `auth login`, `auth logout`, `memory seed`, `setup`, `service`, `upgrade`,
 `forget`, `approvals --enable`, `approvals --install-hook`, `plugins install`,
 `plugins remove`, and `config lock|unlock` refuse the service outright.
 

@@ -1005,3 +1005,57 @@ def test_each_service_gets_a_line_saying_whether_it_is_connected():
                "on a call"),
         (False, "Calendar: not connected"),
     ]
+
+
+# --- signing out ----------------------------------------------------------------------------
+
+
+def everything_a_sign_in_leaves(client) -> list:
+    finish_signin(client, redirect(start_signin(client)), post=FakePost())
+    start_signin(client)  # and a sign-in in progress
+    older = legacy_token_path(client)
+    older.write_text(json.dumps({"refresh_token": "1//older", "client_id": "cid"}))
+    stray = client.data_dir / "google" / "bob@example.com.json"
+    stray.write_text(json.dumps({"refresh_token": "1//bobs", "client_id": "other"}))
+    return [account.token_path(client), client.data_dir / PENDING_FILE, older, stray,
+            client.data_dir / "google" / "ada@example.com.json"]
+
+
+def test_signing_out_revokes_every_grant_and_removes_every_file(client):
+    files = everything_a_sign_in_leaves(client)
+    bookkeeping = client.data_dir / "google" / "oauth_states.json"
+    bookkeeping.write_text("{}")
+    post = FakePost()
+
+    out = google.sign_out(client, post=post)
+
+    assert sorted(post.revoked) == ["1//bobs", "1//older", "1//rt"]  # each once
+    assert out.revoked is True and sorted(out.removed) == sorted(files)
+    assert not any(path.exists() for path in files)
+    assert bookkeeping.exists()  # the server's own, and no credential
+
+
+def test_a_revoke_google_does_not_confirm_still_removes_the_files_and_says_so(client):
+    files = everything_a_sign_in_leaves(client)
+
+    out = google.sign_out(client, post=FakePost(revoke_status=503))
+
+    assert out.revoked is False and not any(path.exists() for path in files)
+
+
+def test_a_grant_google_says_is_already_gone_counts_as_revoked(client):
+    """Google revokes by account and client: the second token of one grant is refused."""
+
+    def post(url, data, timeout):
+        return Response(400, {"error": "invalid_token"})
+
+    assert google.revoke("1//rt", post=post) is True
+    assert google.revoke("1//rt", post=lambda *a, **k: Response(400, {"error": "x"})) is False
+
+
+def test_signing_out_with_nothing_signed_in_touches_nothing(client):
+    post = FakePost()
+
+    out = google.sign_out(client, post=post)
+
+    assert out.removed == () and out.revoked is None and post.revoked == []

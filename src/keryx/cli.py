@@ -1611,6 +1611,22 @@ def auth_login(
         raise typer.Exit(1) from None
 
 
+@auth_app.command("logout")
+def auth_logout(
+    name: Annotated[str, typer.Argument(help="google.")],
+) -> None:
+    """Sign out of Google: revoke Keryx's access at Google and delete the sign-in here.
+
+    The token, its copy for the agents' tools, and anything an older sign-in left are all
+    removed, whether or not Google answers. `keryx auth login google` signs in again.
+    """
+    if name not in auth_flow.LOGOUTS:
+        typer.echo(f"sign out of one of: {', '.join(auth_flow.LOGOUTS)}", err=True)
+        raise typer.Exit(2)
+    _owner_only("sign out")
+    auth_flow.logout(name, _configure_readonly(), echo=typer.echo)
+
+
 @auth_app.command("status")
 def auth_status_command(
     as_json: Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")] = False,

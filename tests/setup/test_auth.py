@@ -331,6 +331,40 @@ def test_nothing_else_can_be_signed_in_to(settings):
         login("myspace", settings)
 
 
+# --- signing out --------------------------------------------------------------------------
+
+
+def logout(settings, out):
+    lines = []
+    auth.logout("google", settings, echo=lines.append, sign_out=lambda s: out)
+    return lines
+
+
+def test_signing_out_says_what_was_done(settings, tmp_path):
+    lines = logout(settings, google.SignOut((tmp_path / "a", tmp_path / "b"), True))
+
+    assert lines[0] == "Signed out of Google: the grant is revoked and 2 files are removed."
+    assert "next sign-in" in lines[1] and "USER_GOOGLE_EMAIL" in lines[1]
+
+
+def test_a_revoke_that_failed_names_where_to_end_the_grant_by_hand(settings, tmp_path):
+    [line] = logout(settings, google.SignOut((tmp_path / "a",), False))[:1]
+
+    assert "removed from this machine" in line
+    assert "https://myaccount.google.com/permissions" in line
+
+
+def test_signing_out_when_nobody_is_signed_in_says_so(settings):
+    assert logout(settings, google.SignOut((), None)) == [
+        "Not signed in to Google: there is nothing to remove."
+    ]
+
+
+def test_only_google_can_be_signed_out_of(settings):
+    with pytest.raises(AuthError, match="one of: google"):
+        auth.logout("claude", settings, echo=print)
+
+
 # --- status -------------------------------------------------------------------------------
 
 

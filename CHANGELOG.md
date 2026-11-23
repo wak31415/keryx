@@ -16,6 +16,8 @@ the version starts with 0.
   answer itself. With `--headless`, or over ssh, it prints a link for any device and asks
   for the address the browser lands on. What you leave unticked on Google's screen is
   simply not connected, and the command says which services are.
+- **`keryx auth logout google`** revokes Keryx's access at Google and deletes the sign-in
+  from this machine.
 - Agents get Drive, Docs, Sheets and Slides as well as Gmail and Calendar, and both Claude
   and Codex get them the same way.
 - When a release ships Keryx's own Google app, signing in needs no Google Cloud project.

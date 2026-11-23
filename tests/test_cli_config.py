@@ -402,6 +402,30 @@ def test_auth_login_google_with_a_browser_here_is_one_command(home, monkeypatch)
     assert "Signed in as ada@example.com." in result.output
 
 
+def test_auth_logout_google_revokes_and_removes(home, tmp_path, monkeypatch):
+    token = tmp_path / "keryx" / "google_token.json"
+    token.parent.mkdir(parents=True)
+    token.write_text('{"refresh_token": "1//rt", "client_id": "cid", "email": "a@b.c"}')
+    posted = []
+
+    def post(url, data, timeout):
+        posted.append((url, data))
+        return type("R", (), {"status_code": 200, "json": lambda self: {}})()
+
+    monkeypatch.setattr("keryx.setup.google.httpx.post", post)
+
+    result = run("auth", "logout", "google")
+
+    assert result.exit_code == 0, result.output
+    assert posted == [("https://oauth2.googleapis.com/revoke", {"token": "1//rt"})]
+    assert not token.exists()
+    assert "Signed out of Google" in result.output and "1//rt" not in result.output
+
+
+def test_auth_logout_knows_only_google(home):
+    assert run("auth", "logout", "claude").exit_code == 2
+
+
 def test_auth_login_google_refuses_a_service_it_does_not_know(home):
     result = run("auth", "login", "google", "--services", "gmail,chat")
 
@@ -557,6 +581,7 @@ def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch
     [
         ("auth", "login", "google"),
         ("auth", "login", "google-workspace"),
+        ("auth", "logout", "google"),
         ("memory", "seed", "--file", "-", "--force"),
         ("setup",),
     ],

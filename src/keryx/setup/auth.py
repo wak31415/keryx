@@ -42,6 +42,8 @@ SIGN_INS = {
 #: reported by `status`, for one release.
 GOOGLE_ALIASES = ("gmail", "google-workspace")
 LOGINS = ("claude", "codex", "google", *GOOGLE_ALIASES)
+#: What `logout` can end: a grant Keryx holds, and the files a sign-in left.
+LOGOUTS = ("google",)
 
 
 class AuthError(RuntimeError):
@@ -123,6 +125,35 @@ def login(
             raise AuthError(str(exc)) from None
         return
     raise AuthError(f"nothing called {name!r} to sign in to; one of: {', '.join(LOGINS)}")
+
+
+def logout(
+    name: str,
+    settings: Settings,
+    *,
+    echo: Echo,
+    sign_out: Callable[[Settings], Any] | None = None,
+) -> None:
+    """End the sign-in `name` names: revoke it where it was granted, and remove what it
+    left on this machine. `sign_out` is `google.sign_out`, looked up when called."""
+    if name not in LOGOUTS:
+        raise AuthError(f"nothing called {name!r} to sign out of; one of: {', '.join(LOGOUTS)}")
+    out = (sign_out or google.sign_out)(settings)
+    if not out.removed:
+        echo("Not signed in to Google: there is nothing to remove.")
+        return
+    count = f"{len(out.removed)} file{'s are' if len(out.removed) != 1 else ' is'} removed"
+    if out.revoked is False:
+        echo(
+            f"The sign-in is removed from this machine ({count}), but Google did not "
+            f"confirm that the grant has ended: remove Keryx at {google.PERMISSIONS_URL}."
+        )
+    else:
+        echo(f"Signed out of Google: the grant is revoked and {count}.")
+    echo(
+        "USER_GOOGLE_EMAIL is left as it is, so the next sign-in is still held to that "
+        "account; `keryx config unset USER_GOOGLE_EMAIL` forgets it."
+    )
 
 
 def _agent_login(
