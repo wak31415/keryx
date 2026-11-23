@@ -1724,8 +1724,10 @@ def auth_logout(
         if name == "slack":
             # Nothing of Keryx's to revoke: the token is the owner's own Slack app's.
             typer.echo(
-                "Slack has no sign-out here: `keryx plugins remove send_to_slack` turns it "
-                "off, and `keryx config unset SLACK_BOT_TOKEN` forgets the token",
+                "Slack has no sign-out here: `keryx auth login slack --access announce` "
+                "stops Keryx reading anything there, `keryx plugins remove send_to_slack` "
+                "turns it off, and `keryx config unset SLACK_BOT_TOKEN SLACK_APP_TOKEN "
+                "SLACK_USER_TOKEN` forgets the tokens",
                 err=True,
             )
         raise typer.Exit(2)

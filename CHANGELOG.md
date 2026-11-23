@@ -9,6 +9,29 @@ the version starts with 0.
 
 ### Added
 
+- **Write back on Slack.** Your Slack app now has an access level, chosen before the app is
+  created: `announce` (as before: Keryx posts and reads nothing), `converse`, or `read`. At
+  `converse`, a reply in the thread under a task's report continues that task, and a new
+  message to the Keryx app starts one and gets its report in that thread. Keryx marks a
+  message it has acted on with 👀. Neither needs the phone PIN: only your own messages in
+  your direct messages with the app are acted on, and `SECURITY.md` describes the trade.
+  It listens over Socket Mode, so nothing new is exposed to the internet. At `read` the app
+  also asks for a user token that can read Slack as you; this release checks and stores
+  it, and the tools that use it follow.
+- **`keryx auth login slack --access LEVEL`** says in plain words what the level lets
+  Keryx see before it prints the link, takes the level's tokens on standard input one to
+  a line, and checks each before saving anything. Raising the level of an app you already
+  have prints the manifest to paste into it, never a second app. A lower level is applied
+  at once and forgets the tokens it no longer uses. `keryx setup` asks the same question
+  first.
+- **More than one Slack workspace.** `keryx auth login slack --workspace NAME` connects
+  another, with its own app, level and tokens. Reports and alerts keep going to your first
+  workspace, and `send_to_slack` can be told which one to use. `keryx doctor` and
+  `keryx auth status` list each workspace with its level and anything that level still
+  lacks.
+- **A task's reports stay in one Slack thread.** The first report is a message of its own;
+  later reports of the same task are replies under it, also shown in the conversation.
+
 - **One Google sign-in for everything: `keryx auth login google`.** It connects Gmail,
   Calendar, Drive, Docs, Sheets and Slides at once, for the coding agents and for email
   answers on a call, and `--services gmail,calendar` chooses fewer. With a browser on the

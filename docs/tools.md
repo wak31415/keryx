@@ -48,7 +48,7 @@ connected. `add_calendar_event` writes, so it is never ticked for you.
 
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|
-| `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too | yes | `SLACK_BOT_TOKEN` (`keryx auth login slack`), or the MCP server's |
+| `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too. With more than one workspace connected it takes a `workspace`, and sends to your first one unless you name another | yes | your Slack app's tokens (`keryx auth login slack`), or the MCP server's |
 | `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | your Google sign-in (`keryx auth login google`) and the `claude` extra |
 | `check_calendar` | what is on your Google Calendar in a second or two: a day, a week, your next meeting, or a search ("when is the dentist"), across every calendar you have ticked there | yes | your Google sign-in |
 | `add_calendar_event` | put one event on your own calendar and say back what it created; it invites nobody | yes | your Google sign-in |
@@ -146,17 +146,46 @@ connection nobody can answer hangs, and a storm of them can get an address banne
 an expired login, open the master again at your desk, for example with `ssh -fN mycluster`.
 If you already run a guard script of your own, name it as `guard` in `cluster_stats.toml`.
 
-**Connecting Slack is a link and one paste.** `keryx setup` → Plugins shows a link that
-opens Slack's own page for a new app, with Keryx's already filled in: pick your workspace,
-create it, install it, and copy its bot token. Paste the token once, at a hidden prompt.
-Keryx checks it with Slack, tells you which workspace it connected to, and finds you by the
-email address you use there, so there is no channel id to look up. Then it offers to send
-a test message, which arrives under Apps in Slack. The app is yours alone: it can post
-messages and read your workspace's member list with addresses, which is how it finds you,
-and nothing in it listens to Slack. From the command line it is two steps:
-`keryx auth login slack` prints the link, and
-`keryx auth login slack --stdin --email you@example.com` takes the token on standard input
-(never as an argument) and does the rest.
+**Connecting Slack is a choice, a link and a paste.** The choice comes first, because it
+decides the app: what Keryx may see in your Slack.
+
+| Level | What Keryx can see | What you paste |
+|---|---|---|
+| `announce` (the default) | nothing: it posts to you | the bot token (`xoxb-`) |
+| `converse` | the direct messages you type to the Keryx app itself, and nothing else | and the app-level token (`xapp-`) |
+| `read` | Slack as you: every conversation you are in, their lists, the member list and search | and your user token (`xoxp-`) |
+
+`keryx setup` → Plugins asks the level, then shows a link that opens Slack's own page for
+a new app, with Keryx's already filled in for that level: pick your workspace, create it,
+install it, and copy the tokens the level needs. Paste each once, at a hidden prompt.
+Keryx checks each with Slack, tells you which workspace it connected to, and finds you by
+the email address you use there, so there is no channel id to look up. Then it offers to
+send a test message, which arrives under Apps in Slack. The app is yours alone. From the
+command line it is two steps: `keryx auth login slack --access LEVEL` says what the level
+means and prints the link, and
+`keryx auth login slack --stdin --access LEVEL --email you@example.com` takes the tokens on
+standard input, one to a line in any order (never as arguments), and does the rest.
+
+**At `converse` you can write back.** A reply in the thread under a task's report continues
+that task. A new message to the Keryx app starts one, and its report arrives in that
+thread. Keryx puts an 👀 on a message it has acted on and says nothing else until the work
+is done. Neither needs the phone PIN: only messages from your own member id, in your
+direct messages with the app, are acted on, and [SECURITY.md](../SECURITY.md) says what
+that trade is. Keryx starts listening when it starts, so run `keryx restart` after
+choosing the level. At `read`, this release checks your user token and keeps it; the tools
+that read Slack with it come next.
+
+**Changing the level later.** A higher one changes the app you have, never makes a second:
+`keryx auth login slack --access converse` on a workspace that is connected prints the
+manifest to paste into the app's App Manifest page, and you reinstall it and hand over
+the new token. A lower one needs nothing from Slack: `keryx auth login slack --access
+announce` forgets the tokens it no longer uses and a running Keryx stops acting on your
+messages at once.
+
+**More than one workspace.** `keryx auth login slack --workspace work` connects another,
+with an app of its own from the same link, its own level and its own tokens. Reports and
+alerts keep going to your first workspace; "send that to my work Slack" goes to the one
+you name. `keryx auth status` lists each with its level.
 
 The question that takes your address takes a channel or member id as well, and that is
 what to give it if Slack cannot find you: your member id is in Slack under your profile,

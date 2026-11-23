@@ -66,6 +66,9 @@ anything behind, or reach a coding agent. In particular:
 - A call being treated as one Keryx placed to your number when Keryx did not place it, or
   placed it to a number that is not yours (see
   [Calls Keryx places itself](#calls-keryx-places-itself)).
+- A Slack message being acted on that is not from your own member id, or not in the direct
+  message with your own Keryx app, or that reaches Keryx at the `announce` level (see
+  [Messages you type to Keryx on Slack](#messages-you-type-to-keryx-on-slack)).
 - **Anything that sets or replaces a PIN while one already exists**, from the phone or from
   a coding agent, or that reads an enrolled PIN back out anywhere.
 - With `BRIEFING_BEFORE_PIN=false`, anything of yours reaching a call that has not given
@@ -154,7 +157,9 @@ caller says or does changes anything or outlasts the call.
   gated unless someone adds it to one of those lists on purpose. Of the plugins,
   `check_billing` and `cluster_stats` set `needs_pin=False`, because they read a number and
   change nothing. `send_to_slack`, `check_email`, `check_calendar`, `add_calendar_event`
-  and `find_document` keep the default and need the PIN.
+  and `find_document` keep the default and need the PIN. This is about the phone. If you
+  let Keryx hear your Slack app, a message you type there can start work with no PIN: see
+  [Messages you type to Keryx on Slack](#messages-you-type-to-keryx-on-slack).
 - **An announcement tells a call nothing it could not already hear.** A result that finishes
   during a call is announced under the same rule as the briefing. Restart confirmations and
   approval escalations go only to a call that has given the PIN or that Keryx placed to your
@@ -271,6 +276,62 @@ to the menu. `*` is never part of a PIN and never a menu option, so it cannot be
 either. A wrong PIN leaves the keypad where it is, so you can try again. Saying the digits
 aloud also works, because `submit_pin` answers at every trust level.
 
+### Messages you type to Keryx on Slack
+
+Your Slack app has one of three access levels, which you choose before the app is created
+and can lower at any time. **`announce` is the default and the off switch:** Keryx posts
+to you and reads nothing, exactly as before there were levels.
+
+**At `converse`, a Slack message can start work on your machine without the phone PIN.**
+That is the trade you make by choosing it, so it is said plainly. Keryx opens a connection
+out to Slack (Socket Mode; nothing new is reachable from the internet) and is sent the
+direct messages typed to your Keryx app. A reply in the thread under a task's report
+continues that task. A new message to the app starts a task, with a coding agent that has
+your full access.
+
+- **What is acted on is narrow.** Only an ordinary message (not an edit, a deletion, a
+  file, or anything else Slack marks with a subtype), in the direct-message conversation
+  with your own Keryx app, not posted by a bot, and from the one member id stored as yours
+  for that workspace. Everything else is dropped silently. The app subscribes to its own
+  direct messages and nothing more, so messages you send other people never reach Keryx.
+- **The PIN is not asked for, on purpose.** The PIN exists because caller ID is free to
+  spoof. A message in your own direct messages from your own member id is not: it needs
+  your Slack account, or something that can post as you.
+- **The accepted risk is whoever controls your Slack account.** Anyone signed in as you,
+  on any device, can start work on your machine by messaging your Keryx app. So can any
+  app that holds a user token able to post as you, if it posts in that conversation.
+  Protect the Slack account as you would the machine: two-factor
+  sign-in, and care about which apps you grant "send messages as you". If that is more
+  than you want, stay at `announce`.
+- **The same limits apply as on the phone.** The daily task cap counts these tasks, and
+  each is an ordinary task with the same budget and time limit.
+- **Lowering the level works at once.** `keryx auth login slack --access announce` (or
+  `keryx setup`) forgets the tokens the lower level does not use, and a running Keryx
+  stops acting on messages immediately. `keryx plugins remove send_to_slack` turns Slack
+  off altogether. Removing the app in Slack ends it from the other side.
+- **Your member id is a setting, not a secret.** It is in `send_to_slack.toml`, which a
+  coding agent on your machine could edit, as it could edit anything else of yours
+  (see [What Keryx may change about itself](#what-keryx-may-change-about-itself)). The
+  tokens are protected settings: the running service can never write them.
+- **The connection's address is treated as a secret.** Slack hands Keryx a one-time
+  WebSocket address that carries its own ticket. Keryx never logs it or puts it in an
+  error message.
+- **Results are answered in Slack, and the phone stays quiet.** A task you started from
+  Slack reports in that thread. It is not texted or called about, though it is mentioned
+  at the start of your next call like any other result you have not heard.
+
+**At `read`, your user token is on the machine.** The app also asks you for a user token,
+which can read every channel, private channel, direct message, and group message you are
+in, list them, read the member list, and search. In this release Keryx checks that token
+and stores it; nothing reads with it yet. It sits in `secrets.toml` with the rest, so
+anyone who can read that file can read your Slack as you until you revoke the token
+(remove the app, or lower the level and reinstall it). Choose `read` only when you want
+what it will be used for.
+
+Each further workspace (`keryx auth login slack --workspace NAME`) is a separate app with
+its own level, tokens, and member id. A message in one workspace is checked against that
+workspace's member id only.
+
 ### PIN and brute force
 
 Caller ID can be spoofed, so anyone who knows an allowed number can reach a phone session.
@@ -369,7 +430,8 @@ email addresses (`users:read`, `users:read.email`). Keryx uses the second for on
 to find you by your address so that you do not have to copy a channel id out of Slack. The
 token keeps that reach for as long as it is valid, though, and so does anyone who can read
 `secrets.toml`. An app you made by hand with `chat:write` alone still works; setup then
-asks you for a channel or member id instead.
+asks you for a channel or member id instead. At the higher access levels the app holds
+more, and the section below says what.
 
 Keryx uses a file rather than a keyring on purpose. A service that systemd starts at boot,
 with nobody logged in, cannot unlock a keyring. Claude Code and Codex keep their credentials

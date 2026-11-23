@@ -26,7 +26,13 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `--account ADDRESS`. Only when the first command
    says there is no Google OAuth client does the person have to make one (the steps:
    `{google_guide}`), which you then pass once with `--client-file PATH`.
-   For Slack, `keryx auth login slack` prints a link and three steps: relay them; the
+   For Slack, `keryx auth login slack` first says the three access levels (what Keryx
+   may see there) and then prints a link and its steps. The level is the person's to
+   choose: read them what it printed and ask. Never choose `converse` or `read` for
+   them, since at those a Slack message can start work without the phone PIN; with no
+   answer it is `announce`, which the commands here set up (a higher one adds `--access
+   LEVEL` to both, and its extra tokens to standard input, one to a line). Relay the link
+   and the steps; the
    person creates and installs the Slack app it describes and copies its bot token. That
    token is not yours to see: they run `keryx auth login slack --stdin --email ADDRESS`
    themselves, with the address they use in Slack, and it asks for the token hidden
