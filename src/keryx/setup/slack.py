@@ -605,6 +605,22 @@ def read_tokens(text: str) -> dict[str, str]:
     return found
 
 
+def another_workspace(saved: SlackWorkspace, team: Workspace) -> str | None:
+    """Why the bot token Slack answered `team` for may not replace the workspace on file;
+    None when it may.
+
+    Another workspace's token would bring another owner with it, and the owner is fixed
+    for as long as a workspace is connected. The one check, for the command line and the
+    wizard alike, so that neither can let through what the other refuses.
+    """
+    if not (saved.owner_id and saved.team_id) or saved.team_id == team.team_id:
+        return None
+    named = "" if saved.name == DEFAULT else f" --workspace {saved.name}"
+    return (f"that bot token is for {team.team or 'another workspace'}, and {saved.label} "
+            f"is connected here: `keryx auth logout slack{named}` first, then log in "
+            "again. Nothing was saved")
+
+
 def standing_owner(saved: SlackWorkspace, team: Workspace, *, same_app: bool) -> str:
     """The owner on file, when it is this workspace's: it stands, whatever is looked up.
 
@@ -695,15 +711,8 @@ def connect(
             "the app is there, and above announce every message is held to both. Nothing "
             "was saved"
         )
-    if saved.owner_id and saved.team_id and saved.team_id != team.team_id:
-        # Another workspace's token would bring another owner with it, and the owner is
-        # fixed for as long as a workspace is connected.
-        named = "" if workspace == DEFAULT else f" --workspace {workspace}"
-        raise SlackSetupError(
-            f"that bot token is for {team.team or 'another workspace'}, and {saved.label} "
-            f"is connected here: `keryx auth logout slack{named}` first, then log in "
-            "again. Nothing was saved"
-        )
+    if problem := another_workspace(saved, team):
+        raise SlackSetupError(problem)
     token_owner = ""
     if USER in needed:
         token_owner = _check_user_token(api, held[USER], team, access)

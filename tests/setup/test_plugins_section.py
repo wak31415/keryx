@@ -626,6 +626,54 @@ def conversing(make_ctx, **more):
     return ctx
 
 
+def test_the_wizard_refuses_another_workspaces_bot_token_as_the_command_line_does(
+    make_ctx, world
+):
+    """One owner, fixed at connect: a token from another workspace would bring another
+    owner with it, so it is refused in the command line's own sentence and nothing more
+    is asked or saved."""
+    ctx = conversing(make_ctx)
+    before = toml(ctx, "slack_report")
+    world.slack_workspaces = [Workspace(team="Other Co", team_id="T0OTHER", user_id="U0OTHERBOT")]
+    world.slack_member = Member(user_id="U0EVE", name="Eve Other")
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, "xoxb-other-workspace")]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done(), "no further question: not the app token, not where to send"
+    assert ctx.ui.lines("error") == [
+        "That bot token is for Other Co, and Acme is connected here: `keryx auth logout "
+        "slack` first, then log in again. Nothing was saved."]
+    assert toml(ctx, "slack_report") == before
+    assert ConfigStore()._secrets()["SLACK_BOT_TOKEN"] != "xoxb-other-workspace"
+
+
+def test_at_read_another_workspaces_tokens_never_name_a_new_owner(make_ctx, world):
+    ctx = conversing(make_ctx, SLACK_USER_TOKEN="xoxp-old")
+    world.slack_workspaces = [
+        Workspace(team="Other Co", team_id="T0OTHER", user_id="U0OTHERBOT"),
+        Workspace(team="Other Co", team_id="T0OTHER", user_id="U0EVE"),
+    ]
+    ctx.ui.answers = [SLACK, (LEVEL, DEFAULT), (TOKEN, "xoxb-other-workspace")]
+
+    section.run_section(ctx)
+
+    after = toml(ctx, "slack_report")
+    assert ctx.ui.done() and (after["owner_id"], after["team_id"]) == ("U0OWNER", "T0ACME")
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-old"
+
+
+def test_the_wizard_and_the_command_line_ask_one_function_about_another_workspace():
+    """So that neither can let through what the other refuses."""
+    import inspect
+
+    from keryx.setup import plugins as wizard
+    from keryx.setup import slack as command_line
+
+    assert "another_workspace(" in inspect.getsource(wizard.run_slack)
+    assert "another_workspace(" in inspect.getsource(command_line.connect)
+
+
 def test_sending_to_a_colleague_never_makes_them_the_owner(make_ctx, world):
     world.slack_member = Member(user_id="U0COLLEAGUE", name="Col League")
     ctx = conversing(make_ctx)

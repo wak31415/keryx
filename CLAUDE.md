@@ -810,7 +810,11 @@ Eleven rulings:
   bot token from another workspace is refused while one is connected; the wizard has no
   question that can change it, and the first time above `announce` its "where to send"
   must say who they are. `keryx auth logout slack` and a new login is the one way to
-  connect as somebody else. Do not add an option for it.
+  connect as somebody else. Do not add an option for it, and mind the ones that are
+  there: `keryx plugins install slack_report --set` refuses `owner_id`, `access` and
+  everything else a sign-in settles (`Key.by_sign_in`; `channel_id` and `mcp_server` stay
+  settable), and the wizard and the command line ask one function,
+  `setup.slack.another_workspace`, so neither lets through what the other refuses.
 - **One app per workspace, in shapes every build on the machine writes back.** The first
   workspace is the top of `slack_report.toml` and the three plain settings
   (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_USER_TOKEN`); a file from before reads as

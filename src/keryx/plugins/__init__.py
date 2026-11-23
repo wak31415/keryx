@@ -87,6 +87,9 @@ class Key:
     #: build of Keryx from before the key carries through a rewrite untouched.
     fields: tuple["Key", ...] = ()
     prefix: str = ""
+    #: Written only by the plugin's sign-in (`Plugin.sign_in`), from what the service it
+    #: connects to said: never taken from a command line, where it could say otherwise.
+    by_sign_in: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,8 @@ class Plugin:
     default_when_connected: bool = False
     #: The name it had before it was renamed, whose files are still read (`files_name`).
     formerly: str = ""
+    #: The command that connects it, which is the only writer of its `by_sign_in` keys.
+    sign_in: str = ""
 
     def key(self, name: str) -> Key:
         return next(key for key in self.keys if key.name == name)
@@ -137,15 +142,20 @@ def _cluster_problem(values: dict[str, Any]) -> str | None:
 SLACK_ACCESS = ("announce", "converse", "read", "write")
 #: What a Slack workspace is, beside its tokens: the first one at the top of the file, and
 #: each further one in a `[workspace-NAME]` table of the same keys.
+#: `access`, `owner_id` and what Slack said of the workspace are settled by connecting it
+#: (`keryx auth login slack`), which checks each token against them. One owner, fixed at
+#: connect: `--set owner_id=…` would be an option to change it, so there is none.
 _SLACK_WORKSPACE = (
     Key("channel_id", "word", "", "Where it posts: your member id, or a channel's id"),
-    Key("access", "choice", "announce", "What Keryx may see there", choices=SLACK_ACCESS),
+    Key("access", "choice", "announce", "What Keryx may see there", choices=SLACK_ACCESS,
+        by_sign_in=True),
     Key("owner_id", "word", "",
-        "Your own member id: only direct messages from it are ever acted on"),
-    Key("team", "line", "", "The workspace's name, as Slack gave it"),
-    Key("team_id", "word", "", "The workspace's id, as Slack gave it"),
+        "Your own member id: only direct messages from it are ever acted on", by_sign_in=True),
+    Key("team", "line", "", "The workspace's name, as Slack gave it", by_sign_in=True),
+    Key("team_id", "word", "", "The workspace's id, as Slack gave it", by_sign_in=True),
     Key("bot_user_id", "word", "",
-        "The app's own member id there: a message is acted on only when it mentions it"),
+        "The app's own member id there: a message is acted on only when it mentions it",
+        by_sign_in=True),
 )
 
 PLUGINS: dict[str, Plugin] = {
@@ -163,10 +173,11 @@ PLUGINS: dict[str, Plugin] = {
             Key("mcp_server", "word", "",
                 "The user-scope MCP server in ~/.claude.json that gives subagents Slack"),
             Key("workspaces", "tables", {}, "Each further workspace, by the name you gave it",
-                fields=_SLACK_WORKSPACE, prefix="workspace-"),
+                fields=_SLACK_WORKSPACE, prefix="workspace-", by_sign_in=True),
         ),
         module="slack",
         problem=_slack_problem,
+        sign_in="keryx auth login slack",
     ),
     "slack_read": Plugin(
         name="slack_read",
@@ -757,9 +768,14 @@ def command_line_values(name: str, assignments: list[str]) -> dict[str, Any]:
                 f"{key.upper()} is a secret and is never taken on a command line: "
                 f"`keryx config set {key.upper()} --stdin`"
             )
+        if key in keys and keys[key].by_sign_in:
+            raise PluginConfigError(
+                f"{key} is settled by `{spec.sign_in}` when the workspace is connected, from "
+                "what Slack says of its tokens, and is never set by hand"
+            )
         if key not in keys or keys[key].kind in TABLE_KINDS:
             known = ", ".join(k for k, spec_key in keys.items()
-                              if spec_key.kind not in TABLE_KINDS)
+                              if spec_key.kind not in TABLE_KINDS and not spec_key.by_sign_in)
             hint = "; its secrets: " + ", ".join(spec.secrets) if spec.secrets else ""
             if spec.google:
                 hint = "; its sign-in is `keryx auth login google`"

@@ -271,11 +271,24 @@ def test_a_slack_file_from_before_workspaces_reads_as_one_at_announce(settings):
 
 
 def test_a_table_is_never_set_from_a_command_line():
-    with pytest.raises(plugins.PluginConfigError, match="has no setting 'workspaces'"):
+    with pytest.raises(plugins.PluginConfigError, match="has no setting 'clusters'"):
+        plugins.command_line_values("cluster_stats", ["clusters=alpha"])
+    with pytest.raises(plugins.PluginConfigError, match="settled by `keryx auth login slack`"):
         plugins.command_line_values("slack_report", ["workspaces=work"])
-    assert plugins.command_line_values("slack_report", ["access=converse"]) == {
-        "access": "converse"
+    assert plugins.command_line_values("slack_report", ["channel_id=C0X"]) == {
+        "channel_id": "C0X"
     }
+
+
+def test_what_a_sign_in_settles_is_named_as_such_and_left_out_of_what_may_be_set():
+    keys = {key.name: key.by_sign_in for key in plugins.plugin("slack_report").keys}
+
+    assert keys == {"channel_id": False, "access": True, "owner_id": True, "team": True,
+                    "team_id": True, "bot_user_id": True, "mcp_server": False,
+                    "workspaces": True}
+    with pytest.raises(plugins.PluginConfigError) as unknown:
+        plugins.command_line_values("slack_report", ["nonsense=1"])
+    assert "(it has channel_id, mcp_server;" in str(unknown.value)
 
 
 # --- an older build rewriting the same file -------------------------------------------------

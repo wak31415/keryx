@@ -262,9 +262,13 @@ def run_slack(ctx: SetupContext) -> None:
                  "there, and above announce every message is held to both. Nothing was "
                  "saved: try again when Slack answers.")
         return
-    standing = slack.standing_owner(
-        slack.on_file(ctx.settings, slack.DEFAULT, values), team, same_app=token == before
-    )
+    on_file_now = slack.on_file(ctx.settings, slack.DEFAULT, values)
+    if token != before and (problem := slack.another_workspace(on_file_now, team)):
+        # The command line's own check and its own sentence: a token from another
+        # workspace would bring another owner with it, whatever is answered after this.
+        ui.error(problem[0].upper() + problem[1:] + ".")
+        return
+    standing = slack.standing_owner(on_file_now, team, same_app=token == before)
     tokens = {BOT: token}
     owner = standing
     if APP in needed:
