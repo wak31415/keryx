@@ -45,7 +45,6 @@ The credential is sent only to Google and never logged; failures come back as an
 import asyncio
 import base64
 import html
-import json
 import logging
 import re
 import time
@@ -61,7 +60,7 @@ import httpx
 
 from keryx.config import Settings, secure_file
 from keryx.integrations import google
-from keryx.integrations.google import TOKEN_URL
+from keryx.integrations.google_api import GMAIL, GoogleApiError, GoogleReader
 from keryx.integrations.summariser import (
     Summariser,
     SummaryError,
@@ -71,7 +70,6 @@ from keryx.integrations.summariser import (
 
 log = logging.getLogger("keryx.integrations.gmail")
 
-GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
 #: The Gmail-only token `keryx auth login gmail` wrote before there was one Google sign-in.
 #: Still read when there is no Google token; removed by the next sign-in.
 LEGACY_TOKEN_FILE = "gmail_token.json"
@@ -92,11 +90,8 @@ MAX_SEARCH_THREADS = 5
 MAX_ALTERNATIVES = 6
 MAX_BODY_CHARS = 2000
 CONCURRENCY = 16
-REQUEST_TIMEOUT_S = 15.0
 #: The whole answer, fetch and model together. It is a wait inside a phone call.
 ANSWER_TIMEOUT_S = 30.0
-#: Refresh the access token this long before Google says it expires.
-EXPIRY_MARGIN_S = 60.0
 
 NO_REPLY = re.compile(
     r"no-?reply|do-?not-?reply|notifications?@|mailer-daemon|calendar-notification", re.I
@@ -206,10 +201,11 @@ class HttpGmail(GmailApi):
 
     The token file is the one `keryx auth login google` writes, or the Gmail-only one an
     older sign-in left (the same keys a `google.oauth2.credentials.Credentials.to_json()`
-    has, so any of them works). A token whose scopes do not let Gmail be read, and a refresh
-    Google refuses (`invalid_grant`: revoked, or a Testing-mode app past its seven days), are
-    `signed_out`, which the voice turns into "run keryx auth login google". A client with no
-    secret sends none: an empty `client_secret` is refused where a missing one may not be.
+    has, so any of them works). The request itself is `google_api.GoogleReader`, which
+    every Google voice tool shares; this is what its failures are called here. A token
+    whose scopes do not let Gmail be read, and a refresh Google refuses (`invalid_grant`:
+    revoked, or a Testing-mode app past its seven days), are `signed_out`, which the voice
+    turns into "run keryx auth login google".
     """
 
     def __init__(
@@ -219,86 +215,31 @@ class HttpGmail(GmailApi):
         client: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._path = path
-        self._client = client
-        self._clock = clock
-        self._access: str | None = None
-        self._expires_at = 0.0
-        self._lock = asyncio.Lock()
-
-    def _http(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S)
-        return self._client
-
-    async def _token(self, *, force: bool = False) -> str:
-        async with self._lock:
-            if self._access and not force and self._clock() < self._expires_at:
-                return self._access
-            try:
-                creds = json.loads(self._path.read_text(encoding="utf-8"))
-                data = {
-                    "client_id": creds["client_id"],
-                    "refresh_token": creds["refresh_token"],
-                    "grant_type": "refresh_token",
-                }
-                if creds.get("client_secret"):
-                    data["client_secret"] = creds["client_secret"]
-                token_url = creds.get("token_uri") or TOKEN_URL
-                scopes = creds.get("scopes")
-            except (OSError, ValueError, KeyError) as exc:
-                raise EmailError("not_configured", f"unreadable {self._path.name}") from exc
-            if isinstance(scopes, list) and not google.reads_gmail(scopes):
-                raise EmailError("signed_out", "the sign-in does not include Gmail")
-            try:
-                response = await self._http().post(token_url, data=data)
-            except httpx.HTTPError as exc:
-                raise EmailError("gmail_failed", f"token refresh: {type(exc).__name__}") from exc
-            if response.status_code != 200:
-                code = _json(response).get("error", response.status_code)
-                if code in ("invalid_grant", "unauthorized_client", "invalid_client"):
-                    raise EmailError("signed_out", f"token refresh refused: {code}")
-                raise EmailError("gmail_failed", f"token refresh: {code}")
-            body = _json(response)
-            self._access = body.get("access_token")
-            if not self._access:
-                raise EmailError("gmail_failed", "token refresh returned no access token")
-            lifetime = float(body.get("expires_in", 3600))
-            self._expires_at = self._clock() + lifetime - EXPIRY_MARGIN_S
-            return self._access
+        self._api = GoogleReader(
+            path, GMAIL, needs=(google.GMAIL_READONLY,), client=client, clock=clock
+        )
 
     async def get(self, path: str, params: Mapping[str, Any] | None = None) -> dict:
-        for attempt in range(2):
-            token = await self._token(force=attempt > 0)
-            try:
-                response = await self._http().get(
-                    f"{GMAIL}/{path}",
-                    params=params,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-            except httpx.HTTPError as exc:
-                raise EmailError("gmail_failed", f"{path}: {type(exc).__name__}") from exc
-            if response.status_code == 401:
-                if attempt == 0:
-                    continue  # an access token revoked early: refresh once, then believe it
-                raise EmailError("signed_out", f"{path}: HTTP 401 after a refresh")
-            if response.status_code != 200:
-                raise EmailError("gmail_failed", f"{path}: HTTP {response.status_code}")
-            return _json(response)
-        raise AssertionError("unreachable")  # pragma: no cover
+        try:
+            return await self._api.get(path, params)
+        except GoogleApiError as exc:
+            raise EmailError(_email_code(exc), exc.detail) from exc
+
+
+def _email_code(exc: GoogleApiError) -> ErrorCode:
+    """What `check_email` calls a Google failure: three things it can say apart."""
+    if exc.code == "not_signed_in":
+        return "not_configured"
+    # A scope the saved sign-in lacks is known before anything is sent. A 403 from Gmail
+    # itself stays "didn't answer", as it always was.
+    if exc.code == "signed_out" or (exc.code == "not_connected" and exc.status is None):
+        return "signed_out"
+    return "gmail_failed"
 
 
 def signed_in(settings: Settings) -> bool:
     """Whether there is a sign-in Gmail can be read with."""
     return credentials_path(settings) is not None
-
-
-def _json(response: httpx.Response) -> dict:
-    try:
-        body = response.json()
-    except ValueError:
-        return {}
-    return body if isinstance(body, dict) else {}
 
 
 # ---------------------------------------------------------------------------- threads

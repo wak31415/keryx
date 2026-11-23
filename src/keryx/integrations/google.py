@@ -174,10 +174,18 @@ def connected_services(scopes: Any) -> tuple[str, ...]:
     return tuple(name for name in SERVICES if all(s in held for s in needed_scopes(name)))
 
 
+def holds(scopes: Any, needed: Any) -> bool:
+    """Whether `scopes` grant every scope in `needed`, a broader one standing in for the
+    narrower ones under it. What one voice tool asks, where a *service* being connected
+    asks for everything the agents' tools use."""
+    held = covered(scopes)
+    return all(scope in held for scope in needed)
+
+
 def reads_gmail(scopes: Any) -> bool:
     """Whether `scopes` let Gmail be read: this sign-in's `gmail.modify`, or an older
     Gmail-only sign-in's `gmail.readonly`."""
-    return GMAIL_READONLY in covered(scopes)
+    return holds(scopes, (GMAIL_READONLY,))
 
 
 def labels(services: Any) -> str:
