@@ -1,5 +1,5 @@
 """Tests for `keryx.logging_util`: what a phone number looks like once it is written down,
-and what an HTTP client is not allowed to write down at all."""
+and what an HTTP or websocket client is not allowed to write down at all."""
 
 import json
 import logging
@@ -162,3 +162,72 @@ def test_quieting_the_clients_twice_is_the_same_as_once(http_loggers_restored):
     quiet_http_loggers()
 
     assert all(logging.getLogger(name).level == logging.WARNING for name in HTTP_LOGGERS)
+
+
+# --- what a websocket client may not write down --------------------------------------------
+
+REALTIME_KEY = "sk-test-not-a-key"
+#: The shape of a frame the Realtime socket carries: a tool call's arguments, here a PIN.
+PIN_FRAME = json.dumps({
+    "type": "response.function_call_arguments.done",
+    "arguments": json.dumps({"pin": "246810"}),
+}).encode()
+WEBSOCKETS_LOGGERS = ("websockets.client", "websockets.server", "websockets.protocol")
+
+
+def open_the_realtime_socket_on_paper() -> None:
+    """The handshake `websockets.connect` sends for the Realtime socket, then one frame,
+    through the library's own protocol object. Nothing is opened: it only fills a buffer."""
+    from websockets.client import ClientProtocol
+    from websockets.protocol import OPEN
+    from websockets.uri import parse_uri
+
+    protocol = ClientProtocol(parse_uri("wss://api.openai.com/v1/realtime?model=gpt-realtime"))
+    request = protocol.connect()
+    # What `additional_headers` does with the dict `OpenAIRealtimeProvider._open` builds.
+    request.headers.update({"Authorization": f"Bearer {REALTIME_KEY}"})
+    protocol.send_request(request)
+    protocol.state = OPEN
+    protocol.send_text(PIN_FRAME)
+
+
+@pytest.mark.parametrize("level", ["INFO", "DEBUG"])
+def test_neither_the_api_key_nor_a_frame_of_the_realtime_socket_reaches_the_log(
+    caplog, http_loggers_restored, level
+):
+    """At DEBUG `websockets.client` logs every handshake header, and the Realtime socket's
+    `Authorization` header is the OpenAI key. It logs both ends of every frame as well,
+    and a frame can carry the PIN."""
+    configure_logging(level)
+    caplog.set_level(logging.DEBUG)
+
+    open_the_realtime_socket_on_paper()
+
+    for private in (REALTIME_KEY, "Authorization", "Bearer", "246810", "api.openai.com"):
+        assert private not in caplog.text
+
+
+def test_left_alone_the_websocket_client_writes_the_key_and_the_frame_down(
+    caplog, http_loggers_restored
+):
+    """The test above has teeth: at DEBUG, the library logs the header and the frame."""
+    logging.getLogger("websockets").setLevel(logging.DEBUG)
+    caplog.set_level(logging.DEBUG)
+
+    open_the_realtime_socket_on_paper()
+
+    assert f"> Authorization: Bearer {REALTIME_KEY}" in caplog.text
+    assert "246810" in caplog.text
+
+
+@pytest.mark.parametrize("level", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+@pytest.mark.parametrize("name", WEBSOCKETS_LOGGERS)
+def test_every_websockets_logger_is_held_to_warnings_whatever_the_level(
+    http_loggers_restored, level, name
+):
+    """Every name `websockets` 17 logs under: the client, a server of its own, and the
+    protocol underneath both."""
+    configure_logging(level)
+
+    assert not logging.getLogger(name).isEnabledFor(logging.INFO)
+    assert logging.getLogger(name).isEnabledFor(logging.WARNING)

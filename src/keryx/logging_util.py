@@ -9,7 +9,9 @@ log or a terminal goes through here.
 So does everything that turns logging on (`configure_logging`), because a library can
 write down what Keryx's own lines are careful not to: `httpx` logs the whole address of
 every request at INFO, and for a Google request that is somebody's email address (a
-calendar's id), the words that were searched for, and the ids of files.
+calendar's id), the words that were searched for, and the ids of files; `websockets` logs
+every handshake header and both ends of every frame at DEBUG, and for the Realtime socket
+that is the OpenAI key and whatever was said on the call.
 """
 
 import logging
@@ -17,23 +19,25 @@ import logging
 #: Every log line Keryx writes, the service's and the restart watchdog's alike.
 LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 
-#: The HTTP clients' own loggers. Held at WARNING whatever `LOG_LEVEL` says, DEBUG
-#: included: their INFO and DEBUG lines are request addresses and headers.
-HTTP_LOGGERS = ("httpx", "httpcore")
+#: The HTTP and websocket clients' own loggers. Held at WARNING whatever `LOG_LEVEL` says,
+#: DEBUG included: their INFO and DEBUG lines are request addresses and headers, and for
+#: `websockets` (the parent of `websockets.client`, `.server` and `.protocol`) the
+#: `Authorization` header of the Realtime handshake and both ends of every frame.
+HTTP_LOGGERS = ("httpx", "httpcore", "websockets")
 
 
 def configure_logging(level: int | str) -> None:
     """Turn logging on at `level`, the one way every entry point does.
 
-    The HTTP clients are kept to warnings. What a request was for is logged by whoever
-    made it, in words that name no one (`keryx.integrations.google_api`).
+    The HTTP and websocket clients are kept to warnings. What a request was for is logged
+    by whoever made it, in words that name no one (`keryx.integrations.google_api`).
     """
     logging.basicConfig(level=level, format=LOG_FORMAT)
     quiet_http_loggers()
 
 
 def quiet_http_loggers() -> None:
-    """Hold the HTTP clients' loggers to warnings. Safe to call any number of times.
+    """Hold every logger in `HTTP_LOGGERS` to warnings. Safe to call any number of times.
 
     `configure_logging` does it for every entry point. Whatever is about to send a
     request whose address is private does it again for itself (the Google request layer),

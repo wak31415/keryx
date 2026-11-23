@@ -162,10 +162,12 @@ remember:
 
 `logging_util.mask_number` is the only shape a phone number may take in a log line, and
 `logging_util.configure_logging` is the only thing that turns logging on (the CLI and the
-watchdog): it holds `httpx` and `httpcore` at WARNING whatever `LOG_LEVEL` says, because at
-INFO they log every request's whole address, which for Google is a calendar's id (somebody's
-email address), the words searched for, and file ids. Never call `logging.basicConfig`
-anywhere else. The Google request layer quiets them again for itself
+watchdog): it holds `httpx`, `httpcore` and `websockets` at WARNING whatever `LOG_LEVEL`
+says, because at INFO the first two log every request's whole address, which for Google is a
+calendar's id (somebody's email address), the words searched for, and file ids, and at DEBUG
+`websockets` logs every handshake header and both ends of every frame, which for the
+Realtime socket is the OpenAI key and what was said on the call. Never call
+`logging.basicConfig` anywhere else. The Google request layer quiets them again for itself
 (`quiet_http_loggers`, in `GoogleReader`), so the rule holds in a process that set its
 logging up some other way.
 

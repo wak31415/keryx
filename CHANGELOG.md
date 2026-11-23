@@ -76,6 +76,10 @@ the version starts with 0.
   logged each one in full at the default log level, which for `check_email` meant message
   and thread ids and the search that was run. Requests are still counted in Keryx's own
   lines.
+- With `LOG_LEVEL=DEBUG`, `keryx.log` recorded the OpenAI API key each time a call opened,
+  and parts of every message to and from the voice model, which can include a PIN. The
+  websocket library wrote both, and it is now held to warnings at every log level. If you
+  have run at `DEBUG`, delete those logs and replace the key.
 - An email written for the purpose could stall the whole service while `check_email` read
   its body: a body of nothing but `<`, or of script tags that never close, took time that
   grew with the square of its length. Reading a body now takes time in proportion to it.
