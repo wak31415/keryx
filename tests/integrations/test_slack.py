@@ -8,17 +8,28 @@ import urllib.parse
 
 import pytest
 
+from keryx.integrations import slack
 from keryx.integrations.slack import (
+    Access,
+    Posted,
     SlackResult,
     SlackWebApi,
+    add_reaction,
     app_manifest,
     auth_test,
     is_dm,
+    is_ts,
     lookup_by_email,
+    manifest_json,
     markdown_pieces,
     new_app_url,
+    open_connection,
+    plain_text,
     post_text,
     slack_credentials,
+    token_kind,
+    token_kinds,
+    ts_key,
 )
 
 #: A made-up server name: which MCP server carries Slack is the owner's setting, never ours.
@@ -420,3 +431,214 @@ def test_the_lookup_is_one_get_with_the_token_in_a_header_and_never_in_the_addre
     )
     assert request.get_header("Authorization") == "Bearer xoxb-secret"
     assert "xoxb-secret" not in request.full_url
+
+
+# --- the three access levels --------------------------------------------------------------
+
+
+def test_the_levels_are_a_ladder():
+    assert slack.LEVELS == (Access.ANNOUNCE, Access.CONVERSE, Access.READ)
+    assert Access.READ.reaches(Access.CONVERSE) and Access.CONVERSE.reaches(Access.CONVERSE)
+    assert not Access.ANNOUNCE.reaches(Access.CONVERSE)
+    assert not Access.CONVERSE.reaches(Access.READ)
+
+
+def test_announce_is_exactly_the_app_there_was():
+    assert app_manifest(Access.ANNOUNCE) == app_manifest()
+    assert new_app_url(Access.ANNOUNCE) == new_app_url()
+    assert "settings" not in app_manifest()
+    assert app_manifest()["features"]["app_home"]["messages_tab_read_only_enabled"] is True
+
+
+def test_converse_hears_its_own_direct_messages_over_a_socket_and_nothing_else():
+    manifest = app_manifest(Access.CONVERSE)
+
+    assert manifest["oauth_config"] == {"scopes": {"bot": [
+        "chat:write", "users:read", "users:read.email", "im:history", "reactions:write",
+    ]}}
+    assert manifest["settings"] == {
+        "event_subscriptions": {"bot_events": ["message.im"]},
+        "socket_mode_enabled": True,
+    }
+    # The tab takes what the owner types, and nothing of Keryx's has an address at Slack.
+    assert manifest["features"]["app_home"]["messages_tab_read_only_enabled"] is False
+    assert "request_url" not in json.dumps(manifest)
+    assert "redirect_urls" not in json.dumps(manifest)
+
+
+def test_read_asks_the_owner_for_a_user_token_and_subscribes_to_nothing_as_them():
+    manifest = app_manifest(Access.READ)
+
+    assert manifest["oauth_config"]["scopes"]["bot"] == (
+        app_manifest(Access.CONVERSE)["oauth_config"]["scopes"]["bot"]
+    )
+    assert manifest["oauth_config"]["scopes"]["user"] == [
+        "channels:history", "groups:history", "im:history", "mpim:history",
+        "channels:read", "groups:read", "im:read", "mpim:read",
+        "users:read", "search:read",
+    ]
+    # A user-level message event would deliver every direct message they have.
+    assert manifest["settings"] == app_manifest(Access.CONVERSE)["settings"]
+    assert "user_events" not in json.dumps(manifest)
+
+
+def test_search_is_one_constant_and_not_the_api_whose_results_may_not_be_stored():
+    assert slack.SEARCH_SCOPES == ("search:read",)
+    assert set(slack.SEARCH_SCOPES) <= set(slack.USER_SCOPES)
+    assert not any(scope.startswith("search:read.") for scope in slack.USER_SCOPES)
+
+
+@pytest.mark.parametrize("access", list(Access))
+def test_each_level_has_a_link_and_a_manifest_to_paste(access):
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(new_app_url(access)).query)
+
+    assert json.loads(query["manifest_json"][0]) == app_manifest(access)
+    assert json.loads(manifest_json(access)) == app_manifest(access)
+    assert "\n" in manifest_json(access)
+
+
+def test_each_level_needs_one_more_token_told_apart_by_prefix():
+    assert token_kinds(Access.ANNOUNCE) == ("bot",)
+    assert token_kinds(Access.CONVERSE) == ("bot", "app")
+    assert token_kinds(Access.READ) == ("bot", "app", "user")
+    assert [token_kind(t) for t in ("xoxb-1", "xapp-1-A", "xoxp-1", "xoxe-1", "")] == [
+        "bot", "app", "user", None, None,
+    ]
+
+
+def test_auth_test_says_which_team_and_whom_the_token_acts_as():
+    reply = {"ok": True, "team": "Acme", "team_id": "T0ACME", "user_id": "U0OWNER"}
+
+    workspace = auth_test("xoxp-test", post=lambda *a: reply)
+
+    assert (workspace.team_id, workspace.user_id) == ("T0ACME", "U0OWNER")
+    odd = auth_test("xoxp-test", post=lambda *a: {"ok": True, "team_id": "t 1", "user_id": 7})
+    assert (odd.team_id, odd.user_id) == ("", "")
+
+
+def test_an_app_token_is_checked_by_opening_a_connection_whose_address_is_never_shown():
+    calls = []
+
+    def post(url, payload, token):
+        calls.append((url, payload, token))
+        return {"ok": True, "url": "wss://wss.slack.example/link/?ticket=very-secret"}
+
+    connection = open_connection("xapp-1", post=post)
+
+    assert connection.ok and connection.url.endswith("ticket=very-secret")
+    assert calls == [("https://slack.com/api/apps.connections.open", {}, "xapp-1")]
+    assert "very-secret" not in repr(connection) and "wss" not in repr(connection)
+
+
+@pytest.mark.parametrize("reply", [
+    {"ok": True}, {"ok": True, "url": "https://x.example/"}, {"ok": True, "url": 7},
+])
+def test_an_answer_with_no_socket_address_is_a_failure(reply):
+    assert open_connection("xapp-1", post=lambda *a: reply).error == "unknown_error"
+
+
+def test_an_app_token_slack_refuses_says_its_code():
+    refused = open_connection("xapp-1", post=lambda *a: {"ok": False, "error": "invalid_auth"})
+
+    assert refused.refused and refused.url == ""
+
+
+def test_the_connection_is_asked_for_as_a_form_with_the_token_in_a_header(monkeypatch):
+    seen = {}
+
+    def urlopen(request, timeout):
+        seen.update(url=request.full_url, headers=dict(request.header_items()),
+                    data=request.data, method=request.get_method())
+        return io.BytesIO(b'{"ok": true, "url": "wss://x.example/?ticket=t"}')
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+    assert open_connection("xapp-secret").ok
+    assert seen["method"] == "POST" and seen["data"] == b""
+    assert seen["headers"]["Authorization"] == "Bearer xapp-secret"
+    assert seen["headers"]["Content-type"] == "application/x-www-form-urlencoded"
+    assert "xapp-secret" not in seen["url"]
+
+
+def test_a_reaction_is_the_acknowledgement_and_one_already_there_is_fine():
+    calls = []
+
+    def post(url, payload, token):
+        calls.append((url, payload, token))
+        return {"ok": True}
+
+    assert add_reaction("xoxb-1", "D1", "17.000100", post=post).ok
+    assert calls == [("https://slack.com/api/reactions.add",
+                      {"channel": "D1", "timestamp": "17.000100", "name": "eyes"}, "xoxb-1")]
+    again = {"ok": False, "error": "already_reacted"}
+    assert add_reaction("xoxb-1", "D1", "17.000100", post=lambda *a: again).ok
+    missing = {"ok": False, "error": "missing_scope"}
+    assert add_reaction("xoxb-1", "D1", "17.000100", post=lambda *a: missing).error == (
+        "missing_scope"
+    )
+
+
+# --- posting into a thread, and where a message landed ------------------------------------
+
+
+async def test_post_says_where_the_message_landed_which_is_slacks_answer():
+    """A member's id as the channel lands in their direct message with the app."""
+    def post(url, payload, token):
+        return {"ok": True, "channel": "D0REAL", "ts": "1700000000.000100"}
+
+    posted = await SlackWebApi("t", "U0OWNER", post=post).post("report")
+
+    assert posted == Posted(channel="D0REAL", ts="1700000000.000100")
+
+
+async def test_a_reply_goes_in_its_thread_and_only_its_first_piece_is_broadcast():
+    payloads: list[dict] = []
+
+    def post(url, payload, token):
+        payloads.append(payload)
+        return {"ok": True, "channel": "D1", "ts": f"1700000000.00000{len(payloads)}"}
+
+    long = "\n\n".join(["x" * 7000, "y" * 7000])
+    posted = await SlackWebApi("t", "D1", post=post).post(
+        long, thread_ts="1699999999.000001", broadcast=True
+    )
+
+    assert posted == Posted("D1", "1700000000.000001")
+    assert [p["thread_ts"] for p in payloads] == ["1699999999.000001"] * 2
+    assert [p.get("reply_broadcast") for p in payloads] == [True, None]
+
+
+async def test_a_reply_that_is_not_broadcast_says_nothing_about_it():
+    payloads: list[dict] = []
+
+    def post(url, payload, token):
+        payloads.append(payload)
+        return {"ok": True}
+
+    posted = await SlackWebApi("t", "D1", post=post).post("x", thread_ts="1.1")
+
+    assert "reply_broadcast" not in payloads[0] and payloads[0]["thread_ts"] == "1.1"
+    # An answer without the two fields still counts as sent, with what is known.
+    assert posted == Posted("D1", "")
+
+
+async def test_a_post_slack_refuses_landed_nowhere():
+    refuse = lambda *a: {"ok": False, "error": "channel_not_found"}  # noqa: E731
+
+    assert await SlackWebApi("t", "D1", post=refuse).post("x") is None
+
+
+def test_a_timestamp_is_recognised_and_ordered():
+    assert is_ts("1700000000.000100") and not is_ts("1700000000") and not is_ts(17.1)
+    assert not is_ts("1700000000.000100; drop") and not is_ts(None)
+    assert ts_key("1700000000.000100") < ts_key("1700000000.000200") < ts_key("1700000001.0")
+    assert ts_key("9.5") < ts_key("10.1")
+
+
+def test_a_messages_text_is_read_back_as_it_was_typed():
+    assert plain_text("  fix &lt;b&gt; &amp;amp; ship  ") == "fix <b> &amp; ship"
+    assert plain_text("see <https://x.example/a?b=1|the page> and <https://y.example>") == (
+        "see https://x.example/a?b=1 and https://y.example"
+    )
+    assert plain_text("mail <mailto:sam@x.io|sam@x.io>") == "mail mailto:sam@x.io"
+    assert plain_text("<@U0OWNER> hi") == "<@U0OWNER> hi"
