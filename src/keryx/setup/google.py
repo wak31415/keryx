@@ -896,7 +896,7 @@ def run_section(ctx: "SetupContext") -> None:
     """One sign-in for everything Google: asked nothing when everything on offer is connected."""
     ui = ctx.ui
     ui.note("One Google sign-in connects Gmail, Calendar, Drive, Docs, Sheets and Slides: "
-            "for the agents, and for email answers on a call.")
+            "for the agents, and for email, calendar and document answers on a call.")
     connect(ctx)
 
 

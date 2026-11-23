@@ -517,7 +517,7 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   is saved before anything further is asked or said: the address, and
   `GOOGLE_WORKSPACE_MCP`, which is set by the first sign-in and never again once the owner
   has stored a value for it (`agents_switched_off`): false is how they keep the sign-in
-  for email answers only. Once somebody is signed in the wizard asks a different question
+  for the plugins only. Once somebody is signed in the wizard asks a different question
   with different answers, so an answer recorded before the sign-in is never offered after
   it, where it would mean signing in a second time.
 

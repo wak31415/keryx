@@ -387,7 +387,7 @@ message.
 ### Signing in to Google
 
 `keryx auth login google` connects your Google account once, for the coding agents and for
-email answers on a call. What it leaves, and what protects it:
+the answers on a call (the email, calendar and document plugins). What it leaves, and what protects it:
 
 - **The token is a file.** `DATA_DIR/google_token.json` holds the refresh token, the
   client it was issued to, the scopes Google granted, and your address. It is 0600 in a
