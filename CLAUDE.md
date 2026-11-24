@@ -612,7 +612,10 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`, or the client file) wins; else the one Keryx
   publishes, which is a packaged data file (`keryx/data/google_client.json`, the console's
   JSON plus an optional `keryx_services` list of what Google has approved it for) and may
-  not be there. A published client is limited to its list; the owner's own offers
+  not be there. No release has shipped one yet (0.3.0 did not: it waits on Google's
+  verification), so today every sign-in is on the owner's own client, and the docs and
+  the setup guide say so; change them in the release that adds the file. A published
+  client is limited to its list; the owner's own offers
   everything. Its secret ships in the wheel and is not a secret (SECURITY.md): PKCE,
   `state` and a loopback-only redirect are what protect the exchange. A client with no
   secret sends none, never an empty one.
@@ -1300,9 +1303,10 @@ second way to read. Thirteen rulings:
   bytes is never kept, logged or put in an error, and the token is not sent to it.
   `local_file` refuses what is not a regular readable file, an empty one, one over a
   gigabyte, more than ten, and anything inside `KERYX_HOME`, by a sentence each and
-  before Slack is asked; that last stops a mistake, not a shell (SECURITY.md). None of
-  it has met real Slack yet: the order and the scope are from its reference, and the
-  first live file is the test.
+  before Slack is asked; that last stops a mistake, not a shell (SECURITY.md). The order
+  and the scope are from Slack's reference; an image sent into the app's direct
+  messages is confirmed on a real workspace, and a file into a task's thread or a
+  channel is not confirmed yet.
 
 `slack_read` and `slack_message` need the PIN and load only while their box is ticked
 for a workspace (refused with the reason otherwise, in one sentence that says to run

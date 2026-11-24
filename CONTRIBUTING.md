@@ -91,10 +91,14 @@ A release is a tag. Pushing it publishes that commit to PyPI as `keryx-voice`
 (`.github/workflows/release.yml`), which is what the installer and `keryx upgrade` fetch, so
 tag only a commit CI has passed on `main`.
 
-1. Bump `version` in `pyproject.toml` by hand. Semantic versioning, and the only public
-   contract it describes is the CLI plus the settings: a removed or renamed setting or command is
-   a major bump, a new one is a minor bump, everything else is a patch.
-2. Add the entry to `CHANGELOG.md` under the new version, with the date.
+1. Bump the version by hand in `pyproject.toml`, in `src/keryx/__init__.py`, and on the
+   `keryx-voice` package's own `version` line in `uv.lock` (editing that line, rather than
+   running `uv lock`, leaves the rest of the lock as it is). Semantic versioning, and the
+   only public contract it describes is the CLI plus the settings: a removed or renamed
+   setting or command is a major bump (a minor one while the version starts with 0), a new
+   one is a minor bump, everything else is a patch.
+2. Turn `[Unreleased]` in `CHANGELOG.md` into the new version, with the date, start a
+   fresh `[Unreleased]` above it, and update the comparison links at the bottom.
 3. Commit (`chore: release vX.Y.Z`), tag it `vX.Y.Z`, and push both. The workflow refuses
    a tag that does not match `pyproject.toml`'s version.
 4. Cut a GitHub Release from the tag, with the `CHANGELOG.md` entry as its body.

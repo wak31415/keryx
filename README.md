@@ -51,6 +51,10 @@ To use the package in a project of your own, install it there with `pip install 
 - A Twilio phone number
 - A tunnel so Twilio can reach your machine: Cloudflare Tunnel on Linux, ngrok on macOS
 
+Optional: for your mail, calendar and documents, a Google OAuth client of your own, made
+once in Google Cloud (`keryx setup` shows you how); for Slack, a workspace where you can
+create and install an app.
+
 ## What it does
 
 - **Keeps working after you hang up.** Ask for status or add instructions on a later call.

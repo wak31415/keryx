@@ -12,6 +12,7 @@ places no condition on images made with them.
 | `keryx-mark.svg` | The mark: three rounded bars of a voice, the tallest in the middle. Geometry only — no text, so it needs no font and renders identically everywhere. |
 | `keryx-hero-light.webp`, `keryx-hero-dark.webp` | The README's hero animation: the mark opens into three dots (you, the assistant, the agent), the call ends while the agent keeps working, and the call comes back. Animated WebP with a transparent background, one per colour scheme, picked with `<picture>`. Drawn on a canvas and recorded frame by frame. |
 | `keryx-incoming-call.jpg` | A photo of a call-back arriving on a watch. |
+| `keryx-call-flow-light.svg`, `keryx-call-flow-dark.svg` | A sequence diagram of one task across three calls: dispatched, a question answered on a call-back, and the result. The README showed it until the hero animation replaced it. |
 | [`../../src/keryx/setup/slack_app_icon.png`](../../src/keryx/setup/slack_app_icon.png) | The mark as a 1024×1024 PNG on white, for the icon of your Slack app. It lives in the package, not here, so an installed Keryx has it: the connect steps print its path. |
 
 The colours are the "sunset" set — orange `#f97316`, pink `#db2777`, violet `#7c3aed` — and

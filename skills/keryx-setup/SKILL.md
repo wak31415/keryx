@@ -98,8 +98,11 @@ A plugin's secret is never a `--set`: the billing admin keys are
 it), and email, the two calendar plugins and `find_document` need the Google sign-in,
 `keryx auth login google` (the sign-ins step of the instructions; the same sign-in gives
 the agents Calendar, Drive, Docs, Sheets and Slides, and the address they paste back goes
-in on standard input, never into the command). A plugin installed before its service is
-connected is refused with the reason, and loads by itself once the sign-in includes it.
+in on standard input, never into the command). Until a release ships Keryx's own Google
+app, that sign-in first needs a Google OAuth client of their own, made once in Google
+Cloud: the instructions say where the steps are, and the file goes in once with
+`--client-file`. A plugin installed before its service is connected is refused with the
+reason, and loads by itself once the sign-in includes it.
 
 Slack is a sign-in too, and it turns `slack_report` on by itself (it was called
 `send_to_slack`; a machine that installed it under that name needs nothing done):
