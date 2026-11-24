@@ -316,6 +316,9 @@ Keryx knows at the top of a call is assembled every time by
   the PIN asks for it, and keeps it out of the after-PIN nudge (`_brief_after_pin`). Do not
   stamp it from a delivery path — hearing something twice is recoverable, never hearing it
   is not.
+  A call the carrier says is over is no session to tell: `/twilio/status` ends it at once
+  (`VoiceSession.call_ended`), `stop` on the stream or not, because a media socket can
+  outlive its call, and a result announced into that gap was stamped as told to nobody.
 - **The memory.** `keryx/continuity/memory.py` owns `data_dir/memory.md` outright — the
   file API *and* the writer. It subscribes to `SessionEnded` and, for an authorized call only,
   dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file —
