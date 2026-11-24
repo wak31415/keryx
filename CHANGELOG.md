@@ -7,6 +7,8 @@ the version starts with 0.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-24
+
 Keryx reaches your Google account and your Slack. One Google sign-in lets the assistant
 answer from your mail, your calendar and your documents during the call, and gives the
 coding agents Gmail, Calendar, Drive, Docs, Sheets and Slides. For now it needs a Google
@@ -408,7 +410,8 @@ calls, and calls you when there's news.
 - **Linux and macOS.** Keryx runs as a systemd or launchd service, keeps its files in the
   standard XDG directories, and stores secrets in files only you can read.
 
-[Unreleased]: https://github.com/wak31415/keryx/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/wak31415/keryx/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/wak31415/keryx/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/wak31415/keryx/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/wak31415/keryx/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/wak31415/keryx/compare/v0.1.0...v0.1.1
