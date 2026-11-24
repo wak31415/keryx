@@ -1,6 +1,17 @@
 # Roadmap
 
-## v0.3.0: local models
+## Open from v0.3.0
+
+v0.3.0 brought Google and Slack. These parts of it are not finished:
+
+- [ ] Google's verification of Keryx's own Google app, so that signing in needs no OAuth
+      client of your own
+- [ ] Reading Slack and sending messages as you, confirmed on more real workspaces
+- [ ] Reading Slack further back than 30 days
+- [ ] A result counts as told only once it has been heard: today, a result spoken into a
+      call that breaks in that same moment can still be marked as heard
+
+## v0.4.0: local models
 
 Run the work and the voice on your own hardware, so a call and what it starts can stay on
 your machine.
@@ -11,7 +22,7 @@ your machine.
 - [ ] The PIN, the keypad, the call-backs, and interruptions working on the local voice
 - [ ] `keryx setup` and `keryx doctor` set up and check the local models
 
-## v0.4.0: talking to it at a Mac
+## v0.5.0: talking to it at a Mac
 
 Say a wake word and talk to the assistant through the Mac's microphone and speaker, with no
 phone and no Twilio. The work is on the
