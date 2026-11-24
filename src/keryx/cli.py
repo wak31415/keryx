@@ -109,7 +109,8 @@ app.add_typer(auth_app, name="auth")
 memory_app = typer.Typer(help="What Keryx remembers between calls.")
 app.add_typer(memory_app, name="memory")
 plugins_app = typer.Typer(
-    help="The optional voice tools (Slack, email, billing, cluster stats): on, off, set up."
+    help="The optional voice tools (Slack, email, the calendar, documents, billing, cluster "
+    "stats): on, off, set up."
 )
 app.add_typer(plugins_app, name="plugins")
 slack_app = typer.Typer(
@@ -1104,7 +1105,7 @@ def plugins_install(
     ] = None,
     clusters: Annotated[
         list[str] | None,
-        typer.Option("--cluster", help="cluster_stats: ALIAS=PARTITION, the whole [clusters] "
+        typer.Option("--cluster", help="cluster_stats: ALIAS=PARTITION, the whole \\[clusters] "
                      "table; repeat for more."),
     ] = None,
     guard: Annotated[
@@ -1708,6 +1709,8 @@ def auth_login(
     google is one sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides. With a
     browser on this machine it opens the consent screen and finishes by itself; with
     --headless it prints a link for any device and asks for the address the browser lands on.
+    Until a release ships Keryx's own Google app, it needs an OAuth client of yours, given
+    once with --client-file: `keryx setup` shows how to make one.
 
     slack at a terminal is one command with no options: it shows a box to tick for each
     thing Keryx may do there, prints the link that creates your Slack app for exactly
