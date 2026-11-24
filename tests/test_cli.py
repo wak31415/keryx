@@ -109,6 +109,33 @@ def test_loopback_help_documents_its_switches():
         assert option in result.output
 
 
+def test_plugins_help_names_the_calendar_and_documents_beside_the_rest():
+    result = runner.invoke(app, ["plugins", "--help"], terminal_width=200)
+
+    assert result.exit_code == 0
+    # The box wraps where the runner's terminal says, whatever width is asked for.
+    words = " ".join(result.output.replace("│", " ").split())
+    assert "Slack, email, the calendar, documents, billing, cluster stats" in words
+
+
+def test_plugins_install_help_shows_the_clusters_table_by_its_name():
+    # Rich reads a bare `[clusters]` as markup and drops it, leaving "the whole  table".
+    result = runner.invoke(app, ["plugins", "install", "--help"], terminal_width=200)
+
+    assert result.exit_code == 0
+    # The box wraps where the runner's terminal says, whatever width is asked for.
+    words = " ".join(result.output.replace("│", " ").split())
+    assert "the whole [clusters] table" in words
+
+
+def test_auth_login_help_says_google_needs_a_client_of_your_own_for_now():
+    result = runner.invoke(app, ["auth", "login", "--help"], terminal_width=200)
+
+    assert result.exit_code == 0
+    words = " ".join(result.output.replace("│", " ").split())
+    assert "it needs an OAuth client of yours, given once with --client-file" in words
+
+
 # --- serve -----------------------------------------------------------------
 
 

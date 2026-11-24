@@ -16,16 +16,19 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `optional` there, since Keryx runs without them, and never make it exit 1. Each
    `keryx auth login` takes its own options and refuses another's. For a coding agent,
    `keryx auth login claude|codex` runs its own login on the terminal. Google is one
-   sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides:
+   sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides. Until a release ships
+   Keryx's own Google app it needs an OAuth client of the person's own: they make it once
+   in Google Cloud (the steps: `{google_guide}`; Personal mode is the short way) and give
+   you the path of the file Google downloads, which you pass once with
+   `--client-file PATH` on the first command below.
    `keryx auth login google --headless` prints a link: relay it; the person approves it
    on any device and gives you the address their browser lands on
    (`http://localhost:1/?…`). That address holds a one-time code, so never put it in a
    command: write it to a file with your file tool, finish with
    `keryx auth login google --callback-url - < THAT_FILE`, and delete the file. If it is
    refused because the account is not the one saved, ask them which they mean and add
-   `--account ADDRESS`. Only when the first command
-   says there is no Google OAuth client does the person have to make one (the steps:
-   `{google_guide}`), which you then pass once with `--client-file PATH`.
+   `--account ADDRESS`. If the first command says there is no Google OAuth client, it
+   still needs that file.
    For Slack, the app always sends them reports and files, and there are three more
    things Keryx may do there, each theirs to switch on: `requests` (it acts on what they
    type to the app), `read` (it reads their Slack as them when they ask) and `send` (it

@@ -79,6 +79,13 @@ read nothing of yours. `slack_report` writes to you, `slack_message` writes as y
 `slack_read`, `check_email`, `check_calendar` and `find_document` read what is yours, and
 `add_calendar_event` changes it, so all seven wait for it.
 
+**The Google plugins need a Google OAuth client of your own, for now.** Keryx does not
+ship a Google app of its own yet, so `keryx auth login google` signs in through a client
+you make once in Google Cloud. `keryx setup` shows the steps and asks for the file Google
+gives you; from the command line, `keryx auth login google --client-file FILE`. The
+quickest way is Google's Personal mode, a client only your own Google account can use,
+with nothing for Google to review.
+
 **The calendar is two plugins, so reading can be on without writing.** Both run on the one
 Google sign-in (`keryx auth login google`, with Calendar ticked) and answer inside the call,
 with no coding agent and no model in between:
@@ -317,8 +324,9 @@ Slack, and nowhere else. A file arrives right after the words that go with it. U
 a file stays in the written report — the assistant tells you it is
 there and offers to send it, rather than reading a path down the phone.
 
-**An app made before 2026-11-23 cannot send a file yet.** Sending one takes a permission
-(`files:write`) that the manifest did not have then. Text reports are unaffected, and a
+**An app made before Keryx 0.3.0 may not be able to send a file yet.** Sending one takes
+a permission (`files:write`) that an app made by hand, or from an earlier manifest, may
+not have. Text reports are unaffected, and a
 file fails with a sentence that says what to do, which is this: run `keryx auth login
 slack` again. It asks Slack what your app may do, and when the permission is missing it
 prints the steps: open the app you have, paste the manifest it prints into **App
