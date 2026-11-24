@@ -7,6 +7,14 @@ server's own `env` in `~/.claude.json` (`integrations.slack.slack_credentials`).
 `channel_id` is a channel's id or a member's: setup stores the owner's member id, found
 from their address, and Slack delivers that to their messages from the app.
 
+**An app of Keryx's own outranks a named MCP server, for everything at once**
+(`_route`). A saved bot token is that app. With one, the token posted with is Keryx's,
+and `SlackRoute.mcp_server` is None, so the two things that ask it follow: a subagent is
+told to send with `keryx slack report` and never pointed at the server, and a Codex
+subagent is not handed the server. The name stays in the file, unused, and counts again
+when the token is gone (`keryx auth logout slack`). One function decides, so what posts
+and what the agents are told cannot disagree; `agents_send_with` says which it is.
+
 Four things besides the tool want Slack, and each asks `slack_route(settings)` rather than
 reading a setting: the PIN-lockout alert (`notify.pin_alert`, at alert time, so turning
 Slack on needs no restart), every finished task's report (`notify.notifier`, the same way,
@@ -25,7 +33,7 @@ halves are joined (`on_file` under it, for Keryx's own half alone).
 
 import contextlib
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,11 +44,17 @@ from keryx.config.settings import SLACK_DEFAULT_WORKSPACE
 from keryx.integrations.slack import (
     APP,
     BOT,
+    FILE_BOT_SCOPES,
     USER,
     Access,
+    FileRefused,
+    LocalFile,
+    SlackFiles,
     SlackPoster,
     SlackSender,
     SlackWebApi,
+    is_conversation,
+    local_files,
     slack_credentials,
     used_kinds,
 )
@@ -63,6 +77,8 @@ class SlackRoute:
 
     token: str | None
     channel: str | None
+    #: The MCP server subagents send through: the one the file names, and None once
+    #: Keryx has a bot token of its own, which outranks it.
     mcp_server: str | None
 
     def sender(self) -> SlackSender | None:
@@ -72,14 +88,34 @@ class SlackRoute:
         return None
 
 
-def _route(settings: Settings, values: dict) -> SlackRoute:
+def _route(settings: Settings, values: Mapping[str, Any]) -> SlackRoute:
+    """The one place the plugin's own token and a named MCP server are ranked.
+
+    A saved bot token is an app of Keryx's own, and it outranks the server for what
+    posts and for what subagents are told alike. The server still fills in a channel the
+    file leaves blank, as it always did.
+    """
     server = values["mcp_server"] or None
     channel = values["channel_id"] or None
-    token = plugins.secret(settings, "slack_bot_token")
+    own = plugins.secret(settings, "slack_bot_token")
+    token = own
     credentials = slack_credentials(token, channel, server=server)
     if credentials is not None:
         token, channel = credentials
-    return SlackRoute(token=token, channel=channel, mcp_server=server)
+    return SlackRoute(token=token, channel=channel, mcp_server=None if own else server)
+
+
+def agents_send_with(settings: Settings, values: Mapping[str, Any]) -> str:
+    """How a subagent is told to send the owner something, in words for `doctor` and
+    `keryx plugins`: the same ranking the route itself makes, said out loud."""
+    named = values.get("mcp_server") or ""
+    if _route(settings, values).mcp_server:
+        return f"subagents send through the {named} MCP server"
+    said = "subagents send with `keryx slack report`"
+    if named:
+        said += (f" (the {named} MCP server named in the file is not used while Keryx "
+                 "has an app of its own)")
+    return said
 
 
 def slack_route(settings: Settings) -> SlackRoute | None:
@@ -176,6 +212,11 @@ class SlackWorkspace:
         """What posts as this workspace's bot, to `channel` or where it usually posts."""
         token, where = self.token(BOT), channel or self.channel
         return SlackWebApi(token, where) if token and where else None
+
+    def files(self) -> SlackFiles | None:
+        """What sends a file as this workspace's bot; None with no bot token."""
+        token = self.token(BOT)
+        return SlackFiles(token) if token else None
 
 
 def _workspace(name: str, values: Mapping[str, Any], tokens: Mapping[str, str]) -> SlackWorkspace:
@@ -283,36 +324,122 @@ class ReportRefused(RuntimeError):
     """`keryx slack report` could not post, in a sentence that holds no token."""
 
 
-async def report(settings: Settings, text: str, *, task: "Task | None" = None,
-                 workspace_name: str | None = None) -> str:
-    """Post `text` to the owner, as Keryx, for `keryx slack report`; where it went.
+@dataclass(frozen=True)
+class _Destination:
+    """One of the two places a report may go, with everything that sends there."""
 
-    To where that workspace's reports go, or, for a task that was typed on Slack, into
-    the thread it was asked in (`report_route`, so never another workspace). Those are
-    the only two places: there is no argument that names a conversation.
-    """
-    text = text.strip()
-    if not text:
-        raise ReportRefused("there is nothing on standard input to post")
+    #: The workspace's name, for the command that mends its app.
+    workspace: str
+    poster: SlackPoster
+    files: SlackFiles | None
+    #: Where it posts as it is on file: a conversation's id, or the owner's member id.
+    channel: str
+    thread_ts: str | None
+    #: Said back to whoever ran the command.
+    where: str
+
+
+def _destination(settings: Settings, task: "Task | None",
+                 workspace_name: str | None) -> _Destination:
+    """Where a report goes: the thread a Slack-typed task was asked in (`report_route`,
+    so never another workspace), else where that workspace's reports go. Those are the
+    only two places, for words and for a file alike."""
     if task is not None and task.origin_channel == SLACK_CHANNEL:
         route = report_route(settings, task)
         if route is None:
             raise ReportRefused("the workspace that task was asked in is not connected, "
                                 "and a report never leaves its workspace")
-        posted = await route.poster.post(text, thread_ts=route.thread_ts)
-        if not posted.ok:
-            raise ReportRefused(f"Slack did not take it ({posted.error})")
-        return "the thread the task was asked in"
+        home = workspace(settings, route.workspace)
+        return _Destination(
+            workspace=route.workspace, poster=route.poster,
+            files=home.files() if home is not None else None,
+            channel=task.slack_channel or "", thread_ts=route.thread_ts,
+            where="the thread the task was asked in",
+        )
     name = (workspace_name or DEFAULT).strip().lower()
     found = workspace(settings, name)
     poster = found.poster() if found is not None and found.sends else None
-    if poster is None:
+    if found is None or poster is None:
         raise ReportRefused(f"no Slack workspace called {name[:40]} can be posted to: "
                             "`keryx auth login slack` connects one")
-    posted = await poster.post(text)
-    if not posted.ok:
-        raise ReportRefused(f"Slack did not take it ({posted.error})")
-    return f"the {name} workspace, where their reports go"
+    return _Destination(workspace=name, poster=poster, files=found.files(),
+                        channel=found.channel, thread_ts=None,
+                        where=f"the {name} workspace, where their reports go")
+
+
+def _not_taken(error: str, file: LocalFile, workspace_name: str) -> str:
+    """Why Slack did not take a file, in one sentence. For an app made before Keryx
+    could send one, the sentence is what to do about it."""
+    if error == "missing_scope":
+        named = "" if workspace_name == DEFAULT else f" --workspace {workspace_name}"
+        return (f"the Slack app lacks the {' and '.join(FILE_BOT_SCOPES)} permission, which "
+                f"sending a file takes: run `keryx auth login slack{named}` again, paste "
+                "the manifest it prints into the app and reinstall it")
+    return f"Slack did not take {file.name} ({error})"
+
+
+async def report(settings: Settings, text: str, *, task: "Task | None" = None,
+                 workspace_name: str | None = None,
+                 files: Sequence[str | Path] = ()) -> str:
+    """Post `text` to the owner, as Keryx, for `keryx slack report`; where it went.
+
+    To where that workspace's reports go, or, for a task that was typed on Slack, into
+    the thread it was asked in (`_destination`). Those are the only two places: there is
+    no argument that names a conversation.
+
+    `files` are paths sent with it, to the same place and no other. Slack's reference
+    gives `files.completeUploadExternal` a `channel_id` that is a conversation's id, and
+    the owner's destination is usually their member id. `chat.postMessage` is documented
+    to take one and answers with the conversation it landed in (a `D…`); that the upload
+    takes one is not (only its plural `channels` is said to, and not where that lands),
+    so nothing here rests on it. The order is fixed: every file is handed to Slack
+    first, unshared, which is where an app without the scope or a file Slack will not
+    take is found out, with nothing posted yet; then the words are posted as every
+    report is; then the files are shared into the conversation Slack said the words
+    landed in, in the same thread when there is one. With no words, a destination that
+    is a conversation already takes the files alone, and a member's is led by the
+    files' names, because a message is how its conversation is learnt.
+    """
+    from keryx.config.files import keryx_home
+
+    text = text.strip()
+    try:
+        attached = local_files(files, private=[keryx_home()])
+    except FileRefused as error:
+        raise ReportRefused(f"{error}. Nothing was posted") from None
+    if not (text or attached):
+        raise ReportRefused("there is nothing on standard input to post")
+    to = _destination(settings, task, workspace_name)
+    uploaded = []
+    for file in attached:
+        if to.files is None:
+            raise ReportRefused("that workspace has no bot token to send a file with. "
+                                "Nothing was posted")
+        sent = await to.files.upload(file)
+        if not sent.ok:
+            raise ReportRefused(f"{_not_taken(sent.error, file, to.workspace)}. "
+                                "Nothing was posted")
+        uploaded.append(sent)
+    channel, said = to.channel, False
+    if text or not is_conversation(channel):
+        lead = text or ", ".join(file.name for file in attached)
+        posted = await to.poster.post(lead, thread_ts=to.thread_ts)
+        if not posted.ok:
+            raise ReportRefused(f"Slack did not take it ({posted.error})")
+        channel, said = posted.channel, True
+    if not uploaded:
+        return to.where
+    after = "the text was posted, but " if said else ""
+    if not is_conversation(channel):
+        raise ReportRefused(f"{after}Slack did not say which conversation it landed in, "
+                            "so no file was sent")
+    shared = await to.files.share(uploaded, channel=channel, thread_ts=to.thread_ts)
+    if not shared.ok:
+        again = ": send the file again without the text" if said else ""
+        raise ReportRefused(f"{after}Slack did not take the file ({shared.error}){again}")
+    names = [file.name for file in attached]
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f"{to.where}, with {listed}"
 
 
 def workspace(settings: Settings, name: str) -> SlackWorkspace | None:

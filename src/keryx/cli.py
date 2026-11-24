@@ -1045,6 +1045,11 @@ def plugins_list(
             settings_line = ", ".join(f"{key}={_plain(value)}" for key, value in shown.items())
             typer.echo(f"{'':<{width}} {status.config_file}" + (f"  ({settings_line})"
                                                                  if settings_line else ""))
+        if status.name == "slack_report" and (status.values or {}).get("mcp_server"):
+            from keryx.plugins.slack import agents_send_with
+
+            # The file names a server, and the name alone does not say whether it is used.
+            typer.echo(f"{'':<{width}} {agents_send_with(settings, status.values)}")
 
 
 @plugins_app.command("hosts")
@@ -1941,14 +1946,22 @@ def slack_report_command(
                      "task, and need not be given."),
     ] = None,
     workspace: _SlackWorkspace = None,
+    files: Annotated[
+        list[Path] | None,
+        typer.Option("--file", help="A file to send with it, to the same place; repeat "
+                     "for more. What is on standard input is the text that goes with "
+                     "it, and there need be none."),
+    ] = None,
 ) -> None:
     """Post what is on standard input to you, as Keryx: where your reports go, or (with
-    --task, for a task typed on Slack) into the thread it was asked in. Nowhere else."""
+    --task, for a task typed on Slack) into the thread it was asked in. Nowhere else.
+    --file sends a file there too."""
     from keryx.agents.session import TASK_ID_ENV
     from keryx.plugins import slack as plugin
 
     settings = _configure_readonly()
-    text = _stdin_text()
+    # A file needs no words, so a terminal with nothing piped in is not waited on.
+    text = "" if files and sys.stdin.isatty() else _stdin_text()
     # Inside a task, the task is the one whose agent is running this: its own thread, or
     # the owner's destination, and never another task's thread.
     own = os.environ.get(TASK_ID_ENV, "")
@@ -1964,7 +1977,8 @@ def slack_report_command(
         found = await _read_task(settings, task) if task is not None else None
         if task is not None and found is None:
             raise plugin.ReportRefused(f"there is no task {task}")
-        return await plugin.report(settings, text, task=found, workspace_name=workspace)
+        return await plugin.report(settings, text, task=found, workspace_name=workspace,
+                                   files=files or ())
 
     try:
         where = asyncio.run(run())

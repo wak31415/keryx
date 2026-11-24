@@ -477,6 +477,33 @@ says something to somebody else in your name, so read it as that.
   shared conversation its members read. The command holds an agent to its own task's
   thread; it is not a sandbox, and an agent with a shell is bounded by what the bot
   token can do, not by this command.
+- **A coding agent can put a file into Slack, and a file is whatever it can read.**
+  `keryx slack report --file` sends files to those same two places and no other: there
+  is no option that names a conversation. The agent runs as you, so the file can be
+  anything your account can read on that machine: a plot, a diff, a private key. It is
+  instructed to send only what your request asks for; that is an instruction, not an
+  enforcement, and an agent steered by text it read could send a file you did not ask
+  for. This adds no reach it lacked: it could already read that file and post its
+  contents as text. **Where it lands decides who reads it.** For a task you typed in
+  your direct messages with the app, or asked for on a call, that is you. For a task you
+  typed in a shared conversation, the file goes into that thread and every member of the
+  conversation can open it, download it and keep it, and removing it from Slack
+  afterwards does not take back a copy. Ask in your direct messages for anything you
+  would not hand to that room. Sending takes the bot permission `files:write`, which
+  also lets the bot token delete a file (`files.delete`); Keryx never calls that, and a
+  steered agent that read the token could.
+- **A few paths are refused, as a guard against a mistake and not as a wall.** The
+  command sends only a regular file that is readable, not empty, at most 1 GB, and at
+  most ten at once, and refuses anything inside Keryx's configuration directory
+  (`secrets.toml`, the PIN), through a link as well. An agent with a shell can copy a
+  file elsewhere first, so this stops an accident and nothing more. The upload goes to
+  an address Slack issues for it, over HTTPS, without the bot token; that address is not
+  logged or kept.
+- **A named MCP server is not used once Keryx has its own app.** If `slack_report.toml`
+  names a Slack MCP server from before the app existed, subagents are no longer pointed
+  at it and Codex is no longer handed it. A Claude subagent still has whatever servers
+  your own Claude configuration gives every session, that one included; it is told to
+  send through Keryx's command and no other Slack tool, which is an instruction too.
 - **What is sent is kept like everything else.** The words are in the call's transcript
   or the task's report.
 
@@ -579,8 +606,9 @@ a client of your own. **Keep this directory out of any dotfiles repository.** It
 secrets despite its name.
 
 What each of those secrets can do is up to whoever issued it, and Slack's are worth
-knowing about. The Slack app that `keryx setup` has you create gives its bot token one
-power at the lowest level, posting messages as the app (`chat:write`); it can no longer
+knowing about. The Slack app that `keryx setup` has you create gives its bot token two
+powers at the lowest level: posting messages as the app (`chat:write`), and uploading
+files as the app, which also covers deleting one (`files:write`). It can no longer
 read your workspace's member list or anybody's email address, which an earlier version
 used to find you by your address. **Keryx also holds a Slack user token at every level
 now**, because a bot token does not say who installed the app and a user token does: it

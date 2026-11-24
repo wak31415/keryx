@@ -79,9 +79,11 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   REF] [--text WORDS] [--from PERSON] [--only waiting|mentions] [--days N] [--question Q]
   [--limit N] [--before REF|TS] [--workspace NAME] [--json]` (the `slack_read` tool's
   filters and planner; fenced context, never a token), `slack conversations [WORDS]` and
-  `slack members [WORDS]` (names and ids), `slack report [--task ID] [--workspace NAME]`
-  (standard input, to the owner as Keryx, or into the thread a Slack-typed task was asked
-  in; inside a task it is that task's), and at `write` `slack message --to RECIPIENT
+  `slack members [WORDS]` (names and ids), `slack report [--task ID] [--workspace NAME]
+  [--file PATH …]` (standard input, to the owner as Keryx, or into the thread a
+  Slack-typed task was asked in; inside a task it is that task's; `--file` sends files to
+  that same place, with standard input as the words that go with them, which may be
+  none), and at `write` `slack message --to RECIPIENT
   [--confirm] [--workspace NAME]` (standard input, as the owner, in two runs: without
   `--confirm` it prints who a name is and the id to send to and sends nothing, and with
   it `--to` is that id)
@@ -201,7 +203,9 @@ remember:
   Slack's link that opens it ready to create, and `auth_test`, `open_connection` and `post_text` are what
   setup does with the pasted tokens (`setup/slack.py`, and the wizard's Slack step
   through three `Probes` fields). `slack_socket` is the Socket Mode
-  connection a workspace is heard over. A
+  connection a workspace is heard over, and `SlackFiles` (with `local_file`, which says
+  which paths may be sent) is a file in Slack's three steps, behind `keryx slack report
+  --file`. A
   member id is a valid `channel_id` (`chat.postMessage` delivers it to that member's
   messages from the app), so reports go to the member the owner's user token names, and
   nobody copies a channel id out of Slack. A Slack refusal is repeated as its error code
@@ -756,7 +760,8 @@ tokens, not legacy, and nothing it shows is anybody's), because Slack issues a u
 only for a user scope; Keryx never calls the method it allows. The bot reads nothing
 about members: `users:read` and `users:read.email` went with the address lookup.
 
-- **`announce`** — Keryx posts; nothing listens, nothing is read.
+- **`announce`** — Keryx posts, a file included (`chat:write` and `files:write`, the
+  two bot scopes every level has); nothing listens, nothing is read.
 - **`converse`** — and Keryx is sent the direct messages typed to the app itself, and
   nothing else: `im:history` as a bot scope, the `message.im` bot event, Socket Mode, the
   Messages tab writable, and `reactions:write` for the acknowledgement. One more token,
@@ -770,7 +775,7 @@ about members: `users:read` and `users:read.email` went with the address lookup.
   `im:write` to open a direct conversation they have not had before): one message to a
   person or a channel, or one reply in a thread, when they ask for exactly that.
 
-Eleven rulings:
+Thirteen rulings:
 
 - **Keryx acts when the owner writes to it: in the app's own direct messages every
   message is a request, and anywhere else only one that mentions it.** The owner's
@@ -970,6 +975,22 @@ Eleven rulings:
   its next start; the settings are read again for every message, so a level lowered is
   honoured at once.
 
+- **An app is made from the manifest of its day, and a missing scope never stops what
+  worked.** `files:write` arrived on 2026-11-23, after the first apps were made (the
+  owner: "we definitely need to add file upload permissions"). Slack says what a token
+  may do with every answer (`x-oauth-scopes`), so `keryx auth login slack` asks once of
+  a workspace that is whole at its level (`setup.slack.lacking_bot_scopes`): an app that
+  lacks a scope its level's manifest has is shown the steps that change the app there
+  is, with the manifest, exactly as raising a level shows them, and at a terminal Enter
+  at each token is all that follows the reinstall. Nothing is refused for it: `connect`
+  saves and says in one line what the app cannot do yet, text reports are untouched,
+  and a file sent meanwhile fails with one sentence that names the fix
+  (`plugins.slack._not_taken`), before anything is posted. Not said by Slack is never
+  taken to mean "nothing". `doctor` does not say so: none of its Slack checks asks Slack
+  anything, and what an app may do is not on file. A new scope goes in
+  `integrations.slack` beside the others and reaches every app this way; do not add a
+  second path.
+
 Search at `read` is one constant, `integrations.slack.SEARCH_SCOPES`: the legacy
 `search:read`, not the Real-time Search API's granular scopes, because that API's terms
 forbid storing its results and Keryx keeps transcripts and reports. Change it there.
@@ -985,9 +1006,8 @@ The owner named the tool set (2026-11-23), and it is the whole of it:
 | `slack_message` | `write` | One message to somebody else, a channel or a thread, **as the owner**. |
 
 A coding agent has the same three as commands (`keryx slack report | read | message`,
-with `conversations` and `members` for names), and where the owner has given subagents an
-MCP server for Slack that stays their way to send. Do not add a fourth tool, a mode, or a
-second way to read. Nine rulings:
+with `conversations` and `members` for names). Do not add a fourth tool, a mode, or a
+second way to read. Eleven rulings:
 
 - **One read tool, and one place a read is planned.** `slack_read` takes
   `conversation`, `thread`, `text`, `from`, `only` (`waiting` or `mentions`), `days`,
@@ -1089,6 +1109,41 @@ second way to read. Nine rulings:
   `AgentContext.task_env`), and inside a task the command is that task's: `--task` with
   another number is refused, so one task's agent does not post into another's thread.
   That binds the command, not a shell that can unset a variable (SECURITY.md).
+
+- **An app of Keryx's own outranks a named MCP server, for everything at once.** An
+  install from before the app could name a user-scope MCP server (`mcp_server` in the
+  plugin's file) that gave subagents Slack and lent the voice tool its token. On the
+  owner's first live run with his own app (2026-11-23) the voice posted through the app
+  and a subagent, told to use the server, sent an image as the old bot. So the two are
+  ranked in one function, `plugins.slack._route`: a saved bot token is Keryx's app, and
+  with one `SlackRoute.mcp_server` is None, which is all the subagent's paragraph
+  (`agents.base`) and Codex's server list (`agents.codex.mcp_servers`) ask. Ranking, and
+  not a login that blanks the name: his file already held both, a hand edit can put the
+  name back, and one function cannot disagree with itself. The name stays in the file,
+  unused, and counts again when the token is gone. An install with a server and no
+  token is told what it always was. `agents_send_with` says which it is, for `doctor`
+  and `keryx plugins`. A Claude subagent still *has* that server's tools, from its own
+  configuration, so `prompts/subagent_slack_report.md` says to send with the command
+  and no other Slack tool: a prompt rule.
+- **A file goes where a report goes, by the same command, in one fixed order.** `keryx
+  slack report --file PATH` is the only way Keryx's app sends one, and it takes no
+  destination either. Slack's upload is three requests (`integrations.slack.SlackFiles`:
+  `files.getUploadURLExternal`, the bytes to the address it answers with,
+  `files.completeUploadExternal`; the single-call `files.upload` is retired), and the
+  last is documented to take a conversation's id, where the owner's destination is a
+  member's. So (`plugins.slack.report`): every file is handed to Slack first, unshared,
+  which is where a missing scope or a refused file is found with nothing posted; then
+  the words are posted as any report is; then the files are shared into the
+  conversation Slack said the words landed in, and in the same thread for a task typed
+  on Slack. With no words, a conversation takes the files alone and a member's id is
+  led by the files' names. No `im:write` and no `conversations.open` for the bot: the
+  answer to a message is how a conversation is learnt. The address Slack gives for the
+  bytes is never kept, logged or put in an error, and the token is not sent to it.
+  `local_file` refuses what is not a regular readable file, an empty one, one over a
+  gigabyte, more than ten, and anything inside `KERYX_HOME`, by a sentence each and
+  before Slack is asked; that last stops a mistake, not a shell (SECURITY.md). None of
+  it has met real Slack yet: the order and the scope are from its reference, and the
+  first live file is the test.
 
 `slack_read` and `slack_message` need the PIN and load only when a workspace is at their
 level (refused with the reason otherwise). `slack_read` makes no model call to list and

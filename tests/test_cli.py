@@ -1291,6 +1291,26 @@ def test_plugins_lists_them_in_columns_whatever_the_longest_name(settings_stub):
     assert {line.index(" off ") for line in lines} == {len("add_calendar_event") + 1}
 
 
+def test_plugins_says_which_way_subagents_send_when_slack_names_a_server(
+    settings_stub, monkeypatch
+):
+    """Only where the file names one: the line says what is in use, which with a bot
+    token of Keryx's own is the command and not the server."""
+    with_token = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: with_token)
+    plugins.write_config(with_token, "slack_report", {"channel_id": "U0OWNER"})
+    plugins.install(with_token, "slack_report")
+
+    plain = runner.invoke(app, ["plugins"]).output
+    plugins.write_config(with_token, "slack_report", {"mcp_server": "chat"})
+    named = runner.invoke(app, ["plugins"]).output
+
+    assert "subagents send" not in plain
+    assert ("subagents send with `keryx slack report` (the chat MCP server named in the "
+            "file is not used while Keryx has an app of its own)") in named
+    assert "xoxb" not in named
+
+
 def test_a_google_plugin_names_the_sign_in_when_given_a_setting_it_lacks(settings_stub):
     result = runner.invoke(app, ["plugins", "install", "check_calendar", "--set", "token=x"])
 

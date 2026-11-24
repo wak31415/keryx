@@ -505,6 +505,12 @@ def test_with_no_mcp_server_of_theirs_slack_is_sent_through_keryx_own_command(un
     assert "pipe the text to `keryx slack report`:" in own
     assert "Do not send them anything on Slack unless they asked for Slack" in own
     assert "and nowhere else" in own
+    # A file goes the same way, and so not through whatever other Slack tool is to hand.
+    assert ('A file they asked for ("send me the plot", "the image", "the diff as a file") '
+            "goes with `--file PATH`, once for each file") in own
+    assert "end the command with `< /dev/null` to send the file with no words" in own
+    assert "Send with this command and no other Slack tool you may have" in own
+    assert "If it refuses a file, do not send it some other way" in own
     # Where they have given subagents an MCP server for Slack, that stays the way.
     assert "keryx slack report" not in theirs and "`slack` MCP server" in theirs
     assert "keryx slack report" not in unwrapped(render_subagent_suffix(task))

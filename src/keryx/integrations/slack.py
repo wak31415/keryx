@@ -4,7 +4,9 @@ The client behind the `slack_report` plugin (`keryx.plugins.slack`). The subagen
 already have Slack: a Slack MCP server configured user-scope in the Claude CLI is inherited
 by every CLI the runner spawns, and the plugin's `mcp_server` names it. The voice model has
 no such thing — it only has the tools this process registers — so this module gives it
-one, using the very same bot token and DM channel rather than a second Slack app.
+one, using the very same bot token and DM channel rather than a second Slack app. That is
+the install from before Keryx's own app: once a bot token is saved, the app outranks the
+server for everything (`keryx.plugins.slack._route`).
 
 `slack_credentials` reads the env pair first (so the process environment can override)
 and, when a server is named, falls back to that server's entry in the Claude CLI config,
@@ -29,16 +31,28 @@ also hears the direct messages typed to the app itself (Socket Mode, an app-leve
 and `read` also holds a user token that reads Slack as the owner. `app_manifest(access)`
 is the only place a level's scopes are written. What listens is `slack_socket`, and what
 acts on a message is `keryx.slack_inbox`.
+
+The third part is a file (`SlackFiles`, behind `keryx slack report --file`). Slack takes
+one in three steps, and each is its own request: `files.getUploadURLExternal` answers
+with an address and a file id, the bytes are posted to that address, and
+`files.completeUploadExternal` shares the file into a conversation. The single-call
+`files.upload` was retired on 2025-11-12. Both methods take the bot scope `files:write`
+(`FILE_BOT_SCOPES`), which every level's manifest has; an app made before it lacks the
+scope, and Slack then refuses the first step with `missing_scope`, before anything is
+sent. The address is not logged or kept, and the token is never sent to it.
 """
 
 import asyncio
 import http.client
 import json
 import logging
+import os
 import re
+import stat
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -53,11 +67,20 @@ AUTH_TEST_URL = "https://slack.com/api/auth.test"
 CONNECTIONS_OPEN_URL = "https://slack.com/api/apps.connections.open"
 REACTIONS_ADD_URL = "https://slack.com/api/reactions.add"
 CONVERSATIONS_HISTORY_URL = "https://slack.com/api/conversations.history"
+GET_UPLOAD_URL = "https://slack.com/api/files.getUploadURLExternal"
+COMPLETE_UPLOAD_URL = "https://slack.com/api/files.completeUploadExternal"
 #: What Slack answers a bot that asks for the history of a conversation it is not in.
 NOT_A_PARTY = frozenset({"channel_not_found", "not_in_channel"})
 #: Slack's own page for making an app; `new_app=1&manifest_json=…` opens it filled in.
 NEW_APP_URL = "https://api.slack.com/apps"
 REQUEST_TIMEOUT_S = 15.0
+#: For each read or write of a file's bytes on their way to Slack, not for the whole of it.
+UPLOAD_TIMEOUT_S = 60.0
+#: The most Slack takes in one file, and the most it puts in one message. Neither is in
+#: its API reference: both are its help centre's ("files up to 1GB", "up to 10 files"),
+#: read as the smaller gigabyte so nothing it would refuse is sent.
+MAX_FILE_BYTES = 1_000_000_000
+MAX_FILES = 10
 
 
 
@@ -85,11 +108,15 @@ class Access(StrEnum):
 #: The ladder, lowest first.
 LEVELS = tuple(Access)
 
+#: What sending a file takes: `files.getUploadURLExternal` and
+#: `files.completeUploadExternal` both ask for this one scope and no other. It also lets
+#: the app delete a file it uploaded, which nothing here does.
+FILE_BOT_SCOPES = ("files:write",)
 #: What the app may do at every level. `chat:write` posts, and with a member id as the
 #: channel it posts to that member's conversation with the app, so no `im:write`. The bot
 #: reads nothing about members: who the owner is comes from their own user token, so the
 #: `users:read` and `users:read.email` an address lookup needed are gone.
-BOT_SCOPES = ("chat:write",)
+BOT_SCOPES = ("chat:write", *FILE_BOT_SCOPES)
 #: Added at `converse`: `im:history` is the `message.im` event (only the app's own direct
 #: messages, as a bot scope), and `reactions:write` is the acknowledgement, a reaction,
 #: because a reaction notifies nobody and a "got it" message does.
@@ -192,6 +219,8 @@ _MEMBER_ID = re.compile(r"[A-Z0-9]{2,32}")
 _TS = re.compile(r"\d{1,12}\.\d{1,9}")
 #: A conversation's id: a channel's, a group's or a direct message's.
 _CONVERSATION = re.compile(r"[CDG][A-Z0-9]{2,31}")
+#: A file's id, as `files.getUploadURLExternal` answers with one.
+_FILE_ID = re.compile(r"F[A-Z0-9]{2,31}")
 
 #: The refusals setup meets often enough to say in words; the code always follows.
 _EXPLAINED = {
@@ -788,3 +817,143 @@ class SlackWebApi:
         if first is None:
             return Posted(error=error)
         return Posted(error=error, channel=first.channel, ts=first.ts)
+
+
+# --- files -------------------------------------------------------------------------------
+
+
+class FileRefused(ValueError):
+    """A path that will not be sent as a file, in one sentence. Slack was not asked."""
+
+
+@dataclass(frozen=True)
+class LocalFile:
+    """A file on this machine that may be sent: where it is, the name Slack shows it
+    under, and how many bytes it is."""
+
+    path: Path
+    name: str
+    size: int
+
+
+def local_file(path: str | Path, *, private: Iterable[Path] = ()) -> LocalFile:
+    """`path` as a file that may be sent, or `FileRefused` saying why not.
+
+    A regular file (a link to one counts), readable, not empty, and no larger than Slack
+    takes. Slack refuses a length of 0 (`missing_argument`, by its reference), so an empty
+    file is refused here with a sentence instead. Nothing inside a directory in `private`
+    is sent, wherever a link to it is: that is how Keryx's own configuration, with its
+    tokens and the PIN, is kept out of Slack by mistake. It stops a mistake, not a shell.
+    """
+    shown = str(path)[:200]
+    try:
+        found = Path(path).expanduser().resolve()
+        status = found.stat()
+    except (OSError, RuntimeError, ValueError):
+        raise FileRefused(f"there is no file at {shown}") from None
+    if not stat.S_ISREG(status.st_mode):
+        raise FileRefused(f"{shown} is not a regular file")
+    for directory in private:
+        if found.is_relative_to(Path(directory).resolve()):
+            raise FileRefused(f"{shown} is in Keryx's own configuration directory, and "
+                              "nothing in it is ever sent")
+    if not os.access(found, os.R_OK):
+        raise FileRefused(f"{shown} cannot be read")
+    if status.st_size == 0:
+        raise FileRefused(f"{shown} is empty, and Slack takes no empty file")
+    if status.st_size > MAX_FILE_BYTES:
+        raise FileRefused(f"{shown} is larger than the 1 GB Slack takes in one file")
+    return LocalFile(path=found, name=found.name, size=status.st_size)
+
+
+def local_files(paths: Sequence[str | Path], *, private: Iterable[Path] = ()) -> list[LocalFile]:
+    """Every path as a file that may be sent; `FileRefused` for the first that may not,
+    and for more of them than Slack puts in one message."""
+    if len(paths) > MAX_FILES:
+        raise FileRefused(f"that is {len(paths)} files, and Slack takes {MAX_FILES} in one "
+                          "message: send them in several")
+    private = tuple(private)
+    return [local_file(path, private=private) for path in paths]
+
+
+def _send_file(url: str, path: Path, size: int) -> None:
+    """The file's bytes, to the address Slack gave for them, read as they are sent.
+
+    Raw bytes, which the reference allows beside a multipart form, and no token: the
+    address is its own authorization. Slack answers 200 when it has them, and anything
+    else is a failure.
+    """
+    with path.open("rb") as handle:
+        request = urllib.request.Request(
+            url,
+            data=handle,
+            method="POST",
+            headers={"Content-Type": "application/octet-stream", "Content-Length": str(size)},
+        )
+        with urllib.request.urlopen(request, timeout=UPLOAD_TIMEOUT_S) as response:
+            if response.status != 200:
+                # Without the address: it is never in anything that could be printed.
+                raise urllib.error.HTTPError("", response.status, "", response.headers, None)
+
+
+@dataclass(frozen=True)
+class Uploaded(SlackResult):
+    """A file Slack holds and has not shared yet: its id, and the title it will carry.
+    With `error`, why it never got there. The address it was sent to is not kept."""
+
+    file_id: str = ""
+    title: str = ""
+
+
+class SlackFiles:
+    """Files as the app's bot, in Slack's three steps: `upload` is the first two
+    (`files.getUploadURLExternal`, then the bytes to the address it answers with) and
+    `share` the third (`files.completeUploadExternal`).
+
+    Two calls, so that a file Slack will not take is found out before the words that go
+    with it are posted. A file that is uploaded and never shared is discarded by Slack.
+    `files.getUploadURLExternal` takes a form and ignores a JSON body, by its reference.
+    Every failure is a code: nothing Slack or the network said is repeated or logged, and
+    neither is the address, which is all the authorization the bytes need.
+    """
+
+    def __init__(self, token: str, *, form=_post_form, post=_post, send=_send_file) -> None:
+        self._token = token
+        self._form = form
+        self._post = post
+        self._send = send
+
+    async def upload(self, file: LocalFile) -> Uploaded:
+        """Hand `file` to Slack, which then holds it unshared."""
+        result, error = await asyncio.to_thread(
+            _ask, self._form, GET_UPLOAD_URL,
+            {"filename": file.name, "length": file.size}, self._token,
+        )
+        if error:
+            return Uploaded(error=error)
+        url, file_id = result.get("upload_url"), result.get("file_id")
+        if not (isinstance(url, str) and url.startswith("https://")
+                and isinstance(file_id, str) and _FILE_ID.fullmatch(file_id)):
+            return Uploaded(error=UNKNOWN_ERROR)
+        try:
+            await asyncio.to_thread(self._send, url, file.path, file.size)
+        except urllib.error.HTTPError as exc:
+            return Uploaded(error=f"{_HTTP}{exc.code}")
+        except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
+            return Uploaded(error=UNREACHABLE)
+        return Uploaded(file_id=file_id, title=file.name)
+
+    async def share(
+        self, uploaded: Sequence[Uploaded], *, channel: str, thread_ts: str | None = None
+    ) -> SlackResult:
+        """Share what was uploaded into `channel`, a conversation's id, as one message;
+        with `thread_ts`, as a reply in that thread (its first message's timestamp)."""
+        payload: dict = {
+            "files": [{"id": each.file_id, "title": each.title} for each in uploaded],
+            "channel_id": channel,
+        }
+        if thread_ts:
+            payload["thread_ts"] = thread_ts
+        _, error = await asyncio.to_thread(
+            _ask, self._post, COMPLETE_UPLOAD_URL, payload, self._token)
+        return SlackResult(error=error)

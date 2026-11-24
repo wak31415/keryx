@@ -14,14 +14,20 @@ import pytest
 from keryx.integrations import slack
 from keryx.integrations.slack import (
     Access,
+    FileRefused,
+    LocalFile,
     Posted,
+    SlackFiles,
     SlackResult,
     SlackWebApi,
+    Uploaded,
     add_reaction,
     app_manifest,
     auth_test,
     is_dm,
     is_ts,
+    local_file,
+    local_files,
     manifest_json,
     markdown_pieces,
     new_app_url,
@@ -233,7 +239,7 @@ def test_the_manifest_is_a_bot_that_can_message_and_a_user_token_that_sees_nothi
     assert manifest["features"]["bot_user"]["display_name"] == "Keryx"
     assert manifest["features"]["app_home"]["messages_tab_enabled"] is True
     assert manifest["oauth_config"] == {
-        "scopes": {"bot": ["chat:write"], "user": ["emoji:read"]}
+        "scopes": {"bot": ["chat:write", "files:write"], "user": ["emoji:read"]}
     }
     # No events, no redirect URLs, no socket mode: nothing of Keryx's listens to Slack.
     assert set(manifest) == {"display_information", "features", "oauth_config"}
@@ -498,7 +504,8 @@ def test_converse_hears_its_own_direct_messages_over_a_socket_and_nothing_else()
     manifest = app_manifest(Access.CONVERSE)
 
     assert manifest["oauth_config"] == {"scopes": {
-        "bot": ["chat:write", "im:history", "reactions:write"], "user": ["emoji:read"]}}
+        "bot": ["chat:write", "files:write", "im:history", "reactions:write"],
+        "user": ["emoji:read"]}}
     assert manifest["settings"] == {
         "event_subscriptions": {"bot_events": ["message.im"]},
         "socket_mode_enabled": True,
@@ -514,7 +521,7 @@ def test_read_is_also_sent_mentions_of_the_app_and_asks_the_owner_for_a_user_tok
 
     # The bot may hear a mention of itself, and still read no conversation at all.
     assert manifest["oauth_config"]["scopes"]["bot"] == [
-        "chat:write", "im:history", "reactions:write", "app_mentions:read",
+        "chat:write", "files:write", "im:history", "reactions:write", "app_mentions:read",
     ]
     assert not any(scope.split(":")[0] in ("channels", "groups", "mpim")
                    for scope in manifest["oauth_config"]["scopes"]["bot"])
@@ -805,3 +812,276 @@ def test_checking_a_token_also_says_what_it_may_do_when_slack_says():
 
     assert said.scopes == ("search:read", "chat:write", "im:write")
     assert silent.scopes is None, "not said is never taken to mean nothing"
+
+
+# --- files: three steps, and nothing of Slack's answer repeated ----------------------------
+
+UPLOAD_ADDRESS = "https://files.slack.example/upload/v1/very-secret-ticket"
+
+
+class FakeUploads:
+    """Slack's three steps, each recorded: the two methods and the address between them."""
+
+    def __init__(self, *, url=UPLOAD_ADDRESS, file_id="F0PLOT", start=None, complete=None,
+                 send=None) -> None:
+        self.calls: list = []
+        self._start = start or {"ok": True, "upload_url": url, "file_id": file_id}
+        self._complete = complete or {"ok": True, "files": [{"id": file_id}]}
+        self._send = send
+
+    def form(self, url, params, token):
+        self.calls.append(("form", url, params, token))
+        return self._start
+
+    def post(self, url, payload, token):
+        self.calls.append(("json", url, payload, token))
+        return self._complete
+
+    def send(self, url, path, size):
+        self.calls.append(("bytes", url, path.read_bytes(), size))
+        if self._send is not None:
+            raise self._send
+
+    def files(self, token="xoxb-very-secret") -> SlackFiles:
+        return SlackFiles(token, form=self.form, post=self.post, send=self.send)
+
+
+@pytest.fixture
+def plot(tmp_path) -> LocalFile:
+    path = tmp_path / "plot.png"
+    path.write_bytes(b"\x89PNG and the rest")
+    return local_file(path)
+
+
+def test_every_level_can_send_a_file_and_with_the_one_scope_that_takes():
+    """`files:write` is the scope both upload methods ask for, and the only one added."""
+    assert slack.FILE_BOT_SCOPES == ("files:write",)
+    for access in Access:
+        scopes = app_manifest(access)["oauth_config"]["scopes"]
+        assert "files:write" in scopes["bot"] and "files:write" not in scopes["user"]
+        assert not any(scope.startswith(("files:read", "remote_files"))
+                       for scope in scopes["bot"] + scopes["user"])
+
+
+async def test_a_file_is_uploaded_in_slacks_two_steps_and_the_token_never_goes_with_the_bytes(
+    plot,
+):
+    slack_api = FakeUploads()
+
+    uploaded = await slack_api.files().upload(plot)
+
+    assert uploaded == Uploaded(file_id="F0PLOT", title="plot.png")
+    assert slack_api.calls == [
+        ("form", "https://slack.com/api/files.getUploadURLExternal",
+         {"filename": "plot.png", "length": plot.size}, "xoxb-very-secret"),
+        ("bytes", UPLOAD_ADDRESS, b"\x89PNG and the rest", plot.size),
+    ]
+
+
+async def test_the_address_slack_gives_is_never_kept_or_shown(plot, caplog):
+    caplog.set_level("DEBUG")
+
+    uploaded = await FakeUploads().files().upload(plot)
+    failed = await FakeUploads(send=OSError(UPLOAD_ADDRESS)).files().upload(plot)
+
+    for result in (uploaded, failed):
+        assert "very-secret" not in repr(result) + result.problem
+    assert "very-secret" not in caplog.text and "xoxb" not in caplog.text
+
+
+async def test_sharing_is_one_call_that_names_a_conversation_and_may_name_a_thread(plot):
+    slack_api = FakeUploads()
+    files = slack_api.files()
+    uploaded = [await files.upload(plot)]
+    slack_api.calls.clear()
+
+    assert (await files.share(uploaded, channel="D0REAL")).ok
+    assert (await files.share(uploaded, channel="C0SHARED", thread_ts="1700000000.000100")).ok
+
+    url = "https://slack.com/api/files.completeUploadExternal"
+    listed = [{"id": "F0PLOT", "title": "plot.png"}]
+    assert slack_api.calls == [
+        ("json", url, {"files": listed, "channel_id": "D0REAL"}, "xoxb-very-secret"),
+        ("json", url, {"files": listed, "channel_id": "C0SHARED",
+                       "thread_ts": "1700000000.000100"}, "xoxb-very-secret"),
+    ]
+
+
+async def test_an_app_without_the_scope_is_refused_before_any_byte_is_sent(plot):
+    slack_api = FakeUploads(start={"ok": False, "error": "missing_scope",
+                                   "needed": "files:write", "provided": "chat:write"})
+
+    uploaded = await slack_api.files().upload(plot)
+
+    assert uploaded.error == "missing_scope" and uploaded.file_id == ""
+    assert [call[0] for call in slack_api.calls] == ["form"]
+
+
+@pytest.mark.parametrize("start", [
+    {"ok": True, "file_id": "F0PLOT"},
+    {"ok": True, "upload_url": "http://files.slack.example/x", "file_id": "F0PLOT"},
+    {"ok": True, "upload_url": UPLOAD_ADDRESS},
+    {"ok": True, "upload_url": UPLOAD_ADDRESS, "file_id": "not an id"},
+    {"ok": True, "upload_url": 7, "file_id": "F0PLOT"},
+])
+async def test_an_answer_without_a_secure_address_and_a_file_id_sends_no_bytes(plot, start):
+    slack_api = FakeUploads(start=start)
+
+    assert (await slack_api.files().upload(plot)).error == "unknown_error"
+    assert [call[0] for call in slack_api.calls] == ["form"]
+
+
+@pytest.mark.parametrize(("failure", "code"), [
+    (urllib.error.HTTPError("", 413, "too large", None, None), "http_413"),
+    (urllib.error.URLError("no route"), "unreachable"),
+    (TimeoutError(), "unreachable"),
+    (http.client.RemoteDisconnected("cut"), "unreachable"),
+])
+async def test_bytes_that_do_not_arrive_are_a_code_and_nothing_is_shared(plot, failure, code):
+    uploaded = await FakeUploads(send=failure).files().upload(plot)
+
+    assert uploaded.error == code and not uploaded.ok and uploaded.file_id == ""
+
+
+async def test_a_share_slack_refuses_says_its_code(plot):
+    slack_api = FakeUploads(complete={"ok": False, "error": "not_in_channel"})
+    files = slack_api.files()
+
+    shared = await files.share([await files.upload(plot)], channel="C0SHARED")
+
+    assert shared.error == "not_in_channel" and shared.refused
+
+
+def test_the_bytes_go_as_they_are_to_the_address_with_no_token_and_are_read_as_sent(
+    plot, monkeypatch
+):
+    seen = {}
+
+    class Answer(io.BytesIO):
+        status = 200
+
+    def urlopen(request, timeout):
+        seen.update(url=request.full_url, headers=dict(request.header_items()),
+                    body=request.data.read(), method=request.get_method(), timeout=timeout)
+        return Answer(b"OK - 17")
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+    slack._send_file(UPLOAD_ADDRESS, plot.path, plot.size)
+
+    assert seen["url"] == UPLOAD_ADDRESS and seen["method"] == "POST"
+    assert seen["body"] == b"\x89PNG and the rest"
+    assert seen["headers"] == {"Content-type": "application/octet-stream",
+                               "Content-length": str(plot.size)}
+    assert "Authorization" not in seen["headers"]
+
+
+def test_anything_but_a_200_from_the_address_is_a_failure_that_does_not_carry_it(
+    plot, monkeypatch
+):
+    class Answer(io.BytesIO):
+        status = 202
+        headers = None
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: Answer(b""))
+
+    with pytest.raises(urllib.error.HTTPError) as failed:
+        slack._send_file(UPLOAD_ADDRESS, plot.path, plot.size)
+
+    assert failed.value.code == 202
+    assert "very-secret" not in str(failed.value) + str(failed.value.url)
+
+
+async def test_the_upload_url_is_asked_for_as_a_form_because_a_json_body_is_ignored(
+    monkeypatch, plot
+):
+    seen = {}
+
+    def urlopen(request, timeout):
+        seen.update(headers=dict(request.header_items()), data=request.data)
+        return io.BytesIO(json.dumps(
+            {"ok": True, "upload_url": UPLOAD_ADDRESS, "file_id": "F0PLOT"}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    sent = []
+    files = SlackFiles("xoxb-very-secret", send=lambda *a: sent.append(a))
+
+    uploaded = await files.upload(plot)
+
+    assert uploaded.ok and len(sent) == 1
+    assert seen["headers"]["Content-type"] == "application/x-www-form-urlencoded"
+    assert urllib.parse.parse_qs(seen["data"].decode()) == {
+        "filename": ["plot.png"], "length": [str(plot.size)]}
+
+
+# --- which paths may be sent ---------------------------------------------------------------
+
+
+def test_a_regular_readable_file_may_be_sent_under_its_own_name(tmp_path):
+    path = tmp_path / "results" / "loss curve.png"
+    path.parent.mkdir()
+    path.write_bytes(b"12345")
+    link = tmp_path / "latest.png"
+    link.symlink_to(path)
+
+    assert local_file(path) == LocalFile(path=path, name="loss curve.png", size=5)
+    # A link to a file is sent as the file it leads to.
+    assert local_file(str(link)).name == "loss curve.png"
+
+
+def test_what_is_not_a_file_that_can_be_sent_is_refused_in_one_sentence(tmp_path):
+    empty = tmp_path / "empty.txt"
+    empty.touch()
+    locked = tmp_path / "locked.txt"
+    locked.write_text("x")
+    locked.chmod(0)
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+
+    for path, says in [
+        (tmp_path / "missing.png", "there is no file at"),
+        (tmp_path, "is not a regular file"),
+        (loop, "there is no file at"),
+        (empty, "is empty, and Slack takes no empty file"),
+        (locked, "cannot be read"),
+        ("\0", "there is no file at"),
+    ]:
+        with pytest.raises(FileRefused, match=says):
+            local_file(path)
+
+
+def test_a_file_larger_than_slack_takes_is_refused_without_being_read(tmp_path, monkeypatch):
+    path = tmp_path / "weights.bin"
+    path.write_bytes(b"x" * 11)
+    monkeypatch.setattr(slack, "MAX_FILE_BYTES", 10)
+
+    with pytest.raises(FileRefused, match="larger than the 1 GB Slack takes in one file"):
+        local_file(path)
+    assert slack.MAX_FILE_BYTES == 10
+
+
+def test_nothing_in_a_private_directory_is_sent_whatever_leads_to_it(tmp_path):
+    home = tmp_path / "keryx-home"
+    home.mkdir()
+    (home / "secrets.toml").write_text('SLACK_BOT_TOKEN = "xoxb-very-secret"')
+    link = tmp_path / "notes.txt"
+    link.symlink_to(home / "secrets.toml")
+
+    for path in (home / "secrets.toml", link, home / ".." / "keryx-home" / "secrets.toml"):
+        with pytest.raises(FileRefused, match="Keryx's own configuration directory"):
+            local_file(path, private=[home])
+    # Beside it is not in it.
+    (tmp_path / "keryx-home-notes.txt").write_text("x")
+    assert local_file(tmp_path / "keryx-home-notes.txt", private=[home]).size == 1
+
+
+def test_more_files_than_one_message_takes_are_refused_together(tmp_path):
+    paths = []
+    for number in range(slack.MAX_FILES + 1):
+        paths.append(tmp_path / f"{number}.txt")
+        paths[-1].write_text("x")
+
+    assert [each.name for each in local_files(paths[:2])] == ["0.txt", "1.txt"]
+    with pytest.raises(FileRefused, match="that is 11 files, and Slack takes 10 in one message"):
+        local_files(paths)
+    assert slack.MAX_FILE_BYTES == 1_000_000_000 and slack.MAX_FILES == 10

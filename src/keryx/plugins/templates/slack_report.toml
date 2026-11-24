@@ -38,8 +38,10 @@ team_id = {team_id}
 bot_user_id = {bot_user_id}
 
 # The user-scope MCP server in ~/.claude.json (in $CLAUDE_CONFIG_DIR, when that is set)
-# that gives subagents Slack. Named, subagents are told to use it, and a missing token or
-# channel is read from its config. Blank: none.
+# that gives subagents Slack, for a machine with no Slack app of Keryx's own: subagents
+# are told to use it, and the token and channel are read from its config. Once
+# `keryx auth login slack` has saved a bot token, that app is used for everything and
+# this name is not: subagents send with `keryx slack report`, files included. Blank: none.
 mcp_server = {mcp_server}
 {extra}
 

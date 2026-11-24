@@ -270,10 +270,13 @@ def test_beside_an_mcp_server_a_token_brings_its_own_destination_and_says_so(cha
     assert ("post", "U0OWNER", TEST_MESSAGE) in fake.calls
     assert (
         "note: slack_report now posts with this token to U0OWNER, not with the chat MCP "
-        "server's token and channel; subagents still use that server"
+        "server's token and channel, and subagents are told to send with `keryx slack "
+        "report`, no longer through that server"
     ) in lines
     route = slack_route(settings.model_copy(update={"slack_bot_token": TOKEN}))
-    assert (route.token, route.channel, route.mcp_server) == (TOKEN, "U0OWNER", "chat")
+    assert (route.token, route.channel, route.mcp_server) == (TOKEN, "U0OWNER", None)
+    # The server's name is left in the file: logging out is what makes it count again.
+    assert plugins.read_config(settings, "slack_report")["mcp_server"] == "chat"
 
 
 def test_a_token_the_environment_also_sets_is_said(settings, monkeypatch):
@@ -1716,7 +1719,8 @@ def test_a_workspace_that_is_whole_is_told_how_it_stands_and_asked_nothing(setti
     lines = at_a_terminal(settings, fake, terminal)
 
     assert lines[0].startswith("Acme is connected at the converse level")
-    assert terminal.asked == [] and fake.calls == []
+    # The owner is asked nothing; Slack is asked once what the app's bot may do.
+    assert terminal.asked == [] and fake.calls == [("auth", TOKEN)]
 
 
 def test_an_older_install_is_asked_at_the_terminal_for_the_user_token_alone(settings):
@@ -1910,3 +1914,174 @@ def test_standard_input_is_still_told_apart_by_prefix_in_any_order(settings):
         connect(settings, FakeSlack(), token=tokens, access=Access.CONVERSE, test=False)
         assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
                                             "SLACK_USER_TOKEN": USER}
+
+
+# --- an app made before Keryx could send a file -------------------------------------------------
+
+#: What Slack says of the bot token of an app made from the manifest before files.
+BEFORE_FILES = Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX",
+                         scopes=("chat:write", "im:history", "reactions:write"))
+WITH_FILES = Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX",
+                       scopes=("chat:write", "files:write", "im:history", "reactions:write"))
+NO_FILES_NOTE = (
+    "note: the app in Slack lacks files:write, so it cannot send a file yet; everything "
+    "else works as it did. To add it: `keryx auth login slack` prints the manifest to "
+    "paste into the app, which is then reinstalled")
+
+
+@pytest.mark.parametrize(("checked", "lacks"), [
+    (BEFORE_FILES, ("files:write",)),
+    (WITH_FILES, ()),
+    (Workspace(team="Acme", scopes=("files:write",)),
+     ("chat:write", "im:history", "reactions:write")),
+    # Not said is never taken to mean nothing, and neither is not answered.
+    (Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"), ()),
+    (Workspace(error="unreachable"), ()),
+    (Workspace(error="invalid_auth", scopes=()), ()),
+])
+def test_what_the_apps_bot_may_not_yet_do_is_read_from_what_slack_says(checked, lacks):
+    assert slack.lacking_bot_scopes(checked, Access.CONVERSE) == lacks
+
+
+def test_logging_in_again_at_the_same_level_says_the_app_lacks_the_scope_and_how_to_add_it(
+    settings,
+):
+    """The same steps raising a level prints: the app there is, its manifest, a reinstall.
+    Never the link that makes a second app, and no token is asked for anew."""
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    fake = FakeSlack(workspace=BEFORE_FILES)
+
+    text = said(settings, api=fake.api())
+
+    assert fake.calls == [("auth", TOKEN)]
+    assert "api.slack.com/apps?new_app=1" not in text
+    assert ("Acme is connected at the converse level, with an app made before Keryx asked "
+            "for files:write, which sending a file takes. Nothing about it stops working: "
+            "reports arrive as they did, and a file cannot be sent until the app has it. "
+            "The app you have is updated, not made again:") in text
+    lines = text.splitlines()
+    for step in (
+        "1. Open https://api.slack.com/apps and pick the app you already have for Keryx. Do "
+        "not create a second one.",
+        "2. App Manifest: replace what is there with the manifest below, and click Save "
+        "Changes.",
+        "3. Install App: click Reinstall to Workspace, then Allow. The new permissions "
+        "count only after that.",
+    ):
+        assert step in lines
+    assert "OAuth Tokens:" not in text and "4. Optional:" in text and "5." not in text
+    manifest = json.loads(
+        text[text.index("The manifest:") + len("The manifest:"):text.index("Saving it")])
+    assert manifest == app_manifest(Access.CONVERSE, assistant="Lyra")
+    assert "files:write" in manifest["oauth_config"]["scopes"]["bot"]
+    assert "The bot token stays as it is." in text
+    assert ("Every token this level needs is saved already, so there is nothing to hand "
+            "over. Once the app is reinstalled:\n  keryx auth login slack --stdin < /dev/null"
+            ) in text
+    assert TOKEN not in text and "**" not in text and "`" not in text
+
+
+@pytest.mark.parametrize("workspace", [
+    WITH_FILES,
+    Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX"),
+    Workspace(error="unreachable"),
+])
+def test_an_app_that_has_the_scope_or_cannot_be_asked_is_told_how_it_stands_as_before(
+    settings, workspace
+):
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+
+    text = said(settings, api=FakeSlack(workspace=workspace).api())
+
+    assert text.startswith("Acme is connected at the converse level: ")
+    assert "made before" not in text and "The manifest:" not in text
+
+
+def test_slack_is_not_asked_about_scopes_for_a_workspace_that_is_not_whole_at_that_level(
+    settings,
+):
+    """A new app, a raised level and an older install are each shown a manifest anyway."""
+    fake = FakeSlack(workspace=BEFORE_FILES)
+
+    said(settings, api=fake.api())
+    said(connected_at(settings), access=Access.CONVERSE, api=fake.api())
+
+    assert fake.calls == []
+
+
+def test_at_a_terminal_that_login_waits_and_enter_at_each_token_is_all_it_takes(settings):
+    """The owner pastes the manifest, reinstalls, comes back and presses Enter: the bot
+    token is the same one, and Slack now says it may send a file."""
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    fake, terminal = FakeSlack(workspace=BEFORE_FILES), Terminal("", "", "")
+    api = fake.api()
+    asked = api.auth_test
+
+    def auth_test(token):
+        answer = asked(token)
+        # The first question is before the reinstall; every later one is after it.
+        if not token.startswith("xoxp-"):
+            fake.workspace = WITH_FILES
+        return answer
+
+    lines: list[str] = []
+    slack.login(settings, ConfigStore(), ask=terminal, echo=lines.append, test=False,
+                api=SlackApi(auth_test=auth_test, post_text=api.post_text,
+                             open_connection=api.open_connection))
+
+    text = "\n".join(lines)
+    assert "with an app made before Keryx asked for files:write" in text
+    assert ("Every token this level needs is saved already. Once the app is reinstalled, "
+            "come back to this terminal, which is waiting, and press Enter at each token "
+            "to keep it, or paste the User OAuth Token if Slack shows a different one "
+            "after the reinstall.") in lines
+    assert terminal.asked == [APP_PROMPT + KEEP, USER_PROMPT + KEEP, BOT_PROMPT + KEEP]
+    assert "connected to the Acme workspace at the converse level; SLACK_BOT_TOKEN, " \
+           "SLACK_APP_TOKEN and SLACK_USER_TOKEN saved" in lines
+    assert not any(line.startswith("note: the app in Slack lacks") for line in lines)
+
+
+def test_an_app_still_without_the_scope_is_saved_and_told_what_it_cannot_do_yet(settings):
+    """Text reports must keep working untouched, so a missing file scope refuses nothing:
+    the login says so in one line and how to mend it."""
+    fake = FakeSlack(workspace=BEFORE_FILES)
+
+    lines = connect(settings, fake, token=f"{TOKEN}\n{APP}\n{USER}", access=Access.CONVERSE)
+
+    assert NO_FILES_NOTE in lines
+    assert "sent a test message: it is in Slack, under Apps" in lines
+    assert saved(settings)["access"] == "converse" and connected(settings)
+
+
+def test_a_further_workspaces_note_names_it(settings):
+    connect(settings, FakeSlack(), test=False)
+    lab = Workspace(team="Lab", team_id="T0LAB", user_id="U0KERYX", scopes=("chat:write",))
+
+    lines = connect(settings, FakeSlack(workspace=lab), workspace="lab", test=False)
+
+    assert any("`keryx auth login slack --workspace lab` prints the manifest" in line
+               for line in lines)
+
+
+def test_an_app_with_the_scope_or_one_slack_says_nothing_of_hears_no_note(settings):
+    for workspace in (WITH_FILES, Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")):
+        lines = connect(settings, FakeSlack(workspace=workspace), test=False)
+
+        assert not any("lacks" in line for line in lines)
+
+
+def test_a_scope_that_is_not_the_file_one_is_said_without_talk_of_files(settings):
+    """The check is of every bot scope the level's manifest has, not of one."""
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    deaf = Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX",
+                     scopes=("chat:write", "files:write", "reactions:write"))
+
+    text = said(settings, api=FakeSlack(workspace=deaf).api())
+
+    assert ("with an app made before Keryx asked for im:history. What it could do it "
+            "still does. The app you have is updated, not made again:") in text
+    assert "a file" not in text.split("The manifest:")[0]
+    assert slack.lacks_note(("im:history",), "default") == (
+        "note: the app in Slack lacks im:history, so not everything at this level works "
+        "yet. To add it: `keryx auth login slack` prints the manifest to paste into the "
+        "app, which is then reinstalled")

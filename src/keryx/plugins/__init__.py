@@ -171,7 +171,8 @@ PLUGINS: dict[str, Plugin] = {
         keys=(
             *_SLACK_WORKSPACE,
             Key("mcp_server", "word", "",
-                "The user-scope MCP server in ~/.claude.json that gives subagents Slack"),
+                "The user-scope MCP server in ~/.claude.json that gives subagents Slack, "
+                "used only while Keryx has no bot token of its own"),
             Key("workspaces", "tables", {}, "Each further workspace, by the name you gave it",
                 fields=_SLACK_WORKSPACE, prefix="workspace-", by_sign_in=True),
         ),

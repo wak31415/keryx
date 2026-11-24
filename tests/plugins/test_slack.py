@@ -221,14 +221,71 @@ def test_with_the_plugin_off_there_is_no_route_whatever_the_token(slack_settings
     assert slack_sender(slack_settings) is None
 
 
-def test_with_the_plugin_on_the_route_carries_the_token_channel_and_server(slack_settings):
-    plugins.write_config(slack_settings, NAME, {"channel_id": "D123", "mcp_server": "chat"})
+def test_with_the_plugin_on_the_route_carries_the_token_and_channel(slack_settings):
+    plugins.write_config(slack_settings, NAME, {"channel_id": "D123"})
     plugins.install(slack_settings, NAME)
 
     route = slack_route(slack_settings)
 
-    assert (route.token, route.channel, route.mcp_server) == ("xoxb-test-token", "D123", "chat")
+    assert (route.token, route.channel, route.mcp_server) == ("xoxb-test-token", "D123", None)
     assert isinstance(slack_sender(slack_settings), SlackWebApi)
+
+
+@pytest.fixture
+def chat_server(settings, monkeypatch, tmp_path):
+    """A machine whose Slack is the `chat` MCP server's alone: no token of Keryx's own."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / ".claude.json").write_text(json.dumps({"mcpServers": {"chat": {
+        "command": "/bin/chat-mcp",
+        "env": {"SLACK_BOT_TOKEN": "xoxb-server", "SLACK_CHANNEL_ID": "D999"}}}}))
+    monkeypatch.setattr(plugins, "current_settings", lambda: settings)
+    plugins.write_config(settings, NAME, {"mcp_server": "chat"})
+    plugins.install(settings, NAME)
+    return settings
+
+
+def test_an_app_of_keryx_own_outranks_a_named_mcp_server_for_the_agents_as_for_the_token(
+    chat_server,
+):
+    """The owner's first live run: his file still named the server from before his app
+    existed, the voice posted through the app, and a subagent was told to send through
+    the server. One ranking now, so what posts and what is said cannot disagree."""
+    before = slack_route(chat_server)
+    own = chat_server.model_copy(update={"slack_bot_token": "xoxb-keryx-own"})
+    plugins.write_config(own, NAME, {"channel_id": "U0OWNER", "mcp_server": "chat"})
+
+    after = slack_route(own)
+
+    assert (before.token, before.channel, before.mcp_server) == ("xoxb-server", "D999", "chat")
+    assert (after.token, after.channel, after.mcp_server) == ("xoxb-keryx-own", "U0OWNER", None)
+    # The name is still in the file, and counts again once the token is gone.
+    assert plugins.read_config(own, NAME)["mcp_server"] == "chat"
+    assert slack_route(chat_server).mcp_server == "chat"
+
+
+def test_a_token_saved_since_startup_outranks_the_server_with_no_restart(
+    chat_server, monkeypatch
+):
+    monkeypatch.setattr(
+        plugins, "current_settings",
+        lambda: chat_server.model_copy(update={"slack_bot_token": "xoxb-keryx-own"}))
+
+    assert slack_route(chat_server).mcp_server is None
+
+
+def test_what_is_said_of_the_route_is_what_the_route_does(chat_server):
+    from keryx.plugins.slack import agents_send_with
+
+    own = chat_server.model_copy(update={"slack_bot_token": "xoxb-keryx-own"})
+    values = plugins.read_config(chat_server, NAME)
+
+    assert agents_send_with(chat_server, values) == (
+        "subagents send through the chat MCP server")
+    assert agents_send_with(own, values) == (
+        "subagents send with `keryx slack report` (the chat MCP server named in the file "
+        "is not used while Keryx has an app of its own)")
+    assert agents_send_with(own, {**values, "mcp_server": ""}) == (
+        "subagents send with `keryx slack report`")
 
 
 def test_turned_off_the_route_is_gone_at_once(slack_settings):
@@ -248,20 +305,42 @@ def test_a_route_with_no_token_has_no_sender(settings, monkeypatch):
     assert slack_sender(settings) is None
 
 
-def test_the_subagent_hears_about_slack_only_through_the_route(slack_settings):
+def test_the_subagent_hears_about_slack_only_through_the_route(settings, chat_server):
+    """An install with a named server and no token of its own is told what it always was."""
     task = Task(id=7, kind=TaskKind.AGENT, description="review the diff")
-    off = AgentContext.build(task, slack_settings, auth=CLAUDE_AUTH, model=None)
-    plugins.write_config(slack_settings, NAME, {"channel_id": "D123", "mcp_server": "chat"})
-    plugins.install(slack_settings, NAME)
-    on = AgentContext.build(task, slack_settings, auth=CLAUDE_AUTH, model=None)
+    on = AgentContext.build(task, chat_server, auth=CLAUDE_AUTH, model=None)
+    plugins.remove(chat_server, NAME)
+    off = AgentContext.build(task, chat_server, auth=CLAUDE_AUTH, model=None)
 
     assert "`chat` MCP server" not in off.instructions
-    assert "`chat` MCP server" in on.instructions
+    assert "`chat` MCP server" in on.instructions and "keryx slack report" not in on.instructions
     assert on.instructions == render_subagent_suffix(
-        task, slack_mcp_server="chat", owner=slack_settings.owner_label,
-        tools_dir=slack_settings.custom_tools_dir,
-        issues=IssueReporting.from_settings(slack_settings),
+        task, slack_mcp_server="chat", slack_report=True, owner=settings.owner_label,
+        tools_dir=settings.custom_tools_dir,
+        issues=IssueReporting.from_settings(settings),
     )
+
+
+def test_once_keryx_has_its_own_app_a_subagent_is_never_pointed_at_the_server(chat_server):
+    task = Task(id=7, kind=TaskKind.AGENT, description="send me the plot")
+    own = chat_server.model_copy(update={"slack_bot_token": "xoxb-keryx-own"})
+    plugins.write_config(own, NAME, {"channel_id": "U0OWNER", "mcp_server": "chat"})
+
+    built = AgentContext.build(task, own, auth=CLAUDE_AUTH, model=None)
+    told = " ".join(built.instructions.split())
+
+    assert "`keryx slack report`" in told and "--file PATH" in told
+    assert "MCP server" not in told and "chat" not in told
+    assert "no other Slack tool you may have" in told
+
+
+def test_once_keryx_has_its_own_app_codex_is_not_handed_the_server(chat_server):
+    from keryx.agents import codex
+
+    own = chat_server.model_copy(update={"slack_bot_token": "xoxb-keryx-own"})
+
+    assert list(codex.mcp_servers(chat_server)) == ["chat"]
+    assert codex.mcp_servers(own) == {}
 
 
 def test_every_template_loads_nothing_it_should_not(slack_settings):

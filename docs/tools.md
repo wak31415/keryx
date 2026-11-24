@@ -257,17 +257,34 @@ A new token brings its destination with it. The id of a direct message belongs t
 that opened it, so when you paste a token that is not the one Keryx has, an old `D…` id is
 not kept beside it: reports go to your own member id instead. A member id or a
 channel's id is kept. The same goes for an MCP server named in `slack_report.toml`: a token of the
-plugin's own never posts to the server's channel, and once it has its own destination the
-voice tool uses that pair while subagents go on using the server. If Keryx was running with
+plugin's own never posts to the server's channel. If Keryx was running with
 an older token, `keryx restart` moves it to the new one.
+
+**Your own app is used for everything, once you have one.** Before Keryx had an app of
+its own, `mcp_server` in `slack_report.toml` could name a Slack MCP server from your
+Claude configuration: subagents sent through it, and the voice tool borrowed its token.
+That still works on a machine with no bot token saved. Once `keryx auth login slack` has
+saved one, the app is what posts, for the voice and for subagents alike, and the server
+named in the file is not used: nothing has to be edited. `keryx doctor` and `keryx
+plugins` say which of the two is in use whenever the file names a server.
 
 Slack is opt-in in both directions. With `slack_report` on, every finished task's whole
 report is posted to your DM when it lands, so a call can stay short. Nothing else goes to
 it unless you asked. When you do ask, the voice sends text with `slack_report`, and a
-subagent sends it with `keryx slack report`, or (files, plots and reports included)
-through the MCP server named by `mcp_server` in `slack_report.toml` where you have given
-it one. Unasked, a file stays in the written report — the assistant tells you it is
+subagent sends text, a plot, an image or any other file with `keryx slack report`: to
+where your reports go, or into the thread you asked in when you typed the request on
+Slack, and nowhere else. A file arrives right after the words that go with it. Unasked,
+a file stays in the written report — the assistant tells you it is
 there and offers to send it, rather than reading a path down the phone.
+
+**An app made before 2026-11-23 cannot send a file yet.** Sending one takes a permission
+(`files:write`) that the manifest did not have then. Text reports are unaffected, and a
+file fails with a sentence that says what to do, which is this: run `keryx auth login
+slack` again. It asks Slack what your app may do, and when the permission is missing it
+prints the steps: open the app you have, paste the manifest it prints into **App
+Manifest** and save, then **Install App** > **Reinstall to Workspace** > **Allow**. At a
+terminal it waits meanwhile, and Enter at each token keeps the one saved. One file is at
+most 1 GB and one report at most ten files, which are Slack's own limits.
 
 ## One routing decision
 

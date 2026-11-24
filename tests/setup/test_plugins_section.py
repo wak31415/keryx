@@ -1056,7 +1056,9 @@ def test_a_token_beside_an_mcp_server_says_what_that_does_to_the_route(chat_serv
 
     saved = toml(ctx, "slack_report")
     assert (saved["channel_id"], saved["mcp_server"]) == ("U0OWNER", "chat")
-    assert any("not with the chat MCP server's" in line and "subagents still" in line
+    assert any("not with the chat MCP server's" in line
+               and "subagents are told to send with `keryx slack report`" in line
+               and "no longer through that server" in line
                for line in ctx.ui.lines("note"))
 
 

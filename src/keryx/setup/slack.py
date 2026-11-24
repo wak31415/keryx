@@ -61,6 +61,14 @@ owner line, the test message. Keryx stays the name of the service that posts, re
 listens. Slack learns a name only from a manifest, so an app keeps the one it was made
 with until its manifest is saved again, and a workspace that is connected is always
 shown that manifest (`_already`).
+
+**An app is made from the manifest of its day, and a later manifest may ask for more.**
+Sending a file takes the bot scope `files:write`, which apps made before it lack. Slack
+says what a token may do with every answer, so a login asks (`lacking_bot_scopes`): a
+workspace that is whole at its level and whose app lacks a scope is shown the steps that
+change the app there is, with the manifest, exactly as raising a level shows them. A
+missing scope never refuses a login or stops a report: what the app could do it still
+does, and `connect` says in one line what it cannot do yet.
 """
 
 import json
@@ -444,6 +452,31 @@ def _flags(name: str, access: Access, current: Access) -> str:
     return flags + ("" if access is current else f" --access {access}")
 
 
+def lacking_bot_scopes(checked: Workspace, access: Access) -> tuple[str, ...]:
+    """What the app's bot may not do yet that the manifest for `access` asks for, from
+    what Slack said of its bot token: an app made from an earlier manifest. Empty when
+    it lacks nothing, and when Slack did not answer or did not say what the token may
+    do, which is never taken to mean "nothing"."""
+    if not checked.ok or checked.scopes is None:
+        return ()
+    return tuple(scope for scope in slack.bot_scopes(access) if scope not in checked.scopes)
+
+
+def _for_files(lacks: tuple[str, ...]) -> bool:
+    return any(scope in lacks for scope in slack.FILE_BOT_SCOPES)
+
+
+def lacks_note(lacks: tuple[str, ...], workspace: str) -> str:
+    """One line for a connected app that lacks a scope: what that costs, and the fix."""
+    named = "" if workspace == DEFAULT else f" --workspace {workspace}"
+    cost = ("so it cannot send a file yet; everything else works as it did"
+            if set(lacks) <= set(slack.FILE_BOT_SCOPES)
+            else "so not everything at this level works yet")
+    return (f"note: the app in Slack lacks {', '.join(lacks)}, {cost}. To add it: `keryx "
+            f"auth login slack{named}` prints the manifest to paste into the app, which "
+            "is then reinstalled")
+
+
 def start(
     settings: Settings,
     echo: Callable[[str], None],
@@ -451,12 +484,16 @@ def start(
     workspace: str = DEFAULT,
     access: Access | None = None,
     waiting: bool = False,
+    api: "SlackApi | None" = None,
 ) -> Access | None:
     """`keryx auth login slack` with no token: what the level means, then the link (or
     the manifest, for an app there already is), the steps, and what comes next. A
     workspace that is connected at that level already, with every token a login takes,
     is told so, and never shown the link that would make a second app. One connected
-    before user tokens were asked for is shown how to update the app it has.
+    before user tokens were asked for is shown how to update the app it has, and so is
+    one whose app lacks a scope its level's manifest now has (`api`, which is how Slack
+    is asked what the bot token may do: once, and only for a workspace that is otherwise
+    whole; with none given, nothing is asked).
 
     What comes next depends on who is there. With nobody at a terminal it is the next
     command, `--stdin`, which is the one place that sentence is printed. `waiting` is a
@@ -479,10 +516,14 @@ def start(
     chosen = access is not None or connected
     access = access or current
     lacking = [kind for kind in token_kinds(access) if not saved.token(kind)]
+    lacks: tuple[str, ...] = ()
     if connected and access is current and lacking != [USER]:
-        # Whole, or without something its level runs on, which `_already` says.
-        _already(saved, echo, app=app, assistant=settings.assistant_name)
-        return None
+        if api is not None and not lacking:
+            lacks = lacking_bot_scopes(api.auth_test(saved.token(BOT) or ""), access)
+        if not lacks:
+            # Whole, or without something its level runs on, which `_already` says.
+            _already(saved, echo, app=app, assistant=settings.assistant_name)
+            return None
     # The app there is, is changed and never made again: to raise its level, or (at the
     # level it has) to give it the user token an app made before them never issued.
     raising = connected and access.reaches(current)
@@ -502,7 +543,15 @@ def start(
     if access.reaches(Access.WRITE):
         echo(WRITE_NOTE)
     echo("")
-    if raising and access is current:
+    if lacks:
+        what = (", which sending a file takes. Nothing about it stops working: reports "
+                "arrive as they did, and a file cannot be sent until the app has it"
+                if _for_files(lacks) else
+                ". What it could do it still does")
+        echo(f"{saved.label} is connected at the {current} level, with an app made before "
+             f"Keryx asked for {', '.join(lacks)}{what}. The app you have is updated, not "
+             "made again:\n")
+    elif raising and access is current:
         echo(f"{saved.label} is connected at the {current} level, from before Keryx asked "
              "for a user token. Nothing about it stops working. The next login takes "
              "one, because it is how Slack says which member you are, so the app you "
@@ -834,7 +883,9 @@ def login(
     Slack refuses (`TokenRefused`) is named and asked for again, `MAX_REFUSALS` times in
     all. Leaving at any question raises `Stopped`: nothing was saved, and the sentence
     says the same command picks it up. A workspace that is whole is told how it stands
-    and asked nothing.
+    and asked nothing, unless Slack says its app lacks a scope the level's manifest has
+    (`lacking_bot_scopes`): then the steps are the ones that update the app there is,
+    and Enter at each token is all that is asked.
     """
     again = "keryx auth login slack" + ("" if steps else " --stdin") + (
         "" if workspace == DEFAULT else f" --workspace {workspace}") + (
@@ -848,8 +899,10 @@ def login(
         )
     saved = on_file(settings, workspace, values)
     level = access or saved.access
+    api = api or SlackApi()
     if steps:
-        wanted = start(settings, echo, workspace=workspace, access=access, waiting=True)
+        wanted = start(settings, echo, workspace=workspace, access=access, waiting=True,
+                       api=api)
         if wanted is None:
             return
         level = wanted
@@ -1067,9 +1120,12 @@ def connect(
     if not status.on:
         raise SlackSetupError(f"{PLUGIN} is installed but refused: {status.refused}")
     echo(f"{PLUGIN} is on, from the next call")
+    if lacks := lacking_bot_scopes(team, access):
+        echo(lacks_note(lacks, workspace))
     if server:
         echo(f"note: {PLUGIN} now posts with this token to {channel}, not with the "
-             f"{server} MCP server's token and channel; subagents still use that server")
+             f"{server} MCP server's token and channel, and subagents are told to send "
+             "with `keryx slack report`, no longer through that server")
     if access.reaches(Access.CONVERSE):
         echo(LISTEN_NOTE.format(app=app))
         if not (is_member(channel) or slack.is_dm(channel)):

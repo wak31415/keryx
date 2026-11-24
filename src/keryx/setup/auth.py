@@ -299,7 +299,8 @@ def _slack(
                 settings, store, workspace=workspace, access=access, echo=echo):
             return
         if ask is None:
-            slack.start(settings, echo, workspace=workspace, access=access)
+            slack.start(settings, echo, workspace=workspace, access=access,
+                        api=slack.SlackApi())
             return
         slack.login(settings, store, ask=ask, echo=echo, test=options.test,
                     steps=not options.stdin, workspace=workspace, access=access)

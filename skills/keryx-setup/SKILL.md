@@ -131,7 +131,10 @@ that line. It is settled then and nothing changes it afterwards; connecting as s
 else is `keryx auth logout slack` and a new login, which is theirs to ask for. A machine
 that connected Slack before user tokens were asked for keeps working as it is: only if
 they want the level raised, or an owner on file, do they run the login again, and the
-first command then prints how to update the app they have.
+first command then prints how to update the app they have. The same goes for an app
+made before Keryx could send files: the first command asks Slack what the app may do,
+and when it lacks `files:write` it prints the manifest to paste into the app and the
+reinstall that follows. Relay those steps; text reports work meanwhile.
 
 The link opens Slack's own page for a new app with theirs already filled in. The steps
 the first command prints follow Slack's console, one visit to each page, and the tokens

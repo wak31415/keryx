@@ -2,6 +2,7 @@
 
 import dataclasses
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -639,6 +640,28 @@ def test_a_missing_projects_root_only_warns_and_says_where_tasks_go(healthy):
     assert "PROJECTS_ROOT" in check.detail
     assert "workspace" in check.detail
     assert not healthy.projects_root.exists()  # reported, never created
+
+
+def test_slack_says_which_way_subagents_send_when_the_file_names_a_server(
+    healthy, monkeypatch, tmp_path
+):
+    """The file may name an MCP server from before Keryx had an app of its own: with a
+    bot token saved the server is not used, and `doctor` says that, not the file."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    (tmp_path / "claude").mkdir()
+    (tmp_path / "claude" / ".claude.json").write_text(json.dumps({"mcpServers": {"chat": {
+        "env": {"SLACK_BOT_TOKEN": "xoxb-server", "SLACK_CHANNEL_ID": "D999"}}}}))
+    plugins.write_config(healthy, "slack_report", {"mcp_server": "chat"})
+    servers_only = healthy.model_copy(update={"slack_bot_token": None})
+    monkeypatch.setattr(plugins, "current_settings", lambda: servers_only)
+
+    own = by_name(run_doctor_checks(healthy))["slack_report"].detail
+    theirs = by_name(run_doctor_checks(servers_only))["slack_report"].detail
+
+    assert own == (
+        "on — posts to D123; subagents send with `keryx slack report` (the chat MCP server "
+        "named in the file is not used while Keryx has an app of its own)")
+    assert theirs.endswith("; subagents send through the chat MCP server")
 
 
 def test_every_plugin_on_names_what_it_does(healthy):

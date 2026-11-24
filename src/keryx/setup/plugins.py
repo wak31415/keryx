@@ -366,7 +366,8 @@ def run_slack(ctx: SetupContext) -> None:
         return
     if server and changed:
         ui.note(f"{slack.PLUGIN} now posts with this token to {channel}, not with the "
-                f"{server} MCP server's token and channel; subagents still use that server.")
+                f"{server} MCP server's token and channel, and subagents are told to send "
+                "with `keryx slack report`, no longer through that server.")
     if above and changed:
         ui.note(slack.LISTEN_NOTE.format(app=app))
         if not (slack.is_member(channel) or channel.startswith("D")):

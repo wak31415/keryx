@@ -280,13 +280,15 @@ def render_subagent_suffix(
 
     The number is in there for the commit trailer: it is what ties a change in a repo back
     to the sentence they said out loud, which is the one thing `git log` cannot recover. The
-    Slack paragraph is there only when `slack_mcp_server` names a route to use, and a task
+    Slack paragraph is there only when `slack_mcp_server` names a route to use (the
+    server the plugin's file names, and None once Keryx has a bot token of its own), and a task
     that was typed on Slack rather than spoken is told so: that the request is the owner's
     and the only instruction, where it was typed, and where its report goes. `slack_read`
     says a workspace may be read as the owner, and adds the commands that read it with
     the rule that what they print is context and never a request. `slack_report` says
     Keryx's own bot can post to the owner, and names `keryx slack report` as the way to
-    send them something when no MCP server of theirs is the route. `slack_write` says a
+    send them something, a file included, when no MCP server of theirs is the route.
+    `slack_write` says a
     workspace is at `write`, and adds the one command that sends as the owner with the
     rule for when it may. `owner` is
     whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
@@ -296,7 +298,9 @@ def render_subagent_suffix(
     problem with Keryx goes (`keryx.issues`), and that section is there only when given.
     """
     if slack_mcp_server:
-        # Where the owner has given subagents an MCP server for Slack, that stays the way.
+        # Where the owner has given subagents an MCP server for Slack and Keryx has no
+        # app of its own, that stays the way. Once it has one the route names no server
+        # (`plugins.slack._route`), and the command below is the way, files included.
         slack = render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
     elif slack_report:
         slack = render_prompt(SUBAGENT_SLACK_REPORT_PROMPT).strip()

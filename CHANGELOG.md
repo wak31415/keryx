@@ -46,6 +46,15 @@ the version starts with 0.
   channel. A coding agent working on your request can send one too, and nothing asks you
   first then: `SECURITY.md` says plainly what that risk is. Lowering the level to `read`
   removes the capability at once.
+- **A coding agent can send you a file on Slack.** "Send me the plot on Slack" now arrives
+  from your own app: `keryx slack report --file PATH` (repeat it for more) sends files to
+  where your reports go, or into the thread you asked in, with what is on standard input
+  as the words that go with them. The app needs one more permission for it,
+  `files:write`, which the manifest now has at every level. **An app you made before
+  this needs updating once**: run `keryx auth login slack` again, which asks Slack what
+  your app may do, prints the manifest to paste into it, and waits while you reinstall
+  it. Until then text reports work exactly as they did, and a file fails with a sentence
+  that says the same.
 - **`keryx plugins install slack_report --set`** takes where reports go (`channel_id`)
   and the MCP server, and refuses the access level, the owner and what Slack said of the
   workspace: those are settled by `keryx auth login slack`, which checks the tokens.
@@ -136,6 +145,13 @@ the version starts with 0.
 
 ### Changed
 
+- **Your own Slack app is used for everything once it is connected.** A machine that named
+  a Slack MCP server for subagents (`mcp_server` in `slack_report.toml`) before it had an
+  app kept sending subagents through that server afterwards, so a file asked for on a
+  call arrived from the old bot. With a bot token saved, subagents are now told to send
+  with `keryx slack report`, a Codex subagent is no longer handed the server, and the
+  name in the file is left alone and unused. A machine with only the server and no token
+  behaves as before. `keryx doctor` and `keryx plugins` say which is in use.
 - **Task numbers are no longer said or posted.** On a call the assistant calls a task by
   what you asked for, and no longer opens with its number after handing work over. A
   report posted to Slack is headed "Finished:" or "Failed:" and your request cut to a

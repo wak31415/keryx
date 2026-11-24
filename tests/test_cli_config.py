@@ -546,6 +546,28 @@ def test_auth_login_slack_alone_prints_the_link_and_the_next_command(home):
     assert home.stored() == {}
 
 
+def test_logging_in_again_with_an_app_made_before_files_prints_the_manifest_that_adds_them(
+    home, monkeypatch
+):
+    """Slack is asked what the bot token may do, and the answer decides what is printed:
+    never the link that makes a second app, and nothing is saved by asking."""
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--no-test",
+        input="xoxb-very-secret\nxoxp-user-secret\n")
+    stored = home.stored()
+    asked = fake_slack(monkeypatch, workspace=Workspace(
+        team="Acme", team_id="T0ACME", user_id="U0KERYX", scopes=("chat:write",)))
+
+    result = run("auth", "login", "slack")
+
+    assert result.exit_code == 0, result.output
+    assert asked == ["auth"] and home.stored() == stored
+    assert "with an app made before Keryx asked for files:write" in result.output
+    assert '"files:write"' in result.output and "new_app=1" not in result.output
+    assert "keryx auth login slack --stdin < /dev/null" in result.output
+    assert "xoxb-very-secret" not in result.output
+
+
 def test_auth_login_slack_takes_the_token_on_stdin_and_turns_the_plugin_on(
     home, tmp_path, monkeypatch
 ):

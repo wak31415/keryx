@@ -703,6 +703,34 @@ class FakePoster:
         return Posted(channel="D0X", ts="1.1") if self._ok else Posted(error="channel_not_found")
 
 
+class Sent(list):
+    """Everything the fakes were asked to do, in order; and what Slack is to refuse."""
+
+    refuse_upload = ""
+    refuse_share = ""
+
+
+class FakeFiles:
+    """`SlackFiles`, recording into the same list as the poster so the order shows."""
+
+    def __init__(self, sent: Sent) -> None:
+        self._sent = sent
+
+    async def upload(self, file):
+        from keryx.integrations.slack import Uploaded
+
+        self._sent.append(("upload", file.name, file.size))
+        if self._sent.refuse_upload:
+            return Uploaded(error=self._sent.refuse_upload)
+        return Uploaded(file_id=f"F0{len(self._sent)}", title=file.name)
+
+    async def share(self, uploaded, *, channel, thread_ts=None):
+        from keryx.integrations.slack import SlackResult
+
+        self._sent.append(("share", channel, thread_ts, [each.title for each in uploaded]))
+        return SlackResult(error=self._sent.refuse_share)
+
+
 @pytest.fixture
 def reporting(settings, monkeypatch):
     """A machine at converse, with a task that was typed on Slack and one that was not."""
@@ -710,10 +738,11 @@ def reporting(settings, monkeypatch):
     from keryx.tasks.models import Task, TaskKind
 
     made = at(settings, "converse")
-    sent: list = []
+    sent = Sent()
     monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
     monkeypatch.setattr(SlackWorkspace, "poster",
                         lambda self, channel=None: FakePoster(sent, channel or self.channel))
+    monkeypatch.setattr(SlackWorkspace, "files", lambda self: FakeFiles(sent))
     tasks = {
         7: Task(id=7, kind=TaskKind.AGENT, description="x", origin_channel="slack",
                 slack_workspace="default", slack_team_id="T0ACME", slack_channel="C0SHARED",
@@ -833,6 +862,257 @@ def test_slack_refusing_it_is_one_line_with_the_code(settings, monkeypatch):
 
     assert result.exit_code == 1
     assert result.output.strip() == "keryx slack: Slack did not take it (channel_not_found)"
+
+
+# --- `keryx slack report --file`: the same two places, and a file beside the words ----------
+
+
+@pytest.fixture
+def plot(tmp_path):
+    path = tmp_path / "plot.png"
+    path.write_bytes(b"\x89PNG and the rest")
+    return path
+
+
+def test_a_file_goes_where_the_owners_reports_go_after_the_words_it_goes_with(reporting, plot):
+    """Slack takes a file only into a conversation, and the owner's destination is their
+    member id: the words are posted first, as every report is, and the file is shared
+    into the conversation Slack says they landed in. It is uploaded before either, so a
+    file Slack will not take leaves nothing half sent."""
+    result = run_slack("report", "--file", str(plot), text="the loss curve\n")
+
+    assert result.exit_code == 0, result.output
+    assert reporting == [
+        ("upload", "plot.png", 17),
+        (OWNER, None, "the loss curve"),
+        ("share", "D0X", None, ["plot.png"]),
+    ]
+    assert result.output.strip() == (
+        "posted to the default workspace, where their reports go, with plot.png")
+
+
+def test_for_a_task_typed_on_slack_the_file_goes_into_the_thread_it_was_asked_in(
+    reporting, plot, monkeypatch
+):
+    monkeypatch.setenv("KERYX_TASK_ID", "7")
+
+    result = run_slack("report", "--file", str(plot), text="the loss curve")
+
+    assert result.exit_code == 0, result.output
+    assert reporting == [
+        ("upload", "plot.png", 17),
+        ("C0SHARED", "1700000000.000100", "the loss curve"),
+        ("share", "D0X", "1700000000.000100", ["plot.png"]),
+    ]
+    assert result.output.strip() == "posted to the thread the task was asked in, with plot.png"
+
+
+def test_a_file_has_no_other_destination_than_a_report_has(reporting, plot, monkeypatch):
+    """The same refusals, with nothing uploaded: another task's thread, a workspace that
+    is gone, an option that names a place."""
+    monkeypatch.setenv("KERYX_TASK_ID", "8")
+
+    other = run_slack("report", "--task", "7", "--file", str(plot), text="x")
+    named = run_slack("report", "--channel", "C0GEN", "--file", str(plot), text="x")
+    monkeypatch.setenv("KERYX_TASK_ID", "9")
+    gone = run_slack("report", "--file", str(plot), text="x")
+
+    assert other.exit_code == 1 and "never to another task's" in other.output
+    assert named.exit_code == 2
+    assert gone.exit_code == 1 and "a report never leaves its workspace" in gone.output
+    assert reporting == []
+
+
+def test_several_files_are_one_message_and_keep_their_order(reporting, plot, tmp_path):
+    diff = tmp_path / "change.diff"
+    diff.write_text("+1\n")
+
+    result = run_slack("report", "--file", str(plot), "--file", str(diff), text="both")
+
+    assert result.exit_code == 0, result.output
+    assert reporting[-1] == ("share", "D0X", None, ["plot.png", "change.diff"])
+    assert result.output.strip().endswith("with plot.png and change.diff")
+
+
+def test_with_no_words_a_file_to_a_member_is_led_by_its_name(reporting, plot):
+    """A member's id is not a conversation's, and Slack only says which conversation it
+    is by answering a message: with nothing to say, the message is the file's name."""
+    result = run_slack("report", "--file", str(plot), text="")
+
+    assert result.exit_code == 0, result.output
+    assert reporting == [
+        ("upload", "plot.png", 17),
+        (OWNER, None, "plot.png"),
+        ("share", "D0X", None, ["plot.png"]),
+    ]
+
+
+def test_with_no_words_a_file_into_a_known_thread_is_the_file_alone(
+    reporting, plot, monkeypatch
+):
+    monkeypatch.setenv("KERYX_TASK_ID", "7")
+
+    result = run_slack("report", "--file", str(plot), text="  \n")
+
+    assert result.exit_code == 0, result.output
+    assert reporting == [
+        ("upload", "plot.png", 17),
+        ("share", "C0SHARED", "1700000000.000100", ["plot.png"]),
+    ]
+
+
+def test_an_app_made_before_files_says_what_to_do_in_one_sentence_and_posts_nothing(
+    reporting, plot
+):
+    reporting.refuse_upload = "missing_scope"
+
+    result = run_slack("report", "--file", str(plot), text="the loss curve")
+
+    assert result.exit_code == 1
+    assert reporting == [("upload", "plot.png", 17)]
+    assert result.output.strip() == (
+        "keryx slack: the Slack app lacks the files:write permission, which sending a file "
+        "takes: run `keryx auth login slack` again, paste the manifest it prints into the "
+        "app and reinstall it. Nothing was posted")
+
+
+def test_that_app_still_posts_text_exactly_as_it_did(reporting):
+    reporting.refuse_upload = reporting.refuse_share = "missing_scope"
+
+    result = run_slack("report", text="here is the diff")
+
+    assert result.exit_code == 0, result.output
+    assert reporting == [(OWNER, None, "here is the diff")]
+    assert result.output.strip() == "posted to the default workspace, where their reports go"
+
+
+@pytest.mark.parametrize(("make", "says"), [
+    (lambda tmp: tmp / "missing.png", "there is no file at"),
+    (lambda tmp: tmp, "is not a regular file"),
+    (lambda tmp: (tmp / "empty.txt").touch() or tmp / "empty.txt",
+     "is empty, and Slack takes no empty file"),
+])
+def test_a_path_that_cannot_be_sent_is_one_sentence_and_slack_is_not_asked(
+    reporting, tmp_path, make, says
+):
+    result = run_slack("report", "--file", str(make(tmp_path)), text="x")
+
+    assert result.exit_code == 1 and says in result.output
+    assert result.output.strip().endswith("Nothing was posted") and reporting == []
+
+
+def test_keryx_own_configuration_is_never_sent_as_a_file(reporting, tmp_path, monkeypatch):
+    home = tmp_path / "keryx-home"
+    home.mkdir(exist_ok=True)
+    (home / "secrets.toml").write_text('SLACK_BOT_TOKEN = "xoxb-very-secret"')
+
+    result = run_slack("report", "--file", str(home / "secrets.toml"), text="x")
+
+    assert result.exit_code == 1 and reporting == []
+    assert "Keryx's own configuration directory" in result.output
+    assert "xoxb" not in result.output
+
+
+def test_a_file_slack_will_not_take_says_its_code_and_posts_nothing(reporting, plot):
+    reporting.refuse_upload = "file_uploads_disabled"
+
+    result = run_slack("report", "--file", str(plot), text="x")
+
+    assert result.exit_code == 1 and reporting == [("upload", "plot.png", 17)]
+    assert result.output.strip() == (
+        "keryx slack: Slack did not take plot.png (file_uploads_disabled). Nothing was posted")
+
+
+def test_a_file_that_is_not_shared_says_the_words_went_and_the_file_did_not(reporting, plot):
+    reporting.refuse_share = "not_in_channel"
+
+    result = run_slack("report", "--file", str(plot), text="the loss curve")
+
+    assert result.exit_code == 1
+    assert [each[0] for each in reporting] == ["upload", OWNER, "share"]
+    assert result.output.strip() == (
+        "keryx slack: the text was posted, but Slack did not take the file "
+        "(not_in_channel): send the file again without the text")
+
+
+def test_words_slack_refuses_leave_the_file_unshared(settings, plot, monkeypatch):
+    from keryx.plugins.slack import SlackWorkspace
+
+    made, sent = at(settings, "announce"), Sent()
+    monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
+    monkeypatch.setattr(SlackWorkspace, "poster",
+                        lambda self, channel=None: FakePoster(sent, "x", ok=False))
+    monkeypatch.setattr(SlackWorkspace, "files", lambda self: FakeFiles(sent))
+
+    result = run_slack("report", "--file", str(plot), text="x")
+
+    assert result.exit_code == 1 and [each[0] for each in sent] == ["upload", "x"]
+    assert result.output.strip() == "keryx slack: Slack did not take it (channel_not_found)"
+
+
+def test_a_message_that_landed_nowhere_slack_names_shares_no_file(settings, plot, monkeypatch):
+    """The conversation is Slack's answer, never the member id that was asked for."""
+    from keryx.integrations.slack import Posted
+    from keryx.plugins.slack import SlackWorkspace
+
+    class Vague(FakePoster):
+        async def post(self, text, **more):
+            await super().post(text, **more)
+            return Posted(channel=OWNER, ts="1.1")
+
+    made, sent = at(settings, "announce"), Sent()
+    monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
+    monkeypatch.setattr(SlackWorkspace, "poster",
+                        lambda self, channel=None: Vague(sent, channel or self.channel))
+    monkeypatch.setattr(SlackWorkspace, "files", lambda self: FakeFiles(sent))
+
+    result = run_slack("report", "--file", str(plot), text="x")
+
+    assert result.exit_code == 1 and "share" not in [each[0] for each in sent]
+    assert "did not say which conversation" in result.output
+
+
+def test_a_workspace_with_nothing_to_send_a_file_with_says_so(reporting, plot, monkeypatch):
+    from keryx.plugins.slack import SlackWorkspace
+
+    monkeypatch.setattr(SlackWorkspace, "files", lambda self: None)
+
+    result = run_slack("report", "--file", str(plot), text="x")
+
+    assert result.exit_code == 1 and reporting == []
+    assert "has no bot token to send a file with. Nothing was posted" in result.output
+
+
+def test_at_a_terminal_a_file_with_nothing_piped_in_is_not_waited_on(
+    reporting, plot, monkeypatch
+):
+    """A file needs no words, so standard input is read only when something is piped."""
+    from keryx import cli
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(cli, "_stdin_text", lambda: pytest.fail("standard input was read"))
+
+    cli.slack_report_command(task=None, workspace=None, files=[plot])
+
+    assert reporting[-1] == ("share", "D0X", None, ["plot.png"])
+
+
+def test_a_task_may_send_a_file_because_it_too_only_ever_reaches_the_owner(
+    reporting, plot, monkeypatch
+):
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+
+    assert run_slack("report", "--file", str(plot), text="x").exit_code == 0
+
+
+def test_a_workspace_holds_what_sends_its_files_with_the_bots_own_token(settings):
+    from keryx.integrations.slack import SlackFiles
+
+    [workspace] = slack_plugin.connected(at(settings, "announce"))
+
+    assert isinstance(workspace.files(), SlackFiles)
+    assert workspace.files()._token == "xoxb-1"
+    assert slack_plugin.SlackWorkspace("default").files() is None
 
 
 def test_every_subagent_is_told_of_each_command_only_while_it_would_work(settings):

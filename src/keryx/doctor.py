@@ -808,12 +808,16 @@ def _secret_without_plugin(settings: Settings, name: str) -> str | None:
     return None
 
 
-def _plugin_detail(status: plugins.Status) -> str:
+def _plugin_detail(status: plugins.Status, settings: Settings) -> str:
     values = status.values or {}
     if status.name == "slack_report":
+        from keryx.plugins.slack import agents_send_with
+
         where = values.get("channel_id") or "the MCP server's channel"
-        server = values.get("mcp_server")
-        return f"posts to {where}" + (f"; subagents use the {server} MCP server" if server else "")
+        # Which way subagents send is said where the file names a server, because the
+        # name alone does not: a bot token of Keryx's own outranks it.
+        named = f"; {agents_send_with(settings, values)}" if values.get("mcp_server") else ""
+        return f"posts to {where}{named}"
     if status.name == "slack_message":
         return "sends one message as you, after saying who to and what and hearing a yes"
     if status.name == "slack_read":
@@ -887,8 +891,8 @@ def plugin_checks(settings: Settings) -> list[Check]:
     for status in statuses:
         name = status.name
         if status.on:
-            checks.append(Check(name, True, f"on — {_plugin_detail(status)}", severity="soft",
-                                section="plugins"))
+            checks.append(Check(name, True, f"on — {_plugin_detail(status, settings)}",
+                                severity="soft", section="plugins"))
             if name == "slack_report":
                 checks.extend(slack_workspace_checks(settings, status.values or {}))
         elif status.installed:

@@ -104,7 +104,8 @@ checked is marked, and listed under "possible".
 | Turn cap and dollar cap | ✅ `SUBAGENT_MAX_TURNS`, `SUBAGENT_MAX_BUDGET_USD` | — |
 | Tokens recorded on the task (`keryx tasks show`, per project in `keryx tasks usage`) | ✅ | ✅ |
 | Dollar cost recorded on the task | ✅ | — a plan call has no price |
-| Slack, through the server the `slack_report` plugin names (`mcp_server`) | ✅ | ✅ handed over from `~/.claude.json` |
+| Slack, through the server the `slack_report` plugin names (`mcp_server`), while Keryx has no Slack app of its own | ✅ | ✅ handed over from `~/.claude.json` |
+| Slack, as your own app, once it is connected: `keryx slack report`, text and files | 🟡 a command the agent runs; the file upload has not met real Slack yet | 🟡 the same command |
 | Gmail, Calendar, Drive, Docs, Sheets and Slides, from `keryx auth login google` | ✅ | ✅ |
 | Gmail and Calendar with no Google sign-in | ✅ claude.ai connectors | — |
 | Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
