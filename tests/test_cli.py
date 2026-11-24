@@ -1550,6 +1550,71 @@ def test_plugins_remove_turns_one_off_and_keeps_its_settings(settings_stub):
     assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 9
 
 
+def test_a_line_from_before_the_boxes_is_never_answered_with_the_level_names(
+    settings_stub, monkeypatch
+):
+    """`keryx doctor`, `keryx plugins` and `keryx auth status`, for a file whose old
+    `access` line was mistyped: each says the line is not understood and what rewrites
+    it, and none lists the four levels a setting that is gone could take."""
+    settings = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    plugins.write_config(settings, "slack_report", {"channel_id": "U0OWNER"})
+    plugins.install(settings, "slack_report")
+    path = plugins.config_path(settings, "slack_report")
+    path.write_text('access = "reed"\n' + path.read_text().replace("allow = []\n", ""))
+
+    for command in (["doctor"], ["plugins"], ["auth", "status"]):
+        output = " ".join(runner.invoke(app, command).output.split())
+        assert "the access line is not understood" in output, command
+        assert "`keryx auth login slack` rewrites it" in output, command
+        assert "announce" not in output and "converse" not in output, command
+
+
+def slack_that_reads_and_sends(settings):
+    """A workspace with reading and sending ticked, and all three Slack tools on."""
+    settings = settings.model_copy(update={"slack_bot_token": "xoxb-1",
+                                           "slack_user_token": "xoxp-1"})
+    plugins.write_config(settings, "slack_report", {
+        "channel_id": "U0OWNER", "owner_id": "U0OWNER", "allow": ["read", "send"],
+        "team": "Acme", "team_id": "T0ACME", "bot_user_id": "U0KERYX"})
+    for name in ("slack_report", "slack_read", "slack_message"):
+        plugins.install(settings, name)
+    return settings
+
+
+@pytest.mark.parametrize("name", ["slack_report", "send_to_slack"])
+def test_turning_slack_report_off_turns_off_the_two_that_act_as_the_owner(
+    settings_stub, monkeypatch, name
+):
+    """The off switch its own settings file names. Left on, `slack_read` and
+    `slack_message` would be refused at every call and `keryx tools` would exit 1 until
+    somebody removed them by hand: they go with it, as when the wizard turns it off."""
+    settings = slack_that_reads_and_sends(settings_stub)
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+
+    result = runner.invoke(app, ["plugins", "remove", name, "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert f"{name} is off from the next call" in result.output
+    assert "slack_read is off with it, from the next call." in result.output
+    assert "slack_message is off with it, from the next call." in result.output
+    for tool in ("slack_report", "slack_read", "slack_message"):
+        assert not plugins.tool_path(settings, tool).is_file()
+    listed = runner.invoke(app, ["tools"])
+    assert listed.exit_code == 0 and "refused" not in listed.output
+
+
+def test_turning_one_of_the_two_off_leaves_the_others_as_they_are(settings_stub, monkeypatch):
+    settings = slack_that_reads_and_sends(settings_stub)
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+
+    result = runner.invoke(app, ["plugins", "remove", "slack_read", "--yes"])
+
+    assert result.exit_code == 0 and "off with it" not in result.output
+    assert plugins.tool_path(settings, "slack_report").is_file()
+    assert plugins.tool_path(settings, "slack_message").is_file()
+
+
 @pytest.mark.parametrize("argv", [["install", "check_billing"], ["remove", "check_billing"]])
 def test_the_service_may_not_turn_plugins_on_or_off(settings_stub, monkeypatch, argv):
     monkeypatch.setenv("KERYX_ACTOR", "service")

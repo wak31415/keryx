@@ -221,3 +221,15 @@ def _no_real_http(monkeypatch):
 
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", refuse)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_urllib(monkeypatch):
+    """Nor through urllib, which is what `integrations.slack` posts with: a sign-in whose
+    fake Slack a test forgot to hand over would otherwise ask the real one."""
+    import urllib.request
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a test tried to reach the network through urllib")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)

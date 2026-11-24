@@ -591,9 +591,10 @@ class Settings(BaseSettings):
     )
     slack_user_token: str | None = setting(
         None,
-        "Your own user token (`xoxp-`) from your Slack app. It is how Slack says which "
-        "member you are, always; it also reads Slack as you and sends as you, each only "
-        "once you have ticked it. `keryx auth login slack` sets it.",
+        "Your own user token (`xoxp-`) from your Slack app. It reads Slack as you and "
+        "sends as you, each only once you have ticked it, and is kept only while one of "
+        "the two is ticked: with neither, Keryx asks it once which member you are and "
+        "does not save it. `keryx auth login slack` sets it.",
         group="plugins",
         repr=False,
     )

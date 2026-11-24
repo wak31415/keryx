@@ -292,10 +292,10 @@ Your Slack app always sends you reports and files, and can do three more things,
 which you tick or leave unticked before the app is created and can untick at any time:
 act on what you type to it, read your Slack as you, and send messages as you. They are
 independent, and nothing is ticked for you. **With nothing ticked, Keryx posts to you
-and reads nothing; unticking everything is the off switch.** Whatever is ticked, Keryx
-holds your Slack user token, because it is how Slack says which member you are; with
-neither reading nor sending ticked that token can see nothing but the workspace's
-custom emoji, and Keryx uses it once, when you connect
+and reads nothing; unticking everything is the off switch.** Connecting takes your Slack
+user token whatever is ticked, because it is how Slack says which member you are, and
+**Keryx keeps that token only while reading or sending is ticked**: with neither, it is
+shown to Slack once, when you first connect, and not saved
 (see [Where secrets live](#where-secrets-live)). What is ticked is what Keryx goes by,
 never what a token on file could do: each tool and command asks again every time it is
 used.
@@ -371,6 +371,14 @@ direct messages typed to your app, which carries your assistant's name (Lyra by 
   auth login slack` (or `keryx setup`), with a box unticked, saves that at once: the
   tokens nothing ticked uses any more are forgotten, the voice tool that went with the
   box is turned off, and a running Keryx stops acting, reading or sending immediately.
+  That is the first thing either does with your answer, before any other question and
+  before Slack is asked anything: at a terminal, with the tokens piped in, and in
+  `keryx setup`, where it is the one thing saved before the step is finished, so leaving
+  the walk after unticking a box has still unticked it. What you ticked instead, if
+  anything, waits for its tokens. A running Keryx stops acting on what you type the
+  moment the box is unticked; the connection it listened on is closed by the next
+  message Slack sends over it, which is not acted on, and is opened again only by
+  `keryx restart`.
   The app in Slack still holds the permission it was made with until you paste the
   manifest the command prints into it and reinstall it; the command says so. `keryx auth
   logout slack` forgets a workspace altogether. Neither revokes anything at Slack: the
@@ -636,19 +644,32 @@ knowing about. The Slack app that `keryx setup` has you create gives its bot tok
 powers whatever you tick: posting messages as the app (`chat:write`), and uploading
 files as the app, which also covers deleting one (`files:write`). It can no longer
 read your workspace's member list or anybody's email address, which an earlier version
-used to find you by your address. **Keryx also holds a Slack user token whatever you
-tick**, because a bot token does not say who installed the app and a user token does: it
+used to find you by your address. **A Slack user token is in `secrets.toml` only while
+reading or sending is ticked.** Connecting for the first time takes one whatever you
+tick, because a bot token does not say who installed the app and a user token does: it
 is how Keryx knows which member you are. With neither reading nor sending ticked that
 token has one permission, `emoji:read`, which lets it list the workspace's custom emoji
-and nothing else; Keryx uses the token once, when you connect, to ask Slack whose it is,
-and never again. With reading ticked the same token can read your Slack, and with
-sending ticked post as you: the section above says what. Whatever a token can do, it
+and nothing else; Keryx shows it to Slack once, to ask whose it is, and does not save
+it. After that, who you are is on file (your member id, which is a setting and not a
+secret), so a workspace with neither box ticked is whole without a user token: no login
+asks for one, and one handed over anyway is checked to be yours (somebody else's is
+still refused) and not saved either. With reading ticked the token can read your Slack,
+and with sending ticked post as you: the section above says what, and then it is kept.
+Whatever a token can do, it
 can do for as long as it is valid, and so can anyone who can read `secrets.toml`.
 **Unticking a box does not shrink a token**: one issued with reading ticked keeps its
 permissions at Slack until you reinstall the app from the manifest for what is ticked
 now, so Keryx forgets that token once neither reading nor sending is ticked, and asks
-for the new one at your next login. (With one of the two still ticked the token is
-kept, since that one needs it, and Keryx simply stops using it for the other.) An app connected
+for the new one only when you tick one of them again. (With one of the two still ticked
+the token is kept, since that one needs it, and Keryx simply stops using it for the
+other.) **A token that can do more than is ticked is still taken**, because Keryx cannot
+shrink it and uses it only for what is ticked: with sending ticked alone, a token from
+an app that was not reinstalled after reading was unticked can still read at Slack, and
+so can anyone who reads `secrets.toml`. The login says so in one line, with the scopes,
+and pasting the manifest it prints into the app and reinstalling it is what trims that.
+A version of Keryx before this rule saved the user token whatever was ticked; it goes
+on working, and the next login or `keryx setup` that saves anything drops it and says
+so. An app connected
 before any of this, with a bot token alone, keeps working as it was.
 
 Keryx uses a file rather than a keyring on purpose. A service that systemd starts at boot,

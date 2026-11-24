@@ -18,9 +18,13 @@ list `keryx auth login slack` shows). Then it makes the app from the link for ex
 that — or, for an app there already is, shows the manifest that changes it — and checks
 each pasted token with Slack; its calls are `Probes` fields too. Ticking a box is also
 the yes to the voice tool that goes with it (`slack_read`, `slack_message`), so neither
-is in the list of plugins and neither is asked about again. It asks the same questions
-whatever it has already saved, because going back replays it. It sets up the first
-workspace; a further one is `keryx auth login slack --workspace NAME`.
+is in the list of plugins and neither is asked about again. Unticking a box is saved
+the moment the boxes are answered, as the command saves it, and a walk that only
+unticks asks nothing more. Otherwise it asks the same questions whatever it has already
+saved, because going back replays it; the one that comes and goes is the user token,
+which is asked for only with reading or sending ticked or while nobody is on file as
+the owner, and a replay passes over a recorded answer the step no longer asks for. It
+sets up the first workspace; a further one is `keryx auth login slack --workspace NAME`.
 
 The plugins that use the Google sign-in (`Plugin.google`: email, the calendar pair,
 documents) share one step, `run_google`. One whose service is connected is turned on and
@@ -129,8 +133,8 @@ def _turn_off(ctx: SetupContext, name: str) -> None:
     ui.success(f"{name} is off from the next call; its settings are kept for next time")
     if name == slack.PLUGIN:
         # The two that act as the owner go with it: left on, each would be refused at
-        # every call.
-        slack.sync_tools(ctx.settings, frozenset(), ui.note)
+        # every call. The same function `keryx plugins remove` calls.
+        slack.retire(ctx.settings, ui.note)
     # The Google sign-in is everything's, so turning email off never touches it. Only the
     # Gmail-only token an older sign-in left belongs to this plugin alone.
     older = gmail.legacy_token_path(ctx.settings)
@@ -185,39 +189,53 @@ def run_slack(ctx: SetupContext) -> None:
     answers are taken first and then shown to Slack as they always were: the bot token,
     the app-level one, the user's. One Slack does not take is asked for again there.
 
-    **Nothing is saved until every answer is in**, as on the command line: what is ticked
-    is all of its tokens or none of it, so a token Slack refuses, or a walk abandoned
-    half-way, leaves the install exactly as it was. Going back runs the step again from a
-    record of its answers (`rewind`), which has to find the questions it recorded: so
-    which are asked follows from this run's answers alone, and what is saved changes only
-    what each *offers* — the boxes already ticked, a token to keep, the test as a yes or
-    a no. A token typed again after going back is not shown to Slack a second time
-    (`ctx.memo`). The one exception is the house rule: the test is not offered on a plain
-    walk that changed nothing, so an owner already set up answers what they always did,
-    and a review asks it, as a review asks about everything that is set.
+    **Nothing that is added is saved until every answer is in**, as on the command line:
+    what is ticked is all of its tokens or none of it, so a token Slack refuses, or a
+    walk abandoned half-way, leaves what was there exactly as it was. **Taking a
+    permission away is the one exception, and it is saved the moment the boxes are
+    answered** (`_untick_now`, which is `slack.untick`, the command's own): it needs no
+    token and nothing from Slack, and somebody who unticks a box and then leaves the
+    walk has still said no. A walk that only unticks ends there, with the manifest that
+    takes it away in Slack too, and asks for no token.
+
+    Going back runs the step again from a record of its answers (`rewind`), which has to
+    find the questions it recorded: so which are asked follows from this run's answers
+    and what is on file when the boxes have been answered, and what is saved after that
+    changes only what each *offers* — the boxes already ticked, a token to keep, the
+    test as a yes or a no. The untick fits that because it is done before any other
+    question and cannot be done twice: a replay finds the box already off, so there is
+    nothing to take away again, and a walk that only unticked is remembered for the walk
+    (`ctx.memo`), so the same boxes end the step the same way and never go on to
+    questions the record does not have. Ticking the box again after going back is an
+    addition like any other, which waits for its tokens: nothing un-unticks. A token
+    typed again after going back is not shown to Slack a second time (`ctx.memo`). The
+    other exception is the house rule: the test is not offered on a plain walk that
+    changed nothing, so an owner already set up answers what they always did, and a
+    review asks it, as a review asks about everything that is set.
 
     A token that is not the one on file brings its destination with it (`slack.keeps`). A
     direct message's id belongs to the app that opened it, so it is not kept beside
     another token; and beside a named MCP server, a new token never posts to the server's
     channel. Ticking more for an app there is shows its new manifest, never the link
-    that would make a second app. Unticking forgets the tokens that no longer uses, and
-    shows the manifest that takes the permission away in Slack too, where the app holds
-    it until then. With anything ticked no token is saved unchecked: what a message is
-    held to, and whose Slack is read, is what Slack said of the token.
+    that would make a second app. With anything ticked no token is saved unchecked: what
+    a message is held to, and whose Slack is read, is what Slack said of the token.
 
     **One owner, fixed at connect, and Slack says who.** The owner is the member the user
     token belongs to (`auth.test`, in the bot token's own workspace), whatever is ticked,
     and reports go to that member unless a destination on file still goes with the bot
     token. An owner on file stands (`slack.standing_owner`), a user token that is
     somebody else's is asked for again, and no question here can change who the owner
-    is. **An install from before user tokens walks through untouched**: with the bot
-    token kept and nothing more ticked, the user token may be left blank, and everything
-    stays as it was.
+    is. **The user token is asked for, and kept, only with reading or sending ticked.**
+    With neither it is asked for only while nobody is on file as the owner, shown to
+    Slack once, and not saved; a workspace with its owner on file is asked for none.
+    **An install from before user tokens walks through untouched**: with the bot token
+    kept and nothing ticked, the user token may be left blank, and everything stays as
+    it was.
     """
     ui = ctx.ui
+    slack.mend(ctx.settings, ui.note)
     values = current_values(ctx, slack.PLUGIN)
     before = ctx.current(slack.TOKEN_KEY)
-    server, on_file = values["mcp_server"], values["channel_id"]
     # What is ticked now: nothing, for a machine with no app of Keryx's own yet.
     was: Allowed = permissions(values["allow"]) if before else frozenset()
     # What the app is called: the assistant's name, fitted for Slack.
@@ -225,16 +243,32 @@ def run_slack(ctx: SetupContext) -> None:
     app = slack.app_of(ctx.settings)
     ui.note(slack.ALWAYS.format(app=app))
     allowed = permissions(ui.checkbox(slack.QUESTION, slack.choices(app, was)))
-    added, removed = allowed - was, was - allowed
-    needed = token_kinds(allowed)
+    if before and was - allowed:
+        # Saved here and now, whatever is answered or left after this.
+        if not _untick_now(ctx, allowed):
+            return
+        values = current_values(ctx, slack.PLUGIN)
+        was = permissions(values["allow"])
+        if allowed == was:
+            return
+    elif before and allowed == was and ctx.memo.get(_UNTICKED) == allowed:
+        # A replay of a walk that only unticked: it is off already, and ends as it did.
+        _show_trimmed(ctx, allowed)
+        return
+    server, on_file = values["mcp_server"], values["channel_id"]
+    added = allowed - was
+    on_file_now = slack.on_file(ctx.settings, slack.DEFAULT, values)
+    # Whose messages count is settled once: a workspace with its owner on file is asked
+    # for a user token only when reading or sending as them is ticked.
+    owner_known = bool(before) and bool(on_file_now.owner_id)
+    acts = as_owner(allowed)
+    needed = token_kinds(allowed, owner_known=owner_known)
     # With `requests` every message is held to the workspace and the app Slack names;
     # with anything ticked at all, no token is taken unchecked.
     listens = Permission.REQUESTS in allowed
     strict = bool(allowed)
     for line in slack.meanings(added, app=app, whole=allowed):
         ui.note(line)
-    if removed:
-        ui.note(f"Turning off: {slack.words(removed)}.")
     held_user = ctx.current(slack.TOKEN_KEYS[USER])
     if not before:
         ui.link(new_app_url(allowed, assistant=assistant))
@@ -242,30 +276,29 @@ def run_slack(ctx: SetupContext) -> None:
         if server and not allowed:
             ui.note(f"Leave both tokens blank to go on using the {server} MCP server's "
                     "token and channel.")
-    elif added or (allowed == was and not held_user):
+    elif added or (USER in needed and not held_user):
         have = tuple(kind for kind in needed if ctx.current(slack.TOKEN_KEYS[kind]))
         ui.note("Slack is connected, so the app you have is changed, not made again."
                 if added else
-                "Slack is connected, and has no user token on file: it was connected "
-                "before Keryx asked for one, or the one it had was forgotten when reading "
-                "and sending as you were switched off. A user token is how Slack says "
-                "which member you are, so the app you have is updated, not made again.")
-        ui.markdown(slack.guide(allowed, app=app, raising=True, have=have))
+                "Slack is connected, and has no user token on file, which what is ticked "
+                "takes. The app you have is updated, not made again."
+                if owner_known else
+                "Slack is connected, and has no owner on file: it was connected before "
+                "Keryx asked for a user token, which is how Slack says which member you "
+                "are. The app you have is updated, not made again.")
+        ui.markdown(slack.guide(allowed, app=app, raising=True, have=have,
+                                owner_known=owner_known))
         ui.panel("The manifest", manifest_json(allowed, assistant=assistant))
         ui.note(slack.RENAME_NOTE.format(app=app))
-    on_file_now = slack.on_file(ctx.settings, slack.DEFAULT, values)
     # The questions, in the order the console shows the tokens. What the user token is
     # held to is only known once the bot token is in, so both are answered before either
     # is checked. Which are asked follows from what is on file and what is ticked alone.
     typed_app = _ask_slack_app_token(ctx) if APP in needed else None
     typed_user: str | None = None
-    # With the bot token kept: with reading and sending both unticked, the user token is
-    # forgotten and not asked for; an install from before user tokens may leave it blank.
-    forgotten = (bool(before) and bool(on_file_now.owner_id) and as_owner(was)
-                 and not as_owner(allowed))
-    if not forgotten:
-        may_stay = (bool(before) and not added and not held_user
-                    and (bool(on_file_now.owner_id) or not strict))
+    if USER in needed:
+        # An install from before user tokens, with nothing ticked, may leave it blank.
+        may_stay = (bool(before) and not owner_known and not added and not held_user
+                    and not strict)
         typed_user = _ask_slack_user_token(
             ctx, blank=may_stay or (bool(server) and not strict), untouched=may_stay)
     token, team = _slack_token(ctx, before, server, strict=strict)
@@ -294,23 +327,23 @@ def run_slack(ctx: SetupContext) -> None:
     owner = standing
     if typed_app is not None:
         tokens[APP] = _slack_app_token(ctx, typed_app)
-    if token == before and standing and as_owner(was) and not as_owner(allowed):
-        # Reading and sending both unticked: the owner on file stands, and the token
-        # that could act as them is not kept (`slack.untick` does the same). It is left
-        # out here, which is what forgets it.
-        pass
-    elif token:
-        # An install from before user tokens, walked with nothing changed, may leave it
-        # blank and stay exactly as it was; anything else takes one.
-        untouched = (token == before and not added
-                     and not ctx.current(slack.TOKEN_KEYS[USER])
-                     and (bool(standing) or not strict))
-        tokens[USER], owner, team = _slack_user_token(
+    # With a token and neither of these, the owner on file stands and nothing ticked acts
+    # as them: no user token is asked for, and one an earlier build kept is left out of
+    # `tokens`, which is what forgets it.
+    if token and (acts or not standing):
+        # Whose it is has to be asked of Slack: it will read or send as them, or nobody
+        # is the owner yet. An install from before user tokens, walked with nothing
+        # ticked and nothing changed, may leave it blank and stay exactly as it was.
+        untouched = token == before and not added and not held_user and not strict
+        shown, owner, team = _slack_user_token(
             ctx, team, standing, allowed, raised=bool(added), optional=untouched,
             bot_token=token, typed=typed_user)
-        if not tokens[USER]:
-            del tokens[USER]
-    elif typed_user and typed_user.strip() != held_user:
+        if shown and acts:
+            tokens[USER] = shown
+        elif shown:
+            # It said who they are, which is all it is for with neither box ticked.
+            ui.note(slack.USED_ONCE)
+    elif not token and typed_user and typed_user.strip() != held_user:
         ui.note("The user token is left out: it goes with a bot token of Keryx's own app, "
                 "and none was given.")
     # Where reports go: where they went, while that still goes with this token; else to
@@ -346,10 +379,6 @@ def run_slack(ctx: SetupContext) -> None:
     if allowed != was:
         # The voice tools follow the ticks: on with the box, off with it, nothing asked.
         slack.sync_tools(ctx.settings, allowed, ui.success)
-    if removed and not added and before:
-        # Off on this machine already. The app in Slack holds it until this is pasted.
-        ui.note(slack.STILL_HOLDS.format(url=slack.APPS_URL))
-        ui.panel("The manifest", manifest_json(allowed, assistant=assistant))
     # It is on now. From here it either sends a test or says why it did not.
     if not (token and channel):
         whose = "channel is" if token else "token and the channel are"
@@ -378,6 +407,45 @@ def run_slack(ctx: SetupContext) -> None:
     else:
         ui.warn(f"The test message did not go through: {sent.problem}. "
                 "What you entered is saved.")
+
+
+#: Where a walk remembers that its Slack step only unticked, and down to what.
+_UNTICKED = ("slack", "unticked")
+
+
+def _untick_now(ctx: SetupContext, allowed: Allowed) -> bool:
+    """Take away what the boxes just unticked, saved before anything else is asked:
+    `slack.untick`, exactly as `keryx auth login slack` does it. False (and said) when
+    it could not be saved.
+
+    What is being added still waits for its tokens, and its steps show the manifest, so
+    with something added the manifest is left to them. A walk that only unticks is shown
+    it here, and is remembered (`_UNTICKED`) so that going back to the boxes and
+    answering the same ends the step the same way.
+    """
+    ui = ctx.ui
+    try:
+        done = slack.untick(
+            ctx.settings, ctx.store, workspace=slack.DEFAULT, allowed=allowed,
+            echo=lambda line: ui.note(line.rstrip("\n")), steps_follow=True,
+            show=lambda manifest: ui.panel("The manifest", manifest))
+    except slack.SlackSetupError as error:
+        ui.error(f"What you unticked could not be saved: {error}. `keryx doctor` says how "
+                 "Slack stands now.")
+        ctx.refresh()
+        return False
+    ctx.refresh()
+    ctx.memo[_UNTICKED] = None if done.added else allowed
+    return True
+
+
+def _show_trimmed(ctx: SetupContext, allowed: Allowed) -> None:
+    """What a walk that only unticked is shown when its boxes are answered the same
+    again: that it is off already, and the manifest that takes it away in Slack."""
+    ui = ctx.ui
+    ui.note("That is off on this machine already, from when you unticked it.")
+    ui.note(slack.STILL_HOLDS.format(url=slack.APPS_URL))
+    ui.panel("The manifest", manifest_json(allowed, assistant=ctx.settings.assistant_name))
 
 
 def _save_slack_tokens(
@@ -531,7 +599,8 @@ def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str,
     user token has to be one of the same workspace).
 
     Never taken unchecked: which member it belongs to is the whole of what it is asked,
-    and only Slack can say. A kept one stands for the owner on file, and is asked again
+    and only Slack can say. Whether it is then saved is the caller's: only with reading
+    or sending ticked. A kept one stands for the owner on file, and is asked again
     only when there is none, or when more was ticked (`raised`), because what it may do
     has to have grown with it. One that belongs to another member than the owner on file is
     refused: a token is never how the owner changes. Nothing is saved here. `optional`
@@ -580,6 +649,8 @@ def _slack_user_token(ctx: SetupContext, team: Workspace, standing: str,
             answer = None
             continue
         ui.success(f"it is yours: you are {checked.user_id} there")
+        if more := slack.beyond_ticked(checked, allowed):
+            ui.note(slack.MORE_THAN_TICKED.format(scopes=", ".join(more), named=""))
         return answer, checked.user_id, team
 
 

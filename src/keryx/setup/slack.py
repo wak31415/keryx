@@ -33,7 +33,9 @@ paste into the app there is. **Unticking needs nothing from Slack and counts at 
 (`untick`): the selection is saved, the tokens it no longer uses are forgotten, the voice
 tool that went with it is turned off and a running service stops, whether or not the
 app in Slack is ever changed; the manifest that takes the permissions away there too is
-printed.
+printed. It is the same on every path, and always first: at a terminal (`login`), with
+the tokens piped in (`hand_over`), with nothing piped (`setup.auth`), and in the wizard,
+where it is the one thing saved before the step's last answer.
 
 **The voice tools follow the ticks** (`VOICE_TOOLS`, `sync_tools`): `slack_read` is on
 with `read` and `slack_message` with `send`, turned on and off by the login or the
@@ -49,18 +51,27 @@ owner; a workspace with `requests` ticked and without it hears nothing.
 
 **One owner, fixed at connect, and Slack says who** (the owner's rulings of 2026-11-23
 and 2026-11-24, "let's always require a user token"). A bot token names the bot, not
-whoever installed it, so connecting takes the owner's user token whatever is ticked, and
-`owner_id` (the one member whose messages may start work with no PIN) is the member
-`auth.test` says that token belongs to, in the bot token's own workspace. Nothing else
-establishes one: not an address looked up, not where reports go. It is recorded with
+whoever installed it, so a first connection takes the owner's user token whatever is
+ticked, and `owner_id` (the one member whose messages may start work with no PIN) is the
+member `auth.test` says that token belongs to, in the bot token's own workspace. Nothing
+else establishes one: not an address looked up, not where reports go. It is recorded with
 nothing ticked too, so ticking more later changes nothing about who the owner is. After
 that nothing changes it in place: a user token that is somebody else's is refused, a bot
 token from another workspace is refused, and there is no option for it. `keryx auth
 logout slack` and a new login is the one way to connect as somebody else. `OWNER_LINE`
-names the member on every connect that has `requests`. **With neither `read` nor `send`
-ticked the user token is used for that one `auth.test` and nothing after**: the clients
-that read and send as the owner are gated on what is ticked (`SlackWorkspace.reads`,
-`.writes`), not on a token being on file.
+names the member on every connect that has `requests`.
+
+**A user token is on file only while `read` or `send` is ticked.** With neither it is
+asked for only when the workspace has no owner on file (the first connection), shown to
+Slack once to learn which member the owner is, and not saved (`USED_ONCE`). A workspace
+with an owner on file and neither box ticked is whole without one: nothing asks for one
+(`token_kinds(…, owner_known=True)`), and a login that changes nothing ends with
+"connected, and nothing was changed". One handed over anyway is still held to the owner
+on file, and still not saved. One saved for that alone by an earlier build is dropped
+the next time a sign-in writes, in one line. The clients that read and send as the owner
+are gated on what is ticked besides (`SlackWorkspace.reads`, `.writes`). **A token that
+may do more at Slack than is ticked is taken** (`beyond_ticked`), because Keryx cannot
+shrink a token: one line says the app still grants more, and how the manifest trims it.
 
 A second workspace is the same flow with `--workspace NAME`: its own app from the same
 manifest, its own ticks, tokens, member id and destination (`plugins.slack`), and
@@ -212,6 +223,27 @@ STILL_OFF = {
 }
 #: Said when one is turned off because nothing is ticked for it any more.
 TURNED_OFF = "{name} is off with it, from the next call."
+#: Said with what was unticked: what a Keryx that is running does about it. Reading and
+#: sending are asked of the settings at every use, so they stop there and then; the
+#: connection `requests` listened on is closed by the next message Slack sends over it
+#: (`SlackInbox.handle`), and nothing that arrives meanwhile is acted on.
+STOPS = "A running Keryx stops at once."
+STOPS_LISTENING = (
+    "A running Keryx stops at once, and closes its connection to Slack at the next "
+    "message it is sent there."
+)
+#: Said when a user token was shown to Slack with neither reading nor sending ticked.
+USED_ONCE = (
+    "The user token said which member you are, and is not saved: nothing that is ticked "
+    "uses it."
+)
+#: Said when the user token may do more at Slack than is ticked: the app was not
+#: reinstalled from the manifest that takes it away. `{named}` is ` --workspace NAME`.
+MORE_THAN_TICKED = (
+    "note: the app in Slack still grants more than is ticked ({scopes}). Keryx does not "
+    "use it; pasting the manifest that `keryx auth login slack{named}` prints into the "
+    "app, and reinstalling it, trims that"
+)
 #: Said when something was unticked: the machine has stopped, and Slack has not.
 STILL_HOLDS = (
     "The app in Slack still holds the permissions it was made with until you paste this "
@@ -418,10 +450,11 @@ def parse_allow(values: Sequence[str] | None) -> Allowed | None:
         return BASE
     try:
         return slack.permissions(names)
-    except ValueError as error:
+    except ValueError:
+        # What was given is never said back: it is whatever was on the command line.
         raise SlackSetupError(
-            f"there is nothing called {str(error)[:40]!r} to allow: one or more of "
-            f"{', '.join(PERMISSIONS)}, or {NONE}"
+            f"--allow takes {', '.join(PERMISSIONS[:-1])} or {PERMISSIONS[-1]}, once "
+            f"for each, or {NONE} alone, and one given is none of those"
         ) from None
 
 
@@ -503,12 +536,13 @@ def app_of(settings: Settings) -> str:
 
 
 def steps(allowed: Allowed = BASE, *, app: str, raising: bool = False,
-          have: tuple[str, ...] = ()) -> list[str]:
+          have: tuple[str, ...] = (), owner_known: bool = False) -> list[str]:
     """What to do in Slack for `allowed`, as Markdown lines without their numbers.
 
     `app` is what the app is called. `raising` is the app there is, changed in place;
     `have` is the tokens already on file, which that leaves as they are and which are not
-    asked for again.
+    asked for again. `owner_known` is a workspace with its owner on file, which is asked
+    for no user token unless reading or sending is ticked.
 
     **Grouped by page, in the order the pages are met, and each page visited once** (the
     owner's report from the real console): the app-level token before the install, then
@@ -517,7 +551,8 @@ def steps(allowed: Allowed = BASE, *, app: str, raising: bool = False,
     ask for the tokens as the steps had them copied. Only what is ticked varies them:
     with no `requests` there is no app-level token and no step for one.
     """
-    wanted = tuple(kind for kind in token_kinds(allowed) if kind not in have)
+    wanted = tuple(kind for kind in token_kinds(allowed, owner_known=owner_known)
+                   if kind not in have)
     lines = list(RAISE_STEPS) if raising else [CREATE_STEP]
     if APP in wanted:
         lines.append(APP_TOKEN_STEP)
@@ -529,12 +564,10 @@ def steps(allowed: Allowed = BASE, *, app: str, raising: bool = False,
 
 
 def guide(allowed: Allowed = BASE, *, app: str, raising: bool = False,
-          have: tuple[str, ...] = ()) -> str:
+          have: tuple[str, ...] = (), owner_known: bool = False) -> str:
     """The steps, as Markdown for the wizard, which shows the link above them."""
-    return "\n".join(
-        f"{number}. {step}"
-        for number, step in enumerate(steps(allowed, app=app, raising=raising, have=have), 1)
-    )
+    listed = steps(allowed, app=app, raising=raising, have=have, owner_known=owner_known)
+    return "\n".join(f"{number}. {step}" for number, step in enumerate(listed, 1))
 
 
 def plain(text: str) -> str:
@@ -555,6 +588,22 @@ def keeps(channel: str, *, new_token: bool) -> bool:
     channel's is the workspace's, and stands whatever the token.
     """
     return bool(channel) and not (new_token and slack.is_dm(channel))
+
+
+#: Said when the plugin's file held a line from before the boxes that said nothing such
+#: a line ever could: it stopped the file being read, so the sign-in rewrote it.
+MENDED = (
+    "The Slack settings held a line from before the boxes that was not understood. It is "
+    "read as nothing ticked, and the file is rewritten without it."
+)
+
+
+def mend(settings: Settings, echo: Callable[[str], None]) -> None:
+    """Rewrite a plugin's file that only a line from before the boxes stops being read
+    (`plugins.mend`), and say so: the first thing every sign-in does, since the refusal
+    of such a line says that this command rewrites it."""
+    if plugins.mend(settings, PLUGIN):
+        echo(MENDED)
 
 
 def _config(settings: Settings) -> dict[str, Any]:
@@ -625,11 +674,12 @@ def start(
     """`keryx auth login slack` with no token: what was ticked, in full, then the link
     (or the manifest, for an app there already is), the steps, and what comes next. A
     workspace that is connected with exactly that ticked, and every token a login takes,
-    is told so, and never shown the link that would make a second app. One connected
-    before user tokens were asked for is shown how to update the app it has, and so is
-    one whose app lacks a scope its manifest now has (`api`, which is how Slack is asked
-    what the bot token may do: once, and only for a workspace that is otherwise whole;
-    with none given, nothing is asked).
+    is told so, and never shown the link that would make a second app: with neither
+    reading nor sending ticked and its owner on file, that is without a user token. One
+    connected before user tokens were asked for, which has no owner on file, is shown
+    how to update the app it has, and so is one whose app lacks a scope its manifest
+    now has (`api`, which is how Slack is asked what the bot token may do: once, and
+    only for a workspace that is otherwise whole; with none given, nothing is asked).
 
     `allowed` is what is ticked; None is what the workspace has. **With nothing
     connected and nothing said, nothing is guessed**: the choices are printed, with the
@@ -660,7 +710,11 @@ def start(
         return None
     current = saved.allowed if connected else BASE
     allowed = current if allowed is None else allowed
-    lacking = [kind for kind in token_kinds(allowed) if not saved.token(kind)]
+    # Who the owner is, is asked once: a workspace that has one on file takes a user
+    # token only for reading or sending as them.
+    owner_known = connected and bool(saved.owner_id)
+    needed = token_kinds(allowed, owner_known=owner_known)
+    lacking = [kind for kind in needed if not saved.token(kind)]
     lacks: tuple[str, ...] = ()
     if connected and allowed == current and lacking != [USER]:
         if api is not None and not lacking:
@@ -677,7 +731,7 @@ def start(
     # The app there is, is changed and never made again: to add what was ticked, or
     # (with nothing new) to give it the user token an app made before them never issued.
     raising = connected
-    have = tuple(kind for kind in token_kinds(allowed) if saved.token(kind)) if raising else ()
+    have = tuple(kind for kind in needed if saved.token(kind)) if raising else ()
     added = allowed - current
     if lacks:
         what = (", which sending a file takes. Nothing about it stops working: reports "
@@ -686,12 +740,18 @@ def start(
                 ". What it could do it still does")
         echo(f"{saved.label} is connected, with an app made before Keryx asked for "
              f"{', '.join(lacks)}{what}. The app you have is updated, not made again:\n")
+    elif raising and not added and owner_known:
+        # Ticked, and without the token it runs on: unset by hand, since a login never
+        # leaves it so.
+        acting = slack.ordered(allowed & {Permission.READ, Permission.SEND})
+        echo(f"{saved.label} is connected, and has no user token on file, which "
+             f"{words(acting)} {'take' if len(acting) > 1 else 'takes'}. The app you have "
+             "is updated, not made again:\n")
     elif raising and not added:
-        echo(f"{saved.label} is connected, and has no user token on file: it was "
-             "connected before Keryx asked for one, or the one it had was forgotten when "
-             "reading and sending as you were switched off. Nothing about it stops "
-             "working. The next login takes one, because it is how Slack says which "
-             "member you are, so the app you have is updated, not made again:\n")
+        echo(f"{saved.label} is connected, and has no owner on file: it was connected "
+             "before Keryx asked for a user token. Nothing about it stops working. The "
+             "next login takes one, because it is how Slack says which member you are, "
+             "so the app you have is updated, not made again:\n")
     elif raising:
         echo(f"{saved.label} is connected. Adding: {words(added)}.")
         for line in meanings(added, app=app, whole=allowed):
@@ -709,7 +769,8 @@ def start(
         echo("\nCreate your Slack app from this link:\n")
         echo(slack.new_app_url(allowed, assistant=settings.assistant_name))
         echo("")
-    for number, step in enumerate(steps(allowed, app=app, raising=raising, have=have), 1):
+    listed = steps(allowed, app=app, raising=raising, have=have, owner_known=owner_known)
+    for number, step in enumerate(listed, 1):
         echo(f"{number}. {shown(step)}")
     if raising:
         echo("\nThe manifest:\n")
@@ -717,13 +778,15 @@ def start(
         echo("\n" + RENAME_NOTE.format(app=app))
         if BOT in have:
             echo("The bot token stays as it is.")
-    wanted = [kind for kind in token_kinds(allowed) if kind not in have]
+    wanted = [kind for kind in needed if kind not in have]
     many = len(wanted) > 1
     what = "the tokens" if many else f"the {TOKEN_NAMES[wanted[0]]}" if wanted else ""
     # Where reports will go: where they go now, while the bot token stays; else to them.
     where = (f"reports keep going to {saved.channel}" if BOT in have and saved.channel
              else "reports go to you")
-    said = f"The user token says which member you are: {where}, and nothing else is asked."
+    said = (f"The user token says which member you are: {where}, and nothing else is asked."
+            if USER in needed else
+            f"Which member you are is on file, so no user token is asked for: {where}.")
     if waiting:
         # This command is still running, so the last thing said is to come back to it.
         echo("\n" + said)
@@ -759,7 +822,7 @@ def start(
 def sync_tools(settings: Settings, allowed: Allowed, echo: Callable[[str], None]) -> None:
     """Make the voice tools match what is ticked, after a change to it: each one whose
     box is in `allowed` is turned on when it is not, and each one that no workspace has
-    a tick for any more is turned off (`_retire`). Called only when what is ticked has
+    a tick for any more is turned off (`retire`). Called only when what is ticked has
     changed, so one turned off by hand stays off until then."""
     for permission, name in VOICE_TOOLS:
         if permission not in allowed or plugins.tool_path(settings, name).is_file():
@@ -770,13 +833,17 @@ def sync_tools(settings: Settings, allowed: Allowed, echo: Callable[[str], None]
             echo(str(error))
         else:
             echo(TURNED_ON[name])
-    _retire(settings, echo)
+    retire(settings, echo)
 
 
-def _retire(settings: Settings, echo: Callable[[str], None]) -> None:
+def retire(settings: Settings, echo: Callable[[str], None]) -> None:
     """Turn off each voice tool that no workspace has a tick for any more: left on, it
     would be refused at every call and reported by `keryx tools` until somebody removed
-    it. Its settings are set aside, as `keryx plugins remove` leaves them."""
+    it. Its settings are set aside, as `keryx plugins remove` leaves them.
+
+    The one function behind every way a tick goes: unticking, logging out, and turning
+    `slack_report` itself off, in the wizard's list and with `keryx plugins remove`
+    alike, after which no workspace has a tick for either."""
     for name, ready in (("slack_read", plugin.can_read), ("slack_message", plugin.can_write)):
         if plugins.tool_path(settings, name).is_file() and not ready(settings):
             plugins.remove(settings, name)
@@ -854,6 +921,8 @@ def untick(
     workspace: str,
     allowed: Allowed,
     echo: Callable[[str], None],
+    steps_follow: bool = False,
+    show: Callable[[str], None] | None = None,
 ) -> Unticked:
     """Take away, now, whatever a connected workspace has ticked that `allowed` has not,
     and say what `allowed` would add.
@@ -861,11 +930,15 @@ def untick(
     Slack is not asked anything, because taking a permission away needs nothing from it:
     what is ticked is saved without what was removed, the tokens that no longer uses are
     forgotten, the voice tools nothing is ticked for are turned off, and a running
-    service honours all of it at once. The app in Slack keeps what it was made with
-    until its manifest is pasted and it is reinstalled, which is said, with the
-    manifest, when taking away is all there is to do. Whatever is *added* is not applied
-    here: it needs the app changed and tokens checked, which is the rest of the login.
-    Nothing is touched, and both are empty, for a workspace that is not connected.
+    service honours all of it at once. **Every path that takes a selection calls this
+    before it does anything else**: the terminal, the pipe and the wizard. The app in
+    Slack keeps what it was made with until its manifest is pasted and it is reinstalled,
+    which is said, with the manifest for `allowed` (through `show`, when the caller has
+    its own way to show one); only where the steps that follow print that manifest
+    themselves (`steps_follow`, with something added) is it left to them. Whatever is
+    *added* is not applied here: it needs the app changed and tokens checked, which is
+    the rest of the login. Nothing is touched, and both are empty, for a workspace that
+    is not connected.
     """
     values = _config(settings)
     saved = on_file(settings, workspace, values)
@@ -875,31 +948,34 @@ def untick(
     if not removed:
         return Unticked(settings, added=added)
     staying = saved.allowed & allowed
-    # What still runs keeps its token; and the user token, when all it could ever do was
-    # say who they are. One that could read or send as them is forgotten once neither is
-    # ticked: it keeps those permissions at Slack until the app is reinstalled, and
-    # Keryx has no use for it meanwhile. The next login asks for the one the reinstalled
-    # app issues.
-    keeping = set(slack.used_kinds(staying))
-    if not as_owner(saved.allowed):
-        keeping.add(USER)
+    # A token is on file only while something ticked uses it. The user token goes with
+    # the last of reading and sending: it keeps those permissions at Slack until the app
+    # is reinstalled, Keryx has no use for it meanwhile, and who the owner is stays on
+    # file without it. Ticking either again asks for the one the app then issues.
+    keeping = slack.used_kinds(staying)
     kept = {kind: saved.tokens[kind] for kind in saved.tokens if kind in keeping}
     dropped = [kind for kind in saved.tokens if kind not in kept]
+    # The tokens first: should the file then refuse the write, what is still ticked has
+    # nothing to run on, which is closed.
     _save_tokens(store, settings, workspace, kept)
-    _write_workspace(settings, values, workspace, {"allow": _stored(staying)})
+    try:
+        _write_workspace(settings, values, workspace, {"allow": _stored(staying)})
+    except plugins.PluginConfigError as error:
+        raise SlackSetupError(
+            f"the tokens it used are forgotten, but {error}") from None
     gone = slack.ordered(removed)
     echo(f"{saved.label}: {words(gone)} {'are' if len(gone) > 1 else 'is'} off, from this "
-         "moment. A running Keryx stops at once.")
+         f"moment. {STOPS_LISTENING if Permission.REQUESTS in removed else STOPS}")
     if dropped:
         names = " and ".join(_stored_as(workspace, kind) for kind in dropped)
         echo(f"{names} {'are' if len(dropped) > 1 else 'is'} forgotten.")
-    _retire(settings, echo)
-    if added:
+    retire(settings, echo)
+    if added and steps_follow:
         echo("The app in Slack still holds the permissions it was made with until the "
              "manifest below is pasted into it.\n")
     else:
-        echo(STILL_HOLDS.format(url=APPS_URL) + "\n")
-        echo(slack.manifest_json(staying, assistant=settings.assistant_name))
+        echo(STILL_HOLDS.format(url=APPS_URL) + ("\n" if show is None else ""))
+        (show or echo)(slack.manifest_json(allowed, assistant=settings.assistant_name))
     if workspace == DEFAULT and dropped:
         # A token these settings were loaded with is not on file any more.
         settings = settings.model_copy(
@@ -966,7 +1042,7 @@ def logout(
         else:
             plugins.remove(settings, PLUGIN)
             echo(f"{PLUGIN} is off.")
-    _retire(settings, echo)
+    retire(settings, echo)
     echo("A running Keryx stops using it at once. The app itself is still installed in "
          f"Slack, and its tokens work until you remove it there: {APPS_URL}")
 
@@ -1117,7 +1193,9 @@ def login(
     (`untick`); if that was all, the command ends there. Then the link or the manifest
     and the steps (`start`; not with `steps` off), and each token still needed is asked
     for, hidden, through `ask`: one on file is kept with Enter, one that is not that
-    token is said so and asked again. Then everything `connect` does, with all the
+    token is said so and asked again. The user token is among them only with reading or
+    sending ticked, or for a workspace with no owner on file yet (`token_kinds`). Then
+    everything `connect` does, with all the
     tokens at once, so nothing more is saved until every one is taken. A token Slack
     refuses (`TokenRefused`) is named and asked for again, `MAX_REFUSALS` times in all.
     Leaving at any question raises `Stopped`, whose sentence says the same command picks
@@ -1148,7 +1226,8 @@ def login(
             boxes = True
             echo("")
         allowed = current if allowed is None else allowed
-        unticked = untick(settings, store, workspace=workspace, allowed=allowed, echo=echo)
+        unticked = untick(settings, store, workspace=workspace, allowed=allowed, echo=echo,
+                          steps_follow=steps)
         if unticked.done:
             return
         if removed := unticked.removed:
@@ -1160,7 +1239,7 @@ def login(
             if wanted is None:
                 return
             echo("")
-        for kind in token_kinds(allowed):
+        for kind in token_kinds(allowed, owner_known=connected and bool(saved.owner_id)):
             if answer := ask_token(kind, saved=bool(saved.token(kind)), ask=ask, echo=echo):
                 given[kind] = answer
         for refusals in range(1, MAX_REFUSALS + 1):
@@ -1170,7 +1249,7 @@ def login(
                 return
             except TokenRefused as refused:
                 echo(f"The {TOKEN_NAMES[refused.kind]} was not taken: {refused.why}. "
-                     "Nothing was saved.")
+                     f"Nothing {'else ' if removed else ''}was saved.")
                 if refusals == MAX_REFUSALS:
                     break
                 # The one on file is offered again only when it is not what was refused.
@@ -1183,6 +1262,50 @@ def login(
     kept = ("what you unticked stays off, and nothing else was saved" if removed
             else "nothing was saved")
     raise Stopped(f"{kept}: run `{again}` again to pick this up")
+
+
+def hand_over(
+    settings: Settings,
+    store: ConfigStore,
+    *,
+    tokens: str,
+    test: bool,
+    echo: Callable[[str], None],
+    api: SlackApi | None = None,
+    workspace: str = DEFAULT,
+    allowed: Allowed | None = None,
+) -> None:
+    """`keryx auth login slack --stdin` with no terminal: what a pipe or a coding agent
+    hands over, in the order a terminal takes it.
+
+    **Whatever `allowed` unticks is taken away first** (`untick`): saved, its tokens
+    forgotten and its voice tool turned off with nothing asked of Slack, and the
+    manifest that takes it away there printed, whatever becomes of the tokens after.
+    With nothing on standard input and nothing added, that is all, so unticking by pipe
+    works while Slack cannot be reached. Then `connect`, with what was handed over. A
+    refusal there says that what was unticked stays off.
+    """
+    unticked = Unticked(settings)
+    if allowed is not None:
+        unticked = untick(settings, store, workspace=workspace, allowed=allowed, echo=echo)
+        if unticked.done and not tokens.strip():
+            return
+    try:
+        connect(unticked.settings, store, tokens=tokens, test=test, echo=echo, api=api,
+                workspace=workspace, allowed=allowed)
+    except SlackSetupError as error:
+        if not unticked.removed:
+            raise
+        raise SlackSetupError(_after_untick(str(error))) from None
+
+
+def _after_untick(refusal: str) -> str:
+    """A refusal's sentence, said after something was unticked: that much was saved."""
+    for said in ("Nothing was saved", "nothing was saved"):
+        if said in refusal:
+            return refusal.replace(
+                said, f"{said[:7]} else was saved, and what you unticked stays off")
+    return f"{refusal}. What you unticked stays off"
 
 
 def read_tokens(text: str) -> dict[str, str]:
@@ -1259,7 +1382,11 @@ def connect(
     `allowed` is what is ticked; None is what the workspace has. `tokens` is standard
     input: one token to a line, told apart by how each starts; or, from a terminal that
     asked for each by name, the tokens by kind. A token this takes and that is on file
-    already need not be given again. A token that is refused
+    already need not be given again. **What is saved is what a connection runs on**
+    (`used_kinds`): the user token only with reading or sending ticked. With neither it
+    is needed only while no owner is on file, shown to Slack once, and not saved; one
+    handed over beside an owner on file is held to that owner and not saved either. A
+    token that is refused
     for what it is raises `TokenRefused`, which says which. Raises
     `SlackSetupError` saying how far it got. Nothing is saved until every token is one
     Slack takes, so a token Slack refuses leaves a working install exactly as it was.
@@ -1284,19 +1411,23 @@ def connect(
         )
     was = saved.allowed if saved.token(BOT) else BASE
     allowed = saved.allowed if allowed is None else allowed
-    needed = token_kinds(allowed)
-    if extra := [kind for kind in given if kind not in needed]:
+    acts = as_owner(allowed)
+    # A user token may always be handed over; whether one is needed follows from what
+    # is ticked and whether the owner is on file. Only the app-level one can be extra.
+    takes = token_kinds(allowed)
+    if extra := [kind for kind in given if kind not in takes]:
         names = " or ".join(f"{_a(TOKEN_NAMES[kind])} ({TOKEN_PREFIXES[kind]})" for kind in extra)
         raise SlackSetupError(
             f"what is ticked does not use {names}: leave it out, or add --allow "
             f"{Permission.REQUESTS}. Nothing was saved"
         )
-    held = {kind: given.get(kind) or saved.token(kind) or "" for kind in needed}
+    held = {kind: given.get(kind) or saved.token(kind) or "" for kind in takes}
+    needed = token_kinds(allowed, owner_known=bool(saved.token(BOT) and saved.owner_id))
     if lacking := [kind for kind in needed if not held[kind]]:
-        if not given:
-            raise SlackSetupError("no token on standard input")
         names = " and ".join(f"the {TOKEN_NAMES[kind]} ({TOKEN_PREFIXES[kind]})"
                              for kind in lacking)
+        if not given:
+            raise SlackSetupError(f"no token on standard input: this needs {names}")
         raise SlackSetupError(f"this also needs {names}, one to a line. Nothing was saved")
     before = saved.token(BOT) or ""
     token = held[BOT]
@@ -1316,16 +1447,21 @@ def connect(
     if problem := another_workspace(saved, team):
         raise SlackSetupError(problem)
     standing = standing_owner(saved, team, same_app=token == before)
-    # Reading and sending both unticked with nothing new handed over: the owner on file
-    # stands, and the token that could act as them is not kept, as `untick` does not
-    # keep it. One handed over now is the reinstalled app's, and is kept.
-    retired = (bool(standing) and USER not in given and as_owner(saved.allowed)
-               and not as_owner(allowed))
-    if retired:
-        needed = tuple(kind for kind in needed if kind != USER)
-        held.pop(USER)
-    token_owner = standing if retired else _check_user_token(api, held[USER], team, allowed)
-    if APP in needed:
+    # Whose the user token is, is asked of Slack when it is to be kept (reading or
+    # sending), when nobody is the owner yet, and when one was handed over anyway, which
+    # is still held to the owner on file. Otherwise that owner stands and none is asked.
+    shown_user: Workspace | None = None
+    if acts or not standing or USER in given:
+        if not held[USER]:
+            raise SlackSetupError(
+                f"this also needs the user token ({TOKEN_PREFIXES[USER]}), which says "
+                "which member you are: nobody is on file as the owner for this bot "
+                "token. Nothing was saved")
+        shown_user = _check_user_token(api, held[USER], team, allowed)
+    token_owner = shown_user.user_id if shown_user else standing
+    # What is kept is what a connection runs on: the user token only while it acts.
+    keeping = {kind: held[kind] for kind in slack.used_kinds(allowed)}
+    if APP in keeping:
         opened = api.open_connection(held[APP])
         if not opened.ok:
             why = (f"it could not be used ({opened.problem}): it needs the "
@@ -1341,8 +1477,8 @@ def connect(
     kept = saved.channel if keeps(saved.channel, new_token=token != before) else ""
     channel = kept or acted_on
 
-    _save_tokens(store, settings, workspace, held)
-    echo(_connected_line(workspace, team, needed))
+    _save_tokens(store, settings, workspace, keeping)
+    echo(_connected_line(workspace, team, tuple(keeping)))
     echo(_capital(in_words(allowed)) + ".")
     if workspace == DEFAULT and store.source_of(TOKEN_KEY, settings) == FROM_ENV:
         echo(f"note: {TOKEN_KEY} is also set in the environment, which wins")
@@ -1391,10 +1527,21 @@ def connect(
         if not (is_member(channel) or slack.is_dm(channel)):
             echo(CHANNEL_NOTE.format(channel=channel))
     for kind in saved.tokens:
-        if kind not in needed:
-            echo(f"{_stored_as(workspace, kind)} is forgotten: what is ticked does not "
-                 "use it" + (", and until the app is reinstalled it could still act as "
-                             "you in Slack" if kind == USER else ""))
+        if kind in keeping:
+            continue
+        if kind == USER and not as_owner(saved.allowed):
+            # One an earlier build saved with neither box ticked, to say who the owner is.
+            echo(f"{_stored_as(workspace, kind)} is forgotten: it was kept only to say "
+                 "which member you are, which is on file, and nothing that is ticked "
+                 "uses it")
+            continue
+        echo(f"{_stored_as(workspace, kind)} is forgotten: what is ticked does not "
+             "use it" + (", and until the app is reinstalled it could still act as "
+                         "you in Slack" if kind == USER else ""))
+    if shown_user is not None and not acts:
+        echo(USED_ONCE)
+    if shown_user is not None and (more := beyond_ticked(shown_user, allowed)):
+        echo(MORE_THAN_TICKED.format(scopes=", ".join(more), named=named))
 
     if not test:
         echo("no test message was sent (--no-test), so nothing has shown it arrives")
@@ -1471,9 +1618,29 @@ def scope_problem(checked: Workspace, allowed: Allowed) -> str | None:
             "User OAuth Token shown after that")
 
 
+def beyond_ticked(checked: Workspace, allowed: Allowed) -> tuple[str, ...]:
+    """What a user token Slack answered for may do there that nothing ticked uses: the
+    history, search, lookup and posting scopes a manifest of Keryx's could have asked
+    for and the one for `allowed` does not. Empty when there is none, and when Slack did
+    not say what the token may do.
+
+    Such a token is the app's from before a box was unticked, not yet reinstalled from
+    the manifest that takes the scope away. It is taken all the same, because Keryx
+    cannot shrink a token and what it does with one is gated on what is ticked; this is
+    what the one line that says so is made from (`MORE_THAN_TICKED`). The scope that
+    only makes Slack issue a user token (`IDENTITY_USER_SCOPES`) is never counted."""
+    if checked.scopes is None:
+        return ()
+    ticked = slack.user_scopes(allowed) if as_owner(allowed) else ()
+    known = slack.LOOKUP_USER_SCOPES + slack.READ_USER_SCOPES + slack.SEND_USER_SCOPES
+    return tuple(scope for scope in dict.fromkeys(known)
+                 if scope in checked.scopes and scope not in ticked)
+
+
 def _check_user_token(api: SlackApi, token: str, team: Workspace,
-                      allowed: Allowed = BASE) -> str:
-    """The member the user token acts as, who is the owner; refused in a sentence."""
+                      allowed: Allowed = BASE) -> Workspace:
+    """What Slack says of the user token, whose member is the owner; refused in a
+    sentence."""
     checked = api.auth_test(token)
     if problem := user_token_problem(checked, team) or scope_problem(checked, allowed):
         message = f"the user token cannot be used: {problem}. Nothing was saved"
@@ -1481,7 +1648,7 @@ def _check_user_token(api: SlackApi, token: str, team: Workspace,
         # token's workspace is known; anything else is Slack not having been asked.
         its_own = (checked.ok or checked.refused) and bool(team.team_id)
         raise TokenRefused(USER, problem, message) if its_own else SlackSetupError(message)
-    return checked.user_id
+    return checked
 
 
 def _connected_line(workspace: str, team: Workspace, kinds: tuple) -> str:

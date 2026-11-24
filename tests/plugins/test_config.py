@@ -328,13 +328,80 @@ def test_what_is_ticked_wins_over_a_level_an_older_build_wrote_beside_it(setting
     assert values["workspaces"]["work"]["allow"] == []
 
 
-def test_a_level_that_was_never_one_is_refused_in_a_sentence(settings):
+def test_a_level_that_was_never_one_is_refused_without_naming_the_levels_there_were(settings):
+    """The four levels are words of a setting that is gone, and the owner is never shown
+    them: the sentence names the line and the one command that rewrites it."""
     settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
     plugins.config_path(settings, "slack_report").write_text(
         'channel_id = "U0ME"\naccess = "everything"\n')
 
-    with pytest.raises(plugins.PluginConfigError, match="access must be one of announce"):
+    with pytest.raises(plugins.PluginConfigError) as refused:
         plugins.read_config(settings, "slack_report")
+
+    assert str(refused.value) == (
+        "slack_report: the access line is not understood (it is from before allow, which "
+        "replaced it): `keryx auth login slack` rewrites it")
+    for level in ("announce", "converse", "everything", "one of"):
+        assert level not in str(refused.value)
+
+
+def test_such_a_line_in_a_further_workspaces_table_is_named_the_same_way(settings):
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "slack_report").write_text(
+        'channel_id = "U0ME"\n\n[workspace-work]\naccess = "reed"\n')
+
+    with pytest.raises(plugins.PluginConfigError) as refused:
+        plugins.read_config(settings, "slack_report")
+
+    assert str(refused.value) == (
+        "slack_report: workspaces.work: the access line is not understood (it is from "
+        "before allow, which replaced it): `keryx auth login slack` rewrites it")
+
+
+def test_mending_rewrites_a_line_that_is_not_understood_as_nothing_ticked(settings):
+    """What the sign-in does first, which is what makes the refusal's advice true: the
+    line is read as nothing ticked, everything else in the file is kept, and a file that
+    reads as it is, is not touched."""
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    path = plugins.config_path(settings, "slack_report")
+    path.write_text('channel_id = "U0ME"\naccess = "reed"\nowner_id = "U0ME"\n'
+                    '\n[workspace-work]\naccess = "reed"\nchannel_id = "C0WORK"\n')
+
+    assert plugins.mend(settings, "slack_report") is True
+
+    values = plugins.read_config(settings, "slack_report")
+    assert (values["allow"], values["channel_id"], values["owner_id"]) == ([], "U0ME", "U0ME")
+    assert values["workspaces"]["work"] == {
+        **values["workspaces"]["work"], "allow": [], "channel_id": "C0WORK"}
+    assert not any(line.startswith("access") for line in path.read_text().splitlines())
+    before = path.read_text()
+    assert plugins.mend(settings, "slack_report") is False and path.read_text() == before
+
+
+def test_mending_leaves_a_level_that_is_understood_and_a_file_broken_some_other_way(settings):
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    path = plugins.config_path(settings, "slack_report")
+    path.write_text('channel_id = "U0ME"\naccess = "converse"\n')
+    assert plugins.mend(settings, "slack_report") is False
+    assert 'access = "converse"' in path.read_text()
+
+    path.write_text('channel_id = "not a word!"\naccess = "reed"\n')
+    assert plugins.mend(settings, "slack_report") is False
+    assert 'access = "reed"' in path.read_text()
+
+    path.unlink()
+    assert plugins.mend(settings, "slack_report") is False and not path.exists()
+
+
+def test_mending_a_plugin_that_is_off_rewrites_the_copy_set_aside(settings):
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    aside = plugins.off_path(settings, "slack_report")
+    aside.write_text('channel_id = "U0ME"\naccess = "reed"\n')
+
+    assert plugins.mend(settings, "slack_report") is True
+
+    assert not plugins.config_path(settings, "slack_report").exists()
+    assert plugins.read_config(settings, "slack_report")["allow"] == []
 
 
 def test_a_slack_file_from_before_workspaces_reads_as_one_with_nothing_ticked(settings):

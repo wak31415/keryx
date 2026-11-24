@@ -183,7 +183,7 @@ def test_a_test_message_that_fails_is_an_error_and_undoes_nothing(settings):
         "everything is saved, but the test message to U0OWNER did not go through: "
         "Slack does not know that channel or member (channel_not_found)"
     )
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
     assert plugins.is_on(settings, "slack_report") and channel(settings) == "U0OWNER"
 
 
@@ -358,10 +358,12 @@ def workspace_tokens() -> dict:
     return json.loads(ConfigStore()._secrets().get("SLACK_WORKSPACE_TOKENS", "{}"))
 
 
-def connected_at(settings, allowed=BASE, user=True, **tokens):
-    """`settings` with a first workspace already connected with `allowed` ticked, its user
-    token on file unless `user` is False (a workspace connected before user tokens were
-    asked for)."""
+def connected_at(settings, allowed=BASE, user=None, **tokens):
+    """`settings` with a first workspace already connected with `allowed` ticked and its
+    owner on file. Its user token is on file when reading or sending is ticked, which is
+    the only time one is kept; `user` says otherwise (True with neither ticked is what
+    an earlier build left, which saved one whatever was ticked)."""
+    user = slack_api.as_owner(allowed) if user is None else user
     plugins.write_config(settings, "slack_report", {
         "channel_id": "U0OWNER", "owner_id": "U0OWNER", "allow": stored(allowed), "team": "Acme",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX",
@@ -530,10 +532,10 @@ def test_adding_reading_to_requests_says_what_the_pair_unlocks_and_shows_the_man
     manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("Saving it")]
     assert json.loads(manifest) == app_manifest(READS, assistant="Lyra")
     assert "api.slack.com/apps?new_app=1" not in text
-    assert ("Every token this needs is saved already, so there is nothing to hand over. "
-            "Once the app is reinstalled:\n  keryx auth login slack --stdin --allow requests "
-            "--allow read < /dev/null") in text
-    assert "If Slack shows a different User OAuth Token after the reinstall" in text
+    # Reading takes the user token, which is not on file while neither box is ticked.
+    assert ("Then hand the user token over on standard input, never on the command line:"
+            "\n  keryx auth login slack --stdin --allow requests --allow read") in text
+    assert "4. OAuth & Permissions > OAuth Tokens: copy the User OAuth Token (xoxp-…)" in text
 
 
 def test_a_workspace_connected_with_exactly_that_is_told_so_and_never_shown_the_link(settings):
@@ -623,15 +625,16 @@ def test_requests_takes_three_tokens_in_any_order_and_the_user_token_says_who_is
 
     lines = connect(settings, fake, token=f"{APP}\n\n  {TOKEN}\n", allowed=REQUESTS)
 
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
-                                        "SLACK_USER_TOKEN": USER}
+    # The user token says who the owner is, and with neither reading nor sending ticked
+    # that is all it is for: it is not saved.
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
+    assert slack.USED_ONCE in lines
     assert saved(settings) == {
         "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER", "team": "Acme",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX", "mcp_server": "",
     }
     assert lines[:2] == [
-        "connected to the Acme workspace; SLACK_BOT_TOKEN, SLACK_APP_TOKEN and "
-        "SLACK_USER_TOKEN saved",
+        "connected to the Acme workspace; SLACK_BOT_TOKEN and SLACK_APP_TOKEN saved",
         "On: sending you reports and files, acting on what you type to the app; off: "
         "reading Slack as you, sending messages as you.",
     ]
@@ -708,12 +711,13 @@ def test_ticking_more_needs_only_the_token_that_is_new(settings):
     settings = connected_at(settings)
     fake = FakeSlack()
 
-    lines = connect(settings, fake, token=APP, allowed=REQUESTS, test=False)
+    lines = connect(settings, fake, token=APP, user=False, allowed=REQUESTS, test=False)
 
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
-                                        "SLACK_USER_TOKEN": USER}
+    # The owner is on file, so no user token is asked for or shown to Slack.
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
     assert saved(settings)["allow"] == ["requests"] and saved(settings)["owner_id"] == "U0OWNER"
-    assert fake.calls == [("auth", TOKEN), ("auth", USER), ("open", APP)]
+    assert fake.calls == [("auth", TOKEN), ("open", APP)]
+    assert slack.USED_ONCE not in lines
     assert "it keeps sending to U0OWNER" in lines
     assert not any("keryx restart`." in line and "old token" in line for line in lines)
 
@@ -724,7 +728,7 @@ def test_with_every_token_on_file_nothing_need_be_typed_again(settings):
 
     connect(settings, fake, token="", user=False, test=False)
 
-    assert fake.calls == [("auth", TOKEN), ("auth", USER), ("open", APP)]
+    assert fake.calls == [("auth", TOKEN), ("open", APP)]
     assert saved(settings)["allow"] == ["requests"]
 
 
@@ -891,7 +895,7 @@ def test_there_is_no_way_to_change_the_owner_in_place(settings):
         with pytest.raises(SlackSetupError, match="the user token belongs to U0COLLEAGUE"):
             connect(settings, theirs, token="xoxp-theirs", allowed=allowed, test=False)
         assert saved(settings)["owner_id"] == "U0OWNER"
-        assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == USER
+        assert "SLACK_USER_TOKEN" not in ConfigStore()._secrets()
 
 
 def test_logging_out_and_in_again_is_how_somebody_else_connects(settings):
@@ -957,13 +961,153 @@ def test_reading_unticked_with_a_token_given_forgets_what_is_no_longer_used(sett
     assert ("auth", USER) not in fake.calls
 
 
-def test_reading_unticked_with_the_reinstalled_apps_user_token_keeps_that_one(settings):
+def test_a_user_token_handed_over_with_neither_box_ticked_is_checked_and_never_saved(settings):
+    """A user token is on file only while reading or sending is ticked. One handed over
+    beside an owner on file is still shown to Slack, because somebody else's is refused
+    whatever is ticked, and that is all that is done with it."""
     settings = connected_at(settings, READS, SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+    fake = FakeSlack()
 
-    connect(settings, FakeSlack(), token="xoxp-after-reinstall", allowed=REQUESTS,
-            test=False)
+    lines = connect(settings, fake, token="xoxp-after-reinstall", allowed=REQUESTS,
+                    test=False)
 
-    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-after-reinstall"
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
+    assert ("auth", "xoxp-after-reinstall") in fake.calls
+    assert slack.USED_ONCE in lines
+    assert saved(settings)["owner_id"] == "U0OWNER"
+
+
+def test_a_first_connection_with_neither_box_ticked_learns_the_owner_and_keeps_no_user_token(
+    settings,
+):
+    for allowed in (BASE, REQUESTS):
+        fake = FakeSlack()
+        lines = connect(settings, fake, token=f"{TOKEN}\n{APP}" if allowed else TOKEN,
+                        allowed=allowed, test=False)
+
+        assert ("auth", USER) in fake.calls
+        assert "SLACK_USER_TOKEN" not in ConfigStore()._secrets()
+        assert saved(settings)["owner_id"] == "U0OWNER"
+        assert lines.count(slack.USED_ONCE) == 1
+        assert not any("SLACK_USER_TOKEN" in line for line in lines)
+        [one] = workspaces(settings)
+        assert one.missing == ()
+        logged_out(settings)
+
+
+def test_a_workspace_with_its_owner_on_file_and_neither_box_ticked_is_whole_without_one(
+    settings,
+):
+    """What `doctor`, `keryx auth status` and the login all ask: nothing is missing, and
+    a login that changes nothing is told so and shown no steps."""
+    settings = connected_at(settings, REQUESTS, SLACK_APP_TOKEN=APP)
+    [one] = workspaces(settings)
+
+    assert one.missing == () and one.listens and one.token("user") is None
+    text = said(settings)
+    assert text.startswith("Acme is connected, and nothing was changed.")
+    assert "Reinstall to Workspace" not in text and "user token" not in text.lower()
+
+
+def test_reading_ticked_with_its_user_token_gone_is_said_as_that_and_not_as_an_older_install(
+    settings,
+):
+    """No user token on file says nothing about when a workspace was connected: no owner
+    on file does. This one has its owner and lacks the token reading runs on, which only
+    unsetting it by hand leaves."""
+    settings = connected_at(settings, READ, user=False)
+    [one] = workspaces(settings)
+    assert one.missing == ("its user token",)
+
+    text = said(settings)
+
+    assert text.startswith("Acme is connected, and has no user token on file, which "
+                           "reading Slack as you takes.")
+    assert "before Keryx asked for a user token" not in text
+    assert "hand the user token over on standard input" in text
+
+
+def test_a_token_slack_refuses_after_an_untick_says_nothing_else_was_saved(settings):
+    settings = connected_at(settings, REQUESTS, SLACK_APP_TOKEN=APP)
+    theirs = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0ELSE"))
+    lines: list[str] = []
+
+    with pytest.raises(slack.Stopped, match="what you unticked stays off"):
+        slack.login(settings, ConfigStore(), ask=Terminal("xoxp-theirs", "", EOFError),
+                    echo=lines.append, api=theirs.api(), allowed=READ, test=False)
+
+    refusal = next(line for line in lines if line.startswith("The user token was not taken"))
+    assert refusal.endswith("Nothing else was saved.")
+    assert saved(settings)["allow"] == []
+
+
+def test_an_identity_only_user_token_from_an_earlier_build_is_dropped_at_the_next_write(
+    settings,
+):
+    """It keeps working untouched while nothing is written (a login that changes nothing
+    writes nothing), and the next sign-in that saves leaves it out, in one line."""
+    settings = connected_at(settings, REQUESTS, user=True, SLACK_APP_TOKEN=APP)
+    assert said(settings).startswith("Acme is connected, and nothing was changed.")
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == USER
+    fake = FakeSlack()
+
+    lines = connect(settings, fake, token="", user=False, test=False)
+
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
+    assert ("SLACK_USER_TOKEN is forgotten: it was kept only to say which member you are, "
+            "which is on file, and nothing that is ticked uses it") in lines
+    assert ("auth", USER) not in fake.calls and slack.USED_ONCE not in lines
+
+
+def test_a_new_bot_token_with_no_workspace_on_file_asks_who_the_owner_is_again(settings):
+    """The owner on file stands for the same workspace, or the same app where the file
+    never learned the workspace. Another bot token then names nobody, so a user token
+    is needed, and it is said."""
+    settings = connected_at(settings)
+    plugins.write_config(settings, "slack_report", {"team_id": ""})
+
+    with pytest.raises(SlackSetupError) as refused:
+        connect(settings, FakeSlack(), token="xoxb-another-app", user=False, test=False)
+
+    assert str(refused.value) == (
+        "this also needs the user token (xoxp-), which says which member you are: nobody "
+        "is on file as the owner for this bot token. Nothing was saved")
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
+
+
+def test_a_token_that_may_do_more_than_is_ticked_is_taken_and_said_in_one_line(settings):
+    """The app was not reinstalled from the manifest that takes reading away. Keryx
+    cannot shrink a token, and what it does with one is gated on what is ticked, so the
+    token is taken, and one line says how the app is trimmed."""
+    fake = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER",
+                                    scopes=slack_api.user_scopes(READ | SEND)))
+
+    lines = connect(settings, fake, token=TOKEN, allowed=SEND, test=False)
+
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
+    [note] = [line for line in lines if "still grants more than is ticked" in line]
+    assert note == (
+        "note: the app in Slack still grants more than is ticked (channels:history, "
+        "groups:history, im:history, mpim:history, search:read). Keryx does not use it; "
+        "pasting the manifest that `keryx auth login slack` prints into the app, and "
+        "reinstalling it, trims that")
+    [one] = workspaces(settings)
+    assert one.writes and not one.reads
+
+
+@pytest.mark.parametrize(("allowed", "scopes", "more"), [
+    (READ | SEND, slack_api.user_scopes(READ | SEND), ()),
+    (READ, slack_api.user_scopes(READ | SEND), ("chat:write", "im:write")),
+    (BASE, slack_api.user_scopes(READ), slack_api.user_scopes(READ)),
+    (BASE, ("emoji:read",), ()),
+    (SEND, None, ()),
+    (SEND, (*slack_api.user_scopes(SEND), "reminders:write"), ()),
+], ids=["exactly", "sending left over", "nothing ticked", "identity alone", "not said",
+        "a scope of the owner's own"])
+def test_what_a_user_token_may_do_beyond_what_is_ticked(allowed, scopes, more):
+    checked = Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER", scopes=scopes)
+
+    assert slack.beyond_ticked(checked, allowed) == tuple(more)
 
 
 def test_unticking_asks_slack_nothing_and_takes_effect_at_once(settings):
@@ -979,7 +1123,9 @@ def test_unticking_asks_slack_nothing_and_takes_effect_at_once(settings):
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
     assert saved(settings)["allow"] == []
     assert lines[0] == ("Acme: acting on what you type to the app and reading Slack as you "
-                        "are off, from this moment. A running Keryx stops at once.")
+                        "are off, from this moment. A running Keryx stops at once, and "
+                        "closes its connection to Slack at the next message it is sent "
+                        "there.")
     assert lines[1] == "SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten."
     assert lines[2] == (
         "The app in Slack still holds the permissions it was made with until you paste "
@@ -999,8 +1145,9 @@ def test_unticking_asks_slack_nothing_and_takes_effect_at_once(settings):
     (READS, READ, {"SLACK_BOT_TOKEN", "SLACK_USER_TOKEN"}),
     # Reading off, requests on: the token that could read as them is not kept.
     (READS, REQUESTS, {"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"}),
-    # Requests off, where the user token could only ever say who they are: it is kept.
-    (REQUESTS, BASE, {"SLACK_BOT_TOKEN", "SLACK_USER_TOKEN"}),
+    # Requests off, with a user token an earlier build kept to say who they are: a
+    # user token is on file only while reading or sending is ticked.
+    (REQUESTS, BASE, {"SLACK_BOT_TOKEN"}),
     (SEND, BASE, {"SLACK_BOT_TOKEN"}),
 ])
 def test_unticking_forgets_exactly_the_tokens_nothing_ticked_uses_any_more(
@@ -1016,6 +1163,20 @@ def test_unticking_forgets_exactly_the_tokens_nothing_ticked_uses_any_more(
     assert saved(settings)["owner_id"] == "U0OWNER"  # who the owner is never changes
 
 
+def test_reading_swapped_for_sending_forgets_the_user_token_between_the_two(settings):
+    """Neither is ticked once reading is off and before sending is on, and the token
+    still reads at Slack until the app is reinstalled: the login asks for the one the
+    reinstalled app issues."""
+    settings = connected_at(settings, READ)
+
+    done = slack.untick(settings, ConfigStore(), workspace="default", allowed=SEND,
+                        echo=lambda line: None)
+
+    assert (done.removed, done.added) == (READ, SEND)
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
+    assert saved(settings)["allow"] == [] and done.settings.slack_user_token is None
+
+
 @pytest.mark.parametrize("allowed", [REQUESTS, READS, EVERYTHING], ids=named)
 def test_the_same_boxes_or_more_take_nothing_away(settings, allowed):
     settings = connected_at(settings, REQUESTS, SLACK_APP_TOKEN=APP)
@@ -1025,8 +1186,7 @@ def test_the_same_boxes_or_more_take_nothing_away(settings, allowed):
 
     assert not done.done and done.removed == BASE and done.added == allowed - REQUESTS
     assert done.settings is settings
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
-                                        "SLACK_USER_TOKEN": USER}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
 
 
 def test_one_box_swapped_for_another_takes_the_one_away_now_and_leaves_the_other_to_the_login(
@@ -1038,14 +1198,62 @@ def test_one_box_swapped_for_another_takes_the_one_away_now_and_leaves_the_other
     lines: list[str] = []
 
     done = slack.untick(settings, ConfigStore(), workspace="default", allowed=READ,
-                        echo=lines.append)
+                        echo=lines.append, steps_follow=True)
 
     assert not done.done and (done.removed, done.added) == (REQUESTS, READ)
     assert saved(settings)["allow"] == []
     assert "SLACK_APP_TOKEN" not in ConfigStore()._secrets()
     assert lines[-1] == ("The app in Slack still holds the permissions it was made with "
                          "until the manifest below is pasted into it.\n")
-    assert not any(line.lstrip().startswith("{") for line in lines)  # the login prints it
+    assert not any(line.lstrip().startswith("{") for line in lines)  # the steps print it
+
+
+def test_a_swap_with_no_steps_to_follow_prints_the_manifest_for_what_is_now_ticked(settings):
+    """Where nothing after the untick shows a manifest (tokens piped in, `--stdin` typed
+    at a terminal), the untick prints the one for the whole new selection itself."""
+    settings = connected_at(settings, REQUESTS, SLACK_APP_TOKEN=APP)
+    lines: list[str] = []
+
+    slack.untick(settings, ConfigStore(), workspace="default", allowed=READ,
+                 echo=lines.append)
+
+    assert lines[-2].startswith("The app in Slack still holds the permissions it was made "
+                                "with until you paste this manifest")
+    assert json.loads(lines[-1]) == app_manifest(READ, assistant="Lyra")
+
+
+def test_the_manifest_can_be_shown_some_other_way_than_as_a_line(settings):
+    settings = connected_at(settings, READS, SLACK_APP_TOKEN=APP)
+    lines: list[str] = []
+    shown: list[str] = []
+
+    slack.untick(settings, ConfigStore(), workspace="default", allowed=REQUESTS,
+                 echo=lines.append, show=shown.append)
+
+    assert json.loads(shown[0]) == app_manifest(REQUESTS, assistant="Lyra")
+    assert lines[-1].endswith("and reinstall it:")
+    assert lines[0].endswith("is off, from this moment. A running Keryx stops at once.")
+
+
+def test_an_untick_the_plugins_file_refuses_has_forgotten_the_tokens_and_says_so(
+    settings, monkeypatch
+):
+    """The tokens go first, so that what is still written as ticked has nothing to run
+    on: closed, and said in a sentence, never a traceback."""
+    settings = connected_at(settings, READS, SLACK_APP_TOKEN=APP)
+
+    def refuse(settings, name, values):
+        raise plugins.PluginConfigError("slack_report: channel_id must be a bare word")
+
+    monkeypatch.setattr(plugins, "write_config", refuse)
+
+    with pytest.raises(SlackSetupError) as refused:
+        slack.untick(settings, ConfigStore(), workspace="default", allowed=BASE,
+                     echo=lambda line: None)
+
+    assert str(refused.value) == ("the tokens it used are forgotten, but slack_report: "
+                                  "channel_id must be a bare word")
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
 
 
 def test_a_workspace_that_is_not_connected_has_nothing_to_untick(settings):
@@ -1253,8 +1461,7 @@ def test_a_further_workspace_has_its_own_app_tokens_owner_and_destination(settin
                     workspace="lab", allowed=REQUESTS)
 
     assert ConfigStore()._secrets()["SLACK_BOT_TOKEN"] == TOKEN
-    assert workspace_tokens() == {"lab": {"bot": "xoxb-lab-secret", "app": "xapp-lab-secret",
-                                          "user": "xoxp-lab-secret"}}
+    assert workspace_tokens() == {"lab": {"bot": "xoxb-lab-secret", "app": "xapp-lab-secret"}}
     assert ("To send reports somewhere else: set channel_id under [workspace-lab] in "
             "slack_report.toml.") in lines
     data = saved(settings)
@@ -1278,8 +1485,8 @@ def test_a_second_further_workspace_keeps_the_first(settings):
                     test=False)
 
     assert workspace_tokens() == {
-        "lab": {"bot": "xoxb-lab-secret", "user": USER},
-        "work": {"bot": "xoxb-work-secret", "user": USER},
+        "lab": {"bot": "xoxb-lab-secret"},
+        "work": {"bot": "xoxb-work-secret"},
     }
     assert {"workspace-lab", "workspace-work"} <= set(saved(settings))
     # A process that started before either is told nothing of a restart, and needs none:
@@ -1298,8 +1505,7 @@ def test_a_further_workspace_is_unticked_by_its_own_name(settings):
     assert slack.untick(settings, ConfigStore(), workspace="lab", allowed=BASE,
                         echo=lines.append).done
 
-    # Its user token could only ever say who they are, so it is kept.
-    assert workspace_tokens() == {"lab": {"bot": "xoxb-lab-secret", "user": USER}}
+    assert workspace_tokens() == {"lab": {"bot": "xoxb-lab-secret"}}
     assert saved(settings)["workspace-lab"]["allow"] == []
     assert lines[0].startswith("lab (Lab): acting on what you type to the app is off, from")
     assert lines[1] == "lab's app-level token is forgotten."
@@ -1344,8 +1550,18 @@ def test_allow_is_said_once_for_each_box_and_none_alone_is_nothing_ticked():
     for old in ("converse", "announce", "write", "everything"):
         with pytest.raises(SlackSetupError) as refused:
             slack.parse_allow([old])
-        assert str(refused.value) == (f"there is nothing called '{old}' to allow: one or "
-                                      "more of requests, read, send, or none")
+        assert str(refused.value) == ("--allow takes requests, read or send, once for "
+                                      "each, or none alone, and one given is none of those")
+
+
+def test_what_allow_refuses_is_never_said_back():
+    """It is whatever was on the command line, a token pasted after the wrong option
+    included: the refusal names what the option takes, and nothing of what it was given."""
+    with pytest.raises(SlackSetupError) as refused:
+        slack.parse_allow(["read", "xoxp-very-secret-pasted-here"])
+
+    assert "xoxp" not in str(refused.value) and "secret" not in str(refused.value)
+    assert "requests, read or send" in str(refused.value)
     assert not hasattr(slack, "parse_access")
 
 
@@ -1369,8 +1585,7 @@ def test_one_line_that_starts_xox_is_still_taken_as_the_bot_token(settings):
     """As it always was: a rotating bot token does not start xoxb-."""
     connect(settings, FakeSlack(), token="xoxe.xoxb-1-very-secret", test=False)
 
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxe.xoxb-1-very-secret",
-                                        "SLACK_USER_TOKEN": USER}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxe.xoxb-1-very-secret"}
     with pytest.raises(SlackSetupError, match="that is not a Slack token"):
         slack.read_tokens("hunter2")
     with pytest.raises(SlackSetupError, match="two bot tokens"):
@@ -1422,7 +1637,7 @@ def test_logging_out_a_further_workspace_removes_its_tokens_and_its_table(settin
 
     lines = logged_out(settings, "lab")
 
-    assert workspace_tokens() == {"work": {"bot": "xoxb-work-secret", "user": USER}}
+    assert workspace_tokens() == {"work": {"bot": "xoxb-work-secret"}}
     assert "workspace-lab" not in saved(settings) and "workspace-work" in saved(settings)
     assert lines[0] == "lab (Lab) is disconnected: its tokens and its settings are removed."
     assert "api.slack.com/apps" in lines[-1] and "at once" in lines[-1]
@@ -1707,9 +1922,8 @@ def test_an_older_install_is_shown_how_to_update_the_app_it_has(settings):
     text = said(settings)
 
     assert "api.slack.com/apps?new_app=1" not in text
-    assert ("is connected, and has no user token on file: it was connected before Keryx "
-            "asked for one, or the one it had was forgotten when reading and sending as you "
-            "were switched off. Nothing about it stops working.") in text
+    assert ("is connected, and has no owner on file: it was connected before Keryx asked "
+            "for a user token. Nothing about it stops working.") in text
     lines = text.splitlines()
     for step in (
         "1. Open https://api.slack.com/apps and pick the app you already have for Keryx. Do "
@@ -1776,17 +1990,21 @@ def test_with_neither_box_ticked_the_user_token_is_asked_who_it_is_and_for_no_sc
         assert saved(settings)["owner_id"] == "U0OWNER"
 
 
-def test_unticking_requests_keeps_the_user_token_that_only_says_who_they_are(
+def test_a_user_token_an_earlier_build_kept_to_say_who_they_are_goes_at_the_next_untick(
     settings,
 ):
-    settings = connected_at(settings, REQUESTS, SLACK_APP_TOKEN=APP)
+    """A user token is on file only while reading or sending is ticked. A build before
+    that rule saved one whatever was ticked; it keeps working, and the next time the
+    sign-in writes it is dropped."""
+    settings = connected_at(settings, REQUESTS, user=True, SLACK_APP_TOKEN=APP)
     lines: list[str] = []
 
     slack.untick(settings, ConfigStore(), workspace="default", allowed=BASE,
                  echo=lines.append)
 
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
-    assert lines[1] == "SLACK_APP_TOKEN is forgotten."
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
+    assert lines[1] == "SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten."
+    assert saved(settings)["owner_id"] == "U0OWNER"
 
 
 # --- the app's icon ------------------------------------------------------------------------------
@@ -1903,8 +2121,10 @@ def test_at_a_terminal_the_login_prints_the_steps_and_then_asks_for_each_token_i
                           "tokens where each is asked for. What you paste is not shown.")
     assert lines[waiting - 1].endswith("reports go to you, and nothing else is asked.")
     assert terminal.asked == [APP_PROMPT, USER_PROMPT, BOT_PROMPT]
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
-                                        "SLACK_USER_TOKEN": USER}
+    # A first connection takes the user token, to learn who the owner is, and keeps it
+    # only with reading or sending ticked.
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
+    assert slack.USED_ONCE in lines
     # Then what a login has always said, and the one message that shows it arriving.
     after = lines[waiting + 1:]
     assert after[0] == ""
@@ -1923,19 +2143,24 @@ def test_each_prompt_says_which_token_it_is_and_where_slack_shows_it():
 
 
 def test_a_token_on_file_that_still_serves_is_kept_with_enter(settings):
-    """Ticking requests: the bot and user tokens are on file, so Enter keeps each and only
-    the app-level token is typed."""
+    """Ticking requests: the bot token is on file, so Enter keeps it and only the
+    app-level token is typed. Who the owner is, is on file too, so no user token is
+    asked for: nothing that is ticked would use one."""
     settings = connected_at(settings)
-    fake, terminal = FakeSlack(), Terminal(APP, "", "")
+    fake, terminal = FakeSlack(), Terminal(APP, "")
 
     lines = at_a_terminal(settings, fake, terminal, allowed=REQUESTS)
 
-    assert terminal.asked == [APP_PROMPT, USER_PROMPT + KEEP, BOT_PROMPT + KEEP]
+    assert terminal.asked == [APP_PROMPT, BOT_PROMPT + KEEP]
     assert "Then come back to this terminal, which is waiting, and paste the app-level " \
            "token where it is asked for. What you paste is not shown." in lines
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
-                                        "SLACK_USER_TOKEN": USER}
+    assert ("\nWhich member you are is on file, so no user token is asked for: reports "
+            "keep going to U0OWNER.") in lines
+    assert not any("User OAuth Token" in line for line in lines)
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
     assert saved(settings)["allow"] == ["requests"]
+    assert fake.calls == [("auth", TOKEN), ("open", APP),
+                          ("post", "U0OWNER", said_to_test(REQUESTS, LYRA))]
 
 
 def test_a_token_of_the_wrong_kind_is_said_so_without_quoting_it_and_asked_again(settings):
@@ -1948,7 +2173,7 @@ def test_a_token_of_the_wrong_kind_is_said_so_without_quoting_it_and_asked_again
     assert ("That is an app-level token, which starts xapp-: the bot token starts "
             "xoxb-.") in lines
     assert not any(secret in line for line in lines for secret in (USER, TOKEN, "typed-here"))
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
 
 
 def test_something_that_is_not_a_token_at_all_is_said_so_and_asked_again(settings):
@@ -2029,7 +2254,7 @@ def test_a_token_slack_refuses_is_named_and_asked_for_again_with_nothing_saved_m
     assert "invalid_auth" in refusal and refusal.endswith("Nothing was saved.")
     assert "xoxb-revoked" not in "\n".join(lines)
     assert all(secrets == {} for secrets in seen), "nothing was saved until every one passed"
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_USER_TOKEN": USER}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN}
     assert lines[-1] == "sent a test message: it is in Slack, under Apps"
 
 
@@ -2079,14 +2304,14 @@ def test_an_app_level_token_slack_refuses_is_named_and_asked_for_again(settings)
 def test_a_saved_token_slack_refuses_is_not_offered_again_as_the_one_to_keep(settings):
     """Enter kept the bot token on file, and Slack no longer takes it: asked again, it is
     a token to paste, since keeping the same one would be refused the same way."""
-    settings = connected_at(settings, user=False)
+    settings = connected_at(settings)
     fake = FakeSlack(workspace=Workspace(error="token_revoked"))
-    terminal = Terminal(USER, "", "", "")
+    terminal = Terminal(APP, "", "", "")
 
     with pytest.raises(slack.Stopped):
-        at_a_terminal(settings, fake, terminal)
+        at_a_terminal(settings, fake, terminal, allowed=REQUESTS)
 
-    assert terminal.asked == [USER_PROMPT, BOT_PROMPT + KEEP, BOT_PROMPT, BOT_PROMPT]
+    assert terminal.asked == [APP_PROMPT, BOT_PROMPT + KEEP, BOT_PROMPT, BOT_PROMPT]
 
 
 def test_slack_refusing_again_and_again_ends_the_login_with_nothing_saved(settings):
@@ -2159,17 +2384,17 @@ def test_an_older_install_is_asked_at_the_terminal_for_the_user_token_alone(sett
 
 
 def test_with_every_token_on_file_ticking_more_waits_for_enter_at_each(settings):
-    settings = connected_at(settings, REQUESTS, SLACK_APP_TOKEN=APP)
+    settings = connected_at(settings, READS, SLACK_APP_TOKEN=APP)
     fake, terminal = FakeSlack(), Terminal("", "", "")
 
-    lines = at_a_terminal(settings, fake, terminal, allowed=READS, test=False)
+    lines = at_a_terminal(settings, fake, terminal, allowed=EVERYTHING, test=False)
 
     assert ("Every token this needs is saved already. Once the app is reinstalled, come "
             "back to this terminal, which is waiting, and press Enter at each token to "
             "keep it, or paste the User OAuth Token if Slack shows a different one after "
             "the reinstall.") in lines
     assert terminal.asked == [APP_PROMPT + KEEP, USER_PROMPT + KEEP, BOT_PROMPT + KEEP]
-    assert saved(settings)["allow"] == ["requests", "read"]
+    assert saved(settings)["allow"] == ["requests", "read", "send"]
 
 
 def test_stdin_typed_at_a_terminal_asks_for_the_tokens_without_the_steps(settings):
@@ -2303,7 +2528,8 @@ def test_ticking_one_more_box_shows_the_manifest_for_the_app_there_is_and_turns_
     assert "api.slack.com/apps?new_app=1" not in text
     manifest = text[text.index("The manifest:") + len("The manifest:"):text.index("Saving it")]
     assert json.loads(manifest) == app_manifest(READS, assistant="Lyra")
-    assert terminal.asked == [APP_PROMPT + KEEP, USER_PROMPT + KEEP, BOT_PROMPT + KEEP]
+    # Reading is what takes a user token: none was on file while neither box was ticked.
+    assert terminal.asked == [APP_PROMPT + KEEP, USER_PROMPT, BOT_PROMPT + KEEP]
     assert saved(settings)["allow"] == ["requests", "read"]
     assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-after-reinstall"
     assert on(settings, "slack_read") and slack.TURNED_ON["slack_read"] in lines
@@ -2346,29 +2572,55 @@ def test_one_box_swapped_for_another_is_off_at_once_and_on_once_its_tokens_are_i
     lines = ticking(settings, fake, terminal, boxes, test=False)
 
     assert lines[2] == ("Acme: acting on what you type to the app is off, from this moment. "
-                        "A running Keryx stops at once.")
+                        "A running Keryx stops at once, and closes its connection to Slack "
+                        "at the next message it is sent there.")
     assert "SLACK_APP_TOKEN is forgotten." in lines
     assert "Acme is connected. Adding: sending messages as you." in lines
     assert slack.SEND_ALONE in "\n".join(lines)
     # No app-level token is asked for any more, and the one forgotten is not offered.
-    assert terminal.asked == [USER_PROMPT + KEEP, BOT_PROMPT + KEEP]
+    assert terminal.asked == [USER_PROMPT, BOT_PROMPT + KEEP]
     assert saved(settings)["allow"] == ["send"]
     assert ConfigStore()._secrets().keys() == {"SLACK_BOT_TOKEN", "SLACK_USER_TOKEN"}
     assert on(settings, "slack_message")
 
 
-def test_a_token_forgotten_by_unticking_is_not_offered_as_one_to_keep(settings):
+def test_a_token_forgotten_by_unticking_is_not_asked_for_while_nothing_ticked_uses_it(settings):
     """Reading off and requests on, in one go: the user token that could read is gone,
-    so its prompt has nothing to keep, whatever these settings were loaded with."""
+    and it is not taken back, because the owner is on file and neither reading nor
+    sending is ticked. The app in Slack was not reinstalled, so the token would still
+    read there: nothing is offered the chance to save it again."""
     settings = connected_at(settings, READ, SLACK_USER_TOKEN=USER)
-    fake, terminal, boxes = FakeSlack(), Terminal(APP, "xoxp-after-reinstall", ""), Boxes(
-        "requests")
+    plugins.install(settings, "slack_read")
+    still_reads = FakeSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER",
+                                           scopes=slack_api.user_scopes(READ)))
+    terminal, boxes = Terminal(APP, ""), Boxes("requests")
 
-    ticking(settings, fake, terminal, boxes, test=False)
+    lines = ticking(settings, still_reads, terminal, boxes, test=False)
 
-    assert terminal.asked == [APP_PROMPT, USER_PROMPT, BOT_PROMPT + KEEP]
-    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-after-reinstall"
+    assert "SLACK_USER_TOKEN is forgotten." in lines
+    assert terminal.asked == [APP_PROMPT, BOT_PROMPT + KEEP]
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
+    assert saved(settings)["allow"] == ["requests"] and not on(settings, "slack_read")
+    assert ("auth", USER) not in still_reads.calls
+
+
+def test_after_unticking_forgot_the_user_token_a_login_can_end_with_nothing_changed(settings):
+    """Requests and reading were ticked, and reading was unticked, which forgot the user
+    token. The workspace is whole as it stands, so opening the login and leaving the
+    boxes alone ends as every unchanged login does: no steps, no prompt, no failure."""
+    settings = connected_at(settings, READS, SLACK_APP_TOKEN=APP)
+    done = slack.untick(settings, ConfigStore(), workspace="default", allowed=REQUESTS,
+                        echo=lambda line: None)
+    fake, terminal, boxes = FakeSlack(), Terminal(), Boxes("requests")
+
+    lines = ticking(done.settings, fake, terminal, boxes)
+
+    text = "\n".join(lines)
+    assert "Acme is connected, and nothing was changed." in text
+    assert "Reinstall to Workspace" not in text and "user token" not in text.lower()
+    assert terminal.asked == [] and boxes.pre_ticked == ["requests"]
     assert saved(settings)["allow"] == ["requests"]
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP}
 
 
 def test_leaving_after_unticking_says_that_stays_off_and_nothing_else_was_saved(settings):
@@ -2412,7 +2664,7 @@ def test_stdin_at_a_terminal_replaces_a_token_without_asking_what_is_ticked(sett
             test=False)
     assert len(fresh_boxes.shown) == 1 and saved(settings)["allow"] == ["requests"]
 
-    boxes, terminal = Boxes(), Terminal("", "", "xoxb-the-new-one")
+    boxes, terminal = Boxes(), Terminal("", "xoxb-the-new-one")
     ticking(connected_like(settings), FakeSlack(), terminal, boxes, steps=False, test=False)
 
     assert boxes.shown == [] and saved(settings)["allow"] == ["requests"]
@@ -2538,7 +2790,7 @@ def test_standard_input_is_still_told_apart_by_prefix_in_any_order(settings):
     """`--stdin` never read an order, and still does not."""
     for tokens in (f"{TOKEN}\n{APP}\n{USER}", f"{USER}\n{TOKEN}\n{APP}"):
         ConfigStore().unset(["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_USER_TOKEN"])
-        connect(settings, FakeSlack(), token=tokens, allowed=REQUESTS, test=False)
+        connect(settings, FakeSlack(), token=tokens, allowed=READS, test=False)
         assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": TOKEN, "SLACK_APP_TOKEN": APP,
                                             "SLACK_USER_TOKEN": USER}
 
@@ -2641,7 +2893,7 @@ def test_at_a_terminal_that_login_waits_and_enter_at_each_token_is_all_it_takes(
     """The owner pastes the manifest, reinstalls, comes back and presses Enter: the bot
     token is the same one, and Slack now says it may send a file."""
     settings = connected_at(settings, REQUESTS, SLACK_APP_TOKEN=APP)
-    fake, terminal = FakeSlack(workspace=BEFORE_FILES), Terminal("", "", "")
+    fake, terminal = FakeSlack(workspace=BEFORE_FILES), Terminal("", "")
     api = fake.api()
     asked = api.auth_test
 
@@ -2661,11 +2913,9 @@ def test_at_a_terminal_that_login_waits_and_enter_at_each_token_is_all_it_takes(
     assert "with an app made before Keryx asked for files:write" in text
     assert ("Every token this needs is saved already. Once the app is reinstalled, come "
             "back to this terminal, which is waiting, and press Enter at each token to "
-            "keep it, or paste the User OAuth Token if Slack shows a different one after "
-            "the reinstall.") in lines
-    assert terminal.asked == [APP_PROMPT + KEEP, USER_PROMPT + KEEP, BOT_PROMPT + KEEP]
-    assert "connected to the Acme workspace; SLACK_BOT_TOKEN, SLACK_APP_TOKEN and " \
-           "SLACK_USER_TOKEN saved" in lines
+            "keep it.") in lines
+    assert terminal.asked == [APP_PROMPT + KEEP, BOT_PROMPT + KEEP]
+    assert "connected to the Acme workspace; SLACK_BOT_TOKEN and SLACK_APP_TOKEN saved" in lines
     assert not any(line.startswith("note: the app in Slack lacks") for line in lines)
 
 

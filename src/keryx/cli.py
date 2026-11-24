@@ -83,6 +83,7 @@ from keryx.session import VoiceSession
 from keryx.setup import auth as auth_flow
 from keryx.setup import profile
 from keryx.setup import service as service_units
+from keryx.setup import slack as slack_setup
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
@@ -1192,6 +1193,10 @@ def plugins_remove(
                    f"{plugins.off_path(settings, name)}")
     else:
         typer.echo(f"{name} was not on")
+    if plugins.plugin(name).name == slack_setup.PLUGIN:
+        # The two that act as the owner go with it, as they do when the wizard turns it
+        # off: left on, each would be refused at every call.
+        slack_setup.retire(settings, typer.echo)
 
 
 @app.command()

@@ -24,6 +24,7 @@ from keryx.integrations.slack import (
     app_manifest,
     new_app_url,
 )
+from keryx.plugins.slack import connected
 from keryx.plugins.ssh_hosts import SshHost
 from keryx.setup import plugins as section
 from keryx.setup import slack as setup_slack
@@ -34,7 +35,7 @@ from keryx.setup.slack import (
     owner_line,
 )
 from keryx.setup.slack import test_message as said_to_test
-from keryx.setup.ui import Back, Forward
+from keryx.setup.ui import Aborted, Back, Forward
 
 from .fakes import DEFAULT
 
@@ -148,8 +149,9 @@ def test_slack_is_a_link_and_two_pasted_tokens_and_nothing_is_asked_about_where(
     section.run_section(ctx)
 
     assert ctx.ui.done() and asked(ctx) == ["Which plugins", BOXES, USER_TOKEN, TOKEN, TEST]
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1",
-                                        "SLACK_USER_TOKEN": "xoxp-1"}
+    # The user token says who they are, once: it is kept only with reading or sending.
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1"}
+    assert setup_slack.USED_ONCE in ctx.ui.lines("note")
     saved = toml(ctx, "slack_report")
     assert (saved["channel_id"], saved["owner_id"], saved["allow"]) == (
         "U0OWNER", "U0OWNER", [])
@@ -282,8 +284,7 @@ def test_a_user_token_left_blank_is_asked_for_again_once_a_new_bot_token_needs_i
     assert ctx.ui.done()
     assert ctx.ui.lines("error") == ["The user token is needed with this bot token: it is "
                                      "how Slack says which member you are."]
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-new",
-                                        "SLACK_USER_TOKEN": "xoxp-1"}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-new"}
     assert toml(ctx, "slack_report")["owner_id"] == "U0OWNER"
 
 
@@ -313,8 +314,8 @@ def test_an_install_from_before_user_tokens_walks_through_untouched(make_ctx, wo
     # It is on, and it says why nothing was sent to show it.
     assert "Nothing changed, so no test message was sent." in ctx.ui.lines("note")
     # It is shown how to update the app it has, for when it wants an owner on file.
-    assert any("has no user token on file: it was connected before Keryx asked for one" in line
-               for line in ctx.ui.lines("note"))
+    assert any("has no owner on file: it was connected before Keryx asked for a user token"
+               in line for line in ctx.ui.lines("note"))
     title, _, body = ctx.ui.lines("panel")[0].partition("\n")
     assert title == "The manifest"
     assert json.loads(body) == app_manifest(BASE, assistant="Lyra")
@@ -339,8 +340,8 @@ def test_that_install_given_its_user_token_gains_an_owner_and_keeps_its_destinat
     assert ctx.ui.done()
     assert (saved["channel_id"], saved["owner_id"], saved["team_id"]) == (
         "D123", "U0OWNER", "T0ACME")
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old",
-                                        "SLACK_USER_TOKEN": "xoxp-1"}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
+    assert setup_slack.USED_ONCE in ctx.ui.lines("note")
     assert any(line.startswith("It keeps sending to D123.") for line in ctx.ui.lines("note"))
     # Asked of Slack only now: which workspace the kept bot token is, then whose the
     # user token is.
@@ -456,8 +457,7 @@ def test_requests_is_three_tokens_each_checked_and_the_owner_is_whose_the_user_t
 
     section.run_section(ctx)
 
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1",
-                                        "SLACK_USER_TOKEN": "xoxp-1"}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1"}
     saved = toml(ctx, "slack_report")
     assert (saved["allow"], saved["owner_id"], saved["channel_id"]) == (
         ["requests"], "U0OWNER", "U0OWNER"
@@ -507,8 +507,7 @@ def test_with_anything_ticked_a_token_that_could_not_be_checked_is_never_saved_u
         ctx.ui.lines("note")
     )
     assert any("For what you ticked it has to be" in line for line in ctx.ui.lines("error"))
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1",
-                                        "SLACK_USER_TOKEN": "xoxp-1"}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1"}
 
 
 def test_a_step_abandoned_half_way_has_saved_none_of_it(make_ctx, world):
@@ -538,7 +537,7 @@ def test_a_slack_file_that_cannot_be_written_has_still_saved_the_tokens_and_says
     section.run_section(ctx)
 
     assert ctx.ui.done() and ctx.ui.lines("error")
-    assert "saved SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_USER_TOKEN" in ctx.ui.lines("success")
+    assert "saved SLACK_BOT_TOKEN, SLACK_APP_TOKEN" in ctx.ui.lines("success")
 
 
 def test_an_app_token_must_be_one(make_ctx):
@@ -605,8 +604,8 @@ def test_a_channel_on_file_as_where_reports_go_stays_and_never_says_who_the_owne
     reports go anywhere but to the owner."""
     ctx = conversing(make_ctx)
     plugins.write_config(ctx.settings, "slack_report", {"channel_id": "C0CHANNEL"})
-    ctx.ui.answers = [SLACK, (BOXES, DEFAULT), (APP_TOKEN, DEFAULT), (USER_TOKEN, "xoxp-1"),
-                      (TOKEN, DEFAULT), (TEST, False)]
+    ctx.ui.answers = [SLACK, (BOXES, ["requests", "read"]), (APP_TOKEN, DEFAULT),
+                      (USER_TOKEN, "xoxp-1"), (TOKEN, DEFAULT), (TEST, False)]
 
     section.run_section(ctx)
 
@@ -712,7 +711,7 @@ def test_the_wizard_refuses_another_workspaces_bot_token_as_the_command_line_doe
     ctx = conversing(make_ctx)
     before = toml(ctx, "slack_report")
     world.slack_workspaces = [Workspace(team="Other Co", team_id="T0OTHER", user_id="U0OTHERBOT")]
-    ctx.ui.answers = [SLACK, (BOXES, DEFAULT), (APP_TOKEN, DEFAULT), (USER_TOKEN, ""),
+    ctx.ui.answers = [SLACK, (BOXES, DEFAULT), (APP_TOKEN, DEFAULT),
                       (TOKEN, "xoxb-other-workspace")]
 
     section.run_section(ctx)
@@ -772,8 +771,14 @@ def test_the_owner_is_recorded_with_nothing_ticked_so_ticking_more_changes_nothi
     assert not any("are acted on there" in line for line in ctx.ui.lines("note"))
     assert OWNER_NOTED.format(who="U0OWNER") in ctx.ui.lines("note")
 
+    # Ticking requests asks for no user token at all: who the owner is, is on file.
+    ctx.ui.answers = [SLACK, (BOXES, ["requests"]), (APP_TOKEN, "xapp-1"), (TOKEN, DEFAULT),
+                      (TEST, False)]
+    section.run_section(ctx)
+    assert ctx.ui.done() and toml(ctx, "slack_report")["owner_id"] == "U0OWNER"
+
     world.slack_user = Workspace(team="Acme", team_id="T0ACME", user_id="U0ELSE")
-    ctx.ui.answers = [SLACK, (BOXES, ["requests"]), (APP_TOKEN, "xapp-1"),
+    ctx.ui.answers = [SLACK, (BOXES, ["requests", "read"]), (APP_TOKEN, DEFAULT),
                       (USER_TOKEN, "xoxp-theirs"), (TOKEN, DEFAULT)]
     with pytest.raises(AssertionError, match="unscripted secret"):
         section.run_section(ctx)  # somebody else's token is asked for again, never taken
@@ -806,53 +811,298 @@ def test_a_user_token_that_is_not_the_owners_on_file_is_asked_for_again(make_ctx
 
 
 def test_a_token_typed_again_after_going_back_is_not_shown_to_slack_twice(make_ctx, world):
-    """Nothing is on file to recognise it by, since nothing is saved until the end."""
+    """Going back from the offer of a test, which comes after the save. The owner is on
+    file by then, so the user token is not asked for a second time: the questions are
+    the app-level token and the bot token, and neither is shown to Slack again."""
     ctx = make_ctx([SLACK, (BOXES, ["requests"]), (APP_TOKEN, "xapp-1"), (USER_TOKEN, "xoxp-1"),
                     (TOKEN, "xoxb-1"), (TEST, Back()), (TOKEN, Back()),
-                    (USER_TOKEN, Back()), (APP_TOKEN, "xapp-1"), (USER_TOKEN, "xoxp-1"),
-                    (TOKEN, "xoxb-1"), (TEST, False), (NEXT, True)])
+                    (APP_TOKEN, "xapp-1"), (TOKEN, "xoxb-1"), (TEST, False), (NEXT, True)])
 
     assert slack_walk(ctx)
 
     assert slack_calls(world) == [("slack_auth",), ("slack_open",), ("slack_auth",)]
-    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1",
-                                        "SLACK_USER_TOKEN": "xoxp-1"}
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1"}
 
 
-def test_unticking_everything_forgets_the_tokens_no_longer_used_and_asks_slack_nothing(
-    make_ctx, world
-):
+def everything_ticked(make_ctx):
+    """A first workspace with all three boxes ticked, its three tokens and both tools."""
     ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
     ctx = already_set_up(make_ctx, channel="U0OWNER")
-    plugins.write_config(ctx.settings, "slack_report", {"allow": ["requests", "read"],
-                                                        "owner_id": "U0OWNER"})
+    plugins.write_config(ctx.settings, "slack_report", {
+        "allow": ["requests", "read", "send"], "owner_id": "U0OWNER", "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
+    for name in ("slack_read", "slack_message"):
+        plugins.install(ctx.settings, name)
+    return ctx
+
+
+def test_unticking_everything_is_saved_when_the_boxes_are_answered_and_asks_for_no_token(
+    make_ctx, world
+):
+    """Taking a permission away is the one thing the step saves before its last answer,
+    exactly as the command does: nothing is asked of Slack or of the owner."""
+    ConfigStore().set({"SLACK_APP_TOKEN": "xapp-old", "SLACK_USER_TOKEN": "xoxp-old"})
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    plugins.write_config(ctx.settings, "slack_report", {
+        "allow": ["requests", "read"], "owner_id": "U0OWNER", "team": "Acme"})
     plugins.install(ctx.settings, "slack_read")
-    ctx.ui.answers = [SLACK, (BOXES, []), (TOKEN, DEFAULT), (TEST, False)]
+    ctx.ui.answers = [SLACK, (BOXES, [])]
 
     section.run_section(ctx)
 
-    # The user token that could read Slack as them is not kept once nothing is ticked
-    # for it, and is not asked for: the owner on file stands.
     assert ctx.ui.done() and slack_calls(world) == []
+    assert asked(ctx) == ["Which plugins", BOXES]
     assert [c.value for c in ctx.ui.choices["What else may Keryx do in your Slack?"]
             if c.checked] == ["requests", "read"]  # shown as it stood
     assert toml(ctx, "slack_report")["owner_id"] == "U0OWNER"
     assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
     assert toml(ctx, "slack_report")["allow"] == []
     notes = ctx.ui.lines("note")
-    assert ("Turning off: acting on what you type to the app and reading Slack as you."
-            ) in notes
-    assert ("SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten: what is ticked does not "
-            "use them.") in notes
+    assert ("Acme: acting on what you type to the app and reading Slack as you are off, "
+            "from this moment. A running Keryx stops at once, and closes its connection to "
+            "Slack at the next message it is sent there.") in notes
+    assert "SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten." in notes
+    assert not any(line.startswith("Turning off") for line in notes)
     # Off on this machine already, tool and all; the app in Slack holds it until the
     # manifest is pasted, which is shown and never the link that makes a second app.
-    assert not on(ctx, "slack_read")
-    assert "slack_read is off with it, from the next call." in ctx.ui.lines("success")
+    assert not on(ctx, "slack_read") and on(ctx, "slack_report")
+    assert "slack_read is off with it, from the next call." in notes
     assert any(line.startswith("The app in Slack still holds the permissions it was made "
                                "with until you paste this manifest") for line in notes)
     [panel] = ctx.ui.lines("panel")
     assert json.loads(panel.partition("\n")[2]) == app_manifest(BASE, assistant="Lyra")
     assert not ctx.ui.lines("link")
+
+
+def test_unticking_in_the_wizard_and_leaving_at_the_next_question_has_still_unticked(
+    make_ctx, world
+):
+    """Reading and sending unticked, requests left on and nothing added: off when the
+    boxes are answered. Here one box is swapped for another, so there is a next question
+    to leave at: what was unticked stays off, and what was ticked instead never came on."""
+    ConfigStore().set({"SLACK_USER_TOKEN": "xoxp-old"})
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    plugins.write_config(ctx.settings, "slack_report", {
+        "allow": ["read", "send"], "owner_id": "U0OWNER", "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX"})
+    for name in ("slack_read", "slack_message"):
+        plugins.install(ctx.settings, name)
+    ctx.ui.answers = [SLACK, (BOXES, ["requests"]), (APP_TOKEN, Aborted())]
+
+    with pytest.raises(Aborted):
+        section.run_section(ctx)
+
+    assert toml(ctx, "slack_report")["allow"] == []
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old"}
+    assert not on(ctx, "slack_read") and not on(ctx, "slack_message")
+    (found,) = connected(ctx.load())
+    assert not found.reads and not found.writes and not found.listens
+    notes = ctx.ui.lines("note")
+    assert ("Acme: reading Slack as you and sending messages as you are off, from this "
+            "moment. A running Keryx stops at once.") in notes
+    # What was added waits for its tokens, and its steps carry the manifest.
+    [panel] = ctx.ui.lines("panel")
+    assert json.loads(panel.partition("\n")[2]) == app_manifest(REQUESTS, assistant="Lyra")
+    assert slack_calls(world) == []
+
+
+def test_a_walk_that_only_unticks_asks_no_token_and_offers_no_test(make_ctx, world):
+    ctx = everything_ticked(make_ctx)
+    ctx.ui.answers = [SLACK, (BOXES, ["requests"])]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and [kind for kind, _ in ctx.ui.asked] == ["checkbox", "checkbox"]
+    assert toml(ctx, "slack_report")["allow"] == ["requests"]
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old",
+                                        "SLACK_APP_TOKEN": "xapp-old"}
+    assert not on(ctx, "slack_read") and not on(ctx, "slack_message")
+    assert slack_calls(world) == []
+
+
+def test_esc_back_to_the_boxes_after_an_untick_takes_nothing_away_twice(make_ctx, world):
+    """The untick was saved when the boxes were first answered. Going back to them and
+    answering the same finds it off already: it ends the step as it did, asks for no
+    token, and says so once more with the manifest."""
+    ctx = everything_ticked(make_ctx)
+    ctx.ui.answers = [SLACK, (BOXES, ["requests"]), (NEXT, Back()), (BOXES, DEFAULT),
+                      (NEXT, True)]
+
+    assert slack_walk(ctx)
+
+    assert asked(ctx) == ["Which plugins", BOXES, NEXT, BOXES, NEXT]
+    # Offered the second time as it now stands, which is what was answered.
+    again = ctx.ui.choices["What else may Keryx do in your Slack?"]
+    assert [c.value for c in again if c.checked] == ["requests"]
+    notes = ctx.ui.lines("note")
+    assert sum("are off, from this moment" in line for line in notes) == 1
+    assert sum(line.endswith("are forgotten.") or line.endswith("is forgotten.")
+               for line in notes) == 1
+    assert "That is off on this machine already, from when you unticked it." in notes
+    assert len(ctx.ui.lines("panel")) == 2  # the manifest, shown each time
+    assert toml(ctx, "slack_report")["allow"] == ["requests"]
+    assert slack_calls(world) == []
+
+
+def test_tab_passes_a_slack_step_that_only_unticked(make_ctx, world):
+    """Tab replays the record and stops at the first question it has no answer for. A
+    step that only unticked recorded one answer, and replays to its end."""
+    ctx = everything_ticked(make_ctx)
+    ctx.ui.answers = [SLACK, (BOXES, ["requests"]), (NEXT, Back()), (BOXES, Back()),
+                      ("Which plugins", Forward()), (NEXT, True)]
+
+    assert slack_walk(ctx)
+
+    assert asked(ctx) == ["Which plugins", BOXES, NEXT, BOXES, "Which plugins", NEXT]
+    assert toml(ctx, "slack_report")["allow"] == ["requests"]
+    assert sum("are off, from this moment" in line for line in ctx.ui.lines("note")) == 1
+
+
+def test_ticking_a_box_again_after_going_back_is_an_addition_that_waits_for_its_token(
+    make_ctx, world
+):
+    """Nothing un-unticks: reading was taken away when the boxes were answered, and
+    ticking it again after Esc asks for the user token like any box newly ticked. Left
+    there, reading is still off."""
+    ctx = everything_ticked(make_ctx)
+    ctx.ui.answers = [SLACK, (BOXES, ["requests"]), (NEXT, Back()),
+                      (BOXES, ["requests", "read"]), (APP_TOKEN, DEFAULT),
+                      (USER_TOKEN, Aborted())]
+
+    with pytest.raises(Aborted):
+        slack_walk(ctx)
+
+    assert toml(ctx, "slack_report")["allow"] == ["requests"]
+    assert "SLACK_USER_TOKEN" not in ConfigStore()._secrets() and not on(ctx, "slack_read")
+    # The user token that was forgotten is not offered as one to keep.
+    assert ctx.ui.currents[[m for _, m in ctx.ui.asked if "User token" in m][0]] == ""
+
+
+def test_one_box_swapped_for_another_unticks_at_once_and_replays_without_doing_it_again(
+    make_ctx, world
+):
+    """Requests unticked and reading ticked: requests is off when the boxes are
+    answered, reading is on once its token is in, and going back from the offer of a
+    test finds nothing left to take away and shows no token to Slack a second time."""
+    ctx = conversing(make_ctx)
+    ctx.ui.answers = [SLACK, (BOXES, ["read"]), (USER_TOKEN, "xoxp-1"), (TOKEN, DEFAULT),
+                      (TEST, Back()), (TOKEN, DEFAULT), (TEST, False), (NEXT, True)]
+
+    assert slack_walk(ctx)
+
+    assert toml(ctx, "slack_report")["allow"] == ["read"]
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old",
+                                        "SLACK_USER_TOKEN": "xoxp-1"}
+    assert on(ctx, "slack_read")
+    notes = ctx.ui.lines("note")
+    assert sum("is off, from this moment" in line for line in notes) == 1
+    assert "SLACK_APP_TOKEN is forgotten." in notes
+    assert slack_calls(world) == [("slack_auth",)]
+
+
+def test_an_untick_that_cannot_be_saved_is_said_and_asks_nothing_more(
+    make_ctx, world, monkeypatch
+):
+    ctx = everything_ticked(make_ctx)
+    ctx.ui.answers = [SLACK, (BOXES, ["requests"])]
+
+    def refuse(*args, **kwargs):
+        raise setup_slack.SlackSetupError("SLACK_USER_TOKEN is locked")
+
+    monkeypatch.setattr(setup_slack, "untick", refuse)
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert ctx.ui.lines("error") == [
+        "What you unticked could not be saved: SLACK_USER_TOKEN is locked. `keryx doctor` "
+        "says how Slack stands now."]
+    assert toml(ctx, "slack_report")["allow"] == ["requests", "read", "send"]
+
+
+def test_a_workspace_with_its_owner_on_file_is_asked_for_no_user_token(make_ctx, world):
+    """Requests ticked and nothing that acts as the owner: a walk that changes nothing
+    asks for the app-level token and the bot token, and Enter keeps each."""
+    ctx = conversing(make_ctx)
+    ctx.ui.answers = [SLACK, (BOXES, DEFAULT), (APP_TOKEN, DEFAULT), (TOKEN, DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and slack_calls(world) == []
+    assert asked(ctx) == ["Which plugins", BOXES, APP_TOKEN, TOKEN]
+    assert "Nothing changed, so no test message was sent." in ctx.ui.lines("note")
+    assert not ctx.ui.lines("panel") and not ctx.ui.lines("markdown")
+
+
+def test_reading_ticked_with_its_user_token_gone_is_asked_for_it_and_not_called_older(
+    make_ctx, world
+):
+    ctx = conversing(make_ctx)
+    plugins.write_config(ctx.settings, "slack_report", {"allow": ["requests", "read"]})
+    ctx.ui.answers = [SLACK, (BOXES, DEFAULT), (APP_TOKEN, DEFAULT), (USER_TOKEN, "xoxp-1"),
+                      (TOKEN, DEFAULT), (TEST, False)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done()
+    notes = ctx.ui.lines("note")
+    assert ("Slack is connected, and has no user token on file, which what is ticked "
+            "takes. The app you have is updated, not made again.") in notes
+    assert not any("before Keryx asked for a user token" in line for line in notes)
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-1"
+
+
+def test_a_user_token_an_earlier_build_kept_is_forgotten_by_the_next_walk_in_one_line(
+    make_ctx, world
+):
+    """It was saved whatever was ticked. With neither reading nor sending ticked and the
+    owner on file, the walk asks for none and leaves that one out."""
+    ConfigStore().set({"SLACK_USER_TOKEN": "xoxp-old"})
+    ctx = conversing(make_ctx)
+    ctx.ui.answers = [SLACK, (BOXES, DEFAULT), (APP_TOKEN, DEFAULT), (TOKEN, DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and slack_calls(world) == []
+    assert ConfigStore()._secrets() == {"SLACK_BOT_TOKEN": "xoxb-old",
+                                        "SLACK_APP_TOKEN": "xapp-old"}
+    assert ("SLACK_USER_TOKEN is forgotten: what is ticked does not use it."
+            ) in ctx.ui.lines("note")
+    assert toml(ctx, "slack_report")["owner_id"] == "U0OWNER"
+
+
+def test_a_user_token_that_may_do_more_than_is_ticked_is_taken_and_said_in_one_line(
+    make_ctx, world
+):
+    world.slack_user = Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER",
+                                 scopes=slack_api.user_scopes(READS | {Permission.SEND}))
+    ctx = make_ctx([SLACK, (BOXES, ["send"]), (USER_TOKEN, "xoxp-1"), (TOKEN, "xoxb-1"),
+                    (TEST, False)])
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and toml(ctx, "slack_report")["allow"] == ["send"]
+    assert ConfigStore()._secrets()["SLACK_USER_TOKEN"] == "xoxp-1"
+    [note] = [line for line in ctx.ui.lines("note") if "grants more than is ticked" in line]
+    assert "search:read" in note and "reinstalling it, trims that" in note
+
+
+def test_a_line_from_before_the_boxes_that_is_not_understood_is_rewritten_by_the_step(
+    make_ctx, world
+):
+    """What the refusal of such a line says a sign-in does, and the wizard's step is one:
+    it is read as nothing ticked, said, and gone from the file."""
+    ctx = already_set_up(make_ctx, channel="U0OWNER")
+    path = plugins.config_path(ctx.settings, "slack_report")
+    path.write_text('access = "reed"\n' + path.read_text().replace("allow = []\n", ""))
+    ctx.ui.answers = [SLACK, (BOXES, DEFAULT), (USER_TOKEN, ""), (TOKEN, DEFAULT)]
+
+    section.run_section(ctx)
+
+    assert ctx.ui.done() and setup_slack.MENDED in ctx.ui.lines("note")
+    assert not ctx.ui.lines("warn")
+    assert toml(ctx, "slack_report")["allow"] == [] and "access" not in toml(ctx, "slack_report")
 
 
 def test_boxes_already_set_up_keep_every_token_and_ask_slack_nothing(make_ctx, world):
@@ -1053,7 +1303,7 @@ def test_tab_from_the_plugins_list_replays_the_boxes_and_stops_at_nothing_of_sla
 ):
     ctx = make_ctx([SLACK, (BOXES, ["requests"]), (APP_TOKEN, "xapp-1"), (USER_TOKEN, "xoxp-1"),
                     (TOKEN, "xoxb-1"), (TEST, False), (NEXT, Back()), (TEST, Back()),
-                    (TOKEN, Back()), (USER_TOKEN, Back()), (APP_TOKEN, Back()),
+                    (TOKEN, Back()), (APP_TOKEN, Back()),
                     (BOXES, Forward()), (NEXT, True)])
 
     assert slack_walk(ctx)
@@ -1222,12 +1472,14 @@ def test_tab_after_the_step_has_saved_stops_at_nothing_of_slacks(make_ctx, world
 
 def test_tab_from_the_first_question_passes_a_slack_step_already_walked(make_ctx, world):
     ctx = make_ctx([SLACK, AS_OFFERED, (USER_TOKEN, "xoxp-1"), (TOKEN, "xoxb-1"), (TEST, True),
-                    (NEXT, Back()), (TEST, Back()), (TOKEN, Back()), (USER_TOKEN, Forward()),
+                    (NEXT, Back()), (TEST, Back()), (TOKEN, Back()), (BOXES, Forward()),
                     (NEXT, True)])
 
     assert slack_walk(ctx)
 
-    assert asked(ctx)[-2:] == [USER_TOKEN, NEXT]
+    # Once saved, the owner is on file and nothing ticked uses a user token, so going
+    # back from the bot token lands on the boxes: the user token is not asked again.
+    assert asked(ctx)[-2:] == [BOXES, NEXT]
     assert [call[0] for call in slack_calls(world)] == ["slack_auth", "slack_auth", "slack_post"]
 
 

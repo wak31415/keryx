@@ -44,8 +44,9 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   Slack app for exactly what was ticked (for an app there is, the manifest that adds to
   it, or that gives an app made before user tokens the one it now needs; whatever was
   unticked is taken away at once, with nothing asked of Slack), then asks for each token
-  that takes, hidden, one on file kept with Enter (never argv: the bot token and the
-  user token always, the app-level one with `requests`), checks them together, learns
+  that takes, hidden, one on file kept with Enter (never argv: the bot token always,
+  the app-level one with `requests`, and the user token with `read` or `send` or while
+  no owner is on file), checks them together, learns
   who the owner is from the user token, turns `slack_report` on (and `slack_read` or
   `slack_message` with their boxes) and sends one test message. A token that is the
   wrong kind, or that Slack refuses, is named and asked for again, a bounded number of
@@ -53,7 +54,8 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   Without a terminal what is ticked is `--allow requests|read|send`, once for each, or
   `--allow none`: it prints the steps and ends, and `slack --stdin --allow …` takes the
   tokens on standard input, one to a line, which is a coding agent's or a pipe's way
-  (`--stdin` typed at a terminal asks without the steps); with nothing connected and no
+  (`--stdin` typed at a terminal asks without the steps), and on both of those too
+  whatever `--allow` leaves out is taken away first; with nothing connected and no
   `--allow` it prints the choices and guesses none;
   nothing changes whose messages are acted on but a logout and a new login;
   see "Slack runs both ways". `uv run keryx auth logout google` revokes the grant at Google
@@ -76,7 +78,8 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   billing, cluster stats): `uv run keryx plugins [list] [--json]`,
   `plugins hosts [--json]` (the ssh hosts `cluster_stats` could ask), `plugins install NAME
   [--set KEY=VALUE …] [--cluster ALIAS=PARTITION …] [--guard PATH] [--template]`, `plugins
-  remove NAME [--yes]`; install and remove refuse the running service, and an install is
+  remove NAME [--yes]` (removing `slack_report` turns `slack_read` and `slack_message`
+  off with it); install and remove refuse the running service, and an install is
   the one thing that renames a plugin's files from a name it had before
 - Slack, for a coding agent (each allowed inside a task; see "Slack reads with one tool
   and sends with two"): `uv run keryx slack read [--conversation NAME_OR_REF] [--thread
@@ -236,7 +239,9 @@ remember:
   rich/questionary one, one question to a screen; `ask_checkbox` is its list of boxes
   for a command that is not the wizard), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record
-  of its answers and probe results, so no probe runs twice), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
+  of its answers and probe results, so no probe runs twice; a section that saves before
+  its last answer has to be safe to run again, which the Slack step's untick is: see
+  "Slack runs both ways"), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
   each set of instructions is written once.
 - **continuity** — `continuity/` is what survives the end of a call: `briefing`, `memory`
   and `recall` (the three pieces below), plus `transcripts`, the call log they read, and
@@ -766,13 +771,16 @@ should give me the app manifest"). Sending them reports and
 files is the base, always on, and three things may be added, **independent of each
 other, so every combination is one app**:
 
-**A user token whatever is ticked** (the owner's ruling of 2026-11-24, "let's always
-require a user token"): a bot token names the bot, not whoever installed it, so the
-install issues the owner a user token and `auth.test` on it is how Slack itself says who
-the owner is. With neither `read` nor `send` the manifest asks for exactly one user scope
+**A user token to connect, whatever is ticked, and on file only while `read` or `send`
+is ticked** (the owner's rulings of 2026-11-24: "let's always require a user token",
+then that it is kept only while something ticked uses it): a bot token names the bot,
+not whoever installed it, so the install issues the owner a user token and `auth.test`
+on it is how Slack itself says who the owner is. With neither `read` nor `send` the
+manifest asks for exactly one user scope
 (`IDENTITY_USER_SCOPES`, `emoji:read`: "View custom emoji in a workspace", granted to user
 tokens, not legacy, and nothing it shows is anybody's), because Slack issues a user token
-only for a user scope; Keryx never calls the method it allows. The bot reads nothing
+only for a user scope; Keryx never calls the method it allows, and with neither ticked
+it shows the token to Slack once and does not save it. The bot reads nothing
 about members: `users:read` and `users:read.email` went with the address lookup.
 
 - **The base** — Keryx posts, a file included (`chat:write` and `files:write`, the two
@@ -817,7 +825,11 @@ Fifteen rulings:
   "converse"` is read as the set that level held (`plugins.SLACK_ACCESS`: `announce`
   nothing, `converse` `requests`, `read` `requests` and `read`, `write` all three),
   `allow` wins when both are there, and the first write drops the old key
-  (`Key.formerly`, `plugins._current`). `--access` was never released and is gone
+  (`Key.formerly`, `plugins._current`). An `access` line that is none of the four is
+  refused in a sentence that names the line and the sign-in that rewrites it, **never
+  the four words** (they are a level's, and the owner is not shown them); and every
+  sign-in, the wizard's step included, does rewrite it first (`plugins.mend`), reading
+  it as nothing ticked and saying so. `--access` was never released and is gone
   outright.
 
 - **Keryx acts when the owner writes to it: in the app's own direct messages every
@@ -911,7 +923,25 @@ Fifteen rulings:
   service stops, whether or not the app in Slack is ever changed; the manifest that
   takes the permission away there too is printed, with the sentence that Slack holds it
   until then. A swap is both, in that order: what was unticked is off before what was
-  ticked is asked about. **Unticking everything is the off switch**, and `keryx auth
+  ticked is asked about. **Every path that takes a selection calls `untick` before it
+  does anything else, and there is no path that does not**: the terminal (`login`),
+  the tokens piped in (`hand_over`, which with nothing piped and nothing added ends
+  there, so it works with Slack unreachable), no terminal and no pipe (`setup.auth`),
+  and the wizard's step. A refusal after it says that what was unticked stays off.
+  **In the wizard that is the one exception to "nothing is saved until every answer is
+  in"** (the owner's ruling of 2026-11-24: taking a permission away is saved the moment
+  the boxes are answered, in the wizard exactly as in the command; only what is being
+  added waits for its tokens): `setup.plugins._untick_now` runs it straight after the
+  boxes, a walk that only unticks ends there and asks for no token, and leaving the walk
+  at the next question has still unticked. It is safe under `rewind` because it is done
+  before any other question and cannot be done twice: a replay finds the box already
+  off, a walk that only unticked is remembered in `ctx.memo` so the same boxes end the
+  step the same way, and ticking the box again after Esc is an addition that waits for
+  its tokens. Nothing un-unticks. **A running service stops acting at once and closes
+  that workspace's Socket Mode connection at the next event it is sent**
+  (`SlackInbox._close`, from `handle`, which is the first time anything looks), with
+  the app-level token the untick forgot; only the next start opens one again. **Unticking
+  everything is the off switch**, and `keryx auth
   logout slack [--workspace NAME]` forgets a workspace.
 - **The voice tools follow the ticks.** `slack_read` is on with `read` and
   `slack_message` with `send` (`setup.slack.VOICE_TOOLS`, `sync_tools`), turned on and
@@ -923,8 +953,10 @@ Fifteen rulings:
   the no, and one turned off by hand stays off until what is ticked next changes, when
   the tools are made to match the boxes again; a login that changes nothing names the
   one command that turns it back on (`STILL_OFF`). Unticking, logging out and turning
-  `slack_report` off turn off the ones no workspace has a tick for any more
-  (`_retire`), since a tool left on is refused at every call.
+  `slack_report` off (in the wizard's list or with `keryx plugins remove slack_report`,
+  which both call it) turn off the ones no workspace has a tick for any more
+  (`setup.slack.retire`, the one function for all of them), since a tool left on is
+  refused at every call.
 - **What is ticked is all of its tokens or none of it, in the wizard as on the command
   line.** Tokens arrive on standard input, one to a line, told apart by prefix; one that
   what is ticked does not use is refused by name, one it needs and lacks likewise, and
@@ -932,9 +964,17 @@ Fifteen rulings:
   `auth.test` on the user token (the same team; its `user_id` is the owner, and must be
   the one on file when there is one; and, when Slack says what it may do, every scope
   `read` or `send` needs, `scope_problem`), `apps.connections.open` on the app-level
-  token. The wizard saves nothing until every answer is in, and with anything ticked
+  token. The wizard saves nothing that is added until every answer is in (what is taken
+  away is saved at the boxes: see the ruling on unticking), and with anything ticked
   never offers to save a token unchecked: what a message is held to, and whose Slack is
-  read, is what Slack said of the token.
+  read, is what Slack said of the token. **A user token that may do more at Slack than
+  is ticked is taken** (`setup.slack.beyond_ticked`; the owner's ruling of 2026-11-24):
+  the app was not reinstalled from the trimmed manifest, Keryx cannot shrink a token,
+  and what it does with one is gated on what is ticked. One line says the app still
+  grants more, with the scopes, and that pasting the manifest and reinstalling trims it
+  (`MORE_THAN_TICKED`). Only a token that *lacks* a scope is refused. **What `--allow`
+  refuses is never said back**: it is whatever was on the command line, so the refusal
+  names the three values it takes and `none`.
 - **The steps follow Slack's console, and the prompts follow the steps.** The owner
   walked the real console: the app-level token is at `Basic Information > App-Level
   Tokens > Generate Token and Scopes`, and one section, `OAuth & Permissions > OAuth
@@ -968,19 +1008,31 @@ Fifteen rulings:
   `setup.slack.another_workspace`, so neither lets through what the other refuses.
   **Reports go to the owner's member id**, unless a destination on file still goes with
   the bot token (`keeps`), which stays; `--set channel_id=…` is the one way to send them
-  anywhere else, and the line that prints the destination says so. **With neither
-  `read` nor `send` ticked the user token is used for that one `auth.test` and nothing
-  after**: `SlackWorkspace.reads` and `.writes` are gated on what is ticked, never on a
+  anywhere else, and the line that prints the destination says so. **A user token is
+  on file only while `read` or `send` is ticked** (the owner's ruling of 2026-11-24,
+  which replaced "one that could only say who they are is kept"). With neither ticked
+  it is asked for only when the workspace has no owner on file (the first connection),
+  used for that one `auth.test` to learn which member the owner is, and not saved
+  (`USED_ONCE`). A workspace with an owner on file and neither box ticked is whole
+  without one: no login and no walk asks for one (`token_kinds(…, owner_known=True)`),
+  and a login that changes nothing ends with "connected, and nothing was changed". One
+  handed over anyway is still shown to Slack and held to the owner on file (another
+  person's is refused whatever is ticked), and still not saved. Unticking the last of
+  the two forgets it, because it keeps those permissions at Slack until the app is
+  reinstalled; one that still serves the box left ticked is kept. **"No user token on
+  file" therefore says nothing about when a workspace was connected: "no owner on file"
+  does**, and that is what `start`, the wizard and `doctor` ask. A user token an
+  earlier build saved with neither box ticked keeps working untouched while nothing is
+  written, and the next sign-in that saves drops it, in one line.
+  `SlackWorkspace.reads` and `.writes` are gated on what is ticked besides, never on a
   token being on file, and a test is named after it. **An install from before user
-  tokens keeps working untouched**: what a connection runs on is
+  tokens keeps working untouched**: what a connection runs on, and so what is kept, is
   `integrations.slack.used_kinds`, not what a login takes (`token_kinds`), so a workspace with a bot token and a destination lacks nothing,
   `doctor` says in one line that it has no owner on file yet and passes, the wizard lets
-  its user token be left blank when nothing else changed, and only the next `keryx auth
+  its user token be left blank when nothing is ticked and nothing else changed, and only
+  the next `keryx auth
   login slack` asks for one (showing how to update the app it has, never the link that
-  makes a second). **A token that could read or send as the owner is not kept once
-  neither is ticked**: unticking the last of the two forgets it, because it keeps those
-  permissions at Slack until the app is reinstalled; one that could only say who they
-  are is kept, and so is one that still serves the box left ticked.
+  makes a second).
 - **One app per workspace, in shapes every build on the machine writes back.** The first
   workspace is the top of `slack_report.toml` and the three plain settings
   (`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_USER_TOKEN`); a file from before reads as

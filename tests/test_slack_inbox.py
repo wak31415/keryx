@@ -1317,6 +1317,58 @@ async def test_a_listener_that_ends_is_logged_and_forgotten_so_the_next_start_ma
     await inbox.stop()
 
 
+async def test_unticking_requests_closes_that_workspaces_connection_at_the_next_event(
+    world, caplog
+):
+    """Acting stops the moment the box is unticked; the connection itself, opened with a
+    token the sign-in has since forgotten, is closed by the first event that arrives
+    over it, and is opened again only by the next start of the service."""
+    world.inbox.start()
+    await asyncio.sleep(0)
+    (listener,) = world.slack.listeners
+    assert listener.running
+    plugins.write_config(world.settings, NAME, {"allow": []})
+
+    with caplog.at_level(logging.INFO, logger="keryx.slack.inbox"):
+        await world.inbox.handle("default", payload("check the build"))
+        await asyncio.sleep(0)
+
+    assert dropped(caplog) == ["not_listening"]
+    assert not listener.running
+    assert "closed the connection for default" in caplog.text
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+    # Not opened again by anything but a start that finds the box ticked.
+    assert world.inbox.start() == [] and len(world.slack.listeners) == 1
+    assert await world.tasks() == []
+
+
+async def test_a_second_look_closes_a_listener_whose_box_was_unticked(world):
+    world.inbox.start()
+    await asyncio.sleep(0)
+    (listener,) = world.slack.listeners
+    plugins.write_config(world.settings, NAME, {"allow": []})
+
+    assert world.inbox.start() == []
+    await asyncio.sleep(0)
+
+    assert not listener.running
+
+
+async def test_one_workspace_unticked_leaves_the_others_connection_open(make_world, two):
+    world = make_world(two)
+    world.inbox.start()
+    await asyncio.sleep(0)
+    first, work = world.slack.listeners
+    tables = plugins.read_config(world.settings, NAME)["workspaces"]
+    tables["work"]["allow"] = []
+    plugins.write_config(world.settings, NAME, {"workspaces": tables})
+
+    await world.inbox.handle("work", payload("check the build"))
+    await asyncio.sleep(0)
+
+    assert first.running and not work.running
+
+
 async def test_a_listener_we_stopped_is_not_reported_as_having_ended(
     make_world, conversing, caplog
 ):

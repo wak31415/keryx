@@ -36,31 +36,42 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    mentions it elsewhere) can start work without the phone PIN, with `read` Keryx reads
    their messages, and with `send` it can post in their name. What they said is `--allow`,
    once for each (`--allow requests --allow read`), or `--allow none` for reports and
-   files alone, which is also what to use when they give no answer; the same options go
-   on both commands below. The best way is theirs: run with no option at a terminal,
+   files alone; the same options go on both commands below. `--allow none` is also what
+   to use when they give no answer, **but only where Slack is not connected yet**. On a
+   workspace that is connected, `--allow` says everything that stays on and whatever it
+   leaves out is switched off at once, so `none` there switches everything off: read what
+   is on from `keryx auth status --json` (`slack.workspaces[].allow`) and pass exactly
+   that, unless they asked you for a change, and never `none` by default. The best way
+   is theirs: run with no option at a terminal,
    `keryx auth login slack` shows a box to tick for each and then does everything else,
    so offer that first. `keryx auth login slack --allow …` prints a link and its steps.
    Relay the link and the steps; the
    person creates and installs the Slack app it describes and copies two tokens from one
    place, `OAuth & Permissions > OAuth Tokens`: their own User OAuth Token and, below it,
    the Bot User OAuth Token (the user token is how Slack says which member they are; no
-   address is asked for). With `requests` there is a third, made before installing,
+   address is asked for, and Keryx keeps that token only with `read` or `send` switched
+   on: with neither it is asked once who they are and not saved, and a workspace that is
+   already connected is asked for none). With `requests` there is a third, made before
+   installing,
    at `Basic Information > App-Level Tokens > Generate Token and Scopes`. The steps are
    in the order of Slack's console, and the tokens are asked for in the order they are
    copied: app-level, user, bot. Those tokens are not yours to see: they
    run `keryx auth login slack --stdin --allow …` themselves, at a terminal, and it asks
    for each hidden (run with no option there, the same command shows the boxes and the
    steps first and then waits for the tokens; only
-   with the tokens already in variables of your environment do you run it: `printenv
-   BOT_VAR USER_VAR | keryx auth login slack --stdin --allow none`, one token to a
-   line). It checks them, takes the member the user token belongs to as them, sends
+   with the tokens already in variables of your environment do you run it, for a first
+   connection: `printenv BOT_VAR USER_VAR | keryx auth login slack --stdin --allow
+   none`, one token to a line, with `--allow` saying what they chose). It checks them,
+   takes the member the user token belongs to as them, sends
    reports to that member, turns `slack_report` on and sends them one test message; ask
    whether it arrived. Switching `read` on also turns on reading Slack on a call
    (`slack_read`), and `send` sending as them (`slack_message`), and each says so: what
    they switched on is their yes to both, with nothing more to install, and
    `keryx plugins remove NAME` turns one off. Running the login again changes what is
-   on: whatever `--allow` leaves out is switched off at once. To send reports somewhere else
-   afterwards: `keryx plugins install slack_report --set channel_id=ID`.
+   on: whatever `--allow` leaves out is switched off at once, before anything else and
+   with or without `--stdin`, so only ever leave something out because they asked. To
+   send reports somewhere else afterwards: `keryx plugins install slack_report --set
+   channel_id=ID`.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
    Slack, reading Slack and sending Slack messages as them (each turned on by the Slack
    login when they switch it on there; never install either for them), email, reading the

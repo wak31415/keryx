@@ -78,7 +78,8 @@ read in Slack's documentation, every event that is not acted on writes one log l
 reason and nothing else — never the text, the member or the conversation — so a live test
 shows at once which check refused. The settings are read again for every message, so
 unticking `requests` for a workspace, or turning the plugin off, stops Keryx acting at
-once.
+once; and the first event that then arrives closes that workspace's connection
+(`SlackInbox._close`), which the service opens again only at its next start.
 
 **Each message is acted on once.** Slack sends an event again when its acknowledgement was
 lost, and promises no order. A message is a repeat when its task remembers acting on it
@@ -316,6 +317,8 @@ class SlackInbox:
         self._manager = manager
         self._api = api or InboxApi()
         self._listeners: dict[str, asyncio.Task] = {}
+        #: Listeners that were closed and have not finished unwinding, for `stop`.
+        self._closing: set[asyncio.Task] = set()
         self._seen: OrderedDict[tuple[str, str, str], None] = OrderedDict()
         #: Direct-message conversations that were shown to be the app's own (True) or
         #: somebody else's (False), by the workspace's id: asked of Slack once each.
@@ -328,13 +331,17 @@ class SlackInbox:
         cancelled) is noticed, logged and forgotten, so the next `start` makes another.
 
         Idempotent, and never raises: a plugin file that does not parse, or a workspace
-        missing a token, is a workspace not listened to, and `doctor` says which.
+        missing a token, is a workspace not listened to, and `doctor` says which. A
+        listener still running for a workspace that may no longer be heard is closed
+        (`_close`).
         """
         try:
             found = [each for each in plugin.connected(self._settings) if each.listens]
         except Exception:
             log.exception("could not read the Slack workspaces; none is listened to")
             return []
+        for name in set(self._listeners) - {each.name for each in found}:
+            self._close(name)
         for each in found:
             if each.name in self._listeners:
                 continue
@@ -348,10 +355,29 @@ class SlackInbox:
             log.info("Slack: listening for the owner's messages in %s", each.name)
         return [each.name for each in found]
 
+    def _close(self, name: str) -> None:
+        """Close the connection to workspace `name`, which may no longer be heard: its
+        box was unticked, it was logged out, or the plugin was turned off.
+
+        Keryx stops *acting* the moment the settings say so, because they are read again
+        for every event; this is what stops it *listening*, with the app-level token the
+        sign-in has by then forgotten. It runs when the next event arrives over that
+        connection, which is the first time anything looks. Opened again only by the
+        next start of the service, which is what ticking the box again says.
+        """
+        listener = self._listeners.pop(name, None)
+        if listener is None:
+            return
+        self._closing.add(listener)
+        listener.cancel()
+        log.info("Slack: closed the connection for %s, where nothing may be heard any "
+                 "more; it is opened again only when Keryx next starts", name)
+
     def _ended(self, name: str, task: asyncio.Task) -> None:
         """A listener's task is over: said when it was not us who stopped it."""
         if self._listeners.get(name) is task:
             del self._listeners[name]
+        self._closing.discard(task)
         if task.cancelled():
             return
         failure = task.exception()
@@ -360,7 +386,8 @@ class SlackInbox:
 
     async def stop(self) -> None:
         """Stop every listener. Idempotent."""
-        listeners, self._listeners = list(self._listeners.values()), {}
+        listeners = [*self._listeners.values(), *self._closing]
+        self._listeners = {}
         for listener in listeners:
             listener.cancel()
         for listener in listeners:
@@ -373,9 +400,11 @@ class SlackInbox:
         """Act on one event from workspace `name`'s app, if it is the owner's request."""
         if problem := envelope_problem(payload):
             return _dropped(name, problem)
-        # As the settings stand now: a box unticked since startup stops this at once.
+        # As the settings stand now: a box unticked since startup stops this at once,
+        # and the connection the event came over is closed with it.
         workspace = plugin.workspace(self._settings, name)
         if workspace is None or not workspace.listens:
+            self._close(name)
             return _dropped(name, "not_listening")
         request = owner_request(payload, workspace)
         if isinstance(request, Dropped):

@@ -154,10 +154,10 @@ nothing. What else Keryx may do in your Slack is yours to tick, each on its own:
 
 | What you tick | What it lets Keryx do | What Keryx can see | What you paste for it |
 |---|---|---|---|
-| nothing | only post to you: reports and files | nothing | your user token (`xoxp-`), which says which member you are and can see nothing but custom emoji, and the bot token (`xoxb-`) |
+| nothing | only post to you: reports and files | nothing | the first time, your user token (`xoxp-`), which says which member you are, can see nothing but custom emoji and is not saved; and the bot token (`xoxb-`) |
 | Act on what you type to the app | every message you send the app itself is a request, with no phone PIN | the messages you type to the app, and nothing else | also the app-level token (`xapp-`), first |
-| Read your Slack as you, when you ask | answer a question about your messages, on a call or in a task | every conversation you are in, their lists, the member list and search, only when you ask about messages | the user token, which can now read |
-| Send messages as you, after a yes | send a message in your name, to other people and channels, when you ask for that message | by itself, only the names of your conversations and of members, to find who you mean; no messages | the user token, which can now post |
+| Read your Slack as you, when you ask | answer a question about your messages, on a call or in a task | every conversation you are in, their lists, the member list and search, only when you ask about messages | the user token, which can now read, and is kept |
+| Send messages as you, after a yes | send a message in your name, to other people and channels, when you ask for that message | by itself, only the names of your conversations and of members, to find who you mean; no messages | the user token, which can now post, and is kept |
 
 Any combination is one app. Two of them together do one thing more: with acting on what
 you type *and* reading both ticked, you can also mention the app in a conversation you
@@ -188,7 +188,10 @@ The tokens are asked for in that same order: app-level, user, bot. Paste each on
 a hidden prompt.
 Keryx checks each with Slack, tells you which workspace it connected to, and learns
 which member you are from your user token, so there is no address to give and no channel
-id to look up: reports go to you. Nothing is saved until every token has been checked.
+id to look up: reports go to you. Your user token is kept only while reading or sending
+is ticked. With neither, it says who you are that once and is not saved, and a workspace
+that is already connected is not asked for one again.
+Nothing you add is saved until every token has been checked.
 Then it offers to send a test message, which arrives under Apps in Slack. The app is
 yours alone. From the command line it is one command with no options, `keryx auth login
 slack`: it shows the same boxes, prints the link and the steps for what you ticked, and
@@ -266,10 +269,17 @@ again.
 up as they stand. Ticking one more changes the app you have, never makes a second: the
 command prints the manifest to paste into the app's App Manifest page, waits while you
 reinstall it, and asks for a token only if there is a new one. Unticking needs nothing
-from Slack and counts at once: the tokens it no longer uses are forgotten, the voice
-tool that went with it is turned off, and a running Keryx stops. The app in Slack still
+from Slack and counts at once, in the command and in `keryx setup` alike: it is saved
+the moment the boxes are answered, the tokens it no longer uses are forgotten, the voice
+tool that went with it is turned off, and a running Keryx stops. If unticking is all you
+did, no token is asked for. The app in Slack still
 holds the permission it was made with until you paste the manifest the command prints
-and reinstall it, which is worth doing and is not what stops Keryx. `keryx auth logout
+and reinstall it, which is worth doing and is not what stops Keryx. If you tick sending
+or reading later and the app was not reinstalled in between, the user token you paste
+may still carry the permission you took away: Keryx takes it, uses it only for what is
+ticked, and says in one line that the app still grants more. `keryx plugins remove
+slack_report` turns Slack off on calls and forgets nothing: `slack_read` and
+`slack_message` go off with it. `keryx auth logout
 slack` forgets the workspace altogether; remove the app in Slack to end its tokens.
 
 **More than one workspace.** `keryx auth login slack --workspace work` connects another,

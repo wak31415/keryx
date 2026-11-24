@@ -1,6 +1,7 @@
 """`keryx auth`'s two halves, called directly: every sign-in's state, and one sign-in."""
 
 import dataclasses
+import json
 
 import pytest
 from slack_sets import READS
@@ -11,9 +12,18 @@ from keryx.agents.base import RunResult
 from keryx.agents.registry import BACKENDS
 from keryx.config.store import ConfigStore
 from keryx.integrations.google import SERVICES
-from keryx.integrations.slack import Permission, new_app_url
-from keryx.setup import auth, google
+from keryx.integrations.slack import (
+    Connection,
+    Permission,
+    SlackResult,
+    Workspace,
+    app_manifest,
+    new_app_url,
+    user_scopes,
+)
+from keryx.setup import auth, google, slack
 from keryx.setup.auth import AuthError, LoginOptions
+from keryx.setup.slack import SlackApi
 
 
 @pytest.fixture
@@ -444,8 +454,9 @@ def test_tokens_piped_to_a_new_slack_login_that_does_not_say_what_is_ticked_are_
 def test_a_slack_login_that_cannot_go_on_is_an_auth_error(settings):
     with pytest.raises(AuthError, match="no token on standard input"):
         login("slack", settings, tokens=" \n", allow=("none",))
-    with pytest.raises(AuthError, match="there is nothing called 'converse' to allow"):
+    with pytest.raises(AuthError, match="--allow takes requests, read or send") as refused:
         login("slack", settings, allow=("converse",))
+    assert "converse" not in str(refused.value)  # what was given is never said back
 
 
 def connected_slack(settings, *allow):
@@ -489,10 +500,175 @@ def test_one_box_swapped_for_another_with_no_terminal_is_off_at_once_and_prints_
 
     text = "\n".join(lines)
     assert plugins.read_config(settings, "slack_report")["allow"] == []
-    assert "SLACK_APP_TOKEN is forgotten." in lines
+    # The app-level token goes with requests, and with it the user token an earlier
+    # build kept with neither reading nor sending ticked.
+    assert "SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten." in lines
     assert "Acme is connected. Adding: sending messages as you." in lines
     assert "The manifest:" in text and "api.slack.com/apps?new_app=1" not in text
-    assert "keryx auth login slack --stdin --allow send < /dev/null" in text
+    assert text.count('"display_information"') == 1  # the steps print it, once
+    assert ("Then hand the user token over on standard input, never on the command line:"
+            "\n  keryx auth login slack --stdin --allow send") in text
+
+
+# --- the tokens piped in: what was unticked first, as at a terminal -----------------------
+
+
+@dataclasses.dataclass
+class PipedSlack:
+    """Slack as `keryx auth login slack --stdin` reaches it with no terminal."""
+
+    team: Workspace = Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")
+    user: Workspace = Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER")
+    calls: list = dataclasses.field(default_factory=list)
+
+    def api(self) -> SlackApi:
+        def auth_test(token):
+            self.calls.append(token)
+            return self.user if token.startswith("xoxp-") else self.team
+
+        return SlackApi(
+            auth_test=auth_test,
+            post_text=lambda token, channel, text: SlackResult(),
+            open_connection=lambda token: Connection(url="wss://x/?ticket=t"),
+        )
+
+
+def piped(settings, monkeypatch, fake, *, tokens, allow) -> list[str]:
+    """`keryx auth login slack --stdin --allow …` with `tokens` on standard input."""
+    monkeypatch.setattr(slack, "SlackApi", fake.api)  # what `connect` makes by default
+    return login("slack", settings, tokens=tokens, stdin=True, test=False, allow=allow)
+
+
+def slack_secrets() -> set[str]:
+    return {key for key in ConfigStore()._secrets() if key.startswith("SLACK_")}
+
+
+def test_unticking_with_stdin_and_nothing_piped_needs_nothing_from_slack(settings, monkeypatch):
+    """`--stdin --allow none < /dev/null` while Slack cannot be reached: reading is off,
+    its tool is off and the user token is forgotten, exactly as without `--stdin`."""
+    settings = connected_slack(settings, "read")
+    plugins.install(settings, "slack_read")
+    down = PipedSlack(team=Workspace(error="unreachable"))
+
+    lines = piped(settings, monkeypatch, down, tokens="", allow=("none",))
+
+    assert down.calls == []
+    assert plugins.read_config(settings, "slack_report")["allow"] == []
+    assert not plugins.tool_path(settings, "slack_read").is_file()
+    assert slack_secrets() == {"SLACK_BOT_TOKEN"}
+    assert lines[0] == ("Acme: reading Slack as you is off, from this moment. A running "
+                        "Keryx stops at once.")
+    assert "SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten." in lines
+    # The manifest that takes it away in Slack too, which every other path prints.
+    assert json.loads(lines[-1]) == app_manifest(frozenset(), assistant="Lyra")
+
+
+def test_a_swap_with_stdin_unticks_first_and_only_what_was_added_is_refused(
+    settings, monkeypatch
+):
+    """Reading ticked, `--stdin --allow send` with a user token that may not post yet
+    (the app was not reinstalled): reading is off whatever becomes of sending, and the
+    refusal says so."""
+    settings = connected_slack(settings, "read")
+    plugins.install(settings, "slack_read")
+    not_yet = PipedSlack(user=Workspace(
+        team="Acme", team_id="T0ACME", user_id="U0OWNER",
+        scopes=user_scopes(frozenset({Permission.READ}))))
+
+    with pytest.raises(AuthError) as refused:
+        piped(settings, monkeypatch, not_yet, tokens="xoxp-1\n", allow=("send",))
+
+    assert "may not yet do what you ticked" in str(refused.value)
+    assert str(refused.value).endswith(
+        "Nothing else was saved, and what you unticked stays off")
+    assert plugins.read_config(settings, "slack_report")["allow"] == []
+    assert not plugins.tool_path(settings, "slack_read").is_file()
+    assert "SLACK_USER_TOKEN" not in slack_secrets()
+
+
+def test_a_swap_with_nothing_piped_says_which_token_what_was_added_needs(settings, monkeypatch):
+    settings = connected_slack(settings, "read")
+
+    with pytest.raises(AuthError) as refused:
+        piped(settings, monkeypatch, PipedSlack(), tokens="", allow=("send",))
+
+    assert str(refused.value) == ("no token on standard input: this needs the user token "
+                                  "(xoxp-). What you unticked stays off")
+    assert plugins.read_config(settings, "slack_report")["allow"] == []
+
+
+def test_a_user_token_piped_in_with_nothing_ticked_is_never_kept_and_the_manifest_is_printed(
+    settings, monkeypatch
+):
+    """The setup instructions' own command, `printenv BOT USER | keryx auth login slack
+    --stdin --allow none`, on a workspace that read and sent, with the same two tokens
+    and an app that was not reinstalled: the user token still reads at Slack, so it is
+    not on file afterwards, and what trims the app is printed."""
+    settings = connected_slack(settings, "read", "send")
+    still = PipedSlack(user=Workspace(
+        team="Acme", team_id="T0ACME", user_id="U0OWNER",
+        scopes=user_scopes(frozenset({Permission.READ, Permission.SEND}))))
+
+    lines = piped(settings, monkeypatch, still, tokens="xoxb-1\nxoxp-1\n", allow=("none",))
+
+    text = "\n".join(lines)
+    assert plugins.read_config(settings, "slack_report")["allow"] == []
+    assert slack_secrets() == {"SLACK_BOT_TOKEN"}
+    assert "SLACK_APP_TOKEN and SLACK_USER_TOKEN are forgotten." in lines
+    assert slack.USED_ONCE in lines
+    assert any(line.startswith("note: the app in Slack still grants more than is ticked")
+               for line in lines)
+    assert "App Manifest page" in text and '"display_information"' in text
+    # Somebody else's is still refused, whatever is ticked.
+    theirs = PipedSlack(user=Workspace(team="Acme", team_id="T0ACME", user_id="U0ELSE"))
+    with pytest.raises(AuthError, match="the user token belongs to U0ELSE"):
+        piped(settings, monkeypatch, theirs, tokens="xoxp-theirs\n", allow=("none",))
+
+
+def test_a_login_rewrites_a_line_from_before_the_boxes_that_is_not_understood(
+    settings, monkeypatch
+):
+    """What the refusal of such a line tells the owner to run. It is read as nothing
+    ticked, the file is written back without it, and the login goes on from there."""
+    settings = connected_slack(settings)
+    path = plugins.config_path(settings, "slack_report")
+    path.write_text('access = "reed"\n' + path.read_text().replace("allow = []\n", ""))
+    with pytest.raises(plugins.PluginConfigError, match="the access line is not understood"):
+        plugins.read_config(settings, "slack_report")
+    monkeypatch.setattr(slack, "SlackApi", PipedSlack().api)
+
+    lines = login("slack", settings, allow=("none",))
+
+    assert lines[0] == slack.MENDED
+    assert lines[1].startswith("Acme is connected, and nothing was changed.")
+    values = plugins.read_config(settings, "slack_report")
+    assert values["allow"] == [] and values["owner_id"] == "U0OWNER"
+    assert "access" not in [line.split(" = ")[0] for line in path.read_text().splitlines()]
+
+
+def test_slack_not_answering_after_an_untick_says_the_untick_stays(settings, monkeypatch):
+    settings = connected_slack(settings, "requests", "read")
+    down = PipedSlack(team=Workspace(error="unreachable"))
+
+    with pytest.raises(AuthError) as refused:
+        piped(settings, monkeypatch, down, tokens="xoxb-2\n", allow=("requests",))
+
+    assert str(refused.value).endswith(
+        "nothing else was saved, and what you unticked stays off")
+    assert plugins.read_config(settings, "slack_report")["allow"] == ["requests"]
+    assert ConfigStore()._secrets()["SLACK_BOT_TOKEN"] == "xoxb-1"
+
+
+def test_tokens_piped_in_with_nothing_unticked_are_refused_as_they_always_were(
+    settings, monkeypatch
+):
+    settings = connected_slack(settings, "requests")
+    down = PipedSlack(team=Workspace(error="invalid_auth"))
+
+    with pytest.raises(AuthError) as refused:
+        piped(settings, monkeypatch, down, tokens="xoxb-2\n", allow=None)
+
+    assert str(refused.value).endswith("nothing was saved")
 
 
 def test_at_a_terminal_a_slack_login_shows_the_boxes_and_what_is_ticked_is_what_it_makes(

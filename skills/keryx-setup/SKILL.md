@@ -128,18 +128,27 @@ other people and channels, after reading each back and a yes). Read them those
 sentences and ask. Never choose `requests`, `read` or `send` for them, and never suggest
 one to save a step. What they say goes on both of the other commands as `--allow`, once
 for each (`--allow requests --allow read`); `--allow none` is reports and files alone,
-which is what to use when they give no answer. Nothing is guessed: with no `--allow`
-on a workspace that is not connected, the command prints the choices and saves nothing.
-Whatever is ticked, the last command takes two tokens, their own user token and
+which is what to use when they give no answer **on a workspace that is not connected
+yet**. Nothing is guessed: with no `--allow` on a workspace that is not connected, the
+command prints the choices and saves nothing. **On a workspace that is connected, never
+pass `--allow none` by default**: `--allow` there says everything that stays on, and
+whatever it leaves out is switched off at once, so `none` switches off everything they
+had on. Read what is on from `keryx auth status --json` (`slack.workspaces[].allow`)
+and pass exactly that selection, unless they asked you for a change.
+A first connection takes two tokens whatever is ticked, their own user token and
 the bot token (the user token is how Slack says which member they are; there is no
-address to give and nothing is asked about where to send: reports go to them). With
+address to give and nothing is asked about where to send: reports go to them). Keryx
+keeps the user token only while `read` or `send` is on: with neither it is asked once
+who they are and not saved, and a workspace that is already connected, whose owner is
+on file, is asked for none. With
 `requests`, the app-level token is asked for
 first (on standard input it goes with the other two, one to a line, in any order). The command names the member it takes them to be: read them
 that line. It is settled then and nothing changes it afterwards; connecting as somebody
 else is `keryx auth logout slack` and a new login, which is theirs to ask for. Running
 the login again is how they change what is on: at a terminal the boxes come up ticked
 as they stand, and without one `--allow` says everything that is to stay on. Whatever
-it leaves out is switched off at once, with nothing asked of Slack, and whatever it
+it leaves out is switched off at once, with nothing asked of Slack and before anything
+else the command does, with or without `--stdin`; whatever it
 adds prints the manifest to paste into the app they have. A machine
 that connected Slack before user tokens were asked for keeps working as it is: only if
 they want more switched on, or an owner on file, do they run the login again, and the

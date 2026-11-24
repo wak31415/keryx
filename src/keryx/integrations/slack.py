@@ -213,12 +213,16 @@ BOT, APP, USER = "bot", "app", "user"
 TOKEN_PREFIXES = {BOT: "xoxb-", APP: "xapp-", USER: "xoxp-"}
 
 
-def token_kinds(chosen: Allowed = BASE) -> tuple[str, ...]:
+def token_kinds(chosen: Allowed = BASE, *, owner_known: bool = False) -> tuple[str, ...]:
     """The tokens connecting with `chosen` takes, in the order they are asked for.
 
-    The user token whatever is ticked (the owner's ruling of 2026-11-24, "let's always
-    require a user token"): a bot token names the bot, not whoever installed it, and
-    `auth.test` on the user token is how Slack itself says who the owner is.
+    **The user token while `read` or `send` is ticked, and otherwise only until the
+    workspace has an owner on file** (the owner's rulings of 2026-11-24: "let's always
+    require a user token" for who the owner is, then that it is on file only while
+    something ticked uses it). A bot token names the bot, not whoever installed it, so
+    `auth.test` on the user token is how Slack itself says who the owner is: a first
+    connection takes one whatever is ticked. `owner_known` is a workspace whose owner is
+    on file already, which with neither `read` nor `send` has nothing left to ask one.
 
     **The order is the order Slack's console shows them in**, as the owner found walking
     it: the app-level token is on a page of its own, met before the app is installed;
@@ -227,14 +231,18 @@ def token_kinds(chosen: Allowed = BASE) -> tuple[str, ...]:
     nobody is sent back to a page they have left. Nothing else may read an order out of
     this: standard input is told apart by prefix.
     """
-    return (APP, USER, BOT) if Permission.REQUESTS in chosen else (USER, BOT)
+    kinds = [APP] if Permission.REQUESTS in chosen else []
+    if as_owner(chosen) or not owner_known:
+        kinds.append(USER)
+    return (*kinds, BOT)
 
 
 def used_kinds(chosen: Allowed = BASE) -> tuple[str, ...]:
-    """The tokens a connection works with once it is made: the bot's to post, the app's
-    to listen with `requests`, the user's to read or send as the owner. With neither of
-    those ticked the user token is used to connect and for nothing after, so a workspace
-    an older build connected, which has none, lacks nothing it runs on."""
+    """The tokens a connection works with once it is made, **which are the ones kept on
+    file**: the bot's to post, the app's to listen with `requests`, the user's to read or
+    send as the owner. With neither of those ticked the user token is used once, to
+    connect, and not saved; so a workspace an older build connected, which has none,
+    lacks nothing it runs on."""
     kinds = [BOT]
     if Permission.REQUESTS in chosen:
         kinds.append(APP)

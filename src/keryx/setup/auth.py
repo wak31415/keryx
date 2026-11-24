@@ -291,14 +291,16 @@ def _slack(
     choose: Callable[[str, Sequence[Any]], Sequence[str]] | None = None,
 ) -> None:
     """Slack's sign-in. A terminal (`ask`) is asked what to tick, shown the steps and
-    asked for the tokens there. Without one: tokens piped in are checked and saved;
-    with none piped, whatever `--allow` unticks is taken away at once, and the steps
-    and the `--stdin` command are printed for what it adds. **What is ticked is never
+    asked for the tokens there. Without one, `--stdin` checks and saves what was piped
+    in (`slack.hand_over`), and no `--stdin` prints the steps and the `--stdin` command
+    for what `--allow` adds. **On all three, whatever was unticked is taken away first**
+    (`slack.untick`), at once and with nothing asked of Slack. **What is ticked is never
     guessed**: with nothing connected and no `--allow`, the choices are printed, and
     tokens piped in are refused."""
     try:
         workspace = slack.workspace_name(options.workspace)
         allowed = slack.parse_allow(options.allow)
+        slack.mend(settings, echo)
         if ask is not None and options.tokens is None:
             slack.login(settings, store, ask=ask, echo=echo, choose=choose,
                         test=options.test, steps=not options.stdin, workspace=workspace,
@@ -311,13 +313,13 @@ def _slack(
                     f"--allow {slack.NONE} for reports and files alone, or --allow once "
                     f"for each of {', '.join(slack.PERMISSIONS)} (`keryx auth login "
                     "slack` says what each is). Nothing was saved")
-            slack.connect(settings, store, tokens=options.tokens, test=options.test,
-                          echo=echo, workspace=workspace, allowed=allowed)
+            slack.hand_over(settings, store, tokens=options.tokens, test=options.test,
+                            echo=echo, workspace=workspace, allowed=allowed)
             return
         if allowed is not None:
             # Taking a permission away needs nothing from Slack: done here and now.
             unticked = slack.untick(settings, store, workspace=workspace, allowed=allowed,
-                                    echo=echo)
+                                    echo=echo, steps_follow=True)
             if unticked.done:
                 return
             settings = unticked.settings

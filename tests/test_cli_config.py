@@ -465,8 +465,7 @@ def test_auth_logout_slack_takes_a_further_workspace_by_name(home, monkeypatch):
     assert refused.exit_code == 1 and "work would be left with none" in refused.output
     assert result.exit_code == 0, result.output
     assert "work (Acme) is disconnected" in result.output
-    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-first-secret",
-                               "SLACK_USER_TOKEN": "xoxp-user-secret"}
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-first-secret"}
     assert run("auth", "logout", "slack", "--workspace", "work").exit_code == 1
 
 
@@ -633,8 +632,9 @@ def test_auth_login_slack_takes_the_token_on_stdin_and_turns_the_plugin_on(
     assert "keryx plugins install slack_report --set channel_id=ID" in result.output
     assert "xoxp-user-secret" not in result.output
     assert asked == ["auth", "user", "U0OWNER"]
-    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-very-secret",
-                               "SLACK_USER_TOKEN": "xoxp-user-secret"}
+    # With neither reading nor sending ticked the user token says who they are, once.
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-very-secret"}
+    assert "The user token said which member you are, and is not saved" in result.output
     assert stat.S_IMODE(home.secrets_path.stat().st_mode) == 0o600
     assert 'channel_id = "U0OWNER"' in (
         tmp_path / "keryx" / "tools" / "slack_report.toml"
@@ -757,8 +757,7 @@ def test_auth_login_slack_at_a_terminal_asks_for_the_token_hidden(home, monkeypa
         ("User token (xoxp-…, OAuth & Permissions > OAuth Tokens > User OAuth Token)", True),
         ("Bot token (xoxb-…, OAuth & Permissions > OAuth Tokens > Bot User OAuth Token)", True),
     ]
-    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret",
-                               "SLACK_USER_TOKEN": "xoxp-typed-secret"}
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret"}
     said = capsys.readouterr()
     # `--stdin` at a terminal is the asking alone: the steps are not printed again.
     assert said.out.startswith("connected to the Acme workspace")
@@ -827,8 +826,7 @@ def test_at_a_terminal_auth_login_slack_is_one_command_that_waits_for_the_tokens
     assert "typed-secret" not in said.out + said.err
     assert asked == ["auth", "user", "open", "U0OWNER"]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret",
-                               "SLACK_APP_TOKEN": "xapp-typed-secret",
-                               "SLACK_USER_TOKEN": "xoxp-typed-secret"}
+                               "SLACK_APP_TOKEN": "xapp-typed-secret"}
 
 
 def test_leaving_the_terminals_questions_saves_nothing_and_says_how_to_pick_it_up(
@@ -941,8 +939,7 @@ def test_at_a_terminal_each_token_still_needed_is_asked_for_and_a_saved_one_may_
          "Enter to keep the one saved", True),
     ]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-saved",
-                               "SLACK_APP_TOKEN": "xapp-typed-secret",
-                               "SLACK_USER_TOKEN": "xoxp-typed-secret"}
+                               "SLACK_APP_TOKEN": "xapp-typed-secret"}
     assert "xapp-typed-secret" not in "".join(capsys.readouterr())
 
 
@@ -978,8 +975,7 @@ def test_auth_login_slack_takes_what_is_ticked_and_its_tokens_one_to_a_line(
     assert "level" not in result.output and "secret" not in result.output
     assert asked == ["auth", "user", "open"]
     assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-bot-secret",
-                               "SLACK_APP_TOKEN": "xapp-app-secret",
-                               "SLACK_USER_TOKEN": "xoxp-user-secret"}
+                               "SLACK_APP_TOKEN": "xapp-app-secret"}
     text = (tmp_path / "keryx" / "tools" / "slack_report.toml").read_text()
     assert 'allow = ["requests"]' in text and 'owner_id = "U0OWNER"' in text
     assert "access =" not in text
@@ -1002,9 +998,7 @@ def test_auth_login_slack_that_unticks_is_done_at_once_and_asks_slack_nothing(
     assert result.exit_code == 0, result.output
     assert "Acme: acting on what you type to the app is off, from this moment." in result.output
     assert "SLACK_APP_TOKEN is forgotten" in result.output
-    # The user token could only ever say who they are, so it is kept.
-    assert asked == [] and home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-bot-secret",
-                                               "SLACK_USER_TOKEN": "xoxp-user-secret"}
+    assert asked == [] and home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-bot-secret"}
 
 
 def test_auth_login_slack_for_a_further_workspace_stores_it_under_its_name(
@@ -1020,9 +1014,8 @@ def test_auth_login_slack_for_a_further_workspace_stores_it_under_its_name(
     assert result.exit_code == 0, result.output
     assert "connected to the Acme workspace as work" in result.output
     assert home._secrets() == {
-        "SLACK_BOT_TOKEN": "xoxb-first-secret", "SLACK_USER_TOKEN": "xoxp-user-secret",
-        "SLACK_WORKSPACE_TOKENS": (
-            '{"work": {"bot": "xoxb-work-secret", "user": "xoxp-user-secret"}}'),
+        "SLACK_BOT_TOKEN": "xoxb-first-secret",
+        "SLACK_WORKSPACE_TOKENS": '{"work": {"bot": "xoxb-work-secret"}}',
     }
     assert "[workspace-work]" in (tmp_path / "keryx" / "tools" / "slack_report.toml").read_text()
 

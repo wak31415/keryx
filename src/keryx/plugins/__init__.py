@@ -35,6 +35,7 @@ choices, numbers) and quoted by `toml_value`, so nothing written can end its own
 """
 
 import contextlib
+import contextvars
 import os
 import re
 import tomllib
@@ -416,10 +417,25 @@ def _copy(value: Any) -> Any:
     return list(value) if isinstance(value, list) else value
 
 
-def _current(where: str, keys: tuple[Key, ...], values: Mapping[str, Any]) -> dict[str, Any]:
+#: Whether a line a newer setting replaced, which says nothing that line ever could, is
+#: read as the newer setting's default instead of refused. Only inside `mend`, which is
+#: how the plugin's sign-in rewrites such a line. A context variable because the reading
+#: is several calls deep.
+_FORGIVING: contextvars.ContextVar[bool] = contextvars.ContextVar("forgiving", default=False)
+
+
+def _current(where: str, keys: tuple[Key, ...], values: Mapping[str, Any],
+             sign_in: str = "") -> dict[str, Any]:
     """`values` with each setting that was replaced (`Key.formerly`) read into the one
     that replaced it, and taken out: the newer one wins when both are there, and the
-    older is never handed on to be written."""
+    older is never handed on to be written.
+
+    An older line that says nothing it ever could is refused in a sentence that names
+    the line and what rewrites it (`sign_in`), **never the values it used to take**:
+    those are words of a setting that is gone, and the owner is not shown them. The
+    sign-in rewrites it (`mend`) by reading it as nothing set, which is the newer
+    setting's default.
+    """
     current = dict(values)
     for key in keys:
         if not key.formerly or key.formerly not in current:
@@ -429,12 +445,14 @@ def _current(where: str, keys: tuple[Key, ...], values: Mapping[str, Any]) -> di
             continue
         was = key.was or {}
         said = str(old).strip().lower()
-        if said not in was:
+        if said in was:
+            current[key.name] = _copy(was[said])
+        elif not _FORGIVING.get():
+            mend = f": `{sign_in}` rewrites it" if sign_in else ""
             raise PluginConfigError(
-                f"{where}: {key.formerly} must be one of {', '.join(was)} (it is {key.name} "
-                "now, and is read only from a file that has not been written since)"
+                f"{where}: the {key.formerly} line is not understood (it is from before "
+                f"{key.name}, which replaced it){mend}"
             )
-        current[key.name] = _copy(was[said])
     return current
 
 
@@ -446,10 +464,11 @@ def clean(name: str, values: Mapping[str, Any]) -> dict[str, Any]:
     """
     spec = plugin(name)
     known = {key.name: key for key in spec.keys}
-    merged = defaults(name) | _current(name, spec.keys, _gathered(spec, values))
+    merged = defaults(name) | _current(name, spec.keys, _gathered(spec, values), spec.sign_in)
     cleaned: dict[str, Any] = {}
     for key, value in merged.items():
-        cleaned[key] = _clean(name, known[key], value) if key in known else value
+        cleaned[key] = (_clean(name, known[key], value, spec.sign_in) if key in known
+                        else value)
     return cleaned
 
 
@@ -474,7 +493,7 @@ def _gathered(spec: Plugin, values: Mapping[str, Any]) -> dict[str, Any]:
     return gathered
 
 
-def _clean(name: str, key: Key, value: Any) -> Any:
+def _clean(name: str, key: Key, value: Any, sign_in: str = "") -> Any:
     where = f"{name}: {key.name}"
     if key.kind == "word":
         text = "" if value is None else str(value).strip()
@@ -516,7 +535,7 @@ def _clean(name: str, key: Key, value: Any) -> Any:
             raise PluginConfigError(f"{where} must be one line")
         return text
     if key.kind == "tables":
-        return _clean_tables(name, key, value)
+        return _clean_tables(name, key, value, sign_in)
     # A table: `{alias: partition}`, both bare words, the alias lower-cased because it is
     # matched against speech.
     if not isinstance(value, Mapping):
@@ -530,7 +549,7 @@ def _clean(name: str, key: Key, value: Any) -> Any:
     return table
 
 
-def _clean_tables(name: str, key: Key, value: Any) -> dict[str, dict[str, Any]]:
+def _clean_tables(name: str, key: Key, value: Any, sign_in: str = "") -> dict[str, dict[str, Any]]:
     """`{name: {field: value}}`: each name a bare word, lower-cased because it may be
     matched against speech, and each table its fields over their defaults, validated. A
     plain value somebody added by hand is carried through."""
@@ -546,7 +565,7 @@ def _clean_tables(name: str, key: Key, value: Any) -> dict[str, dict[str, Any]]:
                 f"{where}: each one is a [{key.prefix}NAME] table, NAME a bare word"
             )
         merged = {field.name: _copy(field.default) for field in key.fields} | _current(
-            f"{name}: {key.name}.{alias}", key.fields, table)
+            f"{name}: {key.name}.{alias}", key.fields, table, sign_in)
         tables[alias] = {
             item: _clean(f"{name}: {key.name}.{alias}", known[item], each)
             if item in known else each
@@ -571,6 +590,34 @@ def read_config(settings: "Settings", name: str) -> dict[str, Any]:
     if not path.exists() and off_path(settings, name).exists():
         path = off_path(settings, name)
     return read_config_file(name, path)
+
+
+def mend(settings: "Settings", name: str) -> bool:
+    """Rewrite the plugin's file when a line a newer setting replaced is all that stops
+    it being read: that line is read as nothing set (the newer setting's default, which
+    for what a workspace may do is nothing), and the file is written back without it.
+    True when it was rewritten.
+
+    The plugin's sign-in calls this before it reads anything, which is what makes the
+    refusal's own advice true (`_current`). A file that reads as it is, is not touched,
+    and one that still does not read is left for whatever reads it next to refuse.
+    """
+    path = config_path(settings, name)
+    if not path.exists():
+        path = off_path(settings, name)
+    try:
+        read_config_file(name, path)
+        return False
+    except PluginConfigError:
+        pass
+    token = _FORGIVING.set(True)
+    try:
+        write_private(path, render_config(name, read_config_file(name, path)))
+    except PluginConfigError:
+        return False
+    finally:
+        _FORGIVING.reset(token)
+    return True
 
 
 def install_problem(settings: "Settings", name: str) -> str | None:
