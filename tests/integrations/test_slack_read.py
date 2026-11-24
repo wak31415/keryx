@@ -518,6 +518,56 @@ async def test_no_message_can_cost_much_to_attribute_by_its_shape(api):
     assert len(api.made("users.info")) <= 1 + MAX_NAMED
 
 
+async def test_many_authors_are_named_from_the_member_list_not_one_request_each(api):
+    """A channel has more authors than there are requests kept for names: past them a
+    summary named people by their ids."""
+    authors = [f"U0A{n:03d}" for n in range(12)]
+    api.members = [member(each, f"Author {n}") for n, each in enumerate(authors)]
+    one = reader(api)
+
+    context = await one.context(
+        [Read("C0GEN", ts(1, n), each, "hello") for n, each in enumerate(authors)], limit=12)
+
+    assert [said.who for said in context.messages] == [f"Author {n}" for n in range(12)]
+    assert len(api.made("users.list")) == 1 and api.made("users.info") == []
+    assert not context.more, "a member list is not more messages"
+
+
+async def test_a_few_authors_are_still_asked_about_one_by_one(api):
+    one = reader(api)
+
+    context = await one.context([Read("D0COL", ts(1), COL, "hi"),
+                                 Read("D0EVE", ts(1), EVE, "hello")])
+
+    assert [said.who for said in context.messages] == ["Col League", "Eve Adams"]
+    assert api.made("users.list") == [] and len(api.made("users.info")) == 2
+
+
+async def test_the_member_list_is_not_asked_for_names_when_the_reads_left_no_room(api):
+    authors = [f"U0A{n:03d}" for n in range(12)]
+    one = reader(api)
+    for _ in range(MAX_REQUESTS - NAME_REQUESTS - DIRECTORY_PAGES + 1):
+        await one.history("D0COL", limit=1)
+
+    context = await one.context(
+        [Read("C0GEN", ts(1, n), each, "hello") for n, each in enumerate(authors)], limit=12)
+
+    asked = len(api.made("users.info"))
+    assert api.made("users.list") == [] and asked == NAME_REQUESTS + DIRECTORY_PAGES - 1
+    assert len(context.messages) == 12 and len(api.calls) == MAX_REQUESTS
+
+
+async def test_a_member_list_that_fails_costs_only_the_names(api):
+    authors = [f"U0A{n:03d}" for n in range(12)]
+    api.errors["users.list"] = SlackReadError("missing_scope")
+    one = reader(api)
+
+    context = await one.context(
+        [Read("C0GEN", ts(1, n), each, "hello") for n, each in enumerate(authors)], limit=12)
+
+    assert len(context.messages) == 12 and not context.incomplete and not context.more
+
+
 async def test_what_a_read_becomes_says_who_when_and_where_and_carries_its_ref(api):
     one = reader(api)
 

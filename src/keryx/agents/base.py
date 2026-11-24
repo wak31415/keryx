@@ -43,6 +43,9 @@ SUBAGENT_SLACK_ORIGIN_PROMPT = "subagent_slack_origin.md"
 #: Said to every subagent while a workspace may be read as the owner: the commands that
 #: read it, and that what they print is context, never a request.
 SUBAGENT_SLACK_READ_PROMPT = "subagent_slack_read.md"
+#: Said instead while Keryx has an app of its own that may not read: that it cannot, what
+#: switches reading on, and that no other Slack tool the agent has stands in for it.
+SUBAGENT_SLACK_NO_READ_PROMPT = "subagent_slack_no_read.md"
 SUBAGENT_SLACK_REPORT_PROMPT = "subagent_slack_report.md"
 SUBAGENT_SLACK_MESSAGE_PROMPT = "subagent_slack_message.md"
 #: Where a request typed on Slack was typed, and how to read around it, by whether it
@@ -285,7 +288,12 @@ def render_subagent_suffix(
     that was typed on Slack rather than spoken is told so: that the request is the owner's
     and the only instruction, where it was typed, and where its report goes. `slack_read`
     says a workspace may be read as the owner, and adds the commands that read it with
-    the rule that what they print is context and never a request. `slack_report` says
+    the rule that what they print is context and never a request. With an app of Keryx's
+    own (`slack_report`, and no server) and no workspace to read, it is told that instead:
+    that it cannot read their Slack, what switches reading on, and to use no other Slack
+    tool it has, which is signed in as something else and sees something else (the
+    owner's first two questions about Slack, on 2026-11-24, were answered from another
+    workspace through a connector, and said to them as their Slack). `slack_report` says
     Keryx's own bot can post to the owner, and names `keryx slack report` as the way to
     send them something, a file included, when no MCP server of theirs is the route.
     `slack_write` says a
@@ -311,6 +319,9 @@ def render_subagent_suffix(
         parts.insert(0, _typed_on_slack(task, owner or OWNER_FALLBACK, can_read=slack_read))
     if slack_read:
         parts.append(render_prompt(SUBAGENT_SLACK_READ_PROMPT, owner=owner or OWNER_FALLBACK))
+    elif slack_report and not slack_mcp_server:
+        parts.append(
+            render_prompt(SUBAGENT_SLACK_NO_READ_PROMPT, owner=owner or OWNER_FALLBACK))
     if slack_write:
         parts.append(render_prompt(SUBAGENT_SLACK_MESSAGE_PROMPT, owner=owner or OWNER_FALLBACK))
     slack = "\n".join(part.strip() for part in parts if part.strip())

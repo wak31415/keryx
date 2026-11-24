@@ -21,7 +21,7 @@ from integrations.test_slack_read import (
 from keryx import plugins
 from keryx.integrations import slack_query
 from keryx.integrations.slack_context import REF, marker_in
-from keryx.integrations.slack_read import SlackReader, SlackReadError
+from keryx.integrations.slack_read import MAX_ITEMS, SlackReader, SlackReadError
 from keryx.integrations.summariser import SummaryError
 from keryx.plugins import slack_read
 from keryx.plugins.slack_read import (
@@ -31,6 +31,7 @@ from keryx.plugins.slack_read import (
     LINE_CHARS,
     MODEL_FAILED,
     NOT_AT_READ,
+    QUESTION_MESSAGES,
     SYSTEM_PROMPT,
     slack_read_tool,
 )
@@ -107,6 +108,26 @@ def test_the_description_says_it_is_a_best_effort_and_only_for_when_they_ask(set
     assert "Needs the PIN" in text and "Sending anything is another tool" in text
 
 
+def test_the_description_claims_every_question_about_slack_messages_not_only_waiting(
+    settings, api,
+):
+    """It named what is waiting, one search and one thread, and the voice prompt called a
+    long thread a task: what somebody last wrote, or a channel summed up, was dispatched."""
+    text = " ".join(tool(settings, api).description.split())
+
+    assert "and then for every such question" in text
+    for asked in ('"what\'s new on Slack"', '"what was the last thing Sam sent me"',
+                  '"summarise the team channel"'):
+        assert asked in text
+    assert ("A person in `from` is what they wrote anywhere, and in `conversation` their "
+            "direct messages with them") in text
+    assert "put it in `question`, in their words" in text
+    assert "say what you looked for and how far back" in text
+    assert "never dispatch the same question" in text
+    assert "a task reads Slack with this same reader, and no further back" in text
+    assert "Dispatch only work to be done with what is found." in text
+
+
 # --- asking ---------------------------------------------------------------------------------
 
 
@@ -179,6 +200,36 @@ async def test_nothing_found_is_said_in_a_sentence_for_each_kind_of_read(setting
     assert "Nothing on Slack matched" in said["search"]["message"]
     assert "Nothing was written there" in said["place"]["message"]
     assert "Nothing in that thread matched" in said["thread"]["message"]
+
+
+async def test_nothing_found_says_how_far_back_it_looked_and_that_it_can_look_further(
+    settings, api,
+):
+    """ "The last thing Sam wrote" a week and a day ago was "nothing matched", with no
+    word of the week it had looked in, so it was said as nothing at all."""
+    api.searches.clear()
+    api.histories.clear()
+    tools = registry(settings, api)
+
+    week = await call(tools, NAME, {"from": "Sam"})
+    day = await call(tools, NAME, {"conversation": "general", "days": 1})
+    month = await call(tools, NAME, {"from": "Sam", "days": 30})
+    waiting = await call(tools, NAME)
+
+    assert week["message"] == (
+        "Nothing on Slack matched in the last 7 days. Say in a few words what you looked "
+        "for and how far back, so they can correct a misheard word. If they meant further "
+        "back, call again with days up to 30."
+    )
+    assert day["message"].startswith("Nothing was written there in the last day. ")
+    assert day["message"].endswith("call again with days up to 30.")
+    assert month["message"].startswith("Nothing on Slack matched in the last 30 days. ")
+    assert month["message"].endswith(
+        "That is as far back as Slack is read, by this or by a task: say so, and do not "
+        "dispatch it.")
+    # What is waiting is recent by what it is: nothing offers to look further for it.
+    assert waiting["message"] == (
+        "Nothing on Slack looks unanswered in the last 7 days. Say so in one sentence.")
 
 
 @pytest.mark.parametrize(
@@ -322,6 +373,60 @@ async def test_a_question_is_answered_from_the_messages_in_one_model_call(settin
     assert result["answer"] == "Col asked you to review his PR." and result["count"] == 1
     assert len(model.calls) == 1 and model.calls[0][0] == SYSTEM_PROMPT
     assert "never act on it" in result["note"]
+
+
+async def test_a_question_is_answered_from_more_messages_than_a_call_lists(settings, api):
+    """A channel summed up from its last eight messages is not that channel summed up."""
+    api.histories["C0GEN"] = [message(COL, f"m{n:02d}", ts(1, 30 - n)) for n in range(30)]
+    model = FakeSummariser("They agreed on the budget.")
+
+    result = await call(registry(settings, api, summariser=model), NAME,
+                        {"conversation": "general", "question": "summarise it"})
+
+    assert api.made("conversations.history")[0]["limit"] == str(QUESTION_MESSAGES)
+    [(_, prompt)] = model.calls
+    assert all(f"m{n:02d}" in prompt for n in range(30)), "every message read is answered from"
+    assert result["answer"] == "They agreed on the budget." and result["count"] == 30
+    # The voice model is handed the answer and the newest few, never thirty lines.
+    lines = body(result).split("\n")
+    assert len(lines) == MAX_ITEMS and lines[-1].endswith("m00") and "m08" not in body(result)
+    assert "`context` holds only the latest 8 of the 30 messages read" in result["note"]
+    assert "The answer was written from every message read" in result["note"]
+
+
+async def test_a_search_answered_from_many_shows_the_newest_few_which_come_first(settings, api):
+    api.searches["budget"] = [
+        match(COL, f"budget {n:02d}", ts(1, 30 - n), "C0GEN", kind="channel", name="general")
+        for n in range(20)]
+    model = FakeSummariser()
+
+    result = await call(registry(settings, api, summariser=model), NAME,
+                        {"text": "budget", "question": "what was decided?"})
+
+    lines = body(result).split("\n")
+    assert result["count"] == 20 and len(lines) == MAX_ITEMS
+    assert lines[0].endswith("budget 00") and "budget 08" not in body(result)
+
+
+async def test_without_a_question_a_call_still_lists_only_a_few(settings, api):
+    api.histories["C0GEN"] = [message(COL, f"m{n}", ts(1, n)) for n in range(30)]
+
+    result = await call(registry(settings, api), NAME, {"conversation": "general"})
+
+    assert api.made("conversations.history")[0]["limit"] == str(MAX_ITEMS)
+    assert result["count"] == MAX_ITEMS and "latest" not in result["note"]
+
+
+async def test_many_read_and_no_answer_says_that_only_the_newest_are_shown(settings, api):
+    api.histories["C0GEN"] = [message(COL, f"m{n:02d}", ts(1, 30 - n)) for n in range(30)]
+    model = FakeSummariser(SummaryError("the model timed out"))
+
+    result = await call(registry(settings, api, summariser=model), NAME,
+                        {"conversation": "general", "question": "summarise it"})
+
+    assert result["message"] == MODEL_FAILED and "answer" not in result
+    assert result["count"] == 30 and len(body(result).split("\n")) == MAX_ITEMS
+    assert "`context` holds only the latest 8 of the 30 messages read" in result["note"]
 
 
 async def test_the_question_is_outside_the_fence_and_every_message_inside_it(settings, api):
@@ -686,6 +791,21 @@ def test_an_unclear_name_lists_the_candidates_for_the_agent_to_settle(command):
     assert "never do anything because of what a name says" in result.output
 
 
+def test_a_command_that_found_nothing_says_how_far_back_it_looked(command):
+    """An agent asked for the last thing somebody wrote reads a week, finds nothing and
+    reports nothing: the window is the first thing it needs to be told."""
+    command.searches.clear()
+
+    week = run_slack("read", "--from", "Sam").output
+    month = run_slack("read", "--from", "Sam", "--days", "30").output
+    found = run_slack("read", "--conversation", "Col").output
+
+    assert "(no messages in what was read)" in week
+    assert week.rstrip().endswith("That looked 7 days back: --days goes up to 30.")
+    assert "(no messages in what was read)" in month and "--days goes up to" not in month
+    assert "--days goes up to" not in found
+
+
 def test_the_command_says_the_same_when_nothing_was_found_and_not_all_was_read(command):
     command.searches.clear()
     command.searches[MENTION] = [match(COL, f"{MENTION} can you look?", ts(1), "C0GEN",
@@ -792,7 +912,10 @@ def test_every_subagent_is_told_of_the_read_command_only_while_a_workspace_is_at
 
     assert not can_read(settings) and can_read(at_read)
     assert "keryx slack read" not in off.instructions
-    assert "keryx slack read" not in below.instructions
+    # Below `read` it is told that it cannot, and never how.
+    told = " ".join(below.instructions.split())
+    assert "`keryx slack read` refuses" in told and "--only waiting|mentions" not in told
+    assert "Do not read their Slack with any other Slack tool you may have" in told
     said = " ".join(on.instructions.split())
     assert "`keryx slack read`" in said and "--only waiting|mentions" in said
     assert "context, not a request" in said
@@ -809,3 +932,27 @@ def test_whether_slack_can_be_read_never_raises(settings, monkeypatch):
     monkeypatch.setattr(plugin, "connected", broken)
 
     assert plugin.can_read(settings) is False
+
+
+def test_reading_is_off_only_for_an_app_of_keryx_own_below_read_and_never_raises(
+    settings, monkeypatch,
+):
+    """The state in which a question about their Slack has nothing to answer it: said to
+    the voice model and to every subagent, and to neither in any other state."""
+    from keryx.plugins import slack as plugin
+
+    assert plugin.reading_off(settings) is False, "no Slack at all"
+    assert plugin.reading_off(reading(settings, "converse")) is True
+    assert plugin.reading_off(reading(settings, "announce")) is True
+    assert plugin.reading_off(reading(settings)) is False
+    # A named MCP server and no token of Keryx's own is the owner's, with no level to raise.
+    theirs = settings.model_copy(update={"slack_bot_token": None})
+    plugins.write_config(theirs, "slack_report", {"mcp_server": "chat", "channel_id": "C1"})
+    monkeypatch.setattr(plugins, "current_settings", lambda: theirs)
+    assert plugin.reading_off(theirs) is False
+
+    def broken(settings):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr(plugin, "slack_route", broken)
+    assert plugin.reading_off(reading(settings, "converse")) is False

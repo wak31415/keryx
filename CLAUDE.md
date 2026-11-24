@@ -861,7 +861,16 @@ Thirteen rulings:
   the level asked for is told so, never shown the link. Lowering asks Slack nothing,
   forgets the tokens the lower level does not use, and takes effect on a running service
   at once. **`announce` is the off switch**, and `keryx auth logout slack [--workspace
-  NAME]` forgets a workspace.
+  NAME]` forgets a workspace. **Reaching a level is enough to use it on a call**: the
+  login that takes a workspace to a level it was not at turns on the voice tools that
+  level unlocks (`setup.slack.VOICE_TOOLS`: `slack_read` at `read`, `slack_message` at
+  `write`), says which before the link (`WILL_TURN_ON`) and that it did in one line
+  each (`TURNED_ON`). It was a second command, `keryx plugins install`, and the owner
+  never ran it (2026-11-24: connecting Slack was expected to be all of it). No flag
+  and no question: typing the level is the yes, `keryx plugins remove NAME` is the no,
+  and one turned off by hand stays off until a level is reached again. Lowering and
+  logging out turn off the ones no workspace has a level for any more (`_retire`),
+  since a tool left on is refused at every call. The wizard still asks, as it did.
 - **A level is all of its tokens or none of it, in the wizard as on the command line.**
   Tokens arrive on standard input, one to a line, told apart by prefix; one the level
   does not use is refused by name, one it needs and lacks likewise, and every one is
@@ -1007,7 +1016,7 @@ The owner named the tool set (2026-11-23), and it is the whole of it:
 
 A coding agent has the same three as commands (`keryx slack report | read | message`,
 with `conversations` and `members` for names). Do not add a fourth tool, a mode, or a
-second way to read. Eleven rulings:
+second way to read. Thirteen rulings:
 
 - **One read tool, and one place a read is planned.** `slack_read` takes
   `conversation`, `thread`, `text`, `from`, `only` (`waiting` or `mentions`), `days`,
@@ -1017,8 +1026,41 @@ second way to read. Eleven rulings:
   adds only `--limit` and `--before`. No filter at all is `only=waiting`. There are five
   reads (what is waiting, mentions, a thread, a conversation, a search) and the filters
   given pick one; nothing else has modes.
+- **A read is answered on the call, and only work is dispatched** (the owner,
+  2026-11-24: "more like my gmail integration"). `slack_read` is to Slack what
+  `check_email` is to mail: what is waiting, what somebody wrote, the last thing they
+  sent, a channel or a thread summed up. Its description claims every question about
+  Slack messages, and the voice prompt's routing names them under "you answer it";
+  what is left for a task is work to be done with what is found, or a written report
+  across many conversations. Never the same read again: a task reads through the same
+  reader, and no further back than `MAX_DAYS`. **A `question` reads more than a list
+  does**: a list is the newest `MAX_ITEMS`, because it is said aloud, and a question is
+  answered by the summariser from up to `plugins.slack_read.QUESTION_MESSAGES` (still
+  one request: history, search and a thread each come a page at a time), with the voice
+  model handed the answer and the newest few (`newest`), never the lot. When more
+  authors are unnamed than half the requests kept for names, the member list names
+  them in one request (`SlackReader._learn_names`), and its failing costs only the
+  names. **Nothing found says how far back it looked** (`nothing`, and `keryx slack
+  read` the same), offers `days` when it could look further and says when it could
+  not: "the last thing Sam wrote", eight days ago, was "nothing matched".
+- **Below `read`, Keryx says so, and nothing stands in for the reader.** With an app of
+  Keryx's own and no workspace at `read` (`plugins.slack.reading_off`) no tool reads
+  Slack on a call and no command does in a task. On the owner's first two questions
+  about Slack (2026-11-24, at `converse`) the voice dispatched both, and the agent,
+  refused by `keryx slack read`, answered from a claude.ai connector signed in to
+  another workspace: that somebody was not found there was said to him as a fact about
+  his Slack. So the voice prompt carries one paragraph in that state
+  (`prompts._SLACK_NOTE`, the one thing it says about a tool that is not there: one
+  sentence, no dispatch, the command only if asked), and every subagent is told the
+  same and to use no other Slack tool it has unless the request names it
+  (`prompts/subagent_slack_no_read.md`). Neither is said with no app (a named MCP
+  server is the owner's, with no level to raise) nor once a workspace reads; from then
+  on the read paragraph says the commands are the way to read, and no other Slack tool.
+  Both are prompt rules, and SECURITY.md says so.
 - **Nothing is guessed.** A name is matched against the owner's own conversations and
-  the member list (`slack_query.find`). One match is used; several are `unclear` with
+  the member list (`slack_query.find`), without case and without accents (`words`:
+  speech has neither, and two names that then read alike are asked about). One match
+  is used; several are `unclear` with
   the candidates and a `ref` for each; none says so (`no_match`); filters that
   contradict each other are `unclear` in one sentence. A person's first name alone is
   their whole name as it is said, so two who share one are never chosen between. A
@@ -1149,9 +1191,11 @@ second way to read. Eleven rulings:
 level (refused with the reason otherwise). `slack_read` makes no model call to list and
 exactly one, through `integrations/summariser.py`, for a `question`; its answer is
 clipped. Every failure of all three is a status and one sentence, an unexpected one
-included. The wizard offers each once, when the Slack step has just raised a workspace
-to the level that unlocks it: reading as a yes, sending in their name as theirs to say
-yes to.
+included. The login turns each on when a workspace first reaches its level (see "Slack
+runs both ways"), and `doctor` names the one command that turns one on from where the
+install stands (`doctor._turn_on`): the login below the level, the install at it. The
+wizard offers each once, when the Slack step has just raised a workspace to the level
+that unlocks it: reading as a yes, sending in their name as theirs to say yes to.
 
 ## Restarts are three halves
 

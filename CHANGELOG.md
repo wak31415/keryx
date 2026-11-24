@@ -34,18 +34,36 @@ the version starts with 0.
   that combine: a conversation (a channel's or a person's name), a thread, words to look
   for, who wrote it, what is waiting on you or what mentions you, and how many days back,
   with an optional question about what it found. "Anything waiting for me on Slack?",
-  "what did Sam say about the budget?" and "read me that thread" are each answered in a
-  few seconds. What is waiting is a best effort, since Slack has no such list, and it
-  says so, and says when part of the check failed. A name that could mean several things
-  is asked about, never guessed. It needs the PIN and a workspace at `read`, only ever
-  reads, and only when you ask.
+  "what did Sam say about the budget?", "what was the last thing Sam sent me?",
+  "summarise the team channel" and "read me that thread" are each answered on the call in
+  a few seconds, as a question about your email is, and never handed to a coding agent
+  for a read. A list is the newest few messages; a question is answered from up to forty.
+  What is waiting is a best effort, since Slack has no such list, and it says so, and
+  says when part of the check failed. A name that could mean several things is asked
+  about, never guessed, and is matched without its accents, since speech has none. When
+  nothing is found it says how far back it looked (a week unless you said, a month at
+  most). It needs the PIN and a workspace at `read`, only ever reads, and only when you
+  ask.
+- **Connecting Slack at `read` or `write` is enough.** The login that takes a workspace
+  to `read` turns on `slack_read`, and the one that takes it to `write` turns on
+  `slack_message`, each saying so in one line: there is no `keryx plugins install` to
+  run afterwards. It says which before it prints the link. Lowering a level, or
+  disconnecting, turns off the ones no workspace has a level for any more, and `keryx
+  plugins remove NAME` turns one off by hand. `keryx doctor` names the one command that
+  turns each on from where the install stands.
+- **Below `read`, Keryx says that it cannot read your Slack.** Asked on a call what is
+  new on Slack, it says in a sentence that reading is not switched on and what switches
+  it on, where it used to hand the question to a coding agent. An agent is told the same,
+  and told not to read your Slack with any other Slack tool it has: such a tool is
+  signed in as something else, possibly to another workspace, and what it found used to
+  be reported as your Slack.
 - **A fourth Slack level, `write`, and the `slack_message` plugin.** At `write` Keryx can
   send one message as you: to a person, a channel, or as a reply in a thread. On a call
   it never sends on the first ask: it says who the message goes to and the exact words,
   and sends only after you say yes. It cannot edit, delete, upload or notify a whole
   channel. A coding agent working on your request can send one too, and nothing asks you
   first then: `SECURITY.md` says plainly what that risk is. Lowering the level to `read`
-  removes the capability at once.
+  removes the capability at once, and turns the plugin off.
 - **A coding agent can send you a file on Slack.** "Send me the plot on Slack" now arrives
   from your own app: `keryx slack report --file PATH` (repeat it for more) sends files to
   where your reports go, or into the thread you asked in, with what is on standard input

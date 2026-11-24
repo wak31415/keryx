@@ -780,17 +780,25 @@ _UNUSED_SECRET = {
     "check_email": "questions about your email are dispatched as tasks instead",
 }
 
-#: What turns a plugin on from nothing, where `keryx plugins install NAME` cannot: Slack's
-#: needs a token and somewhere to send first, and its sign-in gets both and turns it on.
-_FIRST_TIME = {
-    "slack_report": "keryx auth login slack",
-    # It reads with a user token, which only a workspace at the read level has.
-    "slack_read": "keryx auth login slack --access read` and then `keryx plugins install "
-                  "slack_read",
-    # It sends with the same token, which may post only at the write level.
-    "slack_message": "keryx auth login slack --access write` and then `keryx plugins "
-                     "install slack_message",
-}
+
+def _turn_on(settings: Settings, name: str) -> str:
+    """The one command that turns an optional plugin on from off, as a hint's ending.
+
+    `keryx plugins install NAME` for most. Slack's cannot start that way: `slack_report`
+    needs a token and somewhere to send, which its sign-in gets before turning it on;
+    and the two that act as the owner need a workspace at their level, which the login
+    that raises it there turns them on with. Once a workspace is at the level, the
+    install is all there is to do.
+    """
+    from keryx.plugins.slack import can_read, can_write
+
+    if name == "slack_report":
+        return "`keryx auth login slack`"
+    level = {"slack_read": ("read", can_read), "slack_message": ("write", can_write)}
+    if name in level and not level[name][1](settings):
+        return (f"`keryx auth login slack --access {level[name][0]}`, which turns it on "
+                "with the level")
+    return f"`keryx plugins install {name}`"
 
 
 def _secret_without_plugin(settings: Settings, name: str) -> str | None:
@@ -906,9 +914,9 @@ def plugin_checks(settings: Settings) -> list[Check]:
                 severity="soft", section="plugins",
             ))
         else:
-            how = _FIRST_TIME.get(name, f"keryx plugins install {name}")
             checks.append(Check(
-                name, False, f"off (optional) — `keryx setup` → Plugins, or `{how}`",
+                name, False,
+                f"off (optional) — `keryx setup` → Plugins, or {_turn_on(settings, name)}",
                 severity="soft", section="plugins", unset=True,
             ))
     return checks

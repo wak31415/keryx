@@ -639,17 +639,89 @@ def test_a_quick_read_of_their_mail_calendar_or_documents_goes_to_the_tool_that_
 
     assert "when you have a tool for it on this call" in mine
     for read in ("what is in their mail", "what is on their calendar", "what a document says",
-                 "what is waiting for them on Slack"):
+                 "what is waiting for them"):
         assert read in mine
     assert "call it rather than dispatching" in mine
-    # A quick read of Slack is the tool's when there is one; anything deeper is a task.
     theirs = text[dispatch : text.index("There are no task types")]
-    assert ("a Slack message to somebody else when you have no tool that sends one, a long "
-            "thread there") in theirs
+    assert "a Slack message to somebody else when you have no tool that sends one" in theirs
     # One message is the tool's when there is one, and only after their yes.
     assert ("sending one Slack message for them, when you have a tool that does and they "
             "have said yes to it") in text[: dispatch]
     assert "slack_read" not in text
+
+
+def test_anything_on_their_slack_is_the_read_tools_and_a_dispatch_is_for_work(unwrapped):
+    """The routing named only "what is waiting for them on Slack" as the tool's, and "a
+    long thread" and "anything across many messages" as a task: so what somebody wrote,
+    or a channel summarised, was dispatched beside a tool that answers it in seconds."""
+    text = unwrapped(load_prompt("voice_system.md"))
+    answer, dispatch = text.index("**You answer it.**"), text.index("**Claude does it.**")
+    mine, theirs = text[answer:dispatch], text[dispatch : text.index("There are no task types")]
+
+    assert ("what is on their Slack (what is waiting for them, what somebody wrote, what a "
+            "channel or a thread says)") in mine
+    assert "a long thread there" not in theirs
+    assert "anything across many messages or files" not in theirs
+    assert ("and on Slack what one look cannot answer: work to be done with what is found, "
+            "or a written report across many conversations") in theirs
+    assert "anything across many emails or files" in theirs
+
+
+def _slack_at(settings, level):
+    """`settings` with Keryx's own Slack app connected at `level`."""
+    from keryx import plugins
+    from keryx.config.store import ConfigStore
+
+    plugins.write_config(settings, "slack_report", {
+        "channel_id": "U0OWNER", "owner_id": "U0OWNER", "access": level, "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
+    plugins.install(settings, "slack_report")
+    secrets = {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_USER_TOKEN": "xoxp-1"}
+    ConfigStore().set(secrets)
+    return settings.model_copy(update={key.lower(): value for key, value in secrets.items()})
+
+
+@pytest.mark.parametrize("level", ["announce", "converse"])
+def test_with_an_app_that_may_not_read_slack_the_voice_says_so_rather_than_dispatching(
+    settings, unwrapped, level,
+):
+    """Below `read` there is no tool that reads Slack and no command either, and nothing
+    said so: the question was dispatched, and answered from whatever else the agent had."""
+    text = unwrapped(_rendered(_slack_at(settings, level)))
+
+    assert "Reading their Slack is not switched on." in text
+    assert "do not dispatch it" in text
+    assert ("say in one sentence that reading Slack is not switched on, and that signing in "
+            "to Slack again at their keyboard, at the read level, switches it on") in text
+    assert "`keryx auth login slack --access read`" in text
+    assert "Sending them something on Slack is not affected" in text
+    assert "{" not in text and "}" not in text
+
+
+def test_the_voice_is_told_reading_slack_is_off_only_while_an_app_of_keryx_cannot(
+    settings, unwrapped,
+):
+    off = "Reading their Slack is not switched on."
+
+    assert off not in unwrapped(_rendered(settings)), "no Slack at all is nothing to say"
+    assert off not in unwrapped(_rendered(_slack_at(settings, "read")))
+    assert off not in unwrapped(_rendered(_slack_at(settings, "write")))
+
+
+def test_what_slack_cannot_do_is_withheld_with_the_rest_before_the_pin(settings, unwrapped):
+    connected = _slack_at(settings, "converse").model_copy(
+        update={"briefing_before_pin": False})
+
+    text = unwrapped(_rendered(connected, trust=TrustLevel.NONE))
+
+    assert "Reading their Slack is not switched on." not in text
+
+
+def test_the_slack_paragraph_names_the_default_agent(settings, unwrapped):
+    codex = _slack_at(settings, "converse").model_copy(update={"agent_backend": "codex"})
+
+    assert "so nothing can: not you, and not Codex" in unwrapped(_rendered(codex))
 
 
 def test_putting_one_new_event_on_their_calendar_goes_to_the_tool_that_adds_one(unwrapped):
@@ -673,7 +745,7 @@ def test_what_those_tools_cannot_do_is_still_dispatched(unwrapped):
 
     for work in ("replying to or sending mail", "changing or deleting an event",
                  "inviting people", "an event that repeats", "editing or creating a document",
-                 "anything across many messages or files"):
+                 "anything across many emails or files"):
         assert work in theirs
     assert theirs.rstrip().endswith("Dispatch it.")
 

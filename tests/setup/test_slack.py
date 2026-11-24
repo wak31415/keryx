@@ -868,6 +868,165 @@ def test_a_workspace_that_is_not_connected_has_nothing_to_lower(settings):
                            access=Access.ANNOUNCE, echo=pytest.fail)
 
 
+# --- the voice tools a level unlocks --------------------------------------------------------
+
+
+def on(settings, name) -> bool:
+    return plugins.tool_path(settings, name).is_file()
+
+
+def loads(settings, name) -> bool:
+    return next(one for one in plugins.status(settings) if one.name == name).on
+
+
+def test_raising_to_read_turns_on_the_voice_tool_that_reads_and_says_so_in_one_line(settings):
+    """It took a second command, `keryx plugins install slack_read`, which nobody ran:
+    the level was raised, nothing on a call could read, and the question was dispatched."""
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+
+    lines = connect(settings, FakeSlack(), token="", access=Access.READ, test=False)
+
+    assert on(settings, "slack_read") and loads(settings, "slack_read")
+    assert not on(settings, "slack_message")
+    assert lines.count(slack.TURNED_ON["slack_read"]) == 1
+    assert slack.TURNED_ON["slack_read"] == (
+        "slack_read is on too, from the next call: a question about your Slack is answered "
+        "on the call (`keryx plugins remove slack_read` turns that off)")
+
+
+def test_raising_to_write_turns_on_the_one_that_sends_as_you_and_says_it_asks_first(settings):
+    settings = connected_at(settings, "read", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+    plugins.install(settings, "slack_read")
+
+    lines = connect(settings, FakeSlack(), token="", access=Access.WRITE, test=False)
+
+    assert on(settings, "slack_message") and loads(settings, "slack_message")
+    assert slack.TURNED_ON["slack_message"] in lines
+    assert "after it has said who to and the words and you have said yes" in (
+        slack.TURNED_ON["slack_message"])
+    assert "`keryx plugins remove slack_message` turns that off" in (
+        slack.TURNED_ON["slack_message"])
+    assert slack.TURNED_ON["slack_read"] not in lines, "read was reached before this login"
+
+
+def test_a_first_connection_made_at_write_turns_on_both(settings):
+    lines = connect(settings, FakeSlack(), token=f"{TOKEN}\n{APP}\n{USER}",
+                    access=Access.WRITE, test=False)
+
+    assert on(settings, "slack_read") and on(settings, "slack_message")
+    assert lines.index(slack.TURNED_ON["slack_read"]) < lines.index(
+        slack.TURNED_ON["slack_message"])
+
+
+def test_a_login_that_raises_nothing_turns_nothing_on(settings):
+    """A token replaced at `read`, by somebody who turned the voice tool off: it stays off."""
+    settings = connected_at(settings, "read", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+
+    lines = connect(settings, FakeSlack(), token="", access=Access.READ, test=False)
+
+    assert not on(settings, "slack_read")
+    assert not any("slack_read is on" in line for line in lines)
+
+
+@pytest.mark.parametrize("level", [Access.ANNOUNCE, Access.CONVERSE])
+def test_below_read_no_voice_tool_is_turned_on(settings, level):
+    token = TOKEN if level is Access.ANNOUNCE else f"{TOKEN}\n{APP}"
+
+    connect(settings, FakeSlack(), token=token, access=level, test=False)
+
+    assert not on(settings, "slack_read") and not on(settings, "slack_message")
+
+
+def test_a_voice_tool_that_cannot_be_turned_on_is_said_and_stops_nothing(settings):
+    settings = connected_at(settings, "converse", SLACK_APP_TOKEN=APP)
+    plugins.config_path(settings, "slack_read").write_text("model = [")
+
+    lines = connect(settings, FakeSlack(), token="", access=Access.READ, test=False)
+
+    assert saved(settings)["access"] == "read" and not on(settings, "slack_read")
+    assert any(line.startswith("slack_read was not turned on: ") for line in lines)
+    assert lines[-1].startswith("no test message was sent")
+
+
+def test_before_the_link_it_says_which_voice_tools_the_login_will_turn_on(settings):
+    """Said in plain words first, as the level is: nobody finds a voice tool on that
+    they were not told of, and nobody is sent to a second command."""
+    assert "`keryx plugins install" not in READ_NOTE + slack.WRITE_NOTE
+    fresh = said(settings, access=Access.WRITE)
+    raised = said(connected_at(settings, "read", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER),
+                  access=Access.WRITE)
+
+    assert ("Connecting at this level also turns on slack_read and slack_message for "
+            "calls, with nothing more to run; `keryx plugins remove NAME` turns one off."
+            ) in fresh
+    assert "also turns on slack_message for calls" in raised
+    assert "turns on" not in said(settings, access=Access.CONVERSE)
+
+
+def test_a_workspace_already_at_its_level_is_told_of_a_voice_tool_that_is_off(settings):
+    """Raised before the login turned them on, or turned off by hand: the login changes
+    nothing then, so it says the one command that does."""
+    settings = connected_at(settings, "read", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+
+    off = said(settings, access=Access.READ)
+    plugins.install(settings, "slack_read")
+    on_already = said(settings, access=Access.READ)
+
+    assert ("slack_read is off, so nothing reads Slack on a call: `keryx plugins install "
+            "slack_read` turns it on.") in off
+    assert "slack_message" not in off, "write is not this workspace's level"
+    assert "slack_read is off" not in on_already
+
+
+def test_lowering_turns_off_the_voice_tools_the_level_no_longer_has(settings):
+    """One left on would be refused at every call, and `keryx tools` would say so for ever."""
+    settings = connected_at(settings, "write", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+    for name in ("slack_read", "slack_message"):
+        plugins.install(settings, name)
+    lines: list[str] = []
+
+    slack.lower(settings, ConfigStore(), workspace="default", access=Access.READ,
+                echo=lines.append)
+
+    assert on(settings, "slack_read") and not on(settings, "slack_message")
+    assert ("slack_message is off with it; raising the level again turns it back on."
+            in lines)
+    assert not any(line.startswith("slack_read is off") for line in lines)
+
+    slack.lower(settings, ConfigStore(), workspace="default", access=Access.CONVERSE,
+                echo=lines.append)
+
+    assert not on(settings, "slack_read")
+    assert "slack_read is off with it; raising the level again turns it back on." in lines
+
+
+def test_lowering_one_workspace_leaves_a_voice_tool_another_still_has(settings):
+    settings = connected_at(settings, "read", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+    fake = FakeSlack(workspace=LAB,
+                     user=Workspace(team="Lab", team_id="T0LAB", user_id="U0LAB"))
+    connect(settings, fake, token="xoxb-lab-secret\nxapp-lab-secret\nxoxp-lab-secret",
+            workspace="lab", access=Access.READ, test=False)
+    assert on(settings, "slack_read"), "a further workspace reaching read turns it on too"
+
+    slack.lower(settings, ConfigStore(), workspace="default", access=Access.CONVERSE,
+                echo=lambda line: None)
+
+    assert on(settings, "slack_read") and loads(settings, "slack_read")
+
+
+def test_disconnecting_the_last_workspace_that_reads_turns_the_voice_tools_off(settings):
+    settings = connected_at(settings, "write", SLACK_APP_TOKEN=APP, SLACK_USER_TOKEN=USER)
+    for name in ("slack_read", "slack_message"):
+        plugins.install(settings, name)
+    lines: list[str] = []
+
+    slack.logout(settings, ConfigStore(), workspace="default", echo=lines.append)
+
+    assert not on(settings, "slack_read") and not on(settings, "slack_message")
+    assert "slack_read is off with it; connecting at that level again turns it back on." in (
+        lines)
+
+
 # --- a further workspace ------------------------------------------------------------------
 
 

@@ -145,20 +145,55 @@ SHORT = {
     Access.WRITE: "also sends a message as you, to a person or a channel, when you ask "
                   "for that message",
 }
-#: Said at `read`: when Slack is read as the owner, and what turns that on.
+#: Said at `read`: when Slack is read as the owner, and by what.
 READ_NOTE = (
-    "Keryx reads Slack as you only when you ask about messages: on a call once "
-    "`keryx plugins install slack_read` has turned that on, and in a task through "
-    "`keryx slack`, which a coding agent runs when your request is about Slack."
+    "Keryx reads Slack as you only when you ask about messages: on a call with the "
+    "`slack_read` voice tool, and in a task through `keryx slack`, which a coding agent "
+    "runs when your request is about Slack."
 )
 
-#: Said at `write`: what sending as the owner is, and what turns it on.
+#: Said at `write`: what sending as the owner is, and by what.
 WRITE_NOTE = (
     "A message Keryx sends at this level is yours: other people read it as written by "
-    "you. On a call that is `keryx plugins install slack_message`, which always asks "
-    "before it sends; in a task it is `keryx slack message`, which a coding agent runs "
-    "only when your request asks for that message to that person or channel."
+    "you. On a call that is the `slack_message` voice tool, which always asks before it "
+    "sends; in a task it is `keryx slack message`, which a coding agent runs only when "
+    "your request asks for that message to that person or channel."
 )
+
+#: The voice tools a level unlocks, lowest level first. A login that takes a workspace
+#: to a level it was not at turns them on (`connect`), because a level that reads with
+#: nothing on a call to read with is what the owner met on 2026-11-24: the question was
+#: dispatched, and answered from somewhere else. Lowering, or disconnecting, turns off
+#: the ones no workspace has a level for any more (`_retire`). One turned off by hand
+#: stays off until a level is reached again.
+VOICE_TOOLS = ((Access.READ, "slack_read"), (Access.WRITE, "slack_message"))
+#: Said before the link, of the voice tools this login would turn on.
+WILL_TURN_ON = (
+    "Connecting at this level also turns on {tools} for calls, with nothing more to "
+    "run; `keryx plugins remove NAME` turns one off."
+)
+#: Said once each, when it has.
+TURNED_ON = {
+    "slack_read": (
+        "slack_read is on too, from the next call: a question about your Slack is "
+        "answered on the call (`keryx plugins remove slack_read` turns that off)"
+    ),
+    "slack_message": (
+        "slack_message is on too, from the next call: a message is sent as you on a "
+        "call, after it has said who to and the words and you have said yes (`keryx "
+        "plugins remove slack_message` turns that off)"
+    ),
+}
+#: Said of one that is off in a workspace already at its level, where a login changes
+#: nothing: what that leaves undone, and the one command that turns it on.
+STILL_OFF = {
+    "slack_read": "slack_read is off, so nothing reads Slack on a call: `keryx plugins "
+                  "install slack_read` turns it on.",
+    "slack_message": "slack_message is off, so nothing sends as you on a call: `keryx "
+                     "plugins install slack_message` turns it on.",
+}
+#: Said when one is turned off because no workspace has the level for it any more.
+TURNED_OFF = "{name} is off with it; {again} again turns it back on."
 
 #: Places in Slack's app settings, each written as the console lays it out: the page in
 #: the sidebar, then the section on it, then what is clicked there. The steps and the
@@ -523,6 +558,11 @@ def start(
         if not lacks:
             # Whole, or without something its level runs on, which `_already` says.
             _already(saved, echo, app=app, assistant=settings.assistant_name)
+            for name in _unlocked(Access.ANNOUNCE, current):
+                if not plugins.tool_path(settings, name).is_file():
+                    # Reached before a login turned it on, or turned off by hand: this
+                    # login changes nothing, so it names the command that does.
+                    echo("\n" + STILL_OFF[name])
             return None
     # The app there is, is changed and never made again: to raise its level, or (at the
     # level it has) to give it the user token an app made before them never issued.
@@ -542,6 +582,8 @@ def start(
         echo(READ_NOTE)
     if access.reaches(Access.WRITE):
         echo(WRITE_NOTE)
+    if unlocked := _unlocked(current, access):
+        echo(WILL_TURN_ON.format(tools=" and ".join(unlocked)))
     echo("")
     if lacks:
         what = (", which sending a file takes. Nothing about it stops working: reports "
@@ -607,6 +649,22 @@ def start(
                  "that one over instead of nothing.")
     echo(said)
     return access
+
+
+def _unlocked(was: Access, now: Access) -> tuple[str, ...]:
+    """The voice tools that `now` has a level for and `was` did not."""
+    return tuple(name for level, name in VOICE_TOOLS
+                 if now.reaches(level) and not was.reaches(level))
+
+
+def _retire(settings: Settings, echo: Callable[[str], None], *, again: str) -> None:
+    """Turn off each voice tool that no workspace has the level for any more: left on,
+    it would be refused at every call and reported by `keryx tools` until somebody
+    removed it. Its settings are set aside, as `keryx plugins remove` leaves them."""
+    for name, ready in (("slack_read", plugin.can_read), ("slack_message", plugin.can_write)):
+        if plugins.tool_path(settings, name).is_file() and not ready(settings):
+            plugins.remove(settings, name)
+            echo(TURNED_OFF.format(name=name, again=again))
 
 
 def _already(saved: SlackWorkspace, echo: Callable[[str], None], *, app: str,
@@ -686,6 +744,7 @@ def lower(
     else:
         stops = ("Keryx no longer holds your user token, so nothing reads Slack as you; it "
                  "still acts on the messages you type to the app.")
+    _retire(settings, echo, again="raising the level")
     echo(f"{stops} The app in Slack keeps the permissions it was made with: to take those "
          "away too, paste this manifest into its App Manifest page and reinstall it:\n")
     echo(slack.manifest_json(access, assistant=settings.assistant_name))
@@ -746,6 +805,7 @@ def logout(
         else:
             plugins.remove(settings, PLUGIN)
             echo(f"{PLUGIN} is off.")
+    _retire(settings, echo, again="connecting at that level")
     echo("A running Keryx stops using it at once. The app itself is still installed in "
          f"Slack, and its tokens work until you remove it there: {APPS_URL}")
 
@@ -999,8 +1059,8 @@ def connect(
     workspace: str = DEFAULT,
     access: Access | None = None,
 ) -> None:
-    """Check the tokens, learn who the owner is, save it all, turn the plugin on, and
-    prove it.
+    """Check the tokens, learn who the owner is, save it all, turn the plugin on (and
+    the voice tools of a level it had not reached before, `VOICE_TOOLS`), and prove it.
 
     `tokens` is standard input: one token to a line, told apart by how each starts; or,
     from a terminal that asked for each by name, the tokens by kind. A token the level
@@ -1120,6 +1180,15 @@ def connect(
     if not status.on:
         raise SlackSetupError(f"{PLUGIN} is installed but refused: {status.refused}")
     echo(f"{PLUGIN} is on, from the next call")
+    # What the level now reached unlocks on a call, and the one before it did not:
+    # turned on here, so that raising a level is one command and not two.
+    for name in _unlocked(saved.access, access):
+        try:
+            plugins.install(settings, name)
+        except plugins.PluginConfigError as error:
+            echo(str(error))
+        else:
+            echo(TURNED_ON[name])
     if lacks := lacking_bot_scopes(team, access):
         echo(lacks_note(lacks, workspace))
     if server:

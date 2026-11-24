@@ -49,7 +49,7 @@ connected. `add_calendar_event` writes, so it is never ticked for you.
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|
 | `slack_report` | Keryx sends you a written message on Slack, from your app — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too. With more than one workspace connected it takes a `workspace`, and sends to your first one unless you name another. It was `send_to_slack`, and a machine that installed it under that name needs to do nothing | yes | your Slack app's tokens (`keryx auth login slack`), or the MCP server's |
-| `slack_read` | read your Slack as you, in a few seconds. Every argument is a filter and they combine: a `conversation` (a channel's name, a person's name, or a ref), a `thread`, `text` to look for, `from` a person, `only` what is `waiting` on you (a best effort) or what `mentions` you, how many `days` back, and a `question` answered in one model call over what it found. With none it says what is waiting. A name that could mean several things is asked about, never guessed | yes | a Slack workspace at the `read` level (`keryx auth login slack --access read`) |
+| `slack_read` | read your Slack as you, in a few seconds. Every argument is a filter and they combine: a `conversation` (a channel's name, a person's name, or a ref), a `thread`, `text` to look for, `from` a person, `only` what is `waiting` on you (a best effort) or what `mentions` you, how many `days` back, and a `question` answered in one model call over what it found (up to forty messages, where a list is the newest eight). With none it says what is waiting. A name that could mean several things is asked about, never guessed | yes | a Slack workspace at the `read` level (`keryx auth login slack --access read`) |
 | `slack_message` | send one message **as you**, to a person, a channel, or as a reply in a thread. It never sends on the first ask: you hear who it goes to and the exact words, and it is sent only after you say yes. No edit, no delete, no file, and never `@channel` or `@here` | yes | a Slack workspace at the `write` level (`keryx auth login slack --access write`) |
 | `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | your Google sign-in (`keryx auth login google`) and the `claude` extra |
 | `check_calendar` | what is on your Google Calendar in a second or two: a day, a week, your next meeting, or a search ("when is the dentist"), across every calendar you have ticked there | yes | your Google sign-in |
@@ -214,15 +214,29 @@ a channel and mention it there: `@Lyra summarise this thread`. It reacts to your
 and **answers in that thread**, where the others in the conversation can read the answer
 too, so ask in your direct messages with the app for anything you would not say in front
 of them. On a call, the `slack_read` plugin answers "anything waiting for me on Slack?",
-"what did Sam say about the budget?" or "read me that thread" in a few seconds (`keryx
-plugins install slack_read`; the wizard offers it when you choose `read`). Slack is read
-only when you ask: there is no background digest. What is read is other people's words,
-and Keryx treats it as material to answer from, never as instructions.
+"what did Sam say about the budget?", "what was the last thing Sam sent me?", "summarise
+the team channel" or "read me that thread" in a few seconds, as `check_email` answers
+about your mail: nothing is handed to a coding agent for a read. A list is the newest few
+messages; a question is answered from up to forty. It looks a week back unless you say
+otherwise, a month at most (a coding agent reads no further back either), and when it
+finds nothing it says how far back it looked.
+Connecting at `read` turns it on (the login says so, and the wizard offers it when you
+choose `read`); `keryx plugins remove slack_read` turns it off. Slack is read only when
+you ask: there is no background digest. What is read is other people's words, and Keryx
+treats it as material to answer from, never as instructions.
+
+**Below `read`, Keryx says that it cannot read your Slack.** Ask on a call what is new
+there and it tells you, in a sentence, that reading is not switched on and that `keryx
+auth login slack --access read` switches it on. It does not hand the question to a
+coding agent, and an agent working on something else is told the same and told not to
+read your Slack with any other Slack tool it happens to have (an MCP server, a
+connector): those are signed in as something else, often to another workspace, and
+their answer would be given to you as your Slack.
 
 **At `write` Keryx can send a message as you.** "Tell Sam I'm running late", "reply in
-that thread that it's fixed": the `slack_message` plugin (`keryx plugins install
-slack_message`) works out who that is, says the recipient and the words back to you, and
-sends only after you say yes. If the name could be two people it asks which. It posts a
+that thread that it's fixed": the `slack_message` plugin (turned on when you connect at
+`write`; `keryx plugins remove slack_message` turns it off) works out who that is, says
+the recipient and the words back to you, and sends only after you say yes. If the name could be two people it asks which. It posts a
 new message or a reply and nothing else. A coding agent working on a request of yours can
 send one as well, when the request asks for exactly that message; nothing asks you first
 then, which is the trade [SECURITY.md](../SECURITY.md) spells out. Lowering the level to
@@ -239,7 +253,9 @@ again.
 manifest to paste into the app's App Manifest page, waits while you reinstall it, and
 asks for the new token. A lower one needs nothing from Slack: `keryx auth login slack --access
 announce` forgets the tokens it no longer uses and a running Keryx stops acting on your
-messages at once. `keryx auth logout slack` forgets the workspace altogether; remove the
+messages at once. Raising a level turns on the voice tool it unlocks (`slack_read` at
+`read`, `slack_message` at `write`), and lowering turns off the ones the new level no
+longer has. `keryx auth logout slack` forgets the workspace altogether; remove the
 app in Slack to end its tokens.
 
 **More than one workspace.** `keryx auth login slack --workspace work` connects another,

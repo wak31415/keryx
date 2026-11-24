@@ -304,6 +304,19 @@ def can_read(settings: Settings) -> bool:
         return False
 
 
+def reading_off(settings: Settings) -> bool:
+    """Whether Keryx has a Slack app of its own that may not read as the owner: the
+    state in which a question about their Slack has no tool and no command to answer it.
+    Not so with no app (a named MCP server is the owner's own, with no level to raise),
+    and not once any workspace is at `read`. Never raises."""
+    try:
+        route = slack_route(settings)
+        own = route is not None and route.mcp_server is None
+        return own and can_report(settings) and not can_read(settings)
+    except Exception:
+        return False
+
+
 def can_write(settings: Settings) -> bool:
     """Whether a message may be sent as the owner in any workspace now. Never raises."""
     try:

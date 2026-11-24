@@ -330,7 +330,7 @@ def test_once_keryx_has_its_own_app_a_subagent_is_never_pointed_at_the_server(ch
     told = " ".join(built.instructions.split())
 
     assert "`keryx slack report`" in told and "--file PATH" in told
-    assert "MCP server" not in told and "chat" not in told
+    assert "tools of the" not in told and "chat" not in told
     assert "no other Slack tool you may have" in told
 
 

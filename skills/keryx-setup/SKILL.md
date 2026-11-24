@@ -78,10 +78,11 @@ runs its own login, which opens a browser or prints a code — theirs to finish,
 ## 3. The plugins they want
 
 Nine voice tools are plugins, off until they are turned on: `slack_report` and
-`check_email` (most people want both), `slack_read` (it reads their Slack as them, and
-loads only once a workspace is at the `read` level), `slack_message` (it sends a message
-*as them*, loads only at the `write` level, and is its own yes: never turn it on because
-they said yes to something else), `check_calendar`,
+`check_email` (most people want both), `slack_read` (it reads their Slack as them, loads
+only once a workspace is at the `read` level, and is turned on by the login that takes
+one there), `slack_message` (it sends a message *as them*, loads only at the `write`
+level, and is turned on by the login that takes a workspace there, which is theirs to
+run: never install it yourself because they said yes to something else), `check_calendar`,
 `add_calendar_event` (it writes to their calendar, so it is its own yes), `find_document`,
 `check_billing` and `cluster_stats`. Ask which they want; do not turn one on unasked.
 

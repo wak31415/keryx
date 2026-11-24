@@ -292,6 +292,38 @@ async def test_whose_messages_to_keep_is_any_member_and_me_is_the_owner(api):
     assert nobody.value.status == "no_match"
 
 
+async def test_a_name_is_found_however_its_accents_were_heard(api):
+    """Speech has no accents: a name said on a call arrives without the ones Slack
+    spells it with, and one typed with them finds a name spelled without."""
+    api.members += [member("U0ZOE", "Zoë Müller"), member("U0JOSE", "Jose Peña")]
+    api.channels += [{"id": "D0ZOE", "is_im": True, "user": "U0ZOE"},
+                     {"id": "C0CAFE", "name": "café-run"}]
+    one = reader(api)
+
+    assert (await find(one, "Zoe", channels=False, people="all")).id == "U0ZOE"
+    assert (await find(one, "zoe muller")).id == "D0ZOE"
+    assert (await find(one, "José Pena", channels=False, people="all")).id == "U0JOSE"
+    assert (await find(one, "cafe run")).id == "C0CAFE"
+
+
+async def test_two_names_that_differ_only_by_an_accent_are_asked_about_not_chosen(api):
+    api.members += [member("U0RENE", "René Blanc"), member("U0RENE2", "Rene Noir")]
+
+    with pytest.raises(Unclear) as unclear:
+        await find(reader(api), "Rene", channels=False, people="all")
+
+    assert [each.ref for each in unclear.value.candidates] == ["U0RENE", "U0RENE2"]
+
+
+async def test_words_are_matched_without_their_accents_too(api):
+    api.threads[("C0GEN", ts(2))] = [message(COL, "the café is closed", ts(2)),
+                                     message(EVE, "the budget is fine", ts(1))]
+
+    context, _ = await ask(api, thread=f"C0GEN:{ts(2)}", text="cafe")
+
+    assert texts(context) == ["the café is closed"]
+
+
 async def test_only_so_many_candidates_are_ever_named(api):
     api.channels += [{"id": f"C0TEAM{n}", "name": f"team-{n}"} for n in range(20)]
 

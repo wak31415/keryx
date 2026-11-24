@@ -405,6 +405,14 @@ you.**
   agent's instructions, not something the code can enforce: an agent that has the command
   could run it when it should not. What it can do with the result is bounded by the same
   things as the rest of its work.
+- **Below `read`, nothing of Keryx's reads your Slack, and a coding agent is told not to
+  with anything else.** A coding agent runs with your own Claude Code or Codex
+  configuration, which may hold Slack tools of its own (an MCP server, a connector),
+  signed in as whatever they are signed in as. Keryx does not control what those see.
+  While your app is below `read`, Keryx says on a call that reading is not switched on
+  instead of handing the question over, and an agent is told to say the same rather
+  than read your Slack some other way. At `read` it is told to read with Keryx's own
+  command and nothing else. Both are instructions to the agent, not enforcements.
 - **Other people's messages are data, never instructions.** Whatever is read from Slack
   is kept apart from what you asked. Your own request is the only instruction. Every
   message read is wrapped between markers that carry a token made for that one read,

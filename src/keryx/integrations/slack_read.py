@@ -585,11 +585,31 @@ class SlackReader:
         return ContextMessage(who=who, when=say_when(read.ts), where=where, text=text,
                               link=read.link, ref=read.ref)
 
+    async def _learn_names(self, reads: list[Read]) -> None:
+        """Names for many authors at once. A channel can have more authors than there
+        are requests kept for names, and past those a message is attributed to an id:
+        the member list names them all, in one request for most workspaces. Asked only
+        when the authors still unnamed are more than half of what is kept, only while
+        the reads left room for it, and never at the cost of anything but the names: a
+        list that fails or is cut short says nothing about the messages."""
+        unknown = {read.user for read in reads if _MEMBER.fullmatch(read.user or "")}
+        unknown -= {self.owner, *self._names}
+        room = self._left - self._kept >= DIRECTORY_PAGES
+        if self._people is not None or len(unknown) <= NAME_REQUESTS // 2 or not room:
+            return
+        more = self.more
+        try:
+            await self.people()
+        except SlackReadError as error:
+            log.info("the member list was not read for names (%s)", error.code)
+        self.more = more
+
     async def context(self, reads: list[Read], *, limit: int = MAX_ITEMS,
                       before: str = "") -> Context:
         """`reads` as a `Context`: the first `limit`, attributed, with what was left out
         and what could not be read said beside them."""
         self.more = self.more or len(reads) > limit
+        await self._learn_names(reads[:limit])
         messages = [await self.attributed(read) for read in reads[:limit]]
         return Context(messages=tuple(messages), more=self.more, incomplete=self.incomplete,
                        before=before if self.more else "")

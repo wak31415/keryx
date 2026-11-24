@@ -819,6 +819,30 @@ def test_slack_that_was_never_connected_is_pointed_at_its_sign_in(healthy):
     assert "`keryx plugins install check_billing`" in checks["check_billing"].detail
 
 
+def test_a_slack_voice_tool_that_is_off_is_pointed_at_the_one_command_that_turns_it_on(
+    healthy,
+):
+    """It named two commands, a login and then an install, whatever the level was: at
+    the level already the login changes nothing, and below it the login is all it takes."""
+    for name in ("slack_read", "slack_message"):
+        plugins.remove(healthy, name)
+        plugins.off_path(healthy, name).unlink()
+
+    at_write = by_name(run_doctor_checks(healthy))
+    plugins.write_config(healthy, "slack_report", {"access": "converse"})
+    below = by_name(run_doctor_checks(healthy))
+
+    assert at_write["slack_read"].detail == (
+        "off (optional) — `keryx setup` → Plugins, or `keryx plugins install slack_read`")
+    assert at_write["slack_message"].detail.endswith("`keryx plugins install slack_message`")
+    assert below["slack_read"].detail == (
+        "off (optional) — `keryx setup` → Plugins, or `keryx auth login slack --access "
+        "read`, which turns it on with the level")
+    assert below["slack_message"].detail.endswith(
+        "`keryx auth login slack --access write`, which turns it on with the level")
+    assert "and then" not in below["slack_read"].detail + below["slack_message"].detail
+
+
 def test_a_google_sign_in_does_not_nag_about_email_answers_being_off(healthy):
     """The sign-in is the agents' as well: having it says nothing about wanting the plugin."""
     plugins.remove(healthy, "check_email")

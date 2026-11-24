@@ -49,11 +49,14 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    BOT_VAR USER_VAR | keryx auth login slack --stdin`, one token to a line). It checks
    both, takes the member the user token belongs to as them, sends reports to that
    member, turns `slack_report` on and sends them one test message; ask whether it
-   arrived. To send reports somewhere else afterwards: `keryx plugins install
-   slack_report --set channel_id=ID`.
+   arrived. A login that takes a workspace to `read` also turns on reading Slack on a
+   call (`slack_read`), and one that takes it to `write` sending as them
+   (`slack_message`), and each says so: the level they chose is their yes to both, and
+   `keryx plugins remove NAME` turns one off. To send reports somewhere else
+   afterwards: `keryx plugins install slack_report --set channel_id=ID`.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
-   Slack, reading Slack (which needs a workspace at the `read` level), sending Slack
-   messages as them (the `write` level, and its own yes), email, reading the
+   Slack, reading Slack (which the login at the `read` level turns on), sending Slack
+   messages as them (the login at `write`; never install it for them), email, reading the
    calendar, adding to it, documents, billing, cluster stats —
    each on or off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes

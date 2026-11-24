@@ -18,6 +18,8 @@ What each may cost, at most, of the reader's budget (`MAX_REQUESTS`, of which
 two pages, the member list for three, each asked once a call); what is waiting, 20 (two
 searches, then up to `MAX_CANDIDATES` of each half confirmed, one request for a direct
 conversation and two for a mention); a thread, 2; a conversation, mentions or a search, 1.
+Attributing what was read to many authors may ask for the member list once more (up to
+3, and only out of what the reads left: `SlackReader._learn_names`).
 
 `conversation`, `from` and `days` narrow any of them; `text` narrows a thread or what is
 waiting by the words themselves. A search is narrowed twice: by the modifiers Slack
@@ -25,7 +27,8 @@ documents (`in:`, `from:<@…>`), built only from ids and names Slack gave, and 
 what comes back, which is the half that is trusted. The window is held here too.
 
 **Nothing is guessed.** A name is matched against the owner's own conversations and the
-member list. One match is used; several are `Unclear` with the candidates, each with a
+member list, without case and without accents (`words`): speech has neither. One match
+is used; several are `Unclear` with the candidates, each with a
 `ref` that says which; none is `Unclear` with the status `no_match`. Filters that
 contradict each other are `Unclear` as well, in one sentence.
 
@@ -44,6 +47,7 @@ read, or one with more after the mention than was read, is left out and said to 
 import asyncio
 import logging
 import re
+import unicodedata
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -206,7 +210,13 @@ def parse(raw: Mapping[str, Any], *, limit: int = MAX_ITEMS) -> Filters:
 
 
 def words(name: str) -> list[str]:
-    return _NOT_WORDS.sub(" ", name.casefold()).split()
+    """The words of a name or a message, without case and without accents. A name said
+    on a call arrives with none ("Zoe" for "Zoë", "Jose" for "José"), so both sides of
+    every match are folded the same way; two names that then read alike are two
+    candidates, asked about like any others."""
+    plain = "".join(char for char in unicodedata.normalize("NFKD", name)
+                    if not unicodedata.combining(char))
+    return _NOT_WORDS.sub(" ", plain.casefold()).split()
 
 
 def as_ref(said: str) -> re.Match[str] | None:

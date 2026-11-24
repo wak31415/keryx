@@ -638,8 +638,8 @@ def run_slack_message(ctx: SetupContext) -> None:
         ctx.ui.note(
             f"{slack_message.TOOL} sends as you, which needs a workspace at the write "
             "level, so it is left off: choose write in the Slack step (`keryx setup` "
-            "again) or run `keryx auth login slack --access write`, and then `keryx "
-            f"plugins install {slack_message.TOOL}`."
+            "again) or run `keryx auth login slack --access write`, which turns it on "
+            "with the level."
         )
         return
     _finish(ctx, slack_message.TOOL, {})
@@ -652,8 +652,8 @@ def run_slack_read(ctx: SetupContext) -> None:
         ctx.ui.note(
             f"{slack_read.TOOL} reads Slack as you, which needs a workspace at the read "
             "level, so it is left off: choose read in the Slack step (`keryx setup` again) "
-            "or run `keryx auth login slack --access read`, and then `keryx plugins install "
-            f"{slack_read.TOOL}`."
+            "or run `keryx auth login slack --access read`, which turns it on with the "
+            "level."
         )
         return
     _finish(ctx, slack_read.TOOL, {})

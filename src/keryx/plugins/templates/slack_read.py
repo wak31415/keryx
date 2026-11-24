@@ -1,4 +1,5 @@
-"""Keryx's Slack reading plugin, turned on with `keryx plugins install slack_read`.
+"""Keryx's Slack reading plugin, turned on when `keryx auth login slack --access read`
+takes a workspace to that level (or with `keryx plugins install slack_read`, once one is).
 
 Its settings are in slack_read.toml beside this file. The code is
 `keryx.plugins.slack_read`, so an update to Keryx reaches this copy; `keryx plugins remove
