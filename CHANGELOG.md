@@ -178,6 +178,10 @@ the version starts with 0.
 
 ### Changed
 
+- `check_email` and `slack_read` answer a question with `claude-sonnet-5-5` by default (it
+  was `claude-opus-5-5`). A tool already installed keeps the model in its file; `keryx
+  plugins install NAME --set model=…` changes it.
+
 - **Your own Slack app is used for everything once it is connected.** A machine that named
   a Slack MCP server for subagents (`mcp_server` in `slack_report.toml`) before it had an
   app kept sending subagents through that server afterwards, so a file asked for on a

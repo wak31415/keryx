@@ -206,7 +206,7 @@ PLUGINS: dict[str, Plugin] = {
         important=(),
         secrets=(),
         keys=(
-            Key("model", "word", "claude-opus-5-5", "The model that answers a question"),
+            Key("model", "word", "claude-sonnet-5-5", "The model that answers a question"),
             Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
         ),
         module="slack_read",
@@ -231,7 +231,7 @@ PLUGINS: dict[str, Plugin] = {
         important=(),
         secrets=(),
         keys=(
-            Key("model", "word", "claude-opus-5-5", "The model that answers"),
+            Key("model", "word", "claude-sonnet-5-5", "The model that answers"),
             Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
         ),
         module="email",

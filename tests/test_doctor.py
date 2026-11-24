@@ -670,10 +670,10 @@ def test_every_plugin_on_names_what_it_does(healthy):
 
     assert checks["slack_report"].detail == "on — posts to D123"
     assert checks["slack_read"].detail == (
-        "on — reads Slack as you, only when you ask; claude-opus-5-5 answers a question "
+        "on — reads Slack as you, only when you ask; claude-sonnet-5-5 answers a question "
         "about what it read"
     )
-    assert checks["check_email"].detail == "on — claude-opus-5-5, low effort"
+    assert checks["check_email"].detail == "on — claude-sonnet-5-5, low effort"
     assert checks["check_calendar"].detail == (
         "on — reads every calendar ticked in Google Calendar, up to 25 events an answer"
     )
