@@ -667,13 +667,13 @@ def test_anything_on_their_slack_is_the_read_tools_and_a_dispatch_is_for_work(un
     assert "anything across many emails or files" in theirs
 
 
-def _slack_at(settings, level):
-    """`settings` with Keryx's own Slack app connected at `level`."""
+def _slack_with(settings, *allow):
+    """`settings` with Keryx's own Slack app connected, and `allow` ticked."""
     from keryx import plugins
     from keryx.config.store import ConfigStore
 
     plugins.write_config(settings, "slack_report", {
-        "channel_id": "U0OWNER", "owner_id": "U0OWNER", "access": level, "team": "Acme",
+        "channel_id": "U0OWNER", "owner_id": "U0OWNER", "allow": list(allow), "team": "Acme",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX",
     })
     plugins.install(settings, "slack_report")
@@ -682,19 +682,21 @@ def _slack_at(settings, level):
     return settings.model_copy(update={key.lower(): value for key, value in secrets.items()})
 
 
-@pytest.mark.parametrize("level", ["announce", "converse"])
+@pytest.mark.parametrize("allow", [(), ("requests",), ("send",), ("requests", "send")])
 def test_with_an_app_that_may_not_read_slack_the_voice_says_so_rather_than_dispatching(
-    settings, unwrapped, level,
+    settings, unwrapped, allow,
 ):
-    """Below `read` there is no tool that reads Slack and no command either, and nothing
-    said so: the question was dispatched, and answered from whatever else the agent had."""
-    text = unwrapped(_rendered(_slack_at(settings, level)))
+    """Without reading ticked there is no tool that reads Slack and no command either,
+    and nothing said so: the question was dispatched, and answered from whatever else the
+    agent had."""
+    text = unwrapped(_rendered(_slack_with(settings, *allow)))
 
     assert "Reading their Slack is not switched on." in text
     assert "do not dispatch it" in text
     assert ("say in one sentence that reading Slack is not switched on, and that signing in "
-            "to Slack again at their keyboard, at the read level, switches it on") in text
-    assert "`keryx auth login slack --access read`" in text
+            "to Slack again at their keyboard, and ticking it there, switches it on") in text
+    assert "the command is `keryx auth login slack`." in text
+    assert "--access" not in text and "read level" not in text
     assert "Sending them something on Slack is not affected" in text
     assert "{" not in text and "}" not in text
 
@@ -705,12 +707,13 @@ def test_the_voice_is_told_reading_slack_is_off_only_while_an_app_of_keryx_canno
     off = "Reading their Slack is not switched on."
 
     assert off not in unwrapped(_rendered(settings)), "no Slack at all is nothing to say"
-    assert off not in unwrapped(_rendered(_slack_at(settings, "read")))
-    assert off not in unwrapped(_rendered(_slack_at(settings, "write")))
+    assert off not in unwrapped(_rendered(_slack_with(settings, "requests", "read")))
+    assert off not in unwrapped(_rendered(_slack_with(settings, "read")))
+    assert off not in unwrapped(_rendered(_slack_with(settings, "requests", "read", "send")))
 
 
 def test_what_slack_cannot_do_is_withheld_with_the_rest_before_the_pin(settings, unwrapped):
-    connected = _slack_at(settings, "converse").model_copy(
+    connected = _slack_with(settings, "requests").model_copy(
         update={"briefing_before_pin": False})
 
     text = unwrapped(_rendered(connected, trust=TrustLevel.NONE))
@@ -719,7 +722,7 @@ def test_what_slack_cannot_do_is_withheld_with_the_rest_before_the_pin(settings,
 
 
 def test_the_slack_paragraph_names_the_default_agent(settings, unwrapped):
-    codex = _slack_at(settings, "converse").model_copy(update={"agent_backend": "codex"})
+    codex = _slack_with(settings, "requests").model_copy(update={"agent_backend": "codex"})
 
     assert "so nothing can: not you, and not Codex" in unwrapped(_rendered(codex))
 

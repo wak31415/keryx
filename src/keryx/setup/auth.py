@@ -11,14 +11,15 @@ the address they land on: at a terminal that is still one command, and without o
 coding agent relaying the link — it is two, the second with `--callback-url`. `gmail` and
 `google-workspace` are the names the two older sign-ins had, and run this one.
 
-Slack is the same shape (`setup/slack.py`). It says what the chosen access level lets
-Keryx see and prints the link that creates the owner's Slack app (or, for an app there is,
-the manifest that changes it); at a terminal it then stays and asks for each token the
-level takes, hidden, checks them, finds where to send and turns `slack_report` on: one
-command. Without a terminal it is two, the second with `--stdin` and the tokens on
-standard input, which is how a coding agent or a pipe hands them over. Lowering a level
-needs no token and is done at once. `--workspace NAME` is a further workspace, with its
-own app.
+Slack is the same shape (`setup/slack.py`). At a terminal it is one command with no
+flags: a box to tick for each thing Keryx may do there beyond sending reports, then the
+link that creates the owner's Slack app for exactly that (or, for an app there is, the
+manifest that changes it), then each token it takes, asked for hidden, checked, and
+`slack_report` turned on. Without a terminal it is two, with `--allow` saying what is
+ticked and the second with `--stdin` and the tokens on standard input, which is how a
+coding agent or a pipe hands them over; with nothing connected and no `--allow`, the
+choices are printed and nothing is guessed. Unticking needs no token and is done at
+once. `--workspace NAME` is a further workspace, with its own app.
 """
 
 import asyncio
@@ -117,8 +118,9 @@ def status(
 
 
 def _slack_workspaces(settings: Settings) -> list[dict[str, Any]]:
-    """Each connected Slack workspace: its level, and what that level still lacks."""
-    from keryx.plugins.slack import connected
+    """Each connected Slack workspace: what is ticked for it, and what that still lacks."""
+    from keryx.integrations.slack import ordered
+    from keryx.plugins.slack import connected, in_words
 
     try:
         found = connected(settings)
@@ -126,22 +128,22 @@ def _slack_workspaces(settings: Settings) -> list[dict[str, Any]]:
         return []
     return [
         {"name": each.name, "team": each.team, "label": each.label,
-         "access": str(each.access), "listens": each.listens, "missing": list(each.missing),
-         "owner": each.owner_id}
+         "allow": [str(one) for one in ordered(each.allowed)], "said": in_words(each.allowed),
+         "listens": each.listens, "missing": list(each.missing), "owner": each.owner_id}
         for each in found
     ]
 
 
 def slack_lines(entry: dict[str, Any]) -> list[str]:
-    """What `auth status` prints under Slack: one line per workspace, its level first."""
+    """What `auth status` prints under Slack: one line per workspace, what is on and
+    off there first, in plain words."""
     lines = []
     for each in entry.get("workspaces", []):
         name = each["label"]
-        state = (f"without {' or '.join(each['missing'])}" if each["missing"]
-                 else ("acts on what you type to the app" if each["listens"] else "posts only"))
+        state = f", without {' or '.join(each['missing'])}" if each["missing"] else ""
         owner = (f", you are {each['owner']}" if each.get("owner")
                  else ", no owner on file yet (the next `keryx auth login slack` adds one)")
-        lines.append(f"{name}: {each['access']} level, {state}{owner}")
+        lines.append(f"{name}: {each['said']}{state}{owner}")
     return lines
 
 
@@ -163,15 +165,16 @@ class LoginOptions:
     #: Google: the account the owner means to sign in as, when it is not the one saved.
     account: str | None = None
     #: Slack: what standard input held, one token to a line (None: nothing was piped, so
-    #: say what the level means and print the link, and at a terminal go on to ask),
-    #: whether `--stdin` was given (at a terminal: ask without the steps), whether to send
-    #: one test message, which workspace (None: the first) and which access level (None:
-    #: the one it has).
+    #: print the link and the steps, and at a terminal ask what to tick first and for
+    #: the tokens after), whether `--stdin` was given (at a terminal: ask without the
+    #: steps), whether to send one test message, which workspace (None: the first) and
+    #: what is ticked, each `--allow` as it was typed (None: ask at a terminal; without
+    #: one, what the workspace has, and nothing guessed for one that is not connected).
     tokens: str | None = field(default=None, repr=False)
     stdin: bool = False
     test: bool = True
     workspace: str | None = None
-    access: str | None = None
+    allow: tuple[str, ...] | None = None
 
 
 def login(
@@ -185,19 +188,21 @@ def login(
     post: Callable[..., Any] | None = None,
     ask: Callable[[str], str] | None = None,
     ask_secret: Callable[[str], str] | None = None,
+    choose: Callable[[str, Sequence[Any]], Sequence[str]] | None = None,
 ) -> None:
     """Do the one sign-in `name` names; raises `AuthError` with what went wrong.
 
     `ask` puts one question to the person at the terminal and is None when there is no
     terminal, which is what makes a pasted-back Google sign-in two commands instead of one.
     `ask_secret` is the same with the typing hidden, for Slack's tokens: it raises
-    `EOFError` or `KeyboardInterrupt` when the person leaves the question.
+    `EOFError` or `KeyboardInterrupt` when the person leaves the question. `choose` shows
+    a list of boxes to tick and answers with the ones ticked, for what Slack may do.
     """
     if name in BACKENDS:
         _agent_login(name, settings, options=options, echo=echo, run_login=run_login)
         return
     if name == "slack":
-        _slack(settings, store, options=options, echo=echo, ask=ask_secret)
+        _slack(settings, store, options=options, echo=echo, ask=ask_secret, choose=choose)
         return
     if name == "google" or name in GOOGLE_ALIASES:
         try:
@@ -283,27 +288,41 @@ def _slack(
     options: LoginOptions,
     echo: Echo,
     ask: Callable[[str], str] | None = None,
+    choose: Callable[[str, Sequence[Any]], Sequence[str]] | None = None,
 ) -> None:
-    """Slack's sign-in: the tokens piped in are checked and saved; with none piped, a
-    lower level is applied at once, a terminal (`ask`) is shown the steps and asked for
-    the tokens there, and anything else is shown the steps and the `--stdin` command."""
+    """Slack's sign-in. A terminal (`ask`) is asked what to tick, shown the steps and
+    asked for the tokens there. Without one: tokens piped in are checked and saved;
+    with none piped, whatever `--allow` unticks is taken away at once, and the steps
+    and the `--stdin` command are printed for what it adds. **What is ticked is never
+    guessed**: with nothing connected and no `--allow`, the choices are printed, and
+    tokens piped in are refused."""
     try:
         workspace = slack.workspace_name(options.workspace)
-        access = slack.parse_access(options.access)
+        allowed = slack.parse_allow(options.allow)
+        if ask is not None and options.tokens is None:
+            slack.login(settings, store, ask=ask, echo=echo, choose=choose,
+                        test=options.test, steps=not options.stdin, workspace=workspace,
+                        allowed=allowed)
+            return
         if options.tokens is not None:
+            if allowed is None and not slack.is_connected(settings, workspace):
+                raise slack.SlackSetupError(
+                    "nothing says what Keryx may do there, and it is not guessed: add "
+                    f"--allow {slack.NONE} for reports and files alone, or --allow once "
+                    f"for each of {', '.join(slack.PERMISSIONS)} (`keryx auth login "
+                    "slack` says what each is). Nothing was saved")
             slack.connect(settings, store, tokens=options.tokens, test=options.test,
-                          echo=echo, workspace=workspace, access=access)
+                          echo=echo, workspace=workspace, allowed=allowed)
             return
-        # Taking access away needs nothing from Slack, so it is done here and now.
-        if not options.stdin and access is not None and slack.lower(
-                settings, store, workspace=workspace, access=access, echo=echo):
-            return
-        if ask is None:
-            slack.start(settings, echo, workspace=workspace, access=access,
-                        api=slack.SlackApi())
-            return
-        slack.login(settings, store, ask=ask, echo=echo, test=options.test,
-                    steps=not options.stdin, workspace=workspace, access=access)
+        if allowed is not None:
+            # Taking a permission away needs nothing from Slack: done here and now.
+            unticked = slack.untick(settings, store, workspace=workspace, allowed=allowed,
+                                    echo=echo)
+            if unticked.done:
+                return
+            settings = unticked.settings
+        slack.start(settings, echo, workspace=workspace, allowed=allowed,
+                    api=slack.SlackApi())
     except slack.Stopped as exc:
         raise AuthStopped(str(exc)) from None
     except slack.SlackSetupError as exc:

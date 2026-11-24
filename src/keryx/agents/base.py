@@ -296,9 +296,8 @@ def render_subagent_suffix(
     workspace through a connector, and said to them as their Slack). `slack_report` says
     Keryx's own bot can post to the owner, and names `keryx slack report` as the way to
     send them something, a file included, when no MCP server of theirs is the route.
-    `slack_write` says a
-    workspace is at `write`, and adds the one command that sends as the owner with the
-    rule for when it may. `owner` is
+    `slack_write` says sending as the owner is ticked for a workspace, and adds the one
+    command that sends as the owner with the rule for when it may. `owner` is
     whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
     `assistant` is who dispatched it (`Settings.assistant_name`).
     `tools_dir` is where the owner's own voice tools live (`keryx.tools.custom`), and the

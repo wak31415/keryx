@@ -78,11 +78,11 @@ runs its own login, which opens a browser or prints a code — theirs to finish,
 ## 3. The plugins they want
 
 Nine voice tools are plugins, off until they are turned on: `slack_report` and
-`check_email` (most people want both), `slack_read` (it reads their Slack as them, loads
-only once a workspace is at the `read` level, and is turned on by the login that takes
-one there), `slack_message` (it sends a message *as them*, loads only at the `write`
-level, and is turned on by the login that takes a workspace there, which is theirs to
-run: never install it yourself because they said yes to something else), `check_calendar`,
+`check_email` (most people want both), `slack_read` (it reads their Slack as them, and
+is turned on by the Slack login when they switch reading on there), `slack_message` (it
+sends a message *as them*, and is turned on by the Slack login when they switch sending
+on there, which is theirs to say: never install it yourself because they said yes to
+something else), `check_calendar`,
 `add_calendar_event` (it writes to their calendar, so it is its own yes), `find_document`,
 `check_billing` and `cluster_stats`. Ask which they want; do not turn one on unasked.
 
@@ -105,33 +105,44 @@ Slack is a sign-in too, and it turns `slack_report` on by itself (it was called
 `send_to_slack`; a machine that installed it under that name needs nothing done):
 
 ```bash
-keryx auth login slack          # says the four access levels, then a link and steps: relay them
-keryx auth login slack --stdin  # theirs to run: it asks for each token hidden
+keryx auth login slack                        # says what there is to switch on: read it to them
+keryx auth login slack --allow none           # what they chose: a link and steps, to relay
+keryx auth login slack --stdin --allow none   # theirs to run: it asks for each token hidden
 ```
 
-Run by you, with no terminal, the first command prints and ends. At a terminal of their
-own it is the whole sign-in in one command: it prints the same steps and then waits for
-the tokens, so someone who would rather do it all themselves runs only that.
+Run by you, with no terminal, each of these prints and ends. At a terminal of their own,
+`keryx auth login slack` with no option is the whole sign-in in one command: it shows a
+box to tick for each thing Keryx may do, prints the steps for exactly that and then
+waits for the tokens, so someone who would rather do it all themselves runs only that.
+Offer it first.
 
-**The access level is theirs to choose, and it comes first**, because it decides the app
-the link creates. The first command prints what each level lets Keryx see and where it can
-be set to work from: `announce` (it posts, and reads nothing), `converse` (it is also sent
-what they type to the app, which is named after their assistant, and every message of
-theirs there, with no mention needed, can resume or start work *without the phone PIN*), `read` (they can also mention it in a
-conversation it was added to, where it answers in that thread for the others there to
-read too, and it reads Slack as them when they ask about messages) and `write` (it can
-also send messages as them, to other people and channels).
-Read them those sentences and ask. Never choose `converse`, `read` or `write` for them,
-and never suggest one to save a step: `announce` is the default and is what the two commands above
-set up. At every level the second command takes two tokens, their own user token and
+**What Keryx may do in their Slack is theirs to choose, and it comes first**, because it
+decides the app the link creates. Sending them reports and files is always on. The first
+command prints the three things that may be added, each on its own: `requests` (it acts
+on what they type to the app, which is named after their assistant: every message of
+theirs there, with no mention needed, can resume or start work *without the phone
+PIN*), `read` (it reads Slack as them when they ask about messages; with `requests` as
+well, they can also mention it in a conversation it was added to, where it answers in
+that thread for the others there to read too) and `send` (it sends messages as them, to
+other people and channels, after reading each back and a yes). Read them those
+sentences and ask. Never choose `requests`, `read` or `send` for them, and never suggest
+one to save a step. What they say goes on both of the other commands as `--allow`, once
+for each (`--allow requests --allow read`); `--allow none` is reports and files alone,
+which is what to use when they give no answer. Nothing is guessed: with no `--allow`
+on a workspace that is not connected, the command prints the choices and saves nothing.
+Whatever is ticked, the last command takes two tokens, their own user token and
 the bot token (the user token is how Slack says which member they are; there is no
-address to give and nothing is asked about where to send: reports go to them). For a
-higher level, both commands take `--access LEVEL`, and the app-level token is asked for
+address to give and nothing is asked about where to send: reports go to them). With
+`requests`, the app-level token is asked for
 first (on standard input it goes with the other two, one to a line, in any order). The command names the member it takes them to be: read them
 that line. It is settled then and nothing changes it afterwards; connecting as somebody
-else is `keryx auth logout slack` and a new login, which is theirs to ask for. A machine
+else is `keryx auth logout slack` and a new login, which is theirs to ask for. Running
+the login again is how they change what is on: at a terminal the boxes come up ticked
+as they stand, and without one `--allow` says everything that is to stay on. Whatever
+it leaves out is switched off at once, with nothing asked of Slack, and whatever it
+adds prints the manifest to paste into the app they have. A machine
 that connected Slack before user tokens were asked for keeps working as it is: only if
-they want the level raised, or an owner on file, do they run the login again, and the
+they want more switched on, or an owner on file, do they run the login again, and the
 first command then prints how to update the app they have. The same goes for an app
 made before Keryx could send files: the first command asks Slack what the app may do,
 and when it lacks `files:write` it prints the manifest to paste into the app and the
@@ -141,7 +152,7 @@ The link opens Slack's own page for a new app with theirs already filled in. The
 the first command prints follow Slack's console, one visit to each page, and the tokens
 are asked for in the order they are copied. Say the places as the steps do, as paths:
 
-- from `converse` up, before installing: `Basic Information > App-Level Tokens >
+- with `requests`, before installing: `Basic Information > App-Level Tokens >
   Generate Token and Scopes`, with the `connections:write` scope, gives the app-level
   token (`xapp-…`);
 - they install the app to their workspace and click Allow;

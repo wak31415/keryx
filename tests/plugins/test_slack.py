@@ -3,17 +3,19 @@
 import json
 
 import pytest
+from slack_sets import BASE, EVERYTHING, READ, READS, REQUESTS, SELECTIONS, SEND, named
 
 from keryx import plugins
 from keryx.agents.base import render_subagent_suffix
 from keryx.agents.claude import CLAUDE_AUTH
 from keryx.agents.session import AgentContext
-from keryx.integrations.slack import Access, SlackWebApi
+from keryx.integrations.slack import Permission, SlackWebApi
 from keryx.issues import IssueReporting
 from keryx.plugins.slack import (
     FAILED_MESSAGE,
     SlackWorkspace,
     connected,
+    in_words,
     report_route,
     slack_report_tool,
     slack_route,
@@ -351,14 +353,15 @@ def test_every_template_loads_nothing_it_should_not(slack_settings):
 # --- workspaces ---------------------------------------------------------------------------
 
 
-WORK = {"access": "converse", "owner_id": "U0WORK", "team": "Acme", "team_id": "T0WORK",
+WORK = {"allow": ["requests"], "owner_id": "U0WORK", "team": "Acme", "team_id": "T0WORK",
         "channel_id": "U0WORK", "bot_user_id": "U0WORKBOT"}
 FIRST = {"channel_id": "U0ME", "team": "Home", "team_id": "T0HOME"}
 
 
 @pytest.fixture
 def two_workspaces(slack_settings):
-    """The first workspace at announce, and `work` at converse with both its tokens."""
+    """The first workspace with nothing ticked, and `work` with requests and both its
+    tokens."""
     settings = slack_settings.model_copy(update={
         "slack_workspace_tokens": {"work": {"bot": "xoxb-work", "app": "xapp-work"}},
     })
@@ -367,7 +370,9 @@ def two_workspaces(slack_settings):
     return settings
 
 
-def test_an_install_from_before_workspaces_is_the_default_one_at_announce(slack_settings):
+def test_an_install_from_before_workspaces_is_the_default_one_with_nothing_ticked(
+    slack_settings,
+):
     """One token and one destination, as every install has had: nothing to migrate."""
     slack_settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
     plugins.config_path(slack_settings, NAME).write_text('channel_id = "D123"\n')
@@ -375,17 +380,17 @@ def test_an_install_from_before_workspaces_is_the_default_one_at_announce(slack_
 
     [only] = connected(slack_settings)
 
-    assert (only.name, only.access, only.channel) == ("default", Access.ANNOUNCE, "D123")
+    assert (only.name, only.allowed, only.channel) == ("default", BASE, "D123")
     assert only.token("bot") == "xoxb-test-token" and only.token("app") is None
     assert only.sends and not only.listens and only.missing == ()
     assert slack_route(slack_settings).channel == "D123"
 
 
-def test_each_workspace_has_its_own_level_tokens_owner_and_destination(two_workspaces):
+def test_each_workspace_has_its_own_ticks_tokens_owner_and_destination(two_workspaces):
     first, work = workspaces(two_workspaces)
 
     assert (first.name, work.name) == ("default", "work")
-    assert (work.access, work.owner_id, work.channel) == (Access.CONVERSE, "U0WORK", "U0WORK")
+    assert (work.allowed, work.owner_id, work.channel) == (REQUESTS, "U0WORK", "U0WORK")
     assert (work.token("bot"), work.token("app")) == ("xoxb-work", "xapp-work")
     # What the owner reads: Slack's own name for the first, their word for a further one.
     assert work.label == "work (Acme)" and first.label == "Home"
@@ -401,31 +406,64 @@ def test_a_workspaces_tokens_are_never_in_its_repr(two_workspaces):
 
 
 @pytest.mark.parametrize(
-    ("access", "tokens", "owner", "team", "bot", "missing", "listens"),
+    ("allowed", "tokens", "owner", "team", "bot", "missing", "listens"),
     [
-        ("announce", {"bot": "b"}, "", "", "", (), False),
-        ("converse", {"bot": "b"}, "U1", "T1", "B1", ("its app token",), False),
-        ("converse", {"bot": "b", "app": "a"}, "", "T1", "B1", ("your member id",), False),
-        ("converse", {"bot": "b", "app": "a"}, "U1", "", "B1", ("the workspace's id",), False),
-        ("converse", {"bot": "b", "app": "a"}, "U1", "T1", "",
+        (BASE, {"bot": "b"}, "", "", "", (), False),
+        (REQUESTS, {"bot": "b"}, "U1", "T1", "B1", ("its app token",), False),
+        (REQUESTS, {"bot": "b", "app": "a"}, "", "T1", "B1", ("your member id",), False),
+        (REQUESTS, {"bot": "b", "app": "a"}, "U1", "", "B1", ("the workspace's id",), False),
+        (REQUESTS, {"bot": "b", "app": "a"}, "U1", "T1", "",
          ("the app's own member id",), False),
-        ("converse", {"bot": "b", "app": "a"}, "U1", "T1", "B1", (), True),
-        ("read", {"bot": "b", "app": "a"}, "U1", "T1", "B1", ("its user token",), True),
-        ("read", {"bot": "b", "app": "a", "user": "u"}, "U1", "T1", "B1", (), True),
-        ("announce", {}, "", "", "", ("its bot token",), False),
+        (REQUESTS, {"bot": "b", "app": "a"}, "U1", "T1", "B1", (), True),
+        (READS, {"bot": "b", "app": "a"}, "U1", "T1", "B1", ("its user token",), True),
+        (READS, {"bot": "b", "app": "a", "user": "u"}, "U1", "T1", "B1", (), True),
+        # Reading or sending alone listens to nothing, and needs no app-level token.
+        (READ, {"bot": "b", "user": "u"}, "U1", "", "", (), False),
+        (SEND, {"bot": "b"}, "U1", "", "", ("its user token",), False),
+        (BASE, {}, "", "", "", ("its bot token",), False),
     ],
+    ids=str,
 )
-def test_a_workspace_says_what_its_level_needs_and_lacks(
-    access, tokens, owner, team, bot, missing, listens
+def test_a_workspace_says_what_its_ticks_need_and_lack(
+    allowed, tokens, owner, team, bot, missing, listens
 ):
-    """Above announce a message is held to the owner's id, the workspace's, and a mention
+    """With requests a message is held to the owner's id, the workspace's, and a mention
     of the app's own: with any missing there is nothing to hold it to, and nothing is
     heard."""
-    one = SlackWorkspace("w", Access(access), channel="U1", owner_id=owner, team_id=team,
+    one = SlackWorkspace("w", allowed, channel="U1", owner_id=owner, team_id=team,
                          bot_user_id=bot, tokens=tokens)
 
     assert one.missing == missing and one.listens is listens
-    assert one.reads is (access == "read" and "user" in tokens)
+    assert one.reads is (Permission.READ in allowed and "user" in tokens)
+
+
+@pytest.mark.parametrize("allowed", SELECTIONS, ids=named)
+def test_what_a_workspace_may_do_follows_what_is_ticked_and_never_a_token_on_file(allowed):
+    """Every token and every id on file: each capability is there exactly when its box
+    is, and a mention is a request only with requests and reading both."""
+    one = SlackWorkspace("w", allowed, channel="U1", owner_id="U1", team_id="T1",
+                         bot_user_id="B1", tokens={"bot": "b", "app": "a", "user": "u"})
+
+    assert one.sends
+    assert one.listens is (Permission.REQUESTS in allowed)
+    assert one.reads is (Permission.READ in allowed)
+    assert one.writes is (Permission.SEND in allowed)
+    assert one.mentions is (Permission.REQUESTS in allowed and Permission.READ in allowed)
+
+
+def test_what_is_on_and_off_is_said_in_plain_words_and_no_name_from_the_code():
+    assert in_words(BASE) == (
+        "on: sending you reports and files; off: acting on what you type to the app, "
+        "reading Slack as you, sending messages as you")
+    assert in_words(READS) == (
+        "on: sending you reports and files, acting on what you type to the app, reading "
+        "Slack as you; off: sending messages as you")
+    assert in_words(EVERYTHING).endswith("reading Slack as you, sending messages as you")
+    assert "off:" not in in_words(EVERYTHING)
+    for allowed in SELECTIONS:
+        said = in_words(allowed)
+        assert not any(word in said for word in (
+            "announce", "converse", "write", "level", "requests", "slack_"))
 
 
 def test_the_first_workspace_with_no_name_from_slack_is_called_what_it_is():
@@ -458,7 +496,7 @@ def test_the_first_workspaces_other_tokens_are_the_plain_settings(slack_settings
     settings = slack_settings.model_copy(update={
         "slack_app_token": "xapp-1", "slack_user_token": "xoxp-1",
     })
-    plugins.write_config(settings, NAME, {"channel_id": "U0ME", "access": "read",
+    plugins.write_config(settings, NAME, {"channel_id": "U0ME", "allow": ["requests", "read"],
                                           "owner_id": "U0ME", "team_id": "T0HOME",
                                           "bot_user_id": "U0KERYX"})
 
@@ -642,7 +680,7 @@ def reconnected(settings):
     """`default` logged out of T0HOME and logged in to another team, as the first workspace."""
     plugins.write_config(settings, NAME, {
         "channel_id": "U0BOWNER", "owner_id": "U0BOWNER", "team": "Team B",
-        "team_id": "T0TEAMB", "bot_user_id": "U0BBOT", "access": "read"})
+        "team_id": "T0TEAMB", "bot_user_id": "U0BBOT", "allow": ["requests", "read"]})
     return settings
 
 
@@ -684,7 +722,7 @@ def test_a_route_carries_the_team_it_posts_in_for_the_thread_it_may_start(two_wo
 def test_a_thread_with_no_team_beside_it_stands_only_while_the_connection_has_none_either(
     slack_settings,
 ):
-    """An install from before levels never wrote its team down, and neither did its
+    """An install from before requests never wrote its team down, and neither did its
     tasks: one connection, one team. Once the connection knows its team, a thread that
     does not is not posted to."""
     plugins.write_config(slack_settings, NAME, {"channel_id": "U0ME"})

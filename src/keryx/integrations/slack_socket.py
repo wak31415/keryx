@@ -1,6 +1,6 @@
 """Socket Mode: hearing the owner's Slack app with no address of Keryx's own.
 
-An app at the `converse` level and above is sent its events over a WebSocket that Keryx
+An app with `requests` ticked is sent its events over a WebSocket that Keryx
 opens outwards, so nothing of Slack's ever needs a public route here (`cloudflared` puts
 the whole of the phone server's port on the internet; this adds nothing to it). The
 protocol is small enough to hold in one file rather than take a dependency for:

@@ -381,7 +381,7 @@ async def _settle_then_listen(state: AppState, *, ready) -> None:
 
     In that order: a message that started a task while a restart was still being confirmed
     would be counted among the work that restart interrupted. Hearing Slack is a
-    connection outwards per workspace whose level allows it (`keryx.slack_inbox`), and
+    connection outwards per workspace that has it ticked (`keryx.slack_inbox`), and
     nothing about it may stop the server: a failure here is logged and Slack stays unheard.
     """
     try:
@@ -1045,11 +1045,28 @@ def plugins_list(
             settings_line = ", ".join(f"{key}={_plain(value)}" for key, value in shown.items())
             typer.echo(f"{'':<{width}} {status.config_file}" + (f"  ({settings_line})"
                                                                  if settings_line else ""))
+        if status.name == "slack_report" and status.on:
+            # What is on and off in each workspace, in plain words.
+            for line in _slack_said(settings, status.values or {}):
+                typer.echo(f"{'':<{width}} {line}")
         if status.name == "slack_report" and (status.values or {}).get("mcp_server"):
             from keryx.plugins.slack import agents_send_with
 
             # The file names a server, and the name alone does not say whether it is used.
             typer.echo(f"{'':<{width}} {agents_send_with(settings, status.values)}")
+
+
+def _slack_said(settings: Settings, values: dict) -> list[str]:
+    """One line for each Slack workspace of Keryx's own: what is on and off there. None
+    for an install that only borrows an MCP server's token, which has nothing to tick."""
+    from keryx.plugins.slack import in_words, on_file
+
+    try:
+        names = ["default", *(name for name in values.get("workspaces", {}) if name != "default")]
+        found = [on_file(settings, name, values) for name in names]
+    except Exception:  # a table somebody edited by hand: `doctor` says why
+        return []
+    return [f"{each.label}: {in_words(each.allowed)}" for each in found if each.token("bot")]
 
 
 @plugins_app.command("hosts")
@@ -1590,6 +1607,17 @@ def _ask_hidden(question: str) -> str:
         raise EOFError from None
 
 
+def _ask_boxes(question: str, choices) -> list[str]:
+    """One list of boxes to tick at the terminal; the values ticked. Ctrl-C and the end
+    of input are `EOFError`, for the flow that asked."""
+    from keryx.setup.ui import Aborted, ask_checkbox
+
+    try:
+        return ask_checkbox(question, choices)
+    except Aborted:
+        raise EOFError from None
+
+
 @auth_app.command("login")
 def auth_login(
     name: Annotated[
@@ -1650,14 +1678,15 @@ def auth_login(
     test: Annotated[
         bool, typer.Option("--test/--no-test", help="slack: send one test message.")
     ] = True,
-    access: Annotated[
-        str | None,
+    allow: Annotated[
+        list[str] | None,
         typer.Option(
-            "--access",
-            help="slack: what Keryx may see there: announce (it posts, and reads nothing), "
-            "converse (it also reads what you type to the app, which can resume or "
-            "start work), read (it also reads Slack as you) or write (it can also send "
-            "messages as you). Default: the level the workspace has, else announce.",
+            "--allow",
+            help="slack, with no terminal to tick boxes at: what Keryx may do there "
+            "beyond sending you reports and files, once for each: requests (it acts on "
+            "what you type to the app), read (it reads Slack as you when you ask), send "
+            "(it sends messages as you, after a yes); or none, alone. What is not named "
+            "is off. Default: what the workspace has; nothing is guessed for a new one.",
         ),
     ] = None,
     workspace: Annotated[
@@ -1675,11 +1704,12 @@ def auth_login(
     browser on this machine it opens the consent screen and finishes by itself; with
     --headless it prints a link for any device and asks for the address the browser lands on.
 
-    slack at a terminal is one command: it says what the access level lets Keryx see,
-    prints the link that creates your Slack app and the steps, and waits for you to
-    paste each token the level needs, hidden. Tokens are never taken as arguments.
-    Without a terminal it prints the steps and ends, and --stdin takes the tokens on
-    standard input. A lower --access on a workspace that is connected is applied at once.
+    slack at a terminal is one command with no options: it shows a box to tick for each
+    thing Keryx may do there, prints the link that creates your Slack app for exactly
+    that and the steps, and waits for you to paste each token it needs, hidden. Run it
+    again to tick or untick: unticking counts at once. Tokens are never taken as
+    arguments. Without a terminal, --allow says what is ticked, it prints the steps and
+    ends, and --stdin takes the tokens on standard input.
     """
     if name not in auth_flow.LOGINS:
         typer.echo(f"sign in to one of: {', '.join(auth_flow.LOGINS)}", err=True)
@@ -1690,9 +1720,9 @@ def auth_login(
     for_google = name == "google" or name in auth_flow.GOOGLE_ALIASES
     googles = (services, account, client_file, callback_url)
     misplaced = (
-        (name != "slack" and (stdin or not test or access is not None
+        (name != "slack" and (stdin or not test or allow is not None
                               or workspace is not None),
-         "--stdin, --no-test, --access and --workspace are for slack"),
+         "--stdin, --no-test, --allow and --workspace are for slack"),
         (not for_google and any(value is not None for value in googles),
          "--services, --account, --client-file and --callback-url are for google"),
         (name == "slack" and headless is not None,
@@ -1726,7 +1756,7 @@ def auth_login(
         stdin=stdin,
         test=test,
         workspace=workspace,
-        access=access,
+        allow=tuple(allow) if allow else None,
     )
     try:
         auth_flow.login(
@@ -1738,6 +1768,7 @@ def auth_login(
             run_login=run_command,
             ask=typer.prompt if sys.stdin.isatty() else None,
             ask_secret=_ask_hidden if sys.stdin.isatty() else None,
+            choose=_ask_boxes if sys.stdin.isatty() else None,
         )
     except auth_flow.AuthStopped as error:
         message = str(error)
@@ -1767,8 +1798,8 @@ def auth_logout(
     or not Google answers. `keryx auth login google` signs in again.
 
     slack: forgets that workspace's tokens and settings. Nothing is revoked, because the
-    app is your own: remove it in Slack to end its tokens. `keryx auth login slack
-    --access announce` is the smaller step, which only stops Keryx reading there.
+    app is your own: remove it in Slack to end its tokens. `keryx auth login slack`
+    and unticking a box is the smaller step, which stops only that.
     """
     if name not in auth_flow.LOGOUTS:
         typer.echo(f"sign out of one of: {', '.join(auth_flow.LOGOUTS)}", err=True)
@@ -1826,7 +1857,7 @@ def auth_status_command(
 _SlackWorkspace = Annotated[
     str | None,
     typer.Option("--workspace", help="Which workspace, by the name you gave it (default: "
-                 "your first one at the level this needs)."),
+                 "your first one that has this switched on)."),
 ]
 _SlackJson = Annotated[bool, typer.Option("--json", help="Print JSON and nothing else.")]
 
@@ -2007,7 +2038,8 @@ def slack_message_command(
     workspace: _SlackWorkspace = None,
 ) -> None:
     """Send what is on standard input as you, in your name: one message to a person or a
-    channel, or one reply in a thread. Needs a workspace at the write level.
+    channel, or one reply in a thread. Needs a workspace where sending as you is
+    switched on (`keryx auth login slack`, at a terminal, and tick it).
 
     Two runs. Without --confirm it sends nothing: it looks the name up, prints who that
     is as Slack names them, and prints the id to send to. With --confirm, --to is that

@@ -62,12 +62,15 @@ def test_keys_added_by_hand_are_carried_through(settings):
         ("cluster_stats", {"timeout_s": 0}),
         ("cluster_stats", {"guard": "/bin/x\n[clusters]"}),
         ("cluster_stats", {"clusters": ["alpha"]}),
-        ("slack_report", {"access": "everything"}),
+        ("slack_report", {"allow": ["everything"]}),
+        ("slack_report", {"allow": "converse"}),
+        ("slack_report", {"allow": 3}),
         ("slack_report", {"owner_id": "U1 or U2"}),
         ("slack_report", {"team": "Acme\n[workspaces.evil]"}),
         ("slack_report", {"workspaces": ["work"]}),
         ("slack_report", {"workspaces": {"work": "U1"}}),
         ("slack_report", {"workspaces": {"my work": {}}}),
+        ("slack_report", {"workspaces": {"work": {"allow": ["all"]}}}),
         ("slack_report", {"workspaces": {"work": {"access": "all"}}}),
         ("slack_report", {"workspaces": {"work": {"channel_id": 'U1"\nx = "y'}}}),
     ],
@@ -223,7 +226,8 @@ def test_a_secret_or_a_stranger_is_refused_with_what_to_do(name, assignment, say
 
 
 def test_each_further_slack_workspace_is_a_table_of_the_same_settings(settings):
-    work = {"access": "converse", "owner_id": "U0WORK", "team": "Acme Inc", "channel_id": "U0WORK"}
+    work = {"allow": ["requests"], "owner_id": "U0WORK", "team": "Acme Inc",
+            "channel_id": "U0WORK"}
     path = plugins.write_config(
         settings, "slack_report", {"channel_id": "U0ME", "workspaces": {"Work": work}}
     )
@@ -232,7 +236,7 @@ def test_each_further_slack_workspace_is_a_table_of_the_same_settings(settings):
     # In the file each is a table of its own, one level deep.
     assert data["workspace-work"] == {**work, "team_id": "", "bot_user_id": ""}
     assert "workspaces" not in data
-    assert (data["channel_id"], data["access"], data["owner_id"]) == ("U0ME", "announce", "")
+    assert (data["channel_id"], data["allow"], data["owner_id"]) == ("U0ME", [], "")
     assert "# Further workspaces, one [workspace-NAME] table each" in path.read_text()
     assert plugins.read_config(settings, "slack_report")["workspaces"]["work"]["team"] == (
         "Acme Inc"
@@ -245,17 +249,95 @@ def test_a_workspace_table_survives_a_rewrite_with_what_was_added_by_hand(settin
     )
     path.write_text(path.read_text() + 'note = "mine"\n')
 
-    plugins.write_config(settings, "slack_report", {"access": "converse"})
+    plugins.write_config(settings, "slack_report", {"allow": ["requests"]})
 
     data = tomllib.loads(path.read_text())
-    assert data["access"] == "converse"
+    assert data["allow"] == ["requests"]
     assert data["workspace-work"] == {
-        "channel_id": "", "access": "announce", "owner_id": "", "team": "", "team_id": "",
+        "channel_id": "", "allow": [], "owner_id": "", "team": "", "team_id": "",
         "bot_user_id": "", "note": "mine",
     }
 
 
-def test_a_slack_file_from_before_workspaces_reads_as_one_at_announce(settings):
+def test_what_is_ticked_is_a_list_written_in_one_order_each_once(settings):
+    path = plugins.write_config(settings, "slack_report", {
+        "channel_id": "U0ME", "allow": ["send", "Requests", "send"],
+        "workspaces": {"work": {"allow": "read, requests"}},  # typed by hand, as a string
+    })
+
+    assert 'allow = ["requests", "send"]' in path.read_text()
+    values = plugins.read_config(settings, "slack_report")
+    assert values["allow"] == ["requests", "send"]
+    assert values["workspaces"]["work"]["allow"] == ["requests", "read"]
+    assert plugins.defaults("slack_report")["allow"] == []
+    plugins.defaults("slack_report")["allow"].append("read")  # a copy, never the default
+    assert plugins.defaults("slack_report")["allow"] == []
+
+
+@pytest.mark.parametrize(("level", "ticked"), [
+    ("announce", []),
+    ("converse", ["requests"]),
+    ("read", ["requests", "read"]),
+    ("write", ["requests", "read", "send"]),
+])
+def test_a_file_that_still_says_a_level_is_read_as_what_that_level_was(settings, level, ticked):
+    """`access` was one of four ordered levels until 2026-11-24. A file from then is read
+    as the set that level held, with nothing asked of the owner."""
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "slack_report").write_text(
+        f'channel_id = "U0ME"\naccess = "{level}"\n\n[workspace-work]\naccess = "{level}"\n'
+    )
+
+    values = plugins.read_config(settings, "slack_report")
+
+    assert values["allow"] == ticked
+    assert values["workspaces"]["work"]["allow"] == ticked
+    assert "access" not in values and "access" not in values["workspaces"]["work"]
+
+
+def test_the_level_is_read_and_never_written_back(settings):
+    """The first write after reading it writes what is ticked, and the old key is gone
+    from the top of the file and from every workspace's table: nothing carries it
+    through as a setting somebody added by hand."""
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    path = plugins.config_path(settings, "slack_report")
+    path.write_text('channel_id = "U0ME"\naccess = "converse"\nnote = "mine"\n'
+                    '\n[workspace-work]\naccess = "read"\n')
+
+    plugins.write_config(settings, "slack_report", {"team": "Acme"})
+
+    data = tomllib.loads(path.read_text())
+    assert data["allow"] == ["requests"] and data["note"] == "mine"
+    assert data["workspace-work"]["allow"] == ["requests", "read"]
+    assert "access" not in data and "access" not in data["workspace-work"]
+    assert "\naccess" not in path.read_text()
+
+
+def test_what_is_ticked_wins_over_a_level_an_older_build_wrote_beside_it(settings):
+    """Several builds share one tools directory here. One from before the boxes writes
+    `access` back whenever it saves; the newer key beside it is the one that counts."""
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "slack_report").write_text(
+        'channel_id = "U0ME"\naccess = "write"\nallow = ["read"]\n'
+        '\n[workspace-work]\nallow = []\naccess = "nonsense"\n'
+    )
+
+    values = plugins.read_config(settings, "slack_report")
+
+    assert values["allow"] == ["read"]
+    assert values["workspaces"]["work"]["allow"] == []
+
+
+def test_a_level_that_was_never_one_is_refused_in_a_sentence(settings):
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "slack_report").write_text(
+        'channel_id = "U0ME"\naccess = "everything"\n')
+
+    with pytest.raises(plugins.PluginConfigError, match="access must be one of announce"):
+        plugins.read_config(settings, "slack_report")
+
+
+def test_a_slack_file_from_before_workspaces_reads_as_one_with_nothing_ticked(settings):
     """What every existing install has: two keys, and nothing to migrate."""
     settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
     plugins.config_path(settings, "slack_report").write_text(
@@ -264,7 +346,7 @@ def test_a_slack_file_from_before_workspaces_reads_as_one_at_announce(settings):
 
     values = plugins.read_config(settings, "slack_report")
 
-    assert values == {"channel_id": "D123", "access": "announce", "owner_id": "", "team": "",
+    assert values == {"channel_id": "D123", "allow": [], "owner_id": "", "team": "",
                       "team_id": "", "bot_user_id": "", "mcp_server": "",
                       "workspaces": {}}
     assert plugins.install_problem(settings, "slack_report") is None
@@ -278,12 +360,17 @@ def test_a_table_is_never_set_from_a_command_line():
     assert plugins.command_line_values("slack_report", ["channel_id=C0X"]) == {
         "channel_id": "C0X"
     }
+    # What is ticked is the sign-in's to write, and the level it replaced is no setting.
+    with pytest.raises(plugins.PluginConfigError, match="settled by `keryx auth login slack`"):
+        plugins.command_line_values("slack_report", ["allow=read"])
+    with pytest.raises(plugins.PluginConfigError, match="settled by `keryx auth login slack`"):
+        plugins.command_line_values("slack_report", ["access=read"])
 
 
 def test_what_a_sign_in_settles_is_named_as_such_and_left_out_of_what_may_be_set():
     keys = {key.name: key.by_sign_in for key in plugins.plugin("slack_report").keys}
 
-    assert keys == {"channel_id": False, "access": True, "owner_id": True, "team": True,
+    assert keys == {"channel_id": False, "allow": True, "owner_id": True, "team": True,
                     "team_id": True, "bot_user_id": True, "mcp_server": False,
                     "workspaces": True}
     with pytest.raises(plugins.PluginConfigError) as unknown:
@@ -305,6 +392,8 @@ def _older_write(path, **changes) -> None:
             return "true" if item else "false"
         if isinstance(item, int | float):
             return repr(item)
+        if isinstance(item, list | tuple):
+            return "[" + ", ".join(value(each) for each in item) + "]"
         return _toml_string(str(item))  # a table here is where the older build lost data
 
     data = tomllib.loads(path.read_text()) | changes
@@ -321,12 +410,13 @@ def _older_write(path, **changes) -> None:
 
 def test_an_older_build_rewriting_the_slack_file_keeps_every_workspace(settings):
     """Several worktrees share one tools directory on this machine. A build from before
-    workspaces rewrites the file when its own setup saves a channel: the level, the owner
-    and every further workspace have to come through, in shapes the newer build reads."""
-    work = {"channel_id": "U0W", "access": "converse", "owner_id": "U0W", "team": "Acme Inc",
-            "team_id": "T0W", "bot_user_id": "U0WBOT"}
+    workspaces rewrites the file when its own setup saves a channel: what is ticked, the
+    owner and every further workspace have to come through, in shapes the newer build
+    reads. A list is one of them: that build's `toml_value` writes one as a list."""
+    work = {"channel_id": "U0W", "allow": ["requests", "read"], "owner_id": "U0W",
+            "team": "Acme Inc", "team_id": "T0W", "bot_user_id": "U0WBOT"}
     path = plugins.write_config(settings, "slack_report", {
-        "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team_id": "T0A",
+        "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER", "team_id": "T0A",
         "workspaces": {"work": work},
     })
     plugins.install(settings, "slack_report")
@@ -336,22 +426,22 @@ def test_an_older_build_rewriting_the_slack_file_keeps_every_workspace(settings)
     assert plugins.is_on(settings, "slack_report")
     values = plugins.read_config(settings, "slack_report")
     assert values["workspaces"] == {"work": work}
-    assert (values["channel_id"], values["access"], values["owner_id"], values["team_id"]) == (
-        "D0NEW", "converse", "U0OWNER", "T0A"
+    assert (values["channel_id"], values["allow"], values["owner_id"], values["team_id"]) == (
+        "D0NEW", ["requests"], "U0OWNER", "T0A"
     )
 
 
 def test_a_file_with_workspaces_nested_under_one_table_is_still_read(settings):
     settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
     plugins.config_path(settings, "slack_report").write_text(
-        'channel_id = "U0ME"\n\n[workspaces.work]\naccess = "converse"\n'
-        '\n[workspace-lab]\naccess = "read"\n'
+        'channel_id = "U0ME"\n\n[workspaces.work]\nallow = ["requests"]\n'
+        '\n[workspace-lab]\nallow = ["read"]\n'
     )
 
     values = plugins.read_config(settings, "slack_report")
 
-    assert {name: each["access"] for name, each in values["workspaces"].items()} == {
-        "work": "converse", "lab": "read",
+    assert {name: each["allow"] for name, each in values["workspaces"].items()} == {
+        "work": ["requests"], "lab": ["read"],
     }
 
 

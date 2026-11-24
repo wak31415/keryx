@@ -152,12 +152,12 @@ class World:
 
 @pytest.fixture
 def conversing(settings):
-    """Settings whose first workspace is at converse, with what that needs."""
+    """Settings whose first workspace has requests ticked, with what that needs."""
     settings = settings.model_copy(update={
         "slack_bot_token": "xoxb-first", "slack_app_token": "xapp-first",
     })
     plugins.write_config(settings, NAME, {
-        "channel_id": OWNER, "access": "converse", "owner_id": OWNER, "team_id": TEAM,
+        "channel_id": OWNER, "allow": ["requests"], "owner_id": OWNER, "team_id": TEAM,
         "bot_user_id": BOT, "url": "https://acme.slack.com/",
     })
     plugins.install(settings, NAME)
@@ -166,9 +166,10 @@ def conversing(settings):
 
 @pytest.fixture
 def reading(conversing):
-    """The same workspace at read: the app may also be mentioned elsewhere."""
+    """The same workspace with reading ticked too: the app may also be mentioned
+    elsewhere."""
     settings = conversing.model_copy(update={"slack_user_token": "xoxp-first"})
-    plugins.write_config(settings, NAME, {"access": "read"})
+    plugins.write_config(settings, NAME, {"allow": ["requests", "read"]})
     return settings
 
 
@@ -519,17 +520,37 @@ def test_a_workspace_with_anything_a_message_is_held_to_missing_accepts_nothing(
     assert owner_request(anybody, lacking) == Dropped("not_on_file")
 
 
-# --- where a request may be typed, by level --------------------------------------------------
+# --- where a request may be typed, by what is ticked -----------------------------------------
 
 
-def test_at_read_a_mention_in_a_conversation_the_app_was_added_to_is_a_request(reading):
+def test_with_reading_too_a_mention_in_a_conversation_the_app_was_added_to_is_a_request(
+    reading,
+):
     request = owner_request(mention(), workspace_of(reading))
 
     assert request == Request(text="summarise this thread", channel=SHARED, ts=TS)
 
 
-def test_at_converse_a_mention_anywhere_but_the_direct_messages_is_not(conversing):
-    assert owner_request(mention(), workspace_of(conversing)) == Dropped("mention_below_read")
+def test_with_requests_alone_a_mention_anywhere_but_the_direct_messages_is_not(conversing):
+    assert owner_request(mention(), workspace_of(conversing)) == Dropped("mentions_off")
+
+
+def test_sending_as_the_owner_does_not_make_a_mention_a_request(conversing):
+    """Requests and sending, without reading: the pair that unlocks a mention is requests
+    and reading, because the thread around one can only be read as the owner."""
+    settings = conversing.model_copy(update={"slack_user_token": "xoxp-first"})
+    plugins.write_config(settings, NAME, {"allow": ["requests", "send"]})
+
+    assert owner_request(mention(), workspace_of(settings)) == Dropped("mentions_off")
+    assert isinstance(owner_request(payload(), workspace_of(settings)), Request)
+
+
+def test_reading_without_requests_hears_nothing_at_all(conversing):
+    settings = conversing.model_copy(update={"slack_user_token": "xoxp-first"})
+    plugins.write_config(settings, NAME, {"allow": ["read"]})
+    workspace = workspace_of(settings)
+
+    assert workspace.reads and not workspace.listens and not workspace.mentions
 
 
 def test_anybody_elses_mention_of_the_app_is_nothing(reading):
@@ -1073,7 +1094,7 @@ async def test_a_colleague_mentioning_the_app_does_nothing(make_world, reading, 
         (payload(subtype="message_changed"), "subtype"),
         (payload(bot_id="B0BOT"), "bot_message"),
         (reply(user="U0SOMEONE"), "not_the_owner"),
-        (mention(), "mention_below_read"),
+        (mention(), "mentions_off"),
         ({"type": "event_callback", "event": {"type": "reaction_added"}}, "not_a_message"),
     ],
 )
@@ -1099,8 +1120,8 @@ async def test_the_apps_own_messages_coming_back_cost_no_settings_at_all(world, 
     await world.inbox.handle("default", payload(bot_id="B0KERYX", user=BOT))
 
 
-async def test_lowering_the_level_stops_it_acting_at_once(world, caplog):
-    plugins.write_config(world.settings, NAME, {"access": "announce"})
+async def test_unticking_requests_stops_it_acting_at_once(world, caplog):
+    plugins.write_config(world.settings, NAME, {"allow": []})
 
     with caplog.at_level(logging.INFO, logger="keryx.slack.inbox"):
         await world.inbox.handle("default", payload())
@@ -1169,9 +1190,9 @@ def two(conversing):
                                    "quiet": {"bot": "xoxb-quiet"}},
     })
     plugins.write_config(settings, NAME, {"workspaces": {
-        "work": {"access": "converse", "owner_id": "U0WORK", "channel_id": "U0WORK",
+        "work": {"allow": ["requests"], "owner_id": "U0WORK", "channel_id": "U0WORK",
                  "team_id": "T0WORK", "bot_user_id": "U0WORKBOT"},
-        "quiet": {"access": "announce", "channel_id": "U0QUIET"},
+        "quiet": {"allow": [], "channel_id": "U0QUIET"},
     }})
     return settings
 
@@ -1222,7 +1243,7 @@ async def test_the_owner_of_one_workspace_is_nobody_in_another(make_world, two):
     assert await world.tasks() == []
 
 
-async def test_at_announce_nothing_listens(make_world, settings):
+async def test_with_nothing_ticked_nothing_listens(make_world, settings):
     settings = settings.model_copy(update={"slack_bot_token": "xoxb-first"})
     plugins.write_config(settings, NAME, {"channel_id": OWNER})
     plugins.install(settings, NAME)
@@ -1452,7 +1473,7 @@ def test_the_check_is_one_read_of_one_message_with_the_bots_token():
     refused = client.in_conversation(
         "xoxb-1", "D0X", get=lambda *a: {"ok": False, "error": "channel_not_found"})
     assert refused.error in client.NOT_A_PARTY == {"channel_not_found", "not_in_channel"}
-    assert "im:history" in client.bot_scopes(client.Access.CONVERSE)
+    assert "im:history" in client.bot_scopes(frozenset({client.Permission.REQUESTS}))
 
 
 def test_owner_request_stays_a_function_of_the_payload_and_says_what_rests_on_the_place(

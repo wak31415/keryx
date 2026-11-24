@@ -17,8 +17,8 @@ from keryx.plugins.slack_message import (
     CONFIRM_SECONDS,
     EXPIRED,
     MAX_PENDING,
-    NOT_AT_WRITE,
     NOT_SENT,
+    SENDING_OFF,
     SENT_NOTE,
     UNKNOWN,
     Channel,
@@ -262,10 +262,10 @@ async def test_an_ambiguous_name_is_unclear_with_the_candidates_and_nothing_is_p
     assert name_in(chosen["to"]) == "a direct message to Sam Wu"
 
 
-async def test_the_level_is_read_again_for_every_use_so_lowering_it_stops_a_call_in_progress(
+async def test_what_is_ticked_is_read_again_for_every_use_so_unticking_stops_a_call_in_progress(
     settings, api, writer, monkeypatch
 ):
-    """The tool is built when the call loads it; the level it may act at is not."""
+    """The tool is built when the call loads it; whether it may still send is not."""
     made = at(settings)
     monkeypatch.setattr(
         slack_message, "channel_for",
@@ -276,11 +276,14 @@ async def test_the_level_is_read_again_for_every_use_so_lowering_it_stops_a_call
     first = await call(tools, NAME, {"to": "Sam", "message": "hi"})
     assert first["status"] == "confirm"
 
-    plugins.write_config(made, "slack_report", {"access": "read"})  # lowered at the keyboard
+    # Unticked at the keyboard, with reading left on.
+    plugins.write_config(made, "slack_report", {"allow": ["requests", "read"]})
     confirmed = await call(tools, NAME, {"confirm": first["confirm"]})
     asked = await call(tools, NAME, {"to": "Sam", "message": "again"})
 
-    assert confirmed == asked == {"status": "not_at_write", "message": slack_message.LOWERED}
+    assert confirmed == asked == {"status": "sending_off",
+                                  "message": slack_message.SWITCHED_OFF}
+    assert "level" not in slack_message.SWITCHED_OFF
     assert writer.calls == []
 
 
@@ -428,21 +431,25 @@ def test_the_real_channel_carries_the_apps_own_member_id(settings):
 # --- whether it loads at all --------------------------------------------------------------------
 
 
-def at(settings, access="write", **more):
+def at(settings, allow=("requests", "read", "send"), **more):
+    """A machine connected to Slack with `allow` ticked (everything, unless said)."""
     settings = settings.model_copy(update={
         "slack_bot_token": "xoxb-1", "slack_app_token": "xapp-1", "slack_user_token": "xoxp-1",
         **more,
     })
     plugins.write_config(settings, "slack_report", {
-        "channel_id": OWNER, "access": access, "owner_id": OWNER, "team_id": "T0ACME",
+        "channel_id": OWNER, "allow": list(allow), "owner_id": OWNER, "team_id": "T0ACME",
         "bot_user_id": "U0KERYX",
     })
     plugins.install(settings, "slack_report")
     return settings
 
 
-def test_installed_with_a_workspace_at_write_it_loads_from_its_template(settings):
-    settings = at(settings)
+@pytest.mark.parametrize("allow", [["send"], ["requests", "send"], ["read", "send"],
+                                   ["requests", "read", "send"]])
+def test_installed_with_sending_ticked_it_loads_from_its_template(settings, allow):
+    """With or without reading: what it resolves a recipient with is its own."""
+    settings = at(settings, allow)
     plugins.install(settings, NAME)
 
     assert NAME in names(settings) and refusal(settings, NAME) is None
@@ -453,29 +460,30 @@ def test_installed_with_a_workspace_at_write_it_loads_from_its_template(settings
     assert slack_plugin.can_write(settings)
 
 
-@pytest.mark.parametrize("access", ["announce", "converse", "read"])
-def test_below_write_it_is_refused_with_the_command_that_raises_the_level(settings, access):
-    settings = at(settings, access)
+@pytest.mark.parametrize("allow", [[], ["requests"], ["read"], ["requests", "read"]])
+def test_without_sending_ticked_it_is_refused_with_what_switches_it_on(settings, allow):
+    settings = at(settings, allow)
     plugins.install(settings, NAME)
 
-    assert NAME not in names(settings) and refusal(settings, NAME) == NOT_AT_WRITE
-    assert "keryx auth login slack --access write" in NOT_AT_WRITE
+    assert NAME not in names(settings) and refusal(settings, NAME) == SENDING_OFF
+    assert SENDING_OFF.endswith("run `keryx auth login slack` and tick it")
+    assert "--" not in SENDING_OFF and "level" not in SENDING_OFF
     assert not slack_plugin.can_write(settings)
     with pytest.raises(ToolUnavailable), loading(settings):
         slack_message_tool(plugins.config_path(settings, NAME))
 
 
-@pytest.mark.parametrize("access", ["announce", "converse"])
-def test_a_user_token_on_file_below_read_reads_nothing_and_sends_nothing(settings, access):
-    """Keryx holds a user token at every level now, because it is how Slack says who the
-    owner is. Below read it is used for that one check at connect and nothing after: the
-    clients that read and send as the owner are gated on the level, never on the token
-    being there."""
+@pytest.mark.parametrize("allow", [[], ["requests"]])
+def test_a_user_token_on_file_with_neither_box_ticked_reads_and_sends_nothing(settings, allow):
+    """Keryx holds a user token whatever is ticked, because it is how Slack says who the
+    owner is. With neither reading nor sending ticked it is used for that one check at
+    connect and nothing after: the clients that read and send as the owner are gated on
+    what is ticked, never on the token being there."""
     from keryx.integrations.slack import USER
     from keryx.plugins import slack_read
     from keryx.plugins.slack import can_read, can_write, workspaces
 
-    made = at(settings, access)
+    made = at(settings, allow)
     for name in ("slack_read", NAME):
         plugins.write_config(made, name, {})
         plugins.install(made, name)
@@ -497,14 +505,33 @@ def _slack_exit(made, *args, text="") -> int:
         return run_slack(*args, text=text).exit_code
 
 
-def test_lowering_the_level_takes_the_capability_away_at_once(settings):
+def test_unticking_it_takes_the_capability_away_at_once(settings):
     settings = at(settings)
     plugins.install(settings, NAME)
     assert NAME in names(settings)
 
-    plugins.write_config(settings, "slack_report", {"access": "read"})
+    plugins.write_config(settings, "slack_report", {"allow": ["requests", "read"]})
 
     assert NAME not in names(settings)
+
+
+def test_sending_alone_sends_and_reads_nothing(settings):
+    """The box by itself: a message may be sent as the owner, the reader it looks names
+    up with is not a way to read, and no read command works."""
+    from keryx.plugins import slack_read
+    from keryx.plugins.slack import can_read, can_write, reading_off
+
+    made = at(settings, ["send"])
+    for name in ("slack_read", NAME):
+        plugins.write_config(made, name, {})
+        plugins.install(made, name)
+
+    assert can_write(made) and not can_read(made) and reading_off(made)
+    assert [each.name for each in slack_message.writing(made)] == ["default"]
+    assert slack_read.reading(made) == []
+    assert NAME in names(made) and "slack_read" not in names(made)
+    for command in (("read",), ("conversations",), ("members",)):
+        assert _slack_exit(made, *command) == 2
 
 
 def test_whether_slack_can_be_written_or_reported_to_never_raises(settings, monkeypatch):
@@ -657,17 +684,19 @@ def test_a_post_slack_refuses_is_one_line_that_does_not_claim_it_was_sent(comman
         "keryx slack: the message was not confirmed as sent (missing_scope)")
 
 
-@pytest.mark.parametrize("access", ["announce", "converse", "read"])
-def test_below_write_nobody_may_send_as_the_owner_a_task_least_of_all(
-    settings, monkeypatch, access
+@pytest.mark.parametrize("allow", [[], ["requests"], ["requests", "read"]])
+def test_without_sending_ticked_nobody_may_send_as_the_owner_a_task_least_of_all(
+    settings, monkeypatch, allow
 ):
-    made = at(settings, access)
+    made = at(settings, allow)
     monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
     monkeypatch.setenv("KERYX_ACTOR", "service")
 
     result = run_slack("message", "--to", "Sam", "--confirm", text="hi")
 
-    assert result.exit_code == 2 and "keryx auth login slack --access write" in result.output
+    assert result.exit_code == 2
+    assert "run `keryx auth login slack` and tick it" in result.output
+    assert "--access" not in result.output
 
 
 def test_a_task_may_send_one_at_write(command, writer, monkeypatch):
@@ -733,11 +762,12 @@ class FakeFiles:
 
 @pytest.fixture
 def reporting(settings, monkeypatch):
-    """A machine at converse, with a task that was typed on Slack and one that was not."""
+    """A machine that acts on what is typed to the app, with a task that was typed on
+    Slack and one that was not."""
     from keryx.plugins.slack import SlackWorkspace
     from keryx.tasks.models import Task, TaskKind
 
-    made = at(settings, "converse")
+    made = at(settings, ["requests"])
     sent = Sent()
     monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
     monkeypatch.setattr(SlackWorkspace, "poster",
@@ -853,7 +883,7 @@ def test_a_task_may_run_it_because_it_only_ever_reaches_the_owner(reporting, mon
 def test_slack_refusing_it_is_one_line_with_the_code(settings, monkeypatch):
     from keryx.plugins.slack import SlackWorkspace
 
-    made = at(settings, "announce")
+    made = at(settings, [])
     monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
     monkeypatch.setattr(SlackWorkspace, "poster",
                         lambda self, channel=None: FakePoster([], "x", ok=False))
@@ -1038,7 +1068,7 @@ def test_a_file_that_is_not_shared_says_the_words_went_and_the_file_did_not(repo
 def test_words_slack_refuses_leave_the_file_unshared(settings, plot, monkeypatch):
     from keryx.plugins.slack import SlackWorkspace
 
-    made, sent = at(settings, "announce"), Sent()
+    made, sent = at(settings, []), Sent()
     monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
     monkeypatch.setattr(SlackWorkspace, "poster",
                         lambda self, channel=None: FakePoster(sent, "x", ok=False))
@@ -1060,7 +1090,7 @@ def test_a_message_that_landed_nowhere_slack_names_shares_no_file(settings, plot
             await super().post(text, **more)
             return Posted(channel=OWNER, ts="1.1")
 
-    made, sent = at(settings, "announce"), Sent()
+    made, sent = at(settings, []), Sent()
     monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
     monkeypatch.setattr(SlackWorkspace, "poster",
                         lambda self, channel=None: Vague(sent, channel or self.channel))
@@ -1108,7 +1138,7 @@ def test_a_task_may_send_a_file_because_it_too_only_ever_reaches_the_owner(
 def test_a_workspace_holds_what_sends_its_files_with_the_bots_own_token(settings):
     from keryx.integrations.slack import SlackFiles
 
-    [workspace] = slack_plugin.connected(at(settings, "announce"))
+    [workspace] = slack_plugin.connected(at(settings, []))
 
     assert isinstance(workspace.files(), SlackFiles)
     assert workspace.files()._token == "xoxb-1"
@@ -1126,9 +1156,12 @@ def test_every_subagent_is_told_of_each_command_only_while_it_would_work(setting
         built = AgentContext.build(task, made, auth=CLAUDE_AUTH, model=None)
         return " ".join(built.instructions.split())
 
-    off, announce, write = told(settings), told(at(settings, "announce")), told(at(settings))
+    off, base, write = told(settings), told(at(settings, [])), told(at(settings))
+    alone = told(at(settings, ["send"]))
 
     assert "keryx slack" not in off
-    assert "`keryx slack report`" in announce and "keryx slack message" not in announce
+    assert "`keryx slack report`" in base and "keryx slack message" not in base
     assert "`keryx slack report`" in write and "keryx slack message --to" in write
     assert "xoxp" not in write and "xoxb" not in write
+    # Sending alone: it may send, and is told it cannot read, in the same breath.
+    assert "keryx slack message --to" in alone and "`keryx slack read` refuses" in alone

@@ -1,8 +1,8 @@
 """Sending one message as the owner: a new message or a reply in a thread, nothing else.
 
 The client behind the `slack_message` plugin (`plugins/slack_message.py`) and `keryx slack
-message`. It works with the user token of a workspace at the `write` level, so what it
-posts is the owner's own message, to other people. That is the most this service can do
+message`. It works with the user token of a workspace that has `send` ticked, so what
+it posts is the owner's own message, to other people. That is the most this service can do
 to somebody who is not its owner, and it is held to the least:
 
 **It can call two methods and no other.** `HttpSlackWriter.call` refuses anything that is
@@ -99,11 +99,11 @@ SENTENCES = {
                    "was sent. Say exactly that, and that they should look before sending "
                    "it again.",
     "signed_out": "Slack no longer takes the token it was given, and the message was not "
-                  "sent. Say that it needs `keryx auth login slack --access write` at "
-                  "their keyboard again.",
+                  "sent. Say that it needs `keryx auth login slack` at their keyboard "
+                  "again.",
     "missing_scope": "The Slack app may not send as them yet, and the message was not "
-                     "sent. Say that the app has to be reinstalled at the write level, "
-                     "with `keryx auth login slack --access write` at their keyboard.",
+                     "sent. Say that the app has to be reinstalled, with `keryx auth "
+                     "login slack` at their keyboard.",
     "not_found": "Slack does not know that conversation, or they are not in it, and the "
                  "message was not sent. Say so in one sentence.",
 }

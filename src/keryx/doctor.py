@@ -786,18 +786,18 @@ def _turn_on(settings: Settings, name: str) -> str:
 
     `keryx plugins install NAME` for most. Slack's cannot start that way: `slack_report`
     needs a token and somewhere to send, which its sign-in gets before turning it on;
-    and the two that act as the owner need a workspace at their level, which the login
-    that raises it there turns them on with. Once a workspace is at the level, the
-    install is all there is to do.
+    and the two that act as the owner follow what is ticked in that sign-in, which
+    turns each on with its box. Where the box is ticked and the tool is off, it was
+    turned off by hand, and the install is all there is to do.
     """
     from keryx.plugins.slack import can_read, can_write
 
     if name == "slack_report":
         return "`keryx auth login slack`"
-    level = {"slack_read": ("read", can_read), "slack_message": ("write", can_write)}
-    if name in level and not level[name][1](settings):
-        return (f"`keryx auth login slack --access {level[name][0]}`, which turns it on "
-                "with the level")
+    ticked = {"slack_read": ("reading Slack as you", can_read),
+              "slack_message": ("sending messages as you", can_write)}
+    if name in ticked and not ticked[name][1](settings):
+        return f"`keryx auth login slack`, and tick {ticked[name][0]}"
     return f"`keryx plugins install {name}`"
 
 
@@ -849,11 +849,11 @@ def _plugin_detail(status: plugins.Status, settings: Settings) -> str:
 
 
 def slack_workspace_checks(settings: Settings, values: dict) -> list[Check]:
-    """One soft check per Slack workspace: the level it is at, and whether everything
-    that level needs is there. Never a token, only which kind is missing. A workspace
+    """One soft check per Slack workspace: what is on and off there, in plain words, and
+    whether everything that needs is there. Never a token, only which kind is missing. A workspace
     connected before user tokens has no owner on file: that is said, with how to add
     one, and is not a failure, because nothing it does needs one."""
-    from keryx.plugins.slack import DEFAULT, workspaces
+    from keryx.plugins.slack import DEFAULT, in_words, workspaces
 
     try:
         found = workspaces(settings, values)
@@ -863,20 +863,19 @@ def slack_workspace_checks(settings: Settings, values: dict) -> list[Check]:
     checks = []
     for each in found:
         name = f"slack_report: {each.name}"
-        where = f"{each.team + ', ' if each.team else ''}at the {each.access} level"
-        flags = ("" if each.name == DEFAULT else f" --workspace {each.name}") + (
-            f" --access {each.access}")
+        team = f"{each.team}, " if each.team else ""
+        said = in_words(each.allowed)
+        flags = "" if each.name == DEFAULT else f" --workspace {each.name}"
         if not each.missing:
-            hears = "; acts on what you type to the app" if each.listens else ""
             owner = "" if each.owner_id else (
                 "; no owner on file yet (it was connected before Keryx asked for a user "
                 f"token): `keryx auth login slack{flags}` adds one")
-            checks.append(Check(name, True, f"{where}, posts to {each.channel}{hears}{owner}",
+            checks.append(Check(name, True, f"{team}posts to {each.channel}; {said}{owner}",
                                 severity="soft", section="plugins"))
             continue
         checks.append(Check(
             name, False,
-            f"{where}, but without {' or '.join(each.missing)} — "
+            f"{team}{said}; but without {' or '.join(each.missing)} — "
             f"`keryx auth login slack{flags}`",
             severity="soft", section="plugins",
         ))

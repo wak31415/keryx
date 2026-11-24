@@ -189,17 +189,17 @@ _ISSUES_NOTE = (
 #: rendered while Keryx has a Slack app of its own that may not read as the owner
 #: (`plugins.slack.reading_off`): then no tool reads Slack on the call and no command
 #: does in a task, and a model told nothing dispatches the question anyway, to an agent
-#: that answers it from whatever other Slack tool it has. At `read` the read tool's own
-#: description is all there is, as for every other plugin.
+#: that answers it from whatever other Slack tool it has. With reading ticked the read
+#: tool's own description is all there is, as for every other plugin.
 _SLACK_NOTE = (
     "Reading their Slack is not switched on. Keryx's Slack app may send them things, and "
     "may not read their channels or their messages with other people, so nothing can: "
     "not you, and not Claude. When they ask what is new on Slack, what somebody wrote "
     "there, or for a channel or a thread to be summarised, do not dispatch it: say in one "
     "sentence that reading Slack is not switched on, and that signing in to Slack again "
-    "at their keyboard, at the read level, switches it on. Only if they ask how: the "
-    "command is `keryx auth login slack --access read`. Say it once, and do not offer to "
-    "look some other way. Sending them something on Slack is not affected."
+    "at their keyboard, and ticking it there, switches it on. Only if they ask how: the "
+    "command is `keryx auth login slack`. Say it once, and do not offer to look some "
+    "other way. Sending them something on Slack is not affected."
 )
 #: A whole word "Claude" that is not "Claude Code" (which is the approval bridge's, and
 #: stays Claude's whoever does the dispatched work).

@@ -1311,6 +1311,56 @@ def test_plugins_says_which_way_subagents_send_when_slack_names_a_server(
     assert "xoxb" not in named
 
 
+def test_plugins_says_what_is_on_and_off_in_each_slack_workspace_in_plain_words(
+    settings_stub, monkeypatch
+):
+    """Never a level, an option, or a name out of the code: what Keryx does there."""
+    connected = settings_stub.model_copy(update={
+        "slack_bot_token": "xoxb-1", "slack_app_token": "xapp-1",
+        "slack_workspace_tokens": {"work": {"bot": "xoxb-w", "user": "xoxp-w"}},
+    })
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: connected)
+    monkeypatch.setattr(plugins, "current_settings", lambda: connected)
+    plugins.write_config(connected, "slack_report", {
+        "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER", "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+        "workspaces": {"work": {"allow": ["read", "send"], "channel_id": "U0WORK",
+                                "owner_id": "U0WORK", "team": "Lab"}},
+    })
+    plugins.install(connected, "slack_report")
+
+    listed = runner.invoke(app, ["plugins"]).output
+
+    assert ("Acme: on: sending you reports and files, acting on what you type to the app; "
+            "off: reading Slack as you, sending messages as you") in listed
+    assert ("work (Lab): on: sending you reports and files, reading Slack as you, sending "
+            "messages as you; off: acting on what you type to the app") in listed
+    for word in ("converse", "announce", "level", "--allow", "requests", "xoxb", "xoxp"):
+        assert word not in listed
+
+
+def test_a_slack_table_that_cannot_be_read_is_doctors_to_report_not_the_listings(
+    settings_stub, monkeypatch
+):
+    from keryx import cli
+
+    def broken(settings, name, values):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr("keryx.plugins.slack.on_file", broken)
+
+    assert cli._slack_said(settings_stub, {"workspaces": {}}) == []
+
+
+def test_plugins_says_nothing_of_boxes_for_slack_that_is_off_or_only_a_servers(
+    settings_stub, monkeypatch
+):
+    monkeypatch.setattr(plugins, "current_settings", lambda: settings_stub)
+    plugins.write_config(settings_stub, "slack_report", {"mcp_server": "chat"})
+
+    assert "sending you reports" not in runner.invoke(app, ["plugins"]).output
+
+
 def test_a_google_plugin_names_the_sign_in_when_given_a_setting_it_lacks(settings_stub):
     result = runner.invoke(app, ["plugins", "install", "check_calendar", "--set", "token=x"])
 
@@ -1391,18 +1441,19 @@ def test_plugins_install_renames_a_pair_installed_under_the_plugins_old_name(
 
 @pytest.mark.parametrize(
     "assignment",
-    ["owner_id=U0COLLEAGUE", "access=write", "team_id=T0OTHER", "bot_user_id=U0OTHERBOT",
-     "team=Other", "workspaces=x"],
+    ["owner_id=U0COLLEAGUE", "allow=send", "access=write", "team_id=T0OTHER",
+     "bot_user_id=U0OTHERBOT", "team=Other", "workspaces=x"],
 )
 def test_plugins_install_cannot_set_what_only_connecting_slack_settles(
     settings_stub, monkeypatch, assignment
 ):
     """One owner, fixed at connect: `--set owner_id=…` would be an option to change it,
-    and `--set access=write` a level nobody's tokens were checked for."""
+    and `--set allow=send` a box nobody's tokens were checked for (as `--set access=…`,
+    the level it replaced, would be)."""
     with_token = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
     monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: with_token)
     plugins.write_config(with_token, "slack_report", {
-        "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER",
+        "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX"})
     plugins.install(with_token, "slack_report")
     before = plugins.read_config(with_token, "slack_report")
@@ -1431,7 +1482,7 @@ def test_plugins_install_still_sets_where_reports_go_and_the_mcp_server(
     assert result.exit_code == 0, result.output
     saved = plugins.read_config(with_token, "slack_report")
     assert (saved["channel_id"], saved["mcp_server"]) == ("C0REPORTS", "slack")
-    assert (saved["owner_id"], saved["access"]) == ("", "announce")
+    assert (saved["owner_id"], saved["allow"]) == ("", [])
 
 
 def test_no_other_plugins_install_can_carry_those_keys_either(settings_stub):

@@ -118,11 +118,11 @@ def test_an_older_build_still_finds_its_plugin_after_this_build_has_run(installe
     line unchanged, and its settings still the keys that build reads."""
     from keryx.setup import slack as setup
 
-    plugins.write_config(installed_before, NEW, {"access": "converse", "owner_id": "U0OWNER",
+    plugins.write_config(installed_before, NEW, {"allow": ["requests"], "owner_id": "U0OWNER",
                                                  "team_id": "T0ACME", "bot_user_id": "U0KERYX"})
     plugins.install(installed_before, NEW)
     setup._write_workspace(installed_before, plugins.read_config(installed_before, NEW),
-                           "work", {"channel_id": "U0WORK", "access": "announce"})
+                           "work", {"channel_id": "U0WORK", "allow": []})
     plugins.status(installed_before)
     loaded(installed_before)
 

@@ -1,5 +1,5 @@
-"""Keryx's Slack messages plugin, turned on when `keryx auth login slack --access write`
-takes a workspace to that level (or with `keryx plugins install slack_message`, once one is).
+"""Keryx's Slack messages plugin, turned on when sending messages as you is ticked in
+`keryx auth login slack` (or with `keryx plugins install slack_message`, once it is).
 
 Its settings are in slack_message.toml beside this file. The code is
 `keryx.plugins.slack_message`, so an update to Keryx reaches this copy; `keryx plugins

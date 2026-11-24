@@ -10,12 +10,15 @@ import urllib.parse
 from pathlib import Path
 
 import pytest
+from slack_sets import READ, READS, REQUESTS, SELECTIONS, SEND, named
 
 from keryx.integrations import slack
 from keryx.integrations.slack import (
-    Access,
+    BASE,
+    EVERYTHING,
     FileRefused,
     LocalFile,
+    Permission,
     Posted,
     SlackFiles,
     SlackResult,
@@ -300,12 +303,12 @@ def test_a_name_whose_username_slack_keeps_for_itself_is_keryx(assistant):
 def test_with_no_name_given_the_app_is_keryx():
     assert app_manifest() == app_manifest(assistant="")
     assert app_manifest()["display_information"]["name"] == "Keryx"
-    assert json.loads(manifest_json(Access.READ, assistant="Lyra")) == app_manifest(
-        Access.READ, assistant="Lyra")
+    assert json.loads(manifest_json(READS, assistant="Lyra")) == app_manifest(
+        READS, assistant="Lyra")
     query = urllib.parse.parse_qs(
-        urllib.parse.urlsplit(new_app_url(Access.CONVERSE, assistant="Lyra")).query)
+        urllib.parse.urlsplit(new_app_url(REQUESTS, assistant="Lyra")).query)
     assert json.loads(query["manifest_json"][0]) == app_manifest(
-        Access.CONVERSE, assistant="Lyra")
+        REQUESTS, assistant="Lyra")
 
 
 # --- the app's colour ------------------------------------------------------------------------
@@ -321,11 +324,11 @@ def _luminance(colour: str) -> float:
     return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
 
 
-@pytest.mark.parametrize("access", list(Access))
-def test_the_manifest_carries_a_background_colour_from_the_mark(access):
+@pytest.mark.parametrize("allowed", SELECTIONS, ids=named)
+def test_the_manifest_carries_a_background_colour_from_the_mark(allowed):
     """Slack takes a hex colour with its hash, three or six digits. It writes white text
     over it, so of the mark's three colours it is the one white reads best on."""
-    colour = app_manifest(access, assistant="Lyra")["display_information"]["background_color"]
+    colour = app_manifest(allowed, assistant="Lyra")["display_information"]["background_color"]
     mark = (Path(__file__).parents[2] / "docs" / "assets" / "keryx-mark.svg").read_text()
 
     assert colour == slack.BACKGROUND_COLOR == "#7c3aed"
@@ -460,48 +463,54 @@ def test_a_test_message_slack_refuses_says_its_code():
 def test_the_bot_reads_nothing_about_members_and_no_address_is_ever_looked_up():
     """Who the owner is comes from their own user token: the lookup by address, and the
     two bot scopes it needed, are gone."""
-    for access in Access:
-        assert not any(scope.startswith("users:") for scope in slack.bot_scopes(access))
+    for allowed in SELECTIONS:
+        assert not any(scope.startswith("users:") for scope in slack.bot_scopes(allowed))
     assert not hasattr(slack, "lookup_by_email") and not hasattr(slack, "Member")
     assert "lookupByEmail" not in inspect.getsource(slack)
 
 
-@pytest.mark.parametrize("access", list(Access))
-def test_every_level_issues_the_owner_a_user_token(access):
+@pytest.mark.parametrize("allowed", SELECTIONS, ids=named)
+def test_whatever_is_ticked_the_install_issues_the_owner_a_user_token(allowed):
     """An install issues one only when the manifest asks for a user scope, and the token
     is how Slack says who installed the app."""
-    assert app_manifest(access)["oauth_config"]["scopes"]["user"]
-    assert "user" in token_kinds(access)
+    assert app_manifest(allowed)["oauth_config"]["scopes"]["user"]
+    assert "user" in token_kinds(allowed)
 
 
-@pytest.mark.parametrize("access", [Access.ANNOUNCE, Access.CONVERSE])
-def test_below_read_the_user_token_has_one_scope_that_sees_nothing_of_anybodys(access):
+@pytest.mark.parametrize("allowed", [BASE, REQUESTS], ids=named)
+def test_with_neither_read_nor_send_the_user_token_has_one_scope_that_sees_nothing(allowed):
     """`emoji:read`: "View custom emoji in a workspace", granted to user tokens, not a
     legacy scope, and its one method is `emoji.list`, which Keryx never calls."""
-    assert slack.user_scopes(access) == slack.IDENTITY_USER_SCOPES == ("emoji:read",)
-    assert app_manifest(access)["oauth_config"]["scopes"]["user"] == ["emoji:read"]
+    assert slack.user_scopes(allowed) == slack.IDENTITY_USER_SCOPES == ("emoji:read",)
+    assert app_manifest(allowed)["oauth_config"]["scopes"]["user"] == ["emoji:read"]
     for module in ("slack", "slack_read", "slack_write", "slack_query"):
         source = Path(slack.__file__).with_name(f"{module}.py").read_text()
         assert "emoji.list" not in source.replace("`emoji.list`", "")
 
 
-def test_the_levels_are_a_ladder():
-    assert slack.LEVELS == (Access.ANNOUNCE, Access.CONVERSE, Access.READ, Access.WRITE)
-    assert Access.READ.reaches(Access.CONVERSE) and Access.CONVERSE.reaches(Access.CONVERSE)
-    assert Access.WRITE.reaches(Access.READ) and not Access.READ.reaches(Access.WRITE)
-    assert not Access.ANNOUNCE.reaches(Access.CONVERSE)
-    assert not Access.CONVERSE.reaches(Access.READ)
+def test_what_may_be_ticked_is_three_independent_things_and_no_ladder():
+    assert slack.PERMISSIONS == (Permission.REQUESTS, Permission.READ, Permission.SEND)
+    assert [str(each) for each in slack.PERMISSIONS] == ["requests", "read", "send"]
+    assert len(SELECTIONS) == 8  # every combination is an app
+    assert not hasattr(slack, "Access") and not hasattr(slack, "LEVELS")
+    assert slack.permissions(["Read ", "requests"]) == READS
+    assert slack.ordered({Permission.SEND, Permission.REQUESTS}) == (
+        Permission.REQUESTS, Permission.SEND)
+    with pytest.raises(ValueError, match="converse"):
+        slack.permissions(["converse"])
 
 
-def test_announce_is_exactly_the_app_there_was():
-    assert app_manifest(Access.ANNOUNCE) == app_manifest()
-    assert new_app_url(Access.ANNOUNCE) == new_app_url()
+def test_nothing_ticked_is_exactly_the_app_there_was():
+    assert app_manifest(BASE) == app_manifest()
+    assert new_app_url(BASE) == new_app_url()
     assert "settings" not in app_manifest()
     assert app_manifest()["features"]["app_home"]["messages_tab_read_only_enabled"] is True
+    assert app_manifest()["oauth_config"] == {"scopes": {
+        "bot": ["chat:write", "files:write"], "user": ["emoji:read"]}}
 
 
-def test_converse_hears_its_own_direct_messages_over_a_socket_and_nothing_else():
-    manifest = app_manifest(Access.CONVERSE)
+def test_requests_hears_its_own_direct_messages_over_a_socket_and_nothing_else():
+    manifest = app_manifest(REQUESTS)
 
     assert manifest["oauth_config"] == {"scopes": {
         "bot": ["chat:write", "files:write", "im:history", "reactions:write"],
@@ -516,8 +525,53 @@ def test_converse_hears_its_own_direct_messages_over_a_socket_and_nothing_else()
     assert "redirect_urls" not in json.dumps(manifest)
 
 
-def test_read_is_also_sent_mentions_of_the_app_and_asks_the_owner_for_a_user_token():
-    manifest = app_manifest(Access.READ)
+def test_read_alone_changes_only_what_the_owners_own_token_may_do():
+    """No socket, no event, no app-level token: reading is the user token's, and the bot
+    stays a bot that posts."""
+    manifest = app_manifest(READ)
+
+    assert manifest["oauth_config"]["scopes"]["bot"] == ["chat:write", "files:write"]
+    assert manifest["oauth_config"]["scopes"]["user"] == [
+        "channels:read", "groups:read", "im:read", "mpim:read", "users:read",
+        "channels:history", "groups:history", "im:history", "mpim:history",
+        "search:read",
+    ]
+    assert "settings" not in manifest
+    assert manifest["features"]["app_home"]["messages_tab_read_only_enabled"] is True
+    assert token_kinds(READ) == ("user", "bot")
+    assert slack.used_kinds(READ) == ("bot", "user")
+
+
+def test_send_alone_can_find_who_is_meant_and_post_and_can_read_no_message():
+    """The lookups the recipient is resolved with, the two scopes that post as the
+    owner, and neither a history nor search: what it sees is names."""
+    manifest = app_manifest(SEND)
+    user = manifest["oauth_config"]["scopes"]["user"]
+
+    assert user == ["channels:read", "groups:read", "im:read", "mpim:read", "users:read",
+                    "chat:write", "im:write"]
+    assert not any(scope.endswith(":history") or scope.startswith("search") for scope in user)
+    assert manifest["oauth_config"]["scopes"]["bot"] == ["chat:write", "files:write"]
+    assert "settings" not in manifest
+    assert slack.used_kinds(SEND) == ("bot", "user")
+
+
+def test_what_send_looks_a_recipient_up_with_is_all_it_is_given_to_look_with():
+    """`slack_write.recipient` resolves through the reader's lists of conversations and
+    members and nothing else of it, so those scopes are the whole of what `send` adds to
+    see with."""
+    from keryx.integrations import slack_read, slack_write
+
+    assert slack_write.WRITE_METHODS == {"chat.postMessage", "conversations.open"}
+    looked_up = {"users.conversations", "users.list", "users.info"}
+    assert looked_up <= slack_read.READ_METHODS
+    assert slack.LOOKUP_USER_SCOPES == (
+        "channels:read", "groups:read", "im:read", "mpim:read", "users:read")
+    assert slack.SEND_USER_SCOPES == ("chat:write", "im:write")
+
+
+def test_requests_and_read_together_are_also_sent_mentions_of_the_app():
+    manifest = app_manifest(READS)
 
     # The bot may hear a mention of itself, and still read no conversation at all.
     assert manifest["oauth_config"]["scopes"]["bot"] == [
@@ -525,22 +579,49 @@ def test_read_is_also_sent_mentions_of_the_app_and_asks_the_owner_for_a_user_tok
     ]
     assert not any(scope.split(":")[0] in ("channels", "groups", "mpim")
                    for scope in manifest["oauth_config"]["scopes"]["bot"])
-    assert manifest["oauth_config"]["scopes"]["user"] == [
+    assert set(manifest["oauth_config"]["scopes"]["user"]) == {
         "channels:history", "groups:history", "im:history", "mpim:history",
         "channels:read", "groups:read", "im:read", "mpim:read",
         "users:read", "search:read",
-    ]
+    }
     assert manifest["settings"] == {
         "event_subscriptions": {"bot_events": ["message.im", "app_mention"]},
         "socket_mode_enabled": True,
     }
 
 
-@pytest.mark.parametrize("access", list(Access))
-def test_no_level_is_ever_sent_a_conversation_it_was_not_addressed_in(access):
+@pytest.mark.parametrize("allowed", SELECTIONS, ids=named)
+def test_a_mention_is_a_request_only_with_requests_and_read_both(allowed):
+    """Something has to listen, and the thread around a mention can only be read as the
+    owner: neither box alone subscribes the app to mentions."""
+    both = Permission.REQUESTS in allowed and Permission.READ in allowed
+    manifest = app_manifest(allowed)
+    events = manifest.get("settings", {}).get("event_subscriptions", {}).get("bot_events", [])
+
+    assert slack.mentions(allowed) is both
+    assert ("app_mention" in events) is both
+    assert ("app_mentions:read" in manifest["oauth_config"]["scopes"]["bot"]) is both
+
+
+@pytest.mark.parametrize("allowed", SELECTIONS, ids=named)
+def test_each_box_adds_its_own_scopes_whatever_else_is_ticked(allowed):
+    scopes = app_manifest(allowed)["oauth_config"]["scopes"]
+    bot, user = set(scopes["bot"]), set(scopes["user"])
+
+    assert ({"im:history", "reactions:write"} <= bot) is (Permission.REQUESTS in allowed)
+    assert ("search:read" in user) is ("channels:history" in user) is (
+        Permission.READ in allowed)
+    assert ({"chat:write", "im:write"} <= user) is (Permission.SEND in allowed)
+    assert ("users:read" in user) is slack.as_owner(allowed)
+    assert ("emoji:read" in user) is not slack.as_owner(allowed)
+    assert ("settings" in app_manifest(allowed)) is (Permission.REQUESTS in allowed)
+
+
+@pytest.mark.parametrize("allowed", SELECTIONS, ids=named)
+def test_nothing_ticked_is_ever_sent_a_conversation_it_was_not_addressed_in(allowed):
     """Never `message.channels`, `.groups` or `.mpim`, and never a user-level event, which
     would be every direct message the owner has with anybody."""
-    text = json.dumps(app_manifest(access))
+    text = json.dumps(app_manifest(allowed))
 
     assert "user_events" not in text
     for event in ("message.channels", "message.groups", "message.mpim"):
@@ -555,29 +636,31 @@ def test_a_conversations_id_is_held_to_its_shape():
 
 def test_search_is_one_constant_and_not_the_api_whose_results_may_not_be_stored():
     assert slack.SEARCH_SCOPES == ("search:read",)
-    assert set(slack.SEARCH_SCOPES) <= set(slack.USER_SCOPES)
-    assert not any(scope.startswith("search:read.") for scope in slack.USER_SCOPES)
+    assert set(slack.SEARCH_SCOPES) <= set(slack.READ_USER_SCOPES)
+    assert not any(scope.startswith("search:read.") for scope in slack.user_scopes(EVERYTHING))
 
 
-@pytest.mark.parametrize("access", list(Access))
-def test_each_level_has_a_link_and_a_manifest_to_paste(access):
-    query = urllib.parse.parse_qs(urllib.parse.urlsplit(new_app_url(access)).query)
+@pytest.mark.parametrize("allowed", SELECTIONS, ids=named)
+def test_every_selection_has_a_link_and_a_manifest_to_paste(allowed):
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(new_app_url(allowed)).query)
 
-    assert json.loads(query["manifest_json"][0]) == app_manifest(access)
-    assert json.loads(manifest_json(access)) == app_manifest(access)
-    assert "\n" in manifest_json(access)
+    assert json.loads(query["manifest_json"][0]) == app_manifest(allowed)
+    assert json.loads(manifest_json(allowed)) == app_manifest(allowed)
+    assert "\n" in manifest_json(allowed)
 
 
-def test_connecting_takes_the_user_token_at_every_level_and_tokens_are_told_apart_by_prefix():
+def test_connecting_always_takes_the_user_token_and_tokens_are_told_apart_by_prefix():
     # In the order Slack's console shows them: the app-level token on a page of its own,
     # then the user token and, below it on the same page, the bot token.
-    assert token_kinds(Access.ANNOUNCE) == ("user", "bot")
-    assert token_kinds(Access.CONVERSE) == ("app", "user", "bot")
-    assert token_kinds(Access.READ) == token_kinds(Access.WRITE) == ("app", "user", "bot")
-    # What a level runs on once connected is another matter: the user token only from read.
-    assert slack.used_kinds(Access.ANNOUNCE) == ("bot",)
-    assert slack.used_kinds(Access.CONVERSE) == ("bot", "app")
-    assert slack.used_kinds(Access.READ) == ("bot", "app", "user")
+    assert token_kinds(BASE) == token_kinds(READ | SEND) == ("user", "bot")
+    assert token_kinds(REQUESTS) == ("app", "user", "bot")
+    assert token_kinds(READS) == token_kinds(EVERYTHING) == ("app", "user", "bot")
+    # What it runs on once connected is another matter: the user token only to read or
+    # send as the owner, the app-level one only to listen.
+    assert slack.used_kinds(BASE) == ("bot",)
+    assert slack.used_kinds(REQUESTS) == ("bot", "app")
+    assert slack.used_kinds(READS) == ("bot", "app", "user")
+    assert slack.used_kinds(REQUESTS | SEND) == ("bot", "app", "user")
     assert [token_kind(t) for t in ("xoxb-1", "xapp-1-A", "xoxp-1", "xoxe-1", "")] == [
         "bot", "app", "user", None, None,
     ]
@@ -791,16 +874,16 @@ def test_a_messages_text_is_read_back_as_it_was_typed():
     assert plain_text("<@U0OWNER> hi") == "<@U0OWNER> hi"
 
 
-def test_write_is_read_and_the_two_user_scopes_that_send_as_the_owner():
+def test_send_adds_to_read_the_two_user_scopes_that_send_as_the_owner():
     """Nothing the bot may do changes, and nothing is added that edits, deletes or joins."""
-    read, write = app_manifest(Access.READ), app_manifest(Access.WRITE)
+    read, write = app_manifest(READS), app_manifest(EVERYTHING)
 
     assert set(write["oauth_config"]["scopes"]["user"]) - set(
         read["oauth_config"]["scopes"]["user"]) == {"chat:write", "im:write"}
     assert write["oauth_config"]["scopes"]["bot"] == read["oauth_config"]["scopes"]["bot"]
     assert write["settings"] == read["settings"]
-    assert slack.token_kinds(Access.WRITE) == slack.token_kinds(Access.READ)
-    assert slack.user_scopes(Access.CONVERSE) == ("emoji:read",)
+    assert slack.token_kinds(EVERYTHING) == slack.token_kinds(READS)
+    assert slack.user_scopes(REQUESTS) == ("emoji:read",)
 
 
 def test_checking_a_token_also_says_what_it_may_do_when_slack_says():
@@ -853,11 +936,11 @@ def plot(tmp_path) -> LocalFile:
     return local_file(path)
 
 
-def test_every_level_can_send_a_file_and_with_the_one_scope_that_takes():
+def test_whatever_is_ticked_can_send_a_file_and_with_the_one_scope_that_takes():
     """`files:write` is the scope both upload methods ask for, and the only one added."""
     assert slack.FILE_BOT_SCOPES == ("files:write",)
-    for access in Access:
-        scopes = app_manifest(access)["oauth_config"]["scopes"]
+    for allowed in SELECTIONS:
+        scopes = app_manifest(allowed)["oauth_config"]["scopes"]
         assert "files:write" in scopes["bot"] and "files:write" not in scopes["user"]
         assert not any(scope.startswith(("files:read", "remote_files"))
                        for scope in scopes["bot"] + scopes["user"])

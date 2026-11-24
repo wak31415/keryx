@@ -11,28 +11,31 @@
 # config below.
 channel_id = {channel_id}
 
-# What Keryx may see in this workspace, which is also what your Slack app was created
-# with. announce: it posts and reads nothing. converse: it is also sent the direct messages
-# you type to the app itself, and acts on every one of them, no mention needed: a
-# new message starts work and a reply under a task's report resumes that task, without
-# the phone PIN. read: you can also mention it in a conversation it was added to, where it
-# answers in that thread, and it reads Slack as you when you ask it about messages.
-# write: it can also send a message as you, to a person or a channel, when you ask.
-# Lowering it here takes effect at once; raising it needs the app changed in Slack and
-# more tokens, which is `keryx auth login slack --access LEVEL`.
-access = {access}
+# What Keryx may do in this workspace beyond sending you reports and files, which is
+# also what your Slack app was created with. Any of these, in any combination:
+#   "requests": it acts on every direct message you type to the app itself, with no
+#     mention needed: a new message starts work and a reply under a task's report resumes
+#     that task, without the phone PIN.
+#   "read": it reads Slack as you when you ask it about messages. With "requests" as
+#     well, you can also mention the app in a conversation it was added to, and it
+#     answers in that thread.
+#   "send": it can send a message as you, to a person or a channel, after reading it
+#     back to you and a yes.
+# `keryx auth login slack` writes this: run it and tick what you want. Taking one out
+# here by hand takes effect at once; adding one needs the app changed in Slack and
+# perhaps another token, which that command walks you through.
+allow = {allow}
 
-# Your own member id in this workspace. At converse and above, only messages from this
-# member are ever acted on. It is settled when the workspace is connected and nothing
-# changes it afterwards: `keryx auth logout slack` and a new login connects as somebody
-# else.
+# Your own member id in this workspace. Only messages from this member are ever acted
+# on. It is settled when the workspace is connected and nothing changes it afterwards:
+# `keryx auth logout slack` and a new login connects as somebody else.
 owner_id = {owner_id}
 
 # The workspace this is, and the app's own member id there, as Slack gave them when
-# the token was checked. At converse and above a message is acted on only when it is
-# from the workspace with this id; outside your direct messages with the app it also has
-# to mention the app, which is a mention of that member id whatever the app is called
-# (it carries your assistant's name), and nothing is ever sent to it as you.
+# the token was checked. A message is acted on only when it is from the workspace with
+# this id; outside your direct messages with the app it also has to mention the app,
+# which is a mention of that member id whatever the app is called (it carries your
+# assistant's name), and nothing is ever sent to it as you.
 team = {team}
 team_id = {team_id}
 bot_user_id = {bot_user_id}

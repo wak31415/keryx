@@ -3,6 +3,7 @@
 import dataclasses
 
 import pytest
+from slack_sets import READS
 
 from keryx import plugins
 from keryx.agents import registry
@@ -10,7 +11,7 @@ from keryx.agents.base import RunResult
 from keryx.agents.registry import BACKENDS
 from keryx.config.store import ConfigStore
 from keryx.integrations.google import SERVICES
-from keryx.integrations.slack import new_app_url
+from keryx.integrations.slack import Permission, new_app_url
 from keryx.setup import auth, google
 from keryx.setup.auth import AuthError, LoginOptions
 
@@ -347,23 +348,30 @@ def test_slack_that_is_on_is_ok_and_says_where_it_posts(settings):
     assert entry == {
         "state": "ok", "detail": "on — posts to U0OWNER", "optional": True,
         "workspaces": [{"name": "default", "team": "", "label": "your first workspace",
-                        "access": "announce", "listens": False, "missing": [], "owner": ""}],
+                        "allow": [], "said": NOTHING_TICKED, "listens": False, "missing": [],
+                        "owner": ""}],
     }
     # Connected before Keryx asked for a user token: it works, and says what it has not.
     assert auth.slack_lines(entry) == [
-        "your first workspace: announce level, posts only, no owner on file yet (the next "
+        f"your first workspace: {NOTHING_TICKED}, no owner on file yet (the next "
         "`keryx auth login slack` adds one)"]
 
 
-def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
+#: What `auth status` and `doctor` say of a workspace with no box ticked.
+NOTHING_TICKED = ("on: sending you reports and files; off: acting on what you type to the "
+                  "app, reading Slack as you, sending messages as you")
+
+
+def test_each_slack_workspace_says_what_is_on_and_off_and_what_it_still_lacks(settings):
     settings = settings.model_copy(update={
         "slack_bot_token": "xoxb-1", "slack_app_token": "xapp-1",
         "slack_workspace_tokens": {"work": {"bot": "xoxb-w"}},
     })
     plugins.write_config(settings, "slack_report", {
-        "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
+        "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER", "team": "Acme",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX",
-        "workspaces": {"work": {"access": "read", "channel_id": "U0WORK", "owner_id": "U0WORK",
+        "workspaces": {"work": {"allow": ["requests", "read"], "channel_id": "U0WORK",
+                                "owner_id": "U0WORK",
                                 "team_id": "T0WORK", "bot_user_id": "U0WORKBOT"}},
     })
     plugins.install(settings, "slack_report")
@@ -373,14 +381,22 @@ def test_each_slack_workspace_says_its_level_and_what_it_still_lacks(settings):
     # The first thing wrong is what the one line says; every workspace is under it.
     assert entry["state"] == "failed" and entry["optional"] is True
     assert entry["detail"] == (
-        "at the read level, but without its app token or its user token — "
-        "`keryx auth login slack --workspace work --access read`"
+        "on: sending you reports and files, acting on what you type to the app, reading "
+        "Slack as you; off: sending messages as you; but without its app token or its "
+        "user token — `keryx auth login slack --workspace work`"
     )
+    assert [each["allow"] for each in entry["workspaces"]] == [["requests"],
+                                                               ["requests", "read"]]
     assert auth.slack_lines(entry) == [
-        "Acme: converse level, acts on what you type to the app, you are U0OWNER",
-        "work: read level, without its app token or its user token, you are U0WORK",
+        "Acme: on: sending you reports and files, acting on what you type to the app; off: "
+        "reading Slack as you, sending messages as you, you are U0OWNER",
+        "work: on: sending you reports and files, acting on what you type to the app, "
+        "reading Slack as you; off: sending messages as you, without its app token or its "
+        "user token, you are U0WORK",
     ]
     assert "xoxb" not in str(entry) and "xapp" not in str(entry)
+    assert not any(word in "".join(auth.slack_lines(entry))
+                   for word in ("level", "converse", "announce"))
 
 
 def test_slack_that_is_off_lists_no_workspace(settings):
@@ -388,14 +404,117 @@ def test_slack_that_is_off_lists_no_workspace(settings):
     assert auth.slack_lines({"state": "ok", "detail": ""}) == []
 
 
-def test_a_slack_login_with_no_token_prints_the_link_that_makes_the_app(settings):
-    assert new_app_url(assistant="Lyra") in login("slack", settings)
+def test_a_slack_login_that_says_what_is_ticked_prints_the_link_that_makes_that_app(settings):
+    assert new_app_url(assistant="Lyra") in login("slack", settings, allow=("none",))
+    lines = login("slack", settings, allow=("requests", "read"))
+    assert new_app_url(READS, assistant="Lyra") in lines
+    assert any("keryx auth login slack --stdin --allow requests --allow read" in line
+               for line in lines)
+    assert ConfigStore().stored() == {}
+
+
+def test_with_no_terminal_and_nothing_said_a_new_slack_login_prints_the_choices_and_guesses_none(
+    settings,
+):
+    """No link, because no app was chosen: every choice in full, and the command that
+    says one. Nothing is saved, and nothing was picked on anybody's behalf."""
+    lines = login("slack", settings)
+
+    text = "\n".join(lines)
+    assert "api.slack.com/apps" not in text
+    assert lines[0].startswith("Always on: Keryx sends you reports and files on Slack")
+    assert "  keryx auth login slack --allow none" in lines
+    assert "  keryx auth login slack --allow requests --allow read" in lines
+    assert lines[-1].endswith("Nothing was chosen for you, and nothing was saved.")
+    assert ConfigStore().stored() == {}
+    assert not plugins.config_path(settings, "slack_report").exists()
+
+
+def test_tokens_piped_to_a_new_slack_login_that_does_not_say_what_is_ticked_are_refused(settings):
+    with pytest.raises(AuthError) as refused:
+        login("slack", settings, tokens="xoxb-1\nxoxp-1\n")
+
+    assert str(refused.value) == (
+        "nothing says what Keryx may do there, and it is not guessed: add --allow none for "
+        "reports and files alone, or --allow once for each of requests, read, send (`keryx "
+        "auth login slack` says what each is). Nothing was saved")
     assert ConfigStore().stored() == {}
 
 
 def test_a_slack_login_that_cannot_go_on_is_an_auth_error(settings):
     with pytest.raises(AuthError, match="no token on standard input"):
-        login("slack", settings, tokens=" \n")
+        login("slack", settings, tokens=" \n", allow=("none",))
+    with pytest.raises(AuthError, match="there is nothing called 'converse' to allow"):
+        login("slack", settings, allow=("converse",))
+
+
+def connected_slack(settings, *allow):
+    """`settings` with a first workspace connected and `allow` ticked."""
+    secrets = {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_APP_TOKEN": "xapp-1",
+               "SLACK_USER_TOKEN": "xoxp-1"}
+    ConfigStore().set(secrets)
+    settings = settings.model_copy(update={key.lower(): value for key, value in secrets.items()})
+    plugins.write_config(settings, "slack_report", {
+        "channel_id": "U0OWNER", "owner_id": "U0OWNER", "allow": list(allow), "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX"})
+    plugins.install(settings, "slack_report")
+    return settings
+
+
+def test_unticking_with_no_terminal_is_done_at_once_and_asks_slack_nothing(settings):
+    """`--allow` says everything that stays on: what it leaves out is off from this
+    moment, with no token and nothing asked of Slack."""
+    settings = connected_slack(settings, "requests", "read")
+    plugins.install(settings, "slack_read")
+
+    lines = login("slack", settings, allow=("requests",))
+
+    assert lines[0] == ("Acme: reading Slack as you is off, from this moment. A running "
+                        "Keryx stops at once.")
+    assert "SLACK_USER_TOKEN is forgotten." in lines
+    assert plugins.read_config(settings, "slack_report")["allow"] == ["requests"]
+    assert not plugins.tool_path(settings, "slack_read").is_file()
+    assert "SLACK_USER_TOKEN" not in ConfigStore()._secrets()
+    assert not any("standard input" in line for line in lines)
+
+
+def test_one_box_swapped_for_another_with_no_terminal_is_off_at_once_and_prints_the_rest(
+    settings,
+):
+    """What `--allow` leaves out is off now; what it adds prints the manifest, the steps
+    and the next command, and offers no token that was just forgotten as one on file."""
+    settings = connected_slack(settings, "requests")
+
+    lines = login("slack", settings, allow=("send",))
+
+    text = "\n".join(lines)
+    assert plugins.read_config(settings, "slack_report")["allow"] == []
+    assert "SLACK_APP_TOKEN is forgotten." in lines
+    assert "Acme is connected. Adding: sending messages as you." in lines
+    assert "The manifest:" in text and "api.slack.com/apps?new_app=1" not in text
+    assert "keryx auth login slack --stdin --allow send < /dev/null" in text
+
+
+def test_at_a_terminal_a_slack_login_shows_the_boxes_and_what_is_ticked_is_what_it_makes(
+    settings,
+):
+    shown, lines = [], []
+
+    def choose(question, choices):
+        shown.append((question, [(box.value, box.checked) for box in choices]))
+        return ["read"]
+
+    def leave(question):
+        raise EOFError
+
+    with pytest.raises(auth.AuthStopped):
+        auth.login("slack", settings, ConfigStore(), options=LoginOptions(), echo=lines.append,
+                   run_login=lambda argv: 0, ask_secret=leave, choose=choose)
+
+    assert shown == [("What else may Keryx do in your Slack?",
+                      [("requests", False), ("read", False), ("send", False)])]
+    assert new_app_url(frozenset({Permission.READ}), assistant="Lyra") in lines
+    assert ConfigStore().stored() == {}
 
 
 def test_a_slack_login_left_at_the_terminal_is_stopped_and_not_called_a_failure(settings):

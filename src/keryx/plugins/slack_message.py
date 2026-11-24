@@ -1,9 +1,9 @@
 """The `slack_message` plugin: one message sent as the owner, after they have said yes.
 
 The one tool in Keryx that says something to somebody who is not its owner, in the
-owner's name. So it is held to the least: it needs the PIN, it loads only when a
-workspace is at the `write` level, it posts one new message or one reply in a thread and
-nothing else (`integrations.slack_write`), and it never sends on the first call.
+owner's name. So it is held to the least: it needs the PIN, it loads only when sending
+as the owner is ticked for a workspace, it posts one new message or one reply in a
+thread and nothing else (`integrations.slack_write`), and it never sends on the first call.
 
 **Two steps, enforced here in code.** The first call sends nothing. It resolves who the
 message goes to, with the resolver reading uses (nothing guessed: a name that could be
@@ -75,9 +75,9 @@ CONFIRM_NOTE = (
     "call again."
 )
 SENT_NOTE = "It was sent, as them. Say so in a few words and nothing more."
-LOWERED = (
-    "No Slack workspace is at the write level any more, so nothing was sent. Say so in "
-    "one sentence."
+SWITCHED_OFF = (
+    "Sending as them is not switched on any more, so nothing was sent. Say so in one "
+    "sentence."
 )
 EXPIRED = (
     "That confirmation is not one that stands: it was used, it is too old, or it was "
@@ -93,9 +93,9 @@ UNKNOWN = (
     "Sending went wrong part of the way, so it is not known whether the message was "
     "sent. Say exactly that, and that they should look before sending it again."
 )
-NOT_AT_WRITE = (
-    "no Slack workspace is at the write level: `keryx auth login slack --access write` "
-    "raises one"
+SENDING_OFF = (
+    "sending messages as you is not switched on for any workspace: run `keryx auth login "
+    "slack` and tick it"
 )
 
 
@@ -159,11 +159,12 @@ def channel_for(workspace: SlackWorkspace) -> Channel:
 
 
 class NoWorkspace(LookupError):
-    """There is nothing to send with: no workspace at `write`, or not the one named."""
+    """There is nothing to send with: no workspace has sending ticked, or not the one
+    named."""
 
 
-class NotAtWrite(NoWorkspace):
-    """No workspace is at `write` at all: never was, or it was lowered since."""
+class SendingOff(NoWorkspace):
+    """No workspace has sending ticked at all: never did, or it was unticked since."""
 
 
 def channels_of(settings, channels: Channels | None = None) -> Channels:
@@ -171,15 +172,15 @@ def channels_of(settings, channels: Channels | None = None) -> Channels:
         channels = {each.name: (lambda each=each: channel_for(each))
                     for each in writing(settings)}
     if not channels:
-        raise NotAtWrite(NOT_AT_WRITE)
+        raise SendingOff(SENDING_OFF)
     return channels
 
 
 def chosen(channels: Channels, workspace: Any) -> str:
     name = str(workspace or next(iter(channels))).strip().lower()
     if name not in channels:
-        raise NoWorkspace(f"no Slack workspace called {clip(name, 40)} is at the write "
-                          f"level: one of {', '.join(channels)}")
+        raise NoWorkspace(f"no Slack workspace called {clip(name, 40)} has sending as "
+                          f"you switched on: one of {', '.join(channels)}")
     return name
 
 
@@ -264,8 +265,9 @@ def slack_message_tool(
         raise ToolUnavailable(str(error)) from None
 
     def live() -> Channels:
-        """The workspaces that may be sent in *now*: the level is read again for every
-        use, so one lowered at the keyboard during a call stops this call too."""
+        """The workspaces that may be sent in *now*: what is ticked is read again for
+        every use, so sending unticked at the keyboard during a call stops this call
+        too."""
         return channels_of(settings, injected)
 
     #: What has been shown and not yet answered, by its confirmation value. It lives as
@@ -308,7 +310,7 @@ def slack_message_tool(
                               "message": text or held.message})
         current = live()
         if held.workspace not in current:
-            raise NotAtWrite(NOT_AT_WRITE)
+            raise SendingOff(SENDING_OFF)
         await deliver(current, held.workspace, held.to, held.message)
         return {"status": "sent", "note": SENT_NOTE}
 
@@ -319,8 +321,8 @@ def slack_message_tool(
             return await asyncio.wait_for(answer(arguments), ANSWER_TIMEOUT_S)
         except TimeoutError:
             return {"status": "timed_out", "message": UNKNOWN if sending else NOT_SENT}
-        except NotAtWrite:
-            return {"status": "not_at_write", "message": LOWERED}
+        except SendingOff:
+            return {"status": "sending_off", "message": SWITCHED_OFF}
         except NoWorkspace as exc:
             return {"status": "unclear", "message": str(exc)}
         except Unclear as exc:

@@ -584,16 +584,16 @@ class Settings(BaseSettings):
     slack_app_token: str | None = setting(
         None,
         "The app-level token (`xapp-`, with `connections:write`) Keryx listens to your "
-        "Slack app with, at the `converse` level and above. `keryx auth login slack` sets "
-        "it.",
+        "Slack app with, once it may act on what you type to the app. `keryx auth login "
+        "slack` sets it.",
         group="plugins",
         repr=False,
     )
     slack_user_token: str | None = setting(
         None,
         "Your own user token (`xoxp-`) from your Slack app. It is how Slack says which "
-        "member you are, at every level; from the `read` level it also reads Slack as you, "
-        "and at `write` sends as you. `keryx auth login slack` sets it.",
+        "member you are, always; it also reads Slack as you and sends as you, each only "
+        "once you have ticked it. `keryx auth login slack` sets it.",
         group="plugins",
         repr=False,
     )

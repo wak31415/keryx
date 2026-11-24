@@ -57,8 +57,8 @@ To use the package in a project of your own, install it there with `pip install 
 - **Calls you back** with the result or when the agent needs an answer to proceed.
 - **Answers Claude Code prompts on your screen** with a keypress on your phone.
 - **Checks your email, calendar, documents and Slack** by voice and sends you links and
-  reports on Slack. At the `converse` level you can write back: reply under a report
-  to continue that task, or send the app a new message to start one. At `write` it can send
+  reports on Slack. Tick it and you can write back: reply under a report to continue
+  that task, or send the app a new message to start one. Tick another box and it can send
   a Slack message as you, after reading it back and hearing a yes.
 - **Grows by voice.** Ask for a new tool, or report a bug and Keryx files the issue.
 

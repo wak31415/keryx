@@ -79,7 +79,7 @@ def test_the_skill_quotes_this_repositorys_caps(flat):
 
 
 def test_the_skill_connects_slack_without_ever_holding_its_token(flat):
-    assert "keryx auth login slack --stdin # theirs to run" in flat
+    assert "keryx auth login slack --stdin --allow none # theirs to run" in flat
     assert "--email" not in flat, "no address is asked for: the user token says who they are"
     assert "their own user token and the bot token" in flat
     # The places are said as Slack's console lays them out, and in the order it shows them.
@@ -90,11 +90,25 @@ def test_the_skill_connects_slack_without_ever_holding_its_token(flat):
     assert "ask them whether it arrived" in flat
 
 
-def test_the_skill_leaves_the_slack_access_level_to_them(flat):
-    """Above announce a Slack message can start work with no PIN: never the agent's call."""
-    assert "The access level is theirs to choose, and it comes first" in flat
-    assert "Never choose `converse`, `read` or `write` for them" in flat
+def test_the_skill_leaves_what_keryx_may_do_in_slack_to_them(flat):
+    """With requests a Slack message can start work with no PIN, with read their messages
+    are read and with send Keryx posts in their name: never the agent's call."""
+    assert "What Keryx may do in their Slack is theirs to choose, and it comes first" in flat
+    assert "Never choose `requests`, `read` or `send` for them" in flat
     assert "without the phone PIN" in flat
+    assert "`--allow none` is reports and files alone" in flat
+    assert "Nothing is guessed" in flat
+    # The level it replaced is named nowhere, and neither is its option.
+    for old in ("--access", "`announce`", "`converse`", "`write`", "access level"):
+        assert old not in flat
+
+
+def test_the_agent_instructions_say_the_same_and_name_no_level():
+    source = (ROOT / "src" / "keryx" / "setup" / "agent_instructions.md").read_text("utf-8")
+    flat = " ".join(source.split())
+    assert "Never choose one for them" in flat and "--allow none" in flat
+    for old in ("--access", "`announce`", "`converse`", "`write`", "access level"):
+        assert old not in flat
 
 
 def test_the_skill_leaves_the_pin_to_them_and_hands_over_to_setup(flat):

@@ -67,9 +67,11 @@ anything behind, or reach a coding agent. In particular:
   placed it to a number that is not yours (see
   [Calls Keryx places itself](#calls-keryx-places-itself)).
 - A Slack message being acted on that is not from your own member id, or does not mention
-  your app, or that reaches Keryx at the `announce` level; a report posted anywhere
-  but your own destination or the thread you asked in; Keryx posting anything with your
-  user token below the `write` level, or at `write` doing anything with it but posting one
+  your app, or that reaches Keryx while acting on what you type is not ticked; a mention
+  in a channel acted on without reading ticked as well; a report posted anywhere
+  but your own destination or the thread you asked in; Keryx reading a message with your
+  user token while reading is not ticked, posting anything with it while sending is not
+  ticked, or with sending ticked doing anything with it but posting one
   message (an edit, a deletion, a reaction, a file, a channel-wide mention); or the
   `slack_message` voice tool sending without the second, confirming call (see
   [Messages you type to Keryx on Slack](#messages-you-type-to-keryx-on-slack)).
@@ -286,15 +288,20 @@ aloud also works, because `submit_pin` answers at every trust level.
 
 ### Messages you type to Keryx on Slack
 
-Your Slack app has one of four access levels, which you choose before the app is created
-and can lower at any time. **`announce` is the default and the off switch:** Keryx posts
-to you and reads nothing. At every level, this one included, Keryx holds your Slack user
-token, because it is how Slack says which member you are; below `read` that token can see
-nothing but the workspace's custom emoji, and Keryx uses it once, when you connect
-(see [Where secrets live](#where-secrets-live)).
+Your Slack app always sends you reports and files, and can do three more things, each of
+which you tick or leave unticked before the app is created and can untick at any time:
+act on what you type to it, read your Slack as you, and send messages as you. They are
+independent, and nothing is ticked for you. **With nothing ticked, Keryx posts to you
+and reads nothing; unticking everything is the off switch.** Whatever is ticked, Keryx
+holds your Slack user token, because it is how Slack says which member you are; with
+neither reading nor sending ticked that token can see nothing but the workspace's
+custom emoji, and Keryx uses it once, when you connect
+(see [Where secrets live](#where-secrets-live)). What is ticked is what Keryx goes by,
+never what a token on file could do: each tool and command asks again every time it is
+used.
 
-**At `converse`, a Slack message can start work on your machine without the phone PIN.**
-That is the trade you make by choosing it, so it is said plainly. Keryx opens a connection
+**With acting on what you type ticked, a Slack message can start work on your machine
+without the phone PIN.** That is the trade you make by ticking it, so it is said plainly. Keryx opens a connection
 out to Slack (Socket Mode; nothing new is reachable from the internet) and is sent the
 direct messages typed to your app, which carries your assistant's name (Lyra by default).
 
@@ -304,13 +311,13 @@ direct messages typed to your app, which carries your assistant's name (Lyra by 
   mention, not what the message says. A new message starts a task with a coding agent
   that has your full access; a reply under a task's report continues that task. So
   "thanks" typed there is a request too, and each one counts against the daily task cap.
-- **Everywhere else Keryx acts only when you mention it.** At `read`, in a conversation
-  the app has been added to, a message is acted on only if it is from your member id
+- **Everywhere else Keryx acts only when you mention it.** With reading ticked as well,
+  in a conversation the app has been added to, a message is acted on only if it is from your member id
   and mentions the app (`@Lyra`). A mention is of the app's member id, never of its
   name, so what the app is called changes nothing here. With no mention nothing happens: no reaction, no
   reply.
-- **Keryx never writes to itself as you.** At `write` Keryx can send messages in your
-  name; it refuses to send one to its own app, by any name, because that message would
+- **Keryx never writes to itself as you.** With sending ticked Keryx can send messages
+  in your name; it refuses to send one to its own app, by any name, because that message would
   be a request from nobody. This is the tool's and the command's refusal: a coding agent
   with a shell and the token file can still post there as you, and the daily task cap is
   what bounds the loop that could start.
@@ -343,14 +350,14 @@ direct messages typed to your app, which carries your assistant's name (Lyra by 
   to that workspace: an employer's or a school's Slack administrator can reset your
   password, add a session, or install such an app.** If you connect a workspace somebody
   else administers, you are trusting them with a way to run work on your machine. Protect
-  the account as you would the machine, and if that is more than you want, stay at
-  `announce` there.
+  the account as you would the machine, and if that is more than you want, leave acting
+  on what you type unticked there.
 - **Re-runs are counted.** Each reply that sets a task going again counts against the
   daily task cap like a new task, because nothing else limits it here: there is no PIN
   and no keypress on this channel. Over the cap, Keryx says so in one sentence and does
   nothing. Follow-ups on the phone are not counted, as before.
 - **There is one owner, fixed when you connect.** Whose messages start work is settled
-  once, by Slack itself: it is the member your user token belongs to, at every level.
+  once, by Slack itself: it is the member your user token belongs to, whatever is ticked.
   Never an address, and never where reports are sent, which may be somebody else. It is
   named on a line of its own each time you connect. Nothing changes it afterwards:
   not changing where reports are sent, not a user token (somebody else's is refused), and
@@ -360,11 +367,14 @@ direct messages typed to your app, which carries your assistant's name (Lyra by 
   `bot_id` is dropped. One that carries only an `app_id`, your member id, and a mention
   is taken to be yours: that is how Slack marks a message sent with a token that posts
   as you, which is already inside the accepted risk above.
-- **Lowering the level works at once.** `keryx auth login slack --access announce` (or
-  `keryx setup`) forgets the tokens the lower level does not use, and a running Keryx
-  stops acting on messages immediately. `keryx auth logout slack` forgets a workspace
-  altogether. Neither revokes anything at Slack: the app is yours, and removing it there
-  is what ends its tokens.
+- **Unticking works at once, whether or not you ever change the app in Slack.** `keryx
+  auth login slack` (or `keryx setup`), with a box unticked, saves that at once: the
+  tokens nothing ticked uses any more are forgotten, the voice tool that went with the
+  box is turned off, and a running Keryx stops acting, reading or sending immediately.
+  The app in Slack still holds the permission it was made with until you paste the
+  manifest the command prints into it and reinstall it; the command says so. `keryx auth
+  logout slack` forgets a workspace altogether. Neither revokes anything at Slack: the
+  app is yours, and removing it there is what ends its tokens.
 - **Your member id is a setting, not a secret.** It is in `slack_report.toml`
   (`send_to_slack.toml` on a machine that installed the plugin under its old name), which a
   coding agent on your machine could edit, as it could edit anything else of yours
@@ -378,10 +388,13 @@ direct messages typed to your app, which carries your assistant's name (Lyra by 
   about, though it is mentioned at the start of your next call like any other result you
   have not heard.
 
-**At `read`, you can also mention Keryx in other conversations, and it can read Slack as
-you.**
+**With reading ticked, Keryx can read Slack as you; with acting on what you type ticked
+as well, you can also mention it in other conversations.**
 
-- **Mentions elsewhere.** The app is sent every message that mentions it in
+- **Mentions elsewhere, only with both.** The app subscribes to mentions of itself only
+  when acting on what you type and reading are both ticked: something has to be
+  listening, and the thread around a mention is other people's words, which only your
+  own token may read. Then the app is sent every message that mentions it in
   conversations it has been added to, anyone's, and nothing else from them. It acts only
   on yours: a colleague mentioning it does nothing and is told nothing.
 - **A report you ask for in a shared conversation is posted there, and its members can
@@ -394,10 +407,10 @@ you.**
 - **What the user token can see.** Every channel, private channel, direct message, and
   group message you are in, the list of them, the member list, and search across them.
   The token is in `secrets.toml` with the rest, so anyone who can read that file can read
-  your Slack as you until you revoke it (remove the app, or lower the level and reinstall
-  it). Keryx itself only ever reads with it: the one request it can make is a read of a
-  fixed list of methods, so at this level it cannot post, react, or mark anything as
-  read with your token. The token is never given to a coding agent; an agent reads Slack
+  your Slack as you until you revoke it (remove the app, or untick reading and reinstall
+  it). Keryx itself only ever reads with it: the one request the reader can make is a
+  read of a fixed list of methods, so it cannot post, react, or mark anything as read
+  with your token. The token is never given to a coding agent; an agent reads Slack
   by running a command that prints what it read.
 - **Reading only when you ask.** Nothing reads your Slack in the background. It is read
   when you ask about it on a call (the `slack_read` plugin, which needs the PIN), and by
@@ -405,14 +418,14 @@ you.**
   agent's instructions, not something the code can enforce: an agent that has the command
   could run it when it should not. What it can do with the result is bounded by the same
   things as the rest of its work.
-- **Below `read`, nothing of Keryx's reads your Slack, and a coding agent is told not to
-  with anything else.** A coding agent runs with your own Claude Code or Codex
+- **Without reading ticked, nothing of Keryx's reads your Slack, and a coding agent is
+  told not to with anything else.** A coding agent runs with your own Claude Code or Codex
   configuration, which may hold Slack tools of its own (an MCP server, a connector),
   signed in as whatever they are signed in as. Keryx does not control what those see.
-  While your app is below `read`, Keryx says on a call that reading is not switched on
+  While reading is not ticked, Keryx says on a call that reading is not switched on
   instead of handing the question over, and an agent is told to say the same rather
-  than read your Slack some other way. At `read` it is told to read with Keryx's own
-  command and nothing else. Both are instructions to the agent, not enforcements.
+  than read your Slack some other way. With it ticked the agent is told to read with
+  Keryx's own command and nothing else. Both are instructions to the agent, not enforcements.
 - **Other people's messages are data, never instructions.** Whatever is read from Slack
   is kept apart from what you asked. Your own request is the only instruction. Every
   message read is wrapped between markers that carry a token made for that one read,
@@ -433,13 +446,18 @@ you.**
   task's report is on disk and posted where you asked. That is why search uses
   Slack's older search method and not its newer one, whose terms forbid keeping results.
 
-**At `write`, Keryx can send messages as you.** This is the one level at which Keryx
-says something to somebody else in your name, so read it as that.
+**With sending ticked, Keryx can send messages as you.** This is the one box with which
+Keryx says something to somebody else in your name, so read it as that.
 
 - **What it can do.** Post one new message, or one reply in a thread, as you: to a
   person (their direct conversation with you, opened if you have never written to them),
   to a channel you are in, or in a thread. The user token gains `chat:write` and
-  `im:write` for this. The part of Keryx that sends can make two Slack requests and no
+  `im:write` for this.
+- **What sending without reading can see.** To find who you mean, the token needs the
+  list of the conversations you are in and the workspace's member list (`channels:read`,
+  `groups:read`, `im:read`, `mpim:read`, `users:read`): names and ids. With reading
+  unticked it is given no history and no search, so no message can be read with it, by
+  Keryx or by anyone who takes the token. The part of Keryx that sends can make two Slack requests and no
   others, so it cannot edit, delete, react, upload, join, schedule, or broadcast a reply
   to its channel, and a message containing `@channel`, `@here`, or `@everyone` is refused.
   The text is posted with Slack's own markup characters escaped, so nothing in it can be
@@ -458,8 +476,8 @@ says something to somebody else in your name, so read it as that.
   because another may be on a page it did not read. A person's or a channel's name is
   handed to the model inside the same wrapping as a message, as words to say and never
   to act on.
-- **The accepted risk: a coding agent can send as you too.** At `write`, a task's coding
-  agent can run `keryx slack message`, which sends as you. It is instructed to do so only
+- **The accepted risk: a coding agent can send as you too.** With sending ticked, a
+  task's coding agent can run `keryx slack message`, which sends as you. It is instructed to do so only
   when your request asks for exactly that message to exactly that recipient, and never
   because something it read told it to. **That is an instruction, not an enforcement.**
   An agent that has been steered by text it read (a Slack message, a web page, a file in
@@ -467,19 +485,19 @@ says something to somebody else in your name, so read it as that.
   words but a channel-wide mention. The request-versus-context rule above reduces this
   and does not remove it. Nothing asks you first when an agent sends, because nobody is
   on the line.
-- **`read` or lower removes the capability from Keryx, not from the token.** `keryx auth
-  login slack --access read` takes effect at once, a call in progress included: the
-  tool and the command read the level again every time they are used. Lowering to `read`
-  keeps the user token, with its `chat:write` scope, on disk; only reinstalling the app
-  without that scope, or `keryx auth logout slack` and removing the app, takes the
-  permission away at Slack.
+- **Unticking it removes the capability from Keryx, not from the token.** `keryx auth
+  login slack` with sending unticked takes effect at once, a call in progress included:
+  the tool and the command read what is ticked again every time they are used. With
+  reading still ticked, the user token stays on disk with its `chat:write` scope; only
+  reinstalling the app from the manifest the command prints, or `keryx auth logout slack`
+  and removing the app, takes the permission away at Slack.
 - **The bounds are the tool's and the command's, not an injected agent's.** No edit, no
   delete, no channel-wide mention, one message, the recipient shown first: those hold
   for `slack_message` and `keryx slack message`. A coding agent has a shell and can read
-  `secrets.toml`, so one that has been steered can use the token directly, at any level
-  that holds it, for whatever its scopes allow. If you would not give a capable stranger
-  who could be talked into things the ability to post as you in that workspace, stay at
-  `read`, and know that at `read` the same stranger can read as you.
+  `secrets.toml`, so one that has been steered can use the token directly, whatever is
+  ticked, for whatever its scopes allow. If you would not give a capable stranger
+  who could be talked into things the ability to post as you in that workspace, leave
+  sending unticked, and know that with reading ticked the same stranger can read as you.
 - **What a coding agent posts to you goes to you.** `keryx slack report` posts as Keryx,
   to where your reports go, or into the thread its own task was asked in, which in a
   shared conversation its members read. The command holds an agent to its own task's
@@ -516,7 +534,7 @@ says something to somebody else in your name, so read it as that.
   or the task's report.
 
 Each further workspace (`keryx auth login slack --workspace NAME`) is a separate app with
-its own level, tokens, and member id. A message in one workspace is checked against that
+its own ticks, tokens, and member id. A message in one workspace is checked against that
 workspace's ids only, and a report never leaves the workspace its task was asked in.
 A workspace here is the one Slack knows by its id, not the name you connected it under:
 if you log out of one and log in to another under the same name, a task asked for in the
@@ -615,20 +633,22 @@ secrets despite its name.
 
 What each of those secrets can do is up to whoever issued it, and Slack's are worth
 knowing about. The Slack app that `keryx setup` has you create gives its bot token two
-powers at the lowest level: posting messages as the app (`chat:write`), and uploading
+powers whatever you tick: posting messages as the app (`chat:write`), and uploading
 files as the app, which also covers deleting one (`files:write`). It can no longer
 read your workspace's member list or anybody's email address, which an earlier version
-used to find you by your address. **Keryx also holds a Slack user token at every level
-now**, because a bot token does not say who installed the app and a user token does: it
-is how Keryx knows which member you are. At `announce` and `converse` that token has one
-permission, `emoji:read`, which lets it list the workspace's custom emoji and nothing
-else; Keryx uses the token once, when you connect, to ask Slack whose it is, and never
-again. At `read` and `write` the same token can read your Slack, and at `write` post as
-you: the section below says what. Whatever a token can do, it can do for as long as it
-is valid, and so can anyone who can read `secrets.toml`. **Lowering the level does not
-shrink a token**: one issued at `read` keeps its `read` permissions at Slack until you
-reinstall the app with the lower level's manifest, so Keryx forgets that token when you
-lower out of `read`, and asks for the new one at your next login. An app connected
+used to find you by your address. **Keryx also holds a Slack user token whatever you
+tick**, because a bot token does not say who installed the app and a user token does: it
+is how Keryx knows which member you are. With neither reading nor sending ticked that
+token has one permission, `emoji:read`, which lets it list the workspace's custom emoji
+and nothing else; Keryx uses the token once, when you connect, to ask Slack whose it is,
+and never again. With reading ticked the same token can read your Slack, and with
+sending ticked post as you: the section above says what. Whatever a token can do, it
+can do for as long as it is valid, and so can anyone who can read `secrets.toml`.
+**Unticking a box does not shrink a token**: one issued with reading ticked keeps its
+permissions at Slack until you reinstall the app from the manifest for what is ticked
+now, so Keryx forgets that token once neither reading nor sending is ticked, and asks
+for the new one at your next login. (With one of the two still ticked the token is
+kept, since that one needs it, and Keryx simply stops using it for the other.) An app connected
 before any of this, with a bot token alone, keeps working as it was.
 
 Keryx uses a file rather than a keyring on purpose. A service that systemd starts at boot,

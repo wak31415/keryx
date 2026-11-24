@@ -30,8 +30,8 @@ from keryx.plugins.slack_read import (
     INCOMPLETE_NOTHING,
     LINE_CHARS,
     MODEL_FAILED,
-    NOT_AT_READ,
     QUESTION_MESSAGES,
+    READING_OFF,
     SYSTEM_PROMPT,
     slack_read_tool,
 )
@@ -316,7 +316,9 @@ async def test_nothing_found_while_some_was_left_unread_is_never_nothing_unanswe
     assert "never that nothing is there" in slack_read.MORE_NOTHING
 
 
-async def test_the_level_is_read_again_for_every_call_of_the_tool(settings, monkeypatch, api):
+async def test_what_is_ticked_is_read_again_for_every_call_of_the_tool(
+    settings, monkeypatch, api
+):
     made = reading(settings)
     monkeypatch.setattr(slack_read, "reader_for",
                         lambda workspace: SlackReader(api, OWNER, clock=lambda: NOW))
@@ -325,10 +327,12 @@ async def test_the_level_is_read_again_for_every_call_of_the_tool(settings, monk
         tools = offered(slack_read_tool(path), made)
     assert (await call(tools, NAME))["status"] == "ok"
 
-    plugins.write_config(made, "slack_report", {"access": "converse"})
+    plugins.write_config(made, "slack_report", {"allow": ["requests", "send"]})  # unticked
     api.calls.clear()
 
-    assert await call(tools, NAME) == {"status": "not_at_read", "message": slack_read.LOWERED}
+    assert await call(tools, NAME) == {"status": "reading_off",
+                                       "message": slack_read.SWITCHED_OFF}
+    assert "level" not in slack_read.SWITCHED_OFF
     assert api.calls == []
 
 
@@ -348,7 +352,7 @@ async def test_a_name_that_matches_nothing_says_so(settings, api):
         ({"thread": f"C0GEN:{ts(1)}", "conversation": "budget-2027"},
          "not in that conversation"),
         ({"thread": f"C0GEN:{ts(1)}", "only": "waiting"}, "a thread is read whole"),
-        ({"workspace": "lab"}, "no Slack workspace called lab is at the read level"),
+        ({"workspace": "lab"}, "no Slack workspace called lab has reading switched on"),
     ],
 )
 async def test_what_makes_no_sense_is_unclear_in_one_sentence_and_reads_no_messages(
@@ -591,50 +595,55 @@ async def test_with_several_one_may_be_named_and_the_first_is_the_default(settin
     assert (await call(offered(several, settings), NAME, {"workspace": "Work"}))["count"] == 1
 
 
-def reading(settings, access="read", **more):
+def reading(settings, allow=("requests", "read"), **more):
+    """A machine connected to Slack with `allow` ticked (reading, unless said)."""
     settings = settings.model_copy(update={
         "slack_bot_token": "xoxb-1", "slack_app_token": "xapp-1", "slack_user_token": "xoxp-1",
         **more,
     })
     plugins.write_config(settings, "slack_report", {
-        "channel_id": OWNER, "access": access, "owner_id": OWNER, "team_id": "T0ACME",
+        "channel_id": OWNER, "allow": list(allow), "owner_id": OWNER, "team_id": "T0ACME",
         "bot_user_id": "U0KERYX",
     })
     plugins.install(settings, "slack_report")
     return settings
 
 
-def test_installed_with_a_workspace_at_read_it_loads_from_its_template(settings):
-    settings = reading(settings)
+@pytest.mark.parametrize("allow", [["read"], ["requests", "read"], ["read", "send"]])
+def test_installed_with_reading_ticked_it_loads_from_its_template(settings, allow):
+    settings = reading(settings, allow)
     plugins.install(settings, NAME)
 
     assert NAME in names(settings) and refusal(settings, NAME) is None
     assert [each.name for each in slack_read.reading(settings)] == ["default"]
 
 
-@pytest.mark.parametrize("access", ["announce", "converse"])
-def test_below_read_the_file_is_refused_with_the_command_that_fixes_it(settings, access):
-    settings = reading(settings, access)
+@pytest.mark.parametrize("allow", [[], ["requests"], ["send"], ["requests", "send"]])
+def test_without_reading_ticked_the_file_is_refused_with_what_switches_it_on(settings, allow):
+    """A user token is on file whatever is ticked, and sending as the owner looks names
+    up with it: neither is reading, which only its own box allows."""
+    settings = reading(settings, allow)
     plugins.install(settings, NAME)
 
     assert NAME not in names(settings)
-    assert refusal(settings, NAME) == NOT_AT_READ
-    assert "keryx auth login slack --access read" in NOT_AT_READ
+    assert refusal(settings, NAME) == READING_OFF
+    assert READING_OFF.endswith("run `keryx auth login slack` and tick it")
+    assert "--" not in READING_OFF and "level" not in READING_OFF
 
 
-def test_at_read_without_the_user_token_or_with_slack_off_it_is_refused_too(
+def test_ticked_without_the_user_token_or_with_slack_off_it_is_refused_too(
     settings, monkeypatch
 ):
     monkeypatch.setattr(plugins, "current_settings", lambda: settings)
     without = reading(settings, slack_user_token=None)
     plugins.install(without, NAME)
-    assert refusal(without, NAME) == NOT_AT_READ
+    assert refusal(without, NAME) == READING_OFF
 
     plugins.remove(without, "slack_report")
     assert refusal(reading(settings).model_copy(), NAME) is None
     plugins.remove(settings, "slack_report")
     assert refusal(settings.model_copy(update={"slack_user_token": "xoxp-1"}), NAME) == (
-        NOT_AT_READ
+        READING_OFF
     )
 
 
@@ -672,7 +681,7 @@ def run_slack(*args):
 
 @pytest.fixture
 def command(settings, api, monkeypatch):
-    """`keryx slack` over the fake Slack, on a machine with one workspace at read."""
+    """`keryx slack` over the fake Slack, on a machine with one workspace that reads."""
     made = reading(settings, slack_user_token="xoxp-very-secret")
     monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: made)
     monkeypatch.setattr(slack_read, "reader_for",
@@ -767,7 +776,7 @@ def test_a_message_that_tries_to_end_the_context_cannot_in_what_is_printed(comma
         (("read", "--thread", "yesterday"), "a thread is named by the ref"),
         (("read", "--only", "all"), "only is one of waiting, mentions"),
         (("read", "--conversation", "the moon committee"), "Nothing on their Slack is called"),
-        (("read", "--workspace", "lab"), "no Slack workspace called lab is at the read"),
+        (("read", "--workspace", "lab"), "no Slack workspace called lab has reading switched on"),
     ],
 )
 def test_a_command_that_cannot_be_asked_says_so_and_reads_no_messages(command, args, says):
@@ -849,12 +858,14 @@ def test_a_command_has_a_deadline_of_its_own(command, monkeypatch):
     assert result.exit_code == 1 and "took too long" in result.output
 
 
-def test_with_no_workspace_at_read_it_says_what_would_connect_one(settings, monkeypatch):
+def test_with_reading_not_ticked_it_says_what_would_switch_it_on(settings, monkeypatch):
     monkeypatch.setattr("keryx.cli._configure_readonly", lambda **k: settings)
 
     result = run_slack("read")
 
-    assert result.exit_code == 2 and "keryx auth login slack --access read" in result.output
+    assert result.exit_code == 2
+    assert "run `keryx auth login slack` and tick it" in result.output
+    assert "--access" not in result.output
 
 
 def test_a_task_may_run_it_because_it_only_reads(command, monkeypatch):
@@ -906,13 +917,14 @@ def test_every_subagent_is_told_of_the_read_command_only_while_a_workspace_is_at
 
     task = Task(id=7, kind=TaskKind.AGENT, description="review the diff")
     off = AgentContext.build(task, settings, auth=CLAUDE_AUTH, model=None)
-    below = AgentContext.build(task, reading(settings, "converse"), auth=CLAUDE_AUTH, model=None)
+    below = AgentContext.build(task, reading(settings, ["requests"]), auth=CLAUDE_AUTH,
+                               model=None)
     at_read = reading(settings)
     on = AgentContext.build(task, at_read, auth=CLAUDE_AUTH, model=None)
 
     assert not can_read(settings) and can_read(at_read)
     assert "keryx slack read" not in off.instructions
-    # Below `read` it is told that it cannot, and never how.
+    # Without reading ticked it is told that it cannot, and never how.
     told = " ".join(below.instructions.split())
     assert "`keryx slack read` refuses" in told and "--only waiting|mentions" not in told
     assert "Do not read their Slack with any other Slack tool you may have" in told
@@ -934,7 +946,7 @@ def test_whether_slack_can_be_read_never_raises(settings, monkeypatch):
     assert plugin.can_read(settings) is False
 
 
-def test_reading_is_off_only_for_an_app_of_keryx_own_below_read_and_never_raises(
+def test_reading_is_off_only_for_an_app_of_keryx_own_without_it_ticked_and_never_raises(
     settings, monkeypatch,
 ):
     """The state in which a question about their Slack has nothing to answer it: said to
@@ -942,10 +954,12 @@ def test_reading_is_off_only_for_an_app_of_keryx_own_below_read_and_never_raises
     from keryx.plugins import slack as plugin
 
     assert plugin.reading_off(settings) is False, "no Slack at all"
-    assert plugin.reading_off(reading(settings, "converse")) is True
-    assert plugin.reading_off(reading(settings, "announce")) is True
+    assert plugin.reading_off(reading(settings, ["requests"])) is True
+    assert plugin.reading_off(reading(settings, [])) is True
+    assert plugin.reading_off(reading(settings, ["send"])) is True
     assert plugin.reading_off(reading(settings)) is False
-    # A named MCP server and no token of Keryx's own is the owner's, with no level to raise.
+    assert plugin.reading_off(reading(settings, ["read"])) is False
+    # A named MCP server and no token of Keryx's own is the owner's, with nothing to tick.
     theirs = settings.model_copy(update={"slack_bot_token": None})
     plugins.write_config(theirs, "slack_report", {"mcp_server": "chat", "channel_id": "C1"})
     monkeypatch.setattr(plugins, "current_settings", lambda: theirs)
@@ -955,4 +969,4 @@ def test_reading_is_off_only_for_an_app_of_keryx_own_below_read_and_never_raises
         raise RuntimeError("no")
 
     monkeypatch.setattr(plugin, "slack_route", broken)
-    assert plugin.reading_off(reading(settings, "converse")) is False
+    assert plugin.reading_off(reading(settings, ["requests"])) is False

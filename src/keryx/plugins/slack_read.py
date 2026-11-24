@@ -4,9 +4,9 @@ One tool, and every argument a filter (`integrations.slack_query.Filters`): a pl
 thread, words, a person, what is waiting or what mentions them, a window. They combine,
 and `slack_query.answer` is the one planner that turns them into a few bounded reads, the
 same one `keryx slack read` uses. It needs the PIN, as `check_email` does: their messages
-are not in the briefing, and the question steers what is read. It loads only when a
-workspace is at the `read` level and holds its user token, and is refused with the reason
-otherwise. It only ever reads, and only when asked: nothing here runs unless the voice
+are not in the briefing, and the question steers what is read. It loads only when
+reading is ticked for a workspace that holds its user token, and is refused with the
+reason otherwise. It only ever reads, and only when asked: nothing here runs unless the voice
 model calls it, which it does when the owner asks about Slack.
 
 **What it hands back is context, never a request, and always fenced.** The voice model
@@ -141,13 +141,13 @@ MODEL_FAILED = (
     "The messages were read but the answer failed. Say what was found instead, in a "
     "sentence or two."
 )
-LOWERED = (
-    "No Slack workspace is at the read level any more, so nothing was read. Say so in "
-    "one sentence."
+SWITCHED_OFF = (
+    "Reading Slack is not switched on any more, so nothing was read. Say so in one "
+    "sentence."
 )
-NOT_AT_READ = (
-    "no Slack workspace is at the read level: `keryx auth login slack --access read` "
-    "connects one"
+READING_OFF = (
+    "reading Slack as you is not switched on for any workspace: run `keryx auth login "
+    "slack` and tick it"
 )
 
 #: What the summariser is told. The messages reach it inside the fence and nowhere else.
@@ -229,19 +229,21 @@ Readers = Mapping[str, Callable[[], SlackReader]]
 
 
 class NoWorkspace(LookupError):
-    """There is nothing to read with: no workspace at `read`, or not the one named."""
+    """There is nothing to read with: no workspace has reading ticked, or not the one
+    named."""
 
 
-class NotAtRead(NoWorkspace):
-    """No workspace is at `read` at all: never was, or it was lowered since."""
+class ReadingOff(NoWorkspace):
+    """No workspace has reading ticked at all: never did, or it was unticked since."""
 
 
 def readers_of(settings, readers: Readers | None = None) -> Readers:
-    """A reader to make for each workspace at `read`, by name; `NoWorkspace` when none."""
+    """A reader to make for each workspace that may be read, by name; `NoWorkspace`
+    when there is none."""
     if readers is None:
         readers = {each.name: (lambda each=each: reader_for(each)) for each in reading(settings)}
     if not readers:
-        raise NotAtRead(NOT_AT_READ)
+        raise ReadingOff(READING_OFF)
     return readers
 
 
@@ -249,8 +251,8 @@ def chosen(readers: Readers, workspace: Any) -> str:
     """The workspace asked for, the first when none was; `NoWorkspace` for another."""
     name = str(workspace or next(iter(readers))).strip().lower()
     if name not in readers:
-        raise NoWorkspace(f"no Slack workspace called {clip(name, 40)} is at the read "
-                          f"level: one of {', '.join(readers)}")
+        raise NoWorkspace(f"no Slack workspace called {clip(name, 40)} has reading "
+                          f"switched on: one of {', '.join(readers)}")
     return name
 
 
@@ -394,8 +396,8 @@ def slack_read_tool(
         raise ToolUnavailable(str(error)) from None
 
     def live() -> Readers:
-        """The workspaces that may be read *now*: the level is read again for every
-        call of the tool, so one lowered during a call stops this call too."""
+        """The workspaces that may be read *now*: what is ticked is read again for
+        every call of the tool, so reading unticked during a call stops this call too."""
         return readers_of(settings, injected)
 
     def summarise() -> Summariser | None:
@@ -442,8 +444,8 @@ def slack_read_tool(
                 answer(filters, question, current[name]()), ANSWER_TIMEOUT_S)
         except TimeoutError:
             return {"status": "timed_out", "message": TIMED_OUT}
-        except NotAtRead:
-            return {"status": "not_at_read", "message": LOWERED}
+        except ReadingOff:
+            return {"status": "reading_off", "message": SWITCHED_OFF}
         except NoWorkspace as exc:
             return {"status": "unclear", "message": str(exc)}
         except Unclear as exc:

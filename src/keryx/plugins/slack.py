@@ -22,8 +22,9 @@ through `report_route`), the subagent's Slack paragraph (`agents.base`), and the
 server a Codex subagent is handed (`agents.codex`). With the plugin off there is no route,
 and none of them reaches Slack.
 
-**Workspaces.** One Slack app per workspace, each a `SlackWorkspace`: a name, an access
-level, the owner's member id there, where to post, and its tokens. The first is `default`:
+**Workspaces.** One Slack app per workspace, each a `SlackWorkspace`: a name, what the
+owner ticked for it (`allowed`, a set of `integrations.slack.Permission`), the owner's
+member id there, where to post, and its tokens. The first is `default`:
 the top of the TOML and the three plain `SLACK_*_TOKEN` settings, which is exactly what a
 single-workspace install has always been, so it needs no migration. Each further one is a
 `[workspace-NAME]` table and an entry of `SLACK_WORKSPACE_TOKENS`. Everything is sent to
@@ -43,21 +44,26 @@ from keryx.config import Settings
 from keryx.config.settings import SLACK_DEFAULT_WORKSPACE
 from keryx.integrations.slack import (
     APP,
+    BASE,
     BOT,
     FILE_BOT_SCOPES,
+    PERMISSIONS,
     USER,
-    Access,
+    Allowed,
     FileRefused,
     LocalFile,
+    Permission,
     SlackFiles,
     SlackPoster,
     SlackSender,
     SlackWebApi,
     is_conversation,
     local_files,
+    permissions,
     slack_credentials,
     used_kinds,
 )
+from keryx.integrations.slack import mentions as _mentions
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from keryx.tasks.models import Task
@@ -69,6 +75,23 @@ DEFAULT = SLACK_DEFAULT_WORKSPACE
 SLACK_CHANNEL = "slack"
 
 FAILED_MESSAGE = "Slack would not take the message; tell them it did not go through"
+
+#: What the app always does, and what each thing the owner may tick is, in a few plain
+#: words: how `doctor`, `keryx plugins` and `keryx auth status` say what is on and off.
+#: Never a name out of the code.
+ALWAYS = "sending you reports and files"
+IN_WORDS = {
+    Permission.REQUESTS: "acting on what you type to the app",
+    Permission.READ: "reading Slack as you",
+    Permission.SEND: "sending messages as you",
+}
+
+
+def in_words(allowed: Allowed) -> str:
+    """What is on and what is off there, in plain words, on one line."""
+    on = [ALWAYS, *(IN_WORDS[each] for each in PERMISSIONS if each in allowed)]
+    off = [IN_WORDS[each] for each in PERMISSIONS if each not in allowed]
+    return f"on: {', '.join(on)}" + (f"; off: {', '.join(off)}" if off else "")
 
 
 @dataclass(frozen=True)
@@ -139,7 +162,8 @@ class SlackWorkspace:
     """One workspace's Slack app as Keryx holds it: its settings and its tokens."""
 
     name: str
-    access: Access = Access.ANNOUNCE
+    #: What the owner ticked for it, beyond sending them reports and files.
+    allowed: Allowed = BASE
     #: Where it posts: the owner's member id, or a channel's id.
     channel: str = ""
     #: The owner's member id there: the only member whose messages are acted on.
@@ -165,12 +189,13 @@ class SlackWorkspace:
 
     @property
     def missing(self) -> tuple[str, ...]:
-        """What its level needs that is not there, in words to print; empty when whole."""
-        gaps = [f"its {kind} token" for kind in used_kinds(self.access)
+        """What it needs for what is ticked that is not there, in words to print; empty
+        when whole."""
+        gaps = [f"its {kind} token" for kind in used_kinds(self.allowed)
                 if not self.token(kind)]
         if not self.channel:
             gaps.append("somewhere to post")
-        if self.access.reaches(Access.CONVERSE):
+        if Permission.REQUESTS in self.allowed:
             if not self.owner_id:
                 gaps.append("your member id")
             if not self.team_id:
@@ -192,21 +217,28 @@ class SlackWorkspace:
         there is nothing to hold one to, so nothing is heard.
         """
         return bool(
-            self.access.reaches(Access.CONVERSE)
+            Permission.REQUESTS in self.allowed
             and self.token(BOT) and self.token(APP)
             and self.owner_id and self.team_id and self.bot_user_id
         )
 
     @property
+    def mentions(self) -> bool:
+        """Whether the owner's mention of the app in a conversation it was added to is
+        acted on there (`integrations.slack.mentions`)."""
+        return _mentions(self.allowed)
+
+    @property
     def reads(self) -> bool:
-        """Whether Keryx may read Slack as the owner here, and holds the token to."""
-        return bool(self.access.reaches(Access.READ) and self.token(USER))
+        """Whether Keryx may read Slack as the owner here, and holds the token to. What
+        is ticked decides, never a token being on file."""
+        return bool(Permission.READ in self.allowed and self.token(USER))
 
     @property
     def writes(self) -> bool:
-        """Whether a message may be sent there as the owner: `write`, the user token it
-        is sent with, and the member that token belongs to."""
-        return bool(self.access.reaches(Access.WRITE) and self.token(USER) and self.owner_id)
+        """Whether a message may be sent there as the owner: it is ticked, the user
+        token it is sent with is there, and so is the member that token belongs to."""
+        return bool(Permission.SEND in self.allowed and self.token(USER) and self.owner_id)
 
     def poster(self, channel: str | None = None) -> SlackWebApi | None:
         """What posts as this workspace's bot, to `channel` or where it usually posts."""
@@ -222,7 +254,7 @@ class SlackWorkspace:
 def _workspace(name: str, values: Mapping[str, Any], tokens: Mapping[str, str]) -> SlackWorkspace:
     return SlackWorkspace(
         name=name,
-        access=Access(values.get("access") or Access.ANNOUNCE),
+        allowed=permissions(values.get("allow") or ()),
         channel=str(values.get("channel_id") or ""),
         owner_id=str(values.get("owner_id") or ""),
         team=str(values.get("team") or ""),
@@ -307,8 +339,8 @@ def can_read(settings: Settings) -> bool:
 def reading_off(settings: Settings) -> bool:
     """Whether Keryx has a Slack app of its own that may not read as the owner: the
     state in which a question about their Slack has no tool and no command to answer it.
-    Not so with no app (a named MCP server is the owner's own, with no level to raise),
-    and not once any workspace is at `read`. Never raises."""
+    Not so with no app (a named MCP server is the owner's own, with nothing to tick),
+    and not once reading is ticked for any workspace. Never raises."""
     try:
         route = slack_route(settings)
         own = route is not None and route.mcp_server is None
@@ -501,7 +533,7 @@ def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
     workspace's, so with no thread, or with one in a team that is gone, it goes where the
     first workspace usually posts, as a message of its own, and that becomes its thread.
     A thread with no team beside it is one recorded while the connection had none on file
-    either (an install from before levels): it stands only for as long as that is so.
+    either (an install from before requests): it stands only for as long as that is so.
     """
     found = {each.name: each for each in connected(settings)}
     asked_here = task.origin_channel == SLACK_CHANNEL

@@ -421,7 +421,7 @@ def test_with_a_workspace_at_read_every_subagent_is_told_how_to_read_slack_and_w
 def test_with_an_app_that_may_not_read_a_subagent_is_told_so_and_to_use_no_other_slack_tool(
     unwrapped,
 ):
-    """Below `read` nothing said that reading was off, so a request to read Slack was
+    """Without reading ticked nothing said that it was off, so a request to read Slack was
     answered with whatever other Slack tool the agent had: signed in to another
     workspace, and reported as theirs."""
     spoken = Task(id=7, kind=TaskKind.AGENT, description="x", origin_channel="phone")
@@ -430,9 +430,11 @@ def test_with_an_app_that_may_not_read_a_subagent_is_told_so_and_to_use_no_other
 
     assert "You cannot read Ada's Slack" in suffix
     assert "say that in one sentence, in your report and in your spoken summary" in suffix
-    assert "signing in to Slack again at their keyboard, at the read level" in suffix
-    assert ("`keryx auth login slack --access read`, goes in the report and not in the "
-            "spoken line") in suffix
+    assert ("signing in to Slack again at their keyboard, and ticking it there, switches "
+            "it on") in suffix
+    assert ("`keryx auth login slack`, goes in the report and not in the spoken line"
+            ) in suffix
+    assert "--access" not in suffix and "read level" not in suffix
     assert "Do not read their Slack with any other Slack tool you may have" in suffix
     assert "it may be signed in to another workspace" in suffix
     assert "unless the request itself names that tool" in suffix
@@ -448,8 +450,8 @@ def test_it_is_told_reading_is_off_only_while_keryx_has_an_app_that_cannot_read(
         return "You cannot read" in unwrapped(render_subagent_suffix(spoken, **flags))
 
     assert said(slack_report=True)
-    # At `read` it reads with the command; with no app of Keryx's there is no level to
-    # raise, and an MCP server of the owner's stays theirs to use.
+    # With reading ticked it reads with the command; with no app of Keryx's there is
+    # nothing to tick, and an MCP server of the owner's stays theirs to use.
     assert not said(slack_report=True, slack_read=True)
     assert not said()
     assert not said(slack_report=True, slack_mcp_server="slack")

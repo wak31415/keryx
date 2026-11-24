@@ -103,8 +103,8 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
 | `SLACK_BOT_TOKEN` | (secret) | never | The bot token (`xoxb-`) of your Slack app: what the `slack_report` plugin, each finished task's report and the PIN-lockout alert post with. `keryx auth login slack` sets it. |
-| `SLACK_APP_TOKEN` | (secret) | never | The app-level token (`xapp-`, with `connections:write`) Keryx listens to your Slack app with, at the `converse` level and above. `keryx auth login slack` sets it. |
-| `SLACK_USER_TOKEN` | (secret) | never | Your own user token (`xoxp-`) from your Slack app. It is how Slack says which member you are, at every level; from the `read` level it also reads Slack as you, and at `write` sends as you. `keryx auth login slack` sets it. |
+| `SLACK_APP_TOKEN` | (secret) | never | The app-level token (`xapp-`, with `connections:write`) Keryx listens to your Slack app with, once it may act on what you type to the app. `keryx auth login slack` sets it. |
+| `SLACK_USER_TOKEN` | (secret) | never | Your own user token (`xoxp-`) from your Slack app. It is how Slack says which member you are, always; it also reads Slack as you and sends as you, each only once you have ticked it. `keryx auth login slack` sets it. |
 | `SLACK_WORKSPACE_TOKENS` | (secret) | never | The tokens of each further Slack workspace, by the name you gave it, as one line of JSON: `{"work": {"bot": "xoxb-…", "app": "xapp-…", "user": "xoxp-…"}}`. `keryx auth login slack --workspace NAME` writes it; the three settings above are the first workspace's. |
 | `OPENAI_ADMIN_KEY` | (secret) | never | An OpenAI *admin* key for the `check_billing` plugin; the ordinary key gets a 401 on the costs endpoint. |
 | `ANTHROPIC_ADMIN_KEY` | (secret) | never | An `sk-ant-admin…` key, for what the subagents have cost (`check_billing`). |

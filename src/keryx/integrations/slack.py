@@ -25,19 +25,21 @@ Slack said about it only the code is kept, so no refusal can carry the token bac
 success carries what was asked for: the workspace's name and address, or the member's id
 and name, each cut to one line.
 
-The app comes at one of four **access levels** (`Access`), chosen before it is created
-because the level decides the manifest: `announce` posts and reads nothing, `converse`
-also hears the direct messages typed to the app itself (Socket Mode, an app-level token),
-and `read` also holds a user token that reads Slack as the owner. `app_manifest(access)`
-is the only place a level's scopes are written. What listens is `slack_socket`, and what
-acts on a message is `keryx.slack_inbox`.
+What the app may do is a **set of permissions the owner ticks** (`Permission`), chosen
+before it is created because the set decides the manifest. Sending them reports and files
+is the base and always there. `requests` also has Keryx hear the direct messages typed to
+the app itself (Socket Mode, an app-level token); `read` has the user token read Slack as
+the owner; `send` has it post as the owner. Any combination is one app, and
+`app_manifest(allowed)` with the `*_SCOPES` constants is the only place a permission's
+scopes are written. What listens is `slack_socket`, and what acts on a message is
+`keryx.slack_inbox`.
 
 The third part is a file (`SlackFiles`, behind `keryx slack report --file`). Slack takes
 one in three steps, and each is its own request: `files.getUploadURLExternal` answers
 with an address and a file id, the bytes are posted to that address, and
 `files.completeUploadExternal` shares the file into a conversation. The single-call
 `files.upload` was retired on 2025-11-12. Both methods take the bot scope `files:write`
-(`FILE_BOT_SCOPES`), which every level's manifest has; an app made before it lacks the
+(`FILE_BOT_SCOPES`), which every manifest has; an app made before it lacks the
 scope, and Slack then refuses the first step with `missing_scope`, before anything is
 sent. The address is not logged or kept, and the token is never sent to it.
 """
@@ -84,55 +86,89 @@ MAX_FILES = 10
 
 
 
-class Access(StrEnum):
-    """How much of Slack the owner's app may see: a ladder, each level holding the last."""
+class Permission(StrEnum):
+    """One thing the owner may tick for their Slack app, beyond what it always does
+    (send them reports and files). Independent: any set of them is one manifest."""
 
-    #: Keryx posts, and reads nothing.
-    ANNOUNCE = "announce"
-    #: And is sent the direct messages typed to the app itself; one from the owner that
-    #: mentions the app may resume or start work.
-    CONVERSE = "converse"
-    #: And is sent the mentions of the app in conversations it was added to (anyone's;
-    #: only the owner's is acted on, and answered there), and reads Slack as the owner,
-    #: with a user token, when the owner asks about messages.
+    #: Keryx is sent the direct messages typed to the app itself, and acts on the
+    #: owner's: a new message starts work, a reply under a report resumes its task.
+    REQUESTS = "requests"
+    #: Keryx reads Slack as the owner, with their user token, when they ask about
+    #: messages. With `REQUESTS` as well, the owner's mention of the app in a
+    #: conversation it was added to is a request too (`mentions`).
     READ = "read"
-    #: And may send a message as the owner, with the same user token, to a person, a
+    #: Keryx may send a message as the owner, with the same user token, to a person, a
     #: channel or a thread, when the owner asks for exactly that message.
-    WRITE = "write"
-
-    def reaches(self, level: "Access") -> bool:
-        """Whether this level is `level` or above it."""
-        return LEVELS.index(self) >= LEVELS.index(level)
+    SEND = "send"
 
 
-#: The ladder, lowest first.
-LEVELS = tuple(Access)
+#: Every permission, in the order they are shown and written down.
+PERMISSIONS = tuple(Permission)
+#: What a workspace's app may do beyond the base: a set of `Permission`.
+Allowed = frozenset[Permission]
+#: Nothing ticked: the app sends the owner reports and files, and that is all.
+BASE: Allowed = frozenset()
+EVERYTHING: Allowed = frozenset(PERMISSIONS)
+
+
+def permissions(names: Iterable[object]) -> Allowed:
+    """`names` as a set of permissions. `ValueError` for one that is not a permission,
+    carrying that name."""
+    found = set()
+    for name in names:
+        try:
+            found.add(Permission(str(name).strip().lower()))
+        except ValueError:
+            raise ValueError(str(name)) from None
+    return frozenset(found)
+
+
+def ordered(chosen: Iterable[Permission]) -> tuple[Permission, ...]:
+    """`chosen` in the one order permissions are shown and stored in."""
+    chosen = set(chosen)
+    return tuple(each for each in PERMISSIONS if each in chosen)
+
+
+def mentions(chosen: Allowed) -> bool:
+    """Whether the owner's mention of the app in a conversation it was added to is a
+    request: with `REQUESTS` (something has to listen) and `READ` (the thread around a
+    mention is somebody else's words, which only the owner's own token may read, so
+    without it the work would be handed one line of a conversation it cannot see)."""
+    return Permission.REQUESTS in chosen and Permission.READ in chosen
+
+
+def as_owner(chosen: Allowed) -> bool:
+    """Whether the user token is used for anything after it has said who the owner is."""
+    return Permission.READ in chosen or Permission.SEND in chosen
+
 
 #: What sending a file takes: `files.getUploadURLExternal` and
 #: `files.completeUploadExternal` both ask for this one scope and no other. It also lets
 #: the app delete a file it uploaded, which nothing here does.
 FILE_BOT_SCOPES = ("files:write",)
-#: What the app may do at every level. `chat:write` posts, and with a member id as the
-#: channel it posts to that member's conversation with the app, so no `im:write`. The bot
-#: reads nothing about members: who the owner is comes from their own user token, so the
-#: `users:read` and `users:read.email` an address lookup needed are gone.
+#: What the app may do whatever is ticked. `chat:write` posts, and with a member id as
+#: the channel it posts to that member's conversation with the app, so no `im:write`.
+#: The bot reads nothing about members: who the owner is comes from their own user token,
+#: so the `users:read` and `users:read.email` an address lookup needed are gone.
 BOT_SCOPES = ("chat:write", *FILE_BOT_SCOPES)
-#: Added at `converse`: `im:history` is the `message.im` event (only the app's own direct
-#: messages, as a bot scope), and `reactions:write` is the acknowledgement, a reaction,
-#: because a reaction notifies nobody and a "got it" message does.
-CONVERSE_BOT_SCOPES = ("im:history", "reactions:write")
-#: Added at `read`: `app_mentions:read` is the `app_mention` event, a mention of the app
-#: in a conversation it has been added to. Nothing else of those conversations is sent
-#: to Keryx, and the bot is given no scope that could read them: what is read there is
-#: read as the owner, with the user token, and only when they ask.
-READ_BOT_SCOPES = ("app_mentions:read",)
-#: The events the app subscribes to, as the bot: its own direct messages at `converse`,
-#: and at `read` the mentions of it elsewhere. Never `message.channels`, `.groups` or
-#: `.mpim`, and never a user-level event: Keryx must not be sent a conversation it was
-#: not addressed in, and a user-level event is every direct message the owner has.
+#: Added with `requests`: `im:history` is the `message.im` event (only the app's own
+#: direct messages, as a bot scope), and `reactions:write` is the acknowledgement, a
+#: reaction, because a reaction notifies nobody and a "got it" message does.
+REQUESTS_BOT_SCOPES = ("im:history", "reactions:write")
+#: Added with `requests` and `read` together (`mentions`): `app_mentions:read` is the
+#: `app_mention` event, a mention of the app in a conversation it has been added to.
+#: Nothing else of those conversations is sent to Keryx, and the bot is given no scope
+#: that could read them: what is read there is read as the owner, with the user token,
+#: and only when they ask.
+MENTION_BOT_SCOPES = ("app_mentions:read",)
+#: The events the app subscribes to, as the bot: its own direct messages with
+#: `requests`, and with `read` as well the mentions of it elsewhere. Never
+#: `message.channels`, `.groups` or `.mpim`, and never a user-level event: Keryx must not
+#: be sent a conversation it was not addressed in, and a user-level event is every
+#: direct message the owner has.
 BOT_EVENTS = ("message.im",)
-READ_BOT_EVENTS = ("app_mention",)
-#: Search, as the owner, at `read`. The one constant phase two changes if it changes.
+MENTION_BOT_EVENTS = ("app_mention",)
+#: Search, as the owner, with `read`. The one constant phase two changes if it changes.
 #: `search:read` is the scope `search.messages` takes. Slack calls it legacy and points
 #: at the Real-time Search API (`assistant.search.context`, the granular
 #: `search:read.public|private|im|mpim`), but that API's terms say its results must not
@@ -140,27 +176,33 @@ READ_BOT_EVENTS = ("app_mention",)
 #: report. The legacy scope carries no such term, and each owner's app is internal to
 #: their own workspace.
 SEARCH_SCOPES = ("search:read",)
-#: What the user token may do at `read`: the history and the listing of each kind of
-#: conversation the owner is in, the member list, and search.
-USER_SCOPES = (
-    "channels:history", "groups:history", "im:history", "mpim:history",
+#: What the user token needs to find who or where is meant, with `read` or `send`: the
+#: listing of each kind of conversation the owner is in (`users.conversations`) and the
+#: member list (`users.list`, `users.info`). Names and ids, and no message.
+LOOKUP_USER_SCOPES = (
     "channels:read", "groups:read", "im:read", "mpim:read",
     "users:read",
+)
+#: Added to the user token with `read`: the history of each kind of conversation the
+#: owner is in, and search. `send` alone never gets these.
+READ_USER_SCOPES = (
+    "channels:history", "groups:history", "im:history", "mpim:history",
     *SEARCH_SCOPES,
 )
-#: What the user token may do below `read`: one scope, the least revealing Slack grants a
-#: user token, because an install issues a user token only when it asks for a user
-#: scope, and the token is what says who installed the app (`auth.test`, which needs no
-#: scope itself). `emoji:read` is "View custom emoji in a workspace": its one method is
-#: `emoji.list`, it is granted to user tokens, it is not a legacy scope, and nothing it
-#: shows is anybody's. (`team:read` also shows the workspace's email domain and lists
-#: external teams and contacts; `identify` is legacy.) Keryx never calls `emoji.list`.
+#: What the user token may do with neither `read` nor `send`: one scope, the least
+#: revealing Slack grants a user token, because an install issues a user token only when
+#: it asks for a user scope, and the token is what says who installed the app
+#: (`auth.test`, which needs no scope itself). `emoji:read` is "View custom emoji in a
+#: workspace": its one method is `emoji.list`, it is granted to user tokens, it is not a
+#: legacy scope, and nothing it shows is anybody's. (`team:read` also shows the
+#: workspace's email domain and lists external teams and contacts; `identify` is
+#: legacy.) Keryx never calls `emoji.list`.
 IDENTITY_USER_SCOPES = ("emoji:read",)
-#: Added to the user token at `write`: `chat:write` posts as the owner wherever they could
-#: post, and `im:write` opens their direct conversation with a member they have not
-#: written to before (`conversations.open`). Nothing that edits, deletes, uploads or
+#: Added to the user token with `send`: `chat:write` posts as the owner wherever they
+#: could post, and `im:write` opens their direct conversation with a member they have
+#: not written to before (`conversations.open`). Nothing that edits, deletes, uploads or
 #: joins: `integrations/slack_write.py` can call those two methods and no other.
-WRITE_USER_SCOPES = ("chat:write", "im:write")
+SEND_USER_SCOPES = ("chat:write", "im:write")
 #: The one scope an app-level token needs for Socket Mode.
 APP_TOKEN_SCOPE = "connections:write"
 #: The acknowledgement: the reaction put on a message that was acted on.
@@ -171,10 +213,10 @@ BOT, APP, USER = "bot", "app", "user"
 TOKEN_PREFIXES = {BOT: "xoxb-", APP: "xapp-", USER: "xoxp-"}
 
 
-def token_kinds(access: Access) -> tuple[str, ...]:
-    """The tokens connecting at a level takes, in the order they are asked for.
+def token_kinds(chosen: Allowed = BASE) -> tuple[str, ...]:
+    """The tokens connecting with `chosen` takes, in the order they are asked for.
 
-    The user token at every level (the owner's ruling of 2026-11-24, "let's always
+    The user token whatever is ticked (the owner's ruling of 2026-11-24, "let's always
     require a user token"): a bot token names the bot, not whoever installed it, and
     `auth.test` on the user token is how Slack itself says who the owner is.
 
@@ -185,18 +227,18 @@ def token_kinds(access: Access) -> tuple[str, ...]:
     nobody is sent back to a page they have left. Nothing else may read an order out of
     this: standard input is told apart by prefix.
     """
-    return (APP, USER, BOT) if access.reaches(Access.CONVERSE) else (USER, BOT)
+    return (APP, USER, BOT) if Permission.REQUESTS in chosen else (USER, BOT)
 
 
-def used_kinds(access: Access) -> tuple[str, ...]:
-    """The tokens a level works with once it is connected: the bot's to post, the app's
-    to listen from `converse`, the user's to read from `read`. Below `read` the user
-    token is used to connect and for nothing after, so a workspace an older build
-    connected, which has none, lacks nothing it runs on."""
+def used_kinds(chosen: Allowed = BASE) -> tuple[str, ...]:
+    """The tokens a connection works with once it is made: the bot's to post, the app's
+    to listen with `requests`, the user's to read or send as the owner. With neither of
+    those ticked the user token is used to connect and for nothing after, so a workspace
+    an older build connected, which has none, lacks nothing it runs on."""
     kinds = [BOT]
-    if access.reaches(Access.CONVERSE):
+    if Permission.REQUESTS in chosen:
         kinds.append(APP)
-    if access.reaches(Access.READ):
+    if as_owner(chosen):
         kinds.append(USER)
     return tuple(kinds)
 
@@ -395,28 +437,33 @@ def _get(url: str, params: dict, token: str) -> dict:
 # --- connecting --------------------------------------------------------------------------
 
 
-def user_scopes(access: Access) -> tuple[str, ...]:
-    """What the user token may do at `access`: below `read`, the one scope that makes
-    Slack issue it at all."""
-    if not access.reaches(Access.READ):
+def user_scopes(chosen: Allowed = BASE) -> tuple[str, ...]:
+    """What the user token may do with `chosen`: with neither `read` nor `send`, the one
+    scope that makes Slack issue it at all. `send` without `read` gets the lookups that
+    find a recipient and the two scopes that post, and no history or search."""
+    if not as_owner(chosen):
         return IDENTITY_USER_SCOPES
-    return USER_SCOPES + (WRITE_USER_SCOPES if access.reaches(Access.WRITE) else ())
-
-
-def bot_scopes(access: Access) -> tuple[str, ...]:
-    """What the app's bot may do at `access`."""
     return (
-        BOT_SCOPES
-        + (CONVERSE_BOT_SCOPES if access.reaches(Access.CONVERSE) else ())
-        + (READ_BOT_SCOPES if access.reaches(Access.READ) else ())
+        LOOKUP_USER_SCOPES
+        + (READ_USER_SCOPES if Permission.READ in chosen else ())
+        + (SEND_USER_SCOPES if Permission.SEND in chosen else ())
     )
 
 
-def bot_events(access: Access) -> tuple[str, ...]:
-    """What the app is sent at `access`; nothing at all below `converse`."""
-    if not access.reaches(Access.CONVERSE):
+def bot_scopes(chosen: Allowed = BASE) -> tuple[str, ...]:
+    """What the app's bot may do with `chosen`."""
+    return (
+        BOT_SCOPES
+        + (REQUESTS_BOT_SCOPES if Permission.REQUESTS in chosen else ())
+        + (MENTION_BOT_SCOPES if mentions(chosen) else ())
+    )
+
+
+def bot_events(chosen: Allowed = BASE) -> tuple[str, ...]:
+    """What the app is sent with `chosen`; nothing at all without `requests`."""
+    if Permission.REQUESTS not in chosen:
         return ()
-    return BOT_EVENTS + (READ_BOT_EVENTS if access.reaches(Access.READ) else ())
+    return BOT_EVENTS + (MENTION_BOT_EVENTS if mentions(chosen) else ())
 
 
 #: What the app is called when the assistant's name leaves nothing Slack would take.
@@ -461,23 +508,23 @@ def app_name(assistant: str | None) -> str:
     return name
 
 
-def app_manifest(access: Access = Access.ANNOUNCE, *, assistant: str = "") -> dict:
-    """The Slack app each owner creates, at the level they chose, called after their
+def app_manifest(chosen: Allowed = BASE, *, assistant: str = "") -> dict:
+    """The Slack app each owner creates, for what they ticked, called after their
     assistant (`app_name`; with none given, `SERVICE_NAME`).
 
-    The only place it is written down. At every level the install also issues the owner
-    a user token (`user_scopes`): it is how Slack says who installed the app, and below
-    `read` its one scope lets it see nothing of theirs. At `announce` it is a bot that
-    posts: nothing listens to Slack — no events, no redirect URL, no socket
-    mode — and the Messages tab is on, read-only, because that tab is where a message to
-    a member arrives and there is nothing to answer one typed there. At `converse` the
-    tab takes messages, the bot subscribes to `message.im` and nothing else, and Socket
-    Mode is on, so no address of Keryx's is ever given to Slack. At `read` the bot is
-    also sent the mentions of it (`app_mention`), and the install asks the owner for a
-    user token, with `USER_SCOPES`; at `write` that token may also post as them
-    (`WRITE_USER_SCOPES`).
+    The only place it is written down. Whatever is ticked, the install also issues the
+    owner a user token (`user_scopes`): it is how Slack says who installed the app, and
+    with neither `read` nor `send` its one scope lets it see nothing of theirs. With
+    nothing ticked it is a bot that posts: nothing listens to Slack (no events, no
+    redirect URL, no socket mode), and the Messages tab is on, read-only, because that
+    tab is where a message to a member arrives and there is nothing to answer one typed
+    there. With `requests` the tab takes messages, the bot subscribes to `message.im`,
+    and Socket Mode is on, so no address of Keryx's is ever given to Slack; with `read`
+    as well it is also sent the mentions of it (`app_mention`). `read` gives the user
+    token the histories and search, `send` lets it post as them, and either gives it
+    the lookups that find who is meant (`LOOKUP_USER_SCOPES`).
     """
-    converse = access.reaches(Access.CONVERSE)
+    requests = Permission.REQUESTS in chosen
     name = app_name(assistant)
     manifest: dict = {
         "display_information": {
@@ -489,29 +536,29 @@ def app_manifest(access: Access = Access.ANNOUNCE, *, assistant: str = "") -> di
             "app_home": {
                 "home_tab_enabled": False,
                 "messages_tab_enabled": True,
-                "messages_tab_read_only_enabled": not converse,
+                "messages_tab_read_only_enabled": not requests,
             },
             "bot_user": {"display_name": name},
         },
-        "oauth_config": {"scopes": {"bot": list(bot_scopes(access)),
-                                    "user": list(user_scopes(access))}},
+        "oauth_config": {"scopes": {"bot": list(bot_scopes(chosen)),
+                                    "user": list(user_scopes(chosen))}},
     }
-    if converse:
+    if requests:
         manifest["settings"] = {
-            "event_subscriptions": {"bot_events": list(bot_events(access))},
+            "event_subscriptions": {"bot_events": list(bot_events(chosen))},
             "socket_mode_enabled": True,
         }
     return manifest
 
 
-def manifest_json(access: Access = Access.ANNOUNCE, *, assistant: str = "") -> str:
+def manifest_json(chosen: Allowed = BASE, *, assistant: str = "") -> str:
     """The manifest as JSON to paste into an existing app's App Manifest page."""
-    return json.dumps(app_manifest(access, assistant=assistant), indent=2, ensure_ascii=False)
+    return json.dumps(app_manifest(chosen, assistant=assistant), indent=2, ensure_ascii=False)
 
 
-def new_app_url(access: Access = Access.ANNOUNCE, *, assistant: str = "") -> str:
+def new_app_url(chosen: Allowed = BASE, *, assistant: str = "") -> str:
     """The link that opens Slack's "create an app" page with `app_manifest` filled in."""
-    manifest = json.dumps(app_manifest(access, assistant=assistant), separators=(",", ":"))
+    manifest = json.dumps(app_manifest(chosen, assistant=assistant), separators=(",", ":"))
     return f"{NEW_APP_URL}?new_app=1&manifest_json={urllib.parse.quote(manifest, safe='')}"
 
 
@@ -582,7 +629,7 @@ class Workspace(SlackResult):
     """`auth.test`: the workspace a token belongs to, and whom it acts as.
 
     `user_id` is the bot's own member id for a bot token, and the member who installed
-    the app for a user token: that is how the owner is known at `read`.
+    the app for a user token: that is how the owner is known.
     """
 
     team: str = ""
@@ -697,8 +744,8 @@ def in_conversation(token: str, channel: str, *, get=_get) -> SlackResult:
     """Whether the app `token` belongs to is a party to `channel`: one read of its latest
     message, which Slack refuses a bot for any conversation it is not in.
 
-    Needs `im:history` for a direct message, which the app has at `converse` (it is what
-    the `message.im` event rests on). Ok means it is; an error in `NOT_A_PARTY` means it
+    Needs `im:history` for a direct message, which the app has with `requests` (it is
+    what the `message.im` event rests on). Ok means it is; an error in `NOT_A_PARTY` means it
     is not; any other error says nothing either way. The message read is not kept.
     """
     _, error = _ask(get, CONVERSATIONS_HISTORY_URL, {"channel": channel, "limit": 1}, token)

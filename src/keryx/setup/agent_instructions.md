@@ -26,37 +26,44 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `--account ADDRESS`. Only when the first command
    says there is no Google OAuth client does the person have to make one (the steps:
    `{google_guide}`), which you then pass once with `--client-file PATH`.
-   For Slack, `keryx auth login slack` first says the four access levels (what Keryx
-   may see there, where it can be set to work from, and at the highest that it can send
-   messages as them) and then prints a link and its steps. The level is the person's to
-   choose: read them what it printed and ask. Never choose `converse`, `read` or `write`
-   for them, since at those any message of theirs to the app (and one that
-   mentions it elsewhere) can start work without the phone PIN, and at `write` Keryx can
-   post in their name; with no answer it is `announce`, which the commands here set up (a higher one adds `--access
-   LEVEL` to both, and its extra tokens to standard input, one to a line). Relay the link
-   and the steps; the
+   For Slack, the app always sends them reports and files, and there are three more
+   things Keryx may do there, each theirs to switch on: `requests` (it acts on what they
+   type to the app), `read` (it reads their Slack as them when they ask) and `send` (it
+   sends messages as them, after a yes). `keryx auth login slack`, run by you with
+   nothing connected, prints what each means and saves nothing: read them that and ask
+   which they want. Never choose one for them, and never suggest one to save a step:
+   with `requests` any message of theirs to the app (and, with `read` as well, one that
+   mentions it elsewhere) can start work without the phone PIN, with `read` Keryx reads
+   their messages, and with `send` it can post in their name. What they said is `--allow`,
+   once for each (`--allow requests --allow read`), or `--allow none` for reports and
+   files alone, which is also what to use when they give no answer; the same options go
+   on both commands below. The best way is theirs: run with no option at a terminal,
+   `keryx auth login slack` shows a box to tick for each and then does everything else,
+   so offer that first. `keryx auth login slack --allow …` prints a link and its steps.
+   Relay the link and the steps; the
    person creates and installs the Slack app it describes and copies two tokens from one
    place, `OAuth & Permissions > OAuth Tokens`: their own User OAuth Token and, below it,
    the Bot User OAuth Token (the user token is how Slack says which member they are; no
-   address is asked for). From `converse` up there is a third, made before installing,
+   address is asked for). With `requests` there is a third, made before installing,
    at `Basic Information > App-Level Tokens > Generate Token and Scopes`. The steps are
    in the order of Slack's console, and the tokens are asked for in the order they are
    copied: app-level, user, bot. Those tokens are not yours to see: they
-   run `keryx auth login slack --stdin` themselves, at a terminal, and it asks for each
-   hidden (run without `--stdin` there, the same command prints the steps again first
-   and then waits for the tokens; only
+   run `keryx auth login slack --stdin --allow …` themselves, at a terminal, and it asks
+   for each hidden (run with no option there, the same command shows the boxes and the
+   steps first and then waits for the tokens; only
    with the tokens already in variables of your environment do you run it: `printenv
-   BOT_VAR USER_VAR | keryx auth login slack --stdin`, one token to a line). It checks
-   both, takes the member the user token belongs to as them, sends reports to that
-   member, turns `slack_report` on and sends them one test message; ask whether it
-   arrived. A login that takes a workspace to `read` also turns on reading Slack on a
-   call (`slack_read`), and one that takes it to `write` sending as them
-   (`slack_message`), and each says so: the level they chose is their yes to both, and
-   `keryx plugins remove NAME` turns one off. To send reports somewhere else
+   BOT_VAR USER_VAR | keryx auth login slack --stdin --allow none`, one token to a
+   line). It checks them, takes the member the user token belongs to as them, sends
+   reports to that member, turns `slack_report` on and sends them one test message; ask
+   whether it arrived. Switching `read` on also turns on reading Slack on a call
+   (`slack_read`), and `send` sending as them (`slack_message`), and each says so: what
+   they switched on is their yes to both, with nothing more to install, and
+   `keryx plugins remove NAME` turns one off. Running the login again changes what is
+   on: whatever `--allow` leaves out is switched off at once. To send reports somewhere else
    afterwards: `keryx plugins install slack_report --set channel_id=ID`.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
-   Slack, reading Slack (which the login at the `read` level turns on), sending Slack
-   messages as them (the login at `write`; never install it for them), email, reading the
+   Slack, reading Slack and sending Slack messages as them (each turned on by the Slack
+   login when they switch it on there; never install either for them), email, reading the
    calendar, adding to it, documents, billing, cluster stats —
    each on or off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes

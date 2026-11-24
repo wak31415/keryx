@@ -2,13 +2,13 @@
 # "read me that thread", answered on a call in a few seconds from a handful of reads of
 # Slack as you. Changes here count from the next call; no restart.
 #
-# It needs a Slack workspace at the read level (`keryx auth login slack --access read`),
-# whose user token it reads with, and it only ever reads, and only when you ask. What is
+# It is on while reading Slack as you is ticked for a workspace (`keryx auth login
+# slack`), whose user token it reads with, and it only ever reads, and only when you ask. What is
 # "waiting" is a best effort: direct and group messages whose last word is somebody
 # else's, and mentions you have not written after. Listing uses no model at all; these
 # two settings are for a question about the messages, answered through the bundled claude
 # CLI when it is installed. `keryx plugins remove slack_read` turns this off and leaves
-# the workspace as it is.
+# the workspace as it is, until what is ticked there next changes.
 
 # The model that answers.
 model = {model}

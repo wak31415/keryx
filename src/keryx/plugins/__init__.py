@@ -59,7 +59,7 @@ OFF_SUFFIX = ".toml.off"
 #: can always tell that there were more. `integrations.calendar` holds the same number.
 MAX_EVENTS_SETTING = 100
 
-Kind = Literal["word", "choice", "number", "path", "line", "table", "tables"]
+Kind = Literal["word", "choice", "choices", "number", "path", "line", "table", "tables"]
 #: The kinds that are a TOML table rather than one line: never set with `--set KEY=VALUE`.
 TABLE_KINDS = ("table", "tables")
 
@@ -90,6 +90,11 @@ class Key:
     #: Written only by the plugin's sign-in (`Plugin.sign_in`), from what the service it
     #: connects to said: never taken from a command line, where it could say otherwise.
     by_sign_in: bool = False
+    #: A setting this one replaced: its name, and what each value it could hold is as a
+    #: value of this one (`was`). A file that still has it and not this one is read by
+    #: it; it is never written, and never carried through a rewrite.
+    formerly: str = ""
+    was: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +127,9 @@ class Plugin:
     formerly: str = ""
     #: The command that connects it, which is the only writer of its `by_sign_in` keys.
     sign_in: str = ""
+    #: The plugin whose sign-in turns this one on and off (Slack's two that act as the
+    #: owner follow what is ticked there), so the wizard's list does not ask about it.
+    follows: str = ""
 
     def key(self, name: str) -> Key:
         return next(key for key in self.keys if key.name == name)
@@ -138,17 +146,26 @@ def _cluster_problem(values: dict[str, Any]) -> str | None:
     return None if values["clusters"] else "[clusters] names no host"
 
 
-#: The access levels of a Slack app (`integrations.slack.Access`), lowest first.
-SLACK_ACCESS = ("announce", "converse", "read", "write")
+#: What a Slack app may do beyond sending the owner reports and files, in the order it
+#: is shown and written (`integrations.slack.Permission`): any set of them.
+SLACK_ALLOW = ("requests", "read", "send")
+#: What `allow` replaced on 2026-11-24: `access`, one of four ordered levels, each
+#: holding the one below. A file that still says a level is read as the set it was.
+SLACK_ACCESS = {
+    "announce": [],
+    "converse": ["requests"],
+    "read": ["requests", "read"],
+    "write": ["requests", "read", "send"],
+}
 #: What a Slack workspace is, beside its tokens: the first one at the top of the file, and
 #: each further one in a `[workspace-NAME]` table of the same keys.
-#: `access`, `owner_id` and what Slack said of the workspace are settled by connecting it
+#: `allow`, `owner_id` and what Slack said of the workspace are settled by connecting it
 #: (`keryx auth login slack`), which checks each token against them. One owner, fixed at
 #: connect: `--set owner_id=…` would be an option to change it, so there is none.
 _SLACK_WORKSPACE = (
     Key("channel_id", "word", "", "Where it posts: your member id, or a channel's id"),
-    Key("access", "choice", "announce", "What Keryx may see there", choices=SLACK_ACCESS,
-        by_sign_in=True),
+    Key("allow", "choices", [], "What Keryx may do there beyond sending you reports",
+        choices=SLACK_ALLOW, by_sign_in=True, formerly="access", was=SLACK_ACCESS),
     Key("owner_id", "word", "",
         "Your own member id: only direct messages from it are ever acted on", by_sign_in=True),
     Key("team", "line", "", "The workspace's name, as Slack gave it", by_sign_in=True),
@@ -192,6 +209,7 @@ PLUGINS: dict[str, Plugin] = {
             Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
         ),
         module="slack_read",
+        follows="slack_report",
     ),
     "slack_message": Plugin(
         name="slack_message",
@@ -202,6 +220,7 @@ PLUGINS: dict[str, Plugin] = {
         secrets=(),
         keys=(),
         module="slack_message",
+        follows="slack_report",
     ),
     "check_email": Plugin(
         name="check_email",
@@ -392,7 +411,31 @@ def defaults(name: str) -> dict[str, Any]:
 
 
 def _copy(value: Any) -> Any:
-    return dict(value) if isinstance(value, dict) else value
+    if isinstance(value, dict):
+        return dict(value)
+    return list(value) if isinstance(value, list) else value
+
+
+def _current(where: str, keys: tuple[Key, ...], values: Mapping[str, Any]) -> dict[str, Any]:
+    """`values` with each setting that was replaced (`Key.formerly`) read into the one
+    that replaced it, and taken out: the newer one wins when both are there, and the
+    older is never handed on to be written."""
+    current = dict(values)
+    for key in keys:
+        if not key.formerly or key.formerly not in current:
+            continue
+        old = current.pop(key.formerly)
+        if key.name in current:
+            continue
+        was = key.was or {}
+        said = str(old).strip().lower()
+        if said not in was:
+            raise PluginConfigError(
+                f"{where}: {key.formerly} must be one of {', '.join(was)} (it is {key.name} "
+                "now, and is read only from a file that has not been written since)"
+            )
+        current[key.name] = _copy(was[said])
+    return current
 
 
 def clean(name: str, values: Mapping[str, Any]) -> dict[str, Any]:
@@ -403,7 +446,7 @@ def clean(name: str, values: Mapping[str, Any]) -> dict[str, Any]:
     """
     spec = plugin(name)
     known = {key.name: key for key in spec.keys}
-    merged = defaults(name) | _gathered(spec, values)
+    merged = defaults(name) | _current(name, spec.keys, _gathered(spec, values))
     cleaned: dict[str, Any] = {}
     for key, value in merged.items():
         cleaned[key] = _clean(name, known[key], value) if key in known else value
@@ -443,6 +486,17 @@ def _clean(name: str, key: Key, value: Any) -> Any:
         if text not in key.choices:
             raise PluginConfigError(f"{where} must be one of {', '.join(key.choices)}")
         return text
+    if key.kind == "choices":
+        # Any of them, as a list; a hand-typed string of them is taken too. Written back
+        # in the order they are listed, each once.
+        if isinstance(value, str):
+            value = value.replace(",", " ").split()
+        if not isinstance(value, list | tuple | set | frozenset):
+            raise PluginConfigError(f"{where} must be a list of {', '.join(key.choices)}")
+        picked = {str(item).strip().lower() for item in value}
+        if not picked <= set(key.choices):
+            raise PluginConfigError(f"{where} may hold only {', '.join(key.choices)}")
+        return [choice for choice in key.choices if choice in picked]
     if key.kind == "number":
         if isinstance(value, bool):
             raise PluginConfigError(f"{where} must be a number")
@@ -491,7 +545,8 @@ def _clean_tables(name: str, key: Key, value: Any) -> dict[str, dict[str, Any]]:
             raise PluginConfigError(
                 f"{where}: each one is a [{key.prefix}NAME] table, NAME a bare word"
             )
-        merged = {field.name: _copy(field.default) for field in key.fields} | dict(table)
+        merged = {field.name: _copy(field.default) for field in key.fields} | _current(
+            f"{name}: {key.name}.{alias}", key.fields, table)
         tables[alias] = {
             item: _clean(f"{name}: {key.name}.{alias}", known[item], each)
             if item in known else each
@@ -761,6 +816,9 @@ def command_line_values(name: str, assignments: list[str]) -> dict[str, Any]:
     """
     spec = plugin(name)
     keys = {key.name: key for key in spec.keys}
+    # A setting that was replaced is refused as the one that replaced it would be.
+    settled = {key.name for key in spec.keys if key.by_sign_in} | {
+        key.formerly for key in spec.keys if key.by_sign_in and key.formerly}
     values: dict[str, Any] = {}
     for text in assignments:
         key, value = parse_assignment(text)
@@ -769,7 +827,7 @@ def command_line_values(name: str, assignments: list[str]) -> dict[str, Any]:
                 f"{key.upper()} is a secret and is never taken on a command line: "
                 f"`keryx config set {key.upper()} --stdin`"
             )
-        if key in keys and keys[key].by_sign_in:
+        if key in settled:
             raise PluginConfigError(
                 f"{key} is settled by `{spec.sign_in}` when the workspace is connected, from "
                 "what Slack says of its tokens, and is never set by hand"

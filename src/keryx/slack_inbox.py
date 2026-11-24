@@ -1,7 +1,7 @@
 """What the owner asks of Keryx on Slack, acted on.
 
 The other direction from `notify`: there Keryx carries a result out, here the owner sends
-something in. One `SocketModeListener` runs per workspace at the `converse` level or above
+something in. One `SocketModeListener` runs per workspace that has `requests` ticked
 (`integrations.slack_socket`), started by `keryx serve` and by nothing else, and every
 event it hears comes to `SlackInbox.handle`.
 
@@ -16,8 +16,8 @@ is the one member id the workspace's settings name. Meant for Keryx is one of tw
   `channel_type` is `im` and whose conversation id is a direct message's. Never from its
   text. A mention that is there is still taken out of the request.
 - **Anywhere else, only one that mentions the app** (`<@…>`, the id `auth.test` gave at
-  connect) in the owner's own words: at `read`, in any conversation the app has been
-  added to, through `app_mention`. No mention, no action: no reaction, no sentence.
+  connect) in the owner's own words: with `read` ticked as well, in any conversation
+  the app has been added to, through `app_mention`. No mention, no action: no reaction, no sentence.
 
 Anyone else's message is dropped the same in both places.
 
@@ -27,10 +27,13 @@ needed a mention it could not write. In the app's own direct messages that is no
 so, which is why `integrations.slack_write.send` refuses the app itself as a recipient:
 its member id, the conversation with it, a thread there.
 
-**Where a request may be typed, by level.** At `converse`, only the direct-message
-conversation with the app (`message.im`). At `read`, also a conversation the app was added
-to, through `app_mention`: the one message that mentions it, and nothing else of that
-conversation, which Keryx is never sent.
+**Where a request may be typed, by what is ticked.** With `requests`, the
+direct-message conversation with the app (`message.im`). With `read` as well
+(`SlackWorkspace.mentions`), also a conversation the app was added to, through
+`app_mention`: the one message that mentions it, and nothing else of that conversation,
+which Keryx is never sent. The pair, because the thread around a mention is other
+people's words, which only the owner's own token may read: without `read` the work
+would be handed one line of a conversation it cannot see.
 
 **Two things a request may do, both without the phone PIN** (SECURITY.md has what that
 costs). In a thread that is a task's, it is a follow-up to that task: what `send_followup`
@@ -48,7 +51,7 @@ that needs the thread reads it itself, fenced, with `keryx slack` (`integrations
 report, every later report of that task and any one-sentence refusal all go in the thread
 the request was typed in: the thread under the message itself when it stood alone, or the
 thread it was a reply in. In a shared conversation that means its members read the report
-too, which the level's description says before it is chosen.
+too, which the box that allows it says before it is ticked.
 
 **What is a request is decided in one function, `owner_request`, and it fails closed.**
 Everything it needs is on file or it refuses: the workspace's id, the owner's member id,
@@ -65,7 +68,7 @@ from one typed to the app. `owner_request` stays a pure function of the payload 
 workspace, and beside it `SlackInbox._apps_own` shows the conversation to be the app's:
 before the first message with no mention is acted on in a `D…` conversation, the bot is
 asked for that conversation's latest message (`integrations.slack.in_conversation`,
-which needs the `im:history` the app has at `converse`), and Slack answers a bot only
+which needs the `im:history` the app has with `requests`), and Slack answers a bot only
 for a conversation it is a party to. Yes or no is remembered for the life of the
 process, so it is one request per conversation; anything else is remembered as nothing,
 that message is left alone, and the next one asks again. A message that mentions the
@@ -74,7 +77,8 @@ that conversation need no such call. Because the real payload has only ever been
 read in Slack's documentation, every event that is not acted on writes one log line with a
 reason and nothing else — never the text, the member or the conversation — so a live test
 shows at once which check refused. The settings are read again for every message, so
-lowering a workspace to `announce`, or turning the plugin off, stops Keryx acting at once.
+unticking `requests` for a workspace, or turning the plugin off, stops Keryx acting at
+once.
 
 **Each message is acted on once.** Slack sends an event again when its acknowledgement was
 lost, and promises no order. A message is a repeat when its task remembers acting on it
@@ -101,7 +105,7 @@ from typing import Any
 
 from keryx.config import Settings
 from keryx.integrations import slack
-from keryx.integrations.slack import Access, SlackPoster, SlackResult, SlackWebApi
+from keryx.integrations.slack import SlackPoster, SlackResult, SlackWebApi
 from keryx.integrations.slack_socket import SocketModeListener
 from keryx.plugins import slack as plugin
 from keryx.plugins.slack import SLACK_CHANNEL, SlackWorkspace
@@ -203,8 +207,8 @@ def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
         # is what was typed and sent, once, never a later version of it.
         return Dropped("edited")
     mentioned = event["type"] == MENTION
-    if mentioned and not workspace.access.reaches(Access.READ):
-        return Dropped("mention_below_read")
+    if mentioned and not workspace.mentions:
+        return Dropped("mentions_off")
     if not mentioned and event.get("channel_type") != "im":
         return Dropped("not_a_direct_message")
     # An id and a timestamp, held to their shapes before they go anywhere: into a request
@@ -318,7 +322,7 @@ class SlackInbox:
         self._own: OrderedDict[tuple[str, str], bool] = OrderedDict()
 
     def start(self) -> list[str]:
-        """Start one listener for each workspace at `converse` or above; their names.
+        """Start one listener for each workspace with `requests` ticked; their names.
 
         A listener's task that ever ends (it should not: `run` only stops when it is
         cancelled) is noticed, logged and forgotten, so the next `start` makes another.
@@ -369,7 +373,7 @@ class SlackInbox:
         """Act on one event from workspace `name`'s app, if it is the owner's request."""
         if problem := envelope_problem(payload):
             return _dropped(name, problem)
-        # As the settings stand now: a level lowered since startup stops this at once.
+        # As the settings stand now: a box unticked since startup stops this at once.
         workspace = plugin.workspace(self._settings, name)
         if workspace is None or not workspace.listens:
             return _dropped(name, "not_listening")

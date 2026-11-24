@@ -2,7 +2,7 @@
 
 The client behind the `slack_read` plugin (`plugins/slack_read.py`) and `keryx slack read`,
 both of which plan what to read in `integrations/slack_query.py` and nowhere else. It
-works with the user token of a workspace at the `read` level, which never leaves this
+works with the user token of a workspace that has `read` ticked, which never leaves this
 process: not into a subagent's environment, not onto a command line, not into a log or an
 error.
 
@@ -117,10 +117,9 @@ SENTENCES = {
                     "sentence; trying again in a minute should work.",
     "unreachable": "Slack could not be reached. Say so in one sentence.",
     "signed_out": "Slack no longer takes the token it was given. Say that reading Slack "
-                  "needs `keryx auth login slack --access read` at their keyboard again.",
+                  "needs `keryx auth login slack` at their keyboard again.",
     "missing_scope": "The Slack app lacks a permission this needs. Say that it has to be "
-                     "reinstalled at the level they chose, with `keryx auth login slack` "
-                     "at their keyboard.",
+                     "reinstalled, with `keryx auth login slack` at their keyboard.",
     "not_found": "Slack does not know that conversation or message. Say so in one sentence.",
     "over_budget": "That needed more of Slack than one answer may read. Say what was "
                    "found so far, and that the rest is a task to hand over.",

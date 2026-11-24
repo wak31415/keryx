@@ -84,7 +84,8 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
     # only when a tool is called).
     with_agent(monkeypatch, "claude", cli="/bin/claude")
     for name, values in {
-        "slack_report": {"channel_id": "D123", "access": "write", "owner_id": "U0OWNER",
+        "slack_report": {"channel_id": "D123", "allow": ["requests", "read", "send"],
+                         "owner_id": "U0OWNER",
                          "team_id": "T0ACME", "bot_user_id": "U0KERYX"},
         "slack_read": {},
         "slack_message": {},
@@ -686,15 +687,15 @@ def test_every_plugin_on_names_what_it_does(healthy):
     assert "xoxb-test" not in str(checks)
 
 
-def test_each_slack_workspace_has_a_check_that_names_its_level_and_what_it_lacks(settings):
+def test_each_slack_workspace_has_a_check_that_says_what_is_on_and_what_it_lacks(settings):
     settings = settings.model_copy(update={
         "slack_bot_token": "xoxb-first-secret",
         "slack_workspace_tokens": {"work": {"bot": "xoxb-work-secret", "app": "xapp-work-secret"}},
     })
     plugins.write_config(settings, "slack_report", {
-        "channel_id": "U0OWNER", "access": "converse", "owner_id": "U0OWNER", "team": "Acme",
+        "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER", "team": "Acme",
         "team_id": "T0ACME", "bot_user_id": "U0KERYX",
-        "workspaces": {"work": {"access": "converse", "channel_id": "U0WORK",
+        "workspaces": {"work": {"allow": ["requests"], "channel_id": "U0WORK",
                                 "owner_id": "U0WORK", "bot_user_id": "U0WORKBOT"}},
     })
     plugins.install(settings, "slack_report")
@@ -703,19 +704,24 @@ def test_each_slack_workspace_has_a_check_that_names_its_level_and_what_it_lacks
 
     first, work = checks["slack_report: default"], checks["slack_report: work"]
     assert (first.state, first.severity, first.section) == ("failed", "soft", "plugins")
+    on_and_off = ("on: sending you reports and files, acting on what you type to the app; "
+                  "off: reading Slack as you, sending messages as you")
     assert first.detail == (
-        "Acme, at the converse level, but without its app token — "
-        "`keryx auth login slack --access converse`"
+        f"Acme, {on_and_off}; but without its app token — `keryx auth login slack`"
     )
     # Nothing says which workspace it is, so no message could be held to it: not heard.
     assert not work.ok and work.detail == (
-        "at the converse level, but without the workspace's id — "
-        "`keryx auth login slack --workspace work --access converse`"
+        f"{on_and_off}; but without the workspace's id — "
+        "`keryx auth login slack --workspace work`"
     )
     assert not any("secret" in check.detail for check in checks.values())
+    # In plain words: no level, no option, and no name out of the code.
+    for check in (first, work):
+        assert not any(word in check.detail for word in (
+            "converse", "announce", "level", "--access", "--allow", "requests"))
 
 
-def test_an_install_from_before_levels_is_one_workspace_at_announce_and_fine(settings):
+def test_an_install_from_before_the_boxes_is_one_workspace_with_none_ticked_and_fine(settings):
     settings = settings.model_copy(update={"slack_bot_token": "xoxb-first-secret"})
     settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
     plugins.config_path(settings, "slack_report").write_text('channel_id = "D123"\n')
@@ -726,8 +732,9 @@ def test_an_install_from_before_levels_is_one_workspace_at_announce_and_fine(set
     assert checks["slack_report"].detail == "on — posts to D123"
     assert checks["slack_report: default"].ok
     assert checks["slack_report: default"].detail == (
-        "at the announce level, posts to D123; no owner on file yet (it was connected "
-        "before Keryx asked for a user token): `keryx auth login slack --access announce` "
+        "posts to D123; on: sending you reports and files; off: acting on what you type "
+        "to the app, reading Slack as you, sending messages as you; no owner on file yet "
+        "(it was connected before Keryx asked for a user token): `keryx auth login slack` "
         "adds one"
     )
 
@@ -747,7 +754,9 @@ def test_a_workspace_with_no_owner_on_file_is_said_in_one_line_and_never_fails(s
     assert older["slack_report: default"].ok and older["slack_report: default"].state == "ok"
     assert older["slack_report: default"].detail.count("\n") == 0
     assert "no owner on file" not in with_owner["slack_report: default"].detail
-    assert with_owner["slack_report: default"].detail == "at the announce level, posts to D123"
+    assert with_owner["slack_report: default"].detail == (
+        "posts to D123; on: sending you reports and files; off: acting on what you type "
+        "to the app, reading Slack as you, sending messages as you")
 
 
 def test_slack_workspaces_that_cannot_be_read_are_said_not_raised(settings, monkeypatch):
@@ -822,25 +831,27 @@ def test_slack_that_was_never_connected_is_pointed_at_its_sign_in(healthy):
 def test_a_slack_voice_tool_that_is_off_is_pointed_at_the_one_command_that_turns_it_on(
     healthy,
 ):
-    """It named two commands, a login and then an install, whatever the level was: at
-    the level already the login changes nothing, and below it the login is all it takes."""
+    """It named two commands, a login and then an install, whatever was ticked: with the
+    box ticked the login changes nothing (the tool was turned off by hand), and without
+    it the login, and ticking it there, is all it takes."""
     for name in ("slack_read", "slack_message"):
         plugins.remove(healthy, name)
         plugins.off_path(healthy, name).unlink()
 
-    at_write = by_name(run_doctor_checks(healthy))
-    plugins.write_config(healthy, "slack_report", {"access": "converse"})
-    below = by_name(run_doctor_checks(healthy))
+    ticked = by_name(run_doctor_checks(healthy))
+    plugins.write_config(healthy, "slack_report", {"allow": ["requests"]})
+    unticked = by_name(run_doctor_checks(healthy))
 
-    assert at_write["slack_read"].detail == (
+    assert ticked["slack_read"].detail == (
         "off (optional) — `keryx setup` → Plugins, or `keryx plugins install slack_read`")
-    assert at_write["slack_message"].detail.endswith("`keryx plugins install slack_message`")
-    assert below["slack_read"].detail == (
-        "off (optional) — `keryx setup` → Plugins, or `keryx auth login slack --access "
-        "read`, which turns it on with the level")
-    assert below["slack_message"].detail.endswith(
-        "`keryx auth login slack --access write`, which turns it on with the level")
-    assert "and then" not in below["slack_read"].detail + below["slack_message"].detail
+    assert ticked["slack_message"].detail.endswith("`keryx plugins install slack_message`")
+    assert unticked["slack_read"].detail == (
+        "off (optional) — `keryx setup` → Plugins, or `keryx auth login slack`, and tick "
+        "reading Slack as you")
+    assert unticked["slack_message"].detail.endswith(
+        "`keryx auth login slack`, and tick sending messages as you")
+    said = unticked["slack_read"].detail + unticked["slack_message"].detail
+    assert "and then" not in said and "--access" not in said and "level" not in said
 
 
 def test_a_google_sign_in_does_not_nag_about_email_answers_being_off(healthy):

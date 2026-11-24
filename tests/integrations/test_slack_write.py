@@ -344,7 +344,8 @@ async def test_a_refusal_from_slack_is_the_failure_it_is(writer):
         await send(writer, Recipient("channel", "#general", channel="C0GEN"), "hi")
 
     assert failed.value.code == "missing_scope"
-    assert "reinstalled at the write level" in failed.value.sentence
+    assert "has to be reinstalled, with `keryx auth login slack`" in failed.value.sentence
+    assert "level" not in failed.value.sentence and "--" not in failed.value.sentence
     assert OWNER not in failed.value.sentence
 
 

@@ -1046,7 +1046,8 @@ class FakeSlackHttp:
 
 @pytest.fixture
 async def two_workspaces(tmp_path, monkeypatch):
-    """An employer's workspace first, at announce, and a personal one at converse."""
+    """An employer's workspace first, with nothing ticked, and a personal one that acts on
+    what is typed to it."""
     from keryx import plugins
     from keryx.plugins.slack import report_route
 
@@ -1056,7 +1057,7 @@ async def two_workspaces(tmp_path, monkeypatch):
     )
     plugins.write_config(settings, "slack_report", {
         "channel_id": "C0EMPLOYER", "team_id": "T0EMPLOYER",
-        "workspaces": {"personal": {"channel_id": "U0ME", "access": "converse",
+        "workspaces": {"personal": {"channel_id": "U0ME", "allow": ["requests"],
                                     "owner_id": "U0ME", "team_id": "T0PERSONAL"}},
     })
     plugins.install(settings, "slack_report")
