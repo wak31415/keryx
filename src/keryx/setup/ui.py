@@ -74,6 +74,7 @@ class Prompter(Protocol):
     def error(self, text: str) -> None: ...
     def markdown(self, text: str) -> None: ...
     def panel(self, title: str, body: str) -> None: ...
+    def link(self, url: str) -> None: ...
     def table(self, headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None: ...
     def outro(self, text: str) -> None: ...
 
@@ -98,7 +99,7 @@ class Prompter(Protocol):
 
 #: Under each section's header: the two keys that are not answers.
 KEYS_HINT = (
-    "esc goes back · tab skips to what is unanswered · ctrl-c stops (answers are saved)"
+    "esc goes back, tab skips to what is unanswered, ctrl-c stops (answers are saved)"
 )
 
 
@@ -188,6 +189,19 @@ class RichPrompter:
         panel = Panel(_escape(body), title=_escape(title), title_align="left", border_style="dim")
         self._show(lambda: self.console.print(panel))
 
+    def link(self, url: str) -> None:
+        """An address too long for a line, to click or copy in one piece.
+
+        Printed bare and left for the terminal to wrap: inside a panel or as Markdown it
+        would be broken across lines with a border or an indent in the middle, and Markdown
+        shows it decoded, which is no longer the address. It is a hyperlink as well, where
+        the terminal has them.
+        """
+        from rich.text import Text
+
+        text = Text(url, style=f"link {url}")
+        self._show(lambda: self.console.print(text, soft_wrap=True))
+
     def table(self, headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
         from rich.table import Table
 
@@ -231,22 +245,7 @@ class RichPrompter:
         )
 
     def checkbox(self, message: str, choices: Sequence[Choice]) -> list[str]:
-        import questionary
-
-        question = questionary.checkbox(
-            message,
-            choices=[
-                *(_choice(choice) for choice in choices),
-                questionary.Separator(" "),
-                questionary.Choice(title=CONTINUE_TITLE, value=CONTINUE),
-            ],
-            instruction="(enter ticks or unticks · Continue when done)",
-            qmark="◇",
-            style=_style(),
-        )
-        _enter_ticks(question.application)
-        answer = self._ask(question)
-        return [str(value) for value in answer if value != CONTINUE]  # type: ignore[union-attr]
+        return _ticked(self._ask(_checkbox(message, choices)))
 
     def text(
         self,
@@ -305,6 +304,42 @@ class RichPrompter:
 #: The last line of a checkbox, and the only way on from one.
 CONTINUE = "\0continue"
 CONTINUE_TITLE = [("class:continue", "Continue →")]
+#: Beside a checkbox's question: the two keys that are not the obvious ones.
+CHECKBOX_HINT = "(enter ticks or unticks, Continue when done)"
+
+
+def _checkbox(message: str, choices: Sequence[Choice]):
+    """The one checkbox there is: a box for each choice, ticked or unticked with Enter,
+    and a Continue line under them that moves on."""
+    import questionary
+
+    question = questionary.checkbox(
+        message,
+        choices=[
+            *(_choice(choice) for choice in choices),
+            questionary.Separator(" "),
+            questionary.Choice(title=CONTINUE_TITLE, value=CONTINUE),
+        ],
+        instruction=CHECKBOX_HINT,
+        qmark="◇",
+        style=_style(),
+    )
+    _enter_ticks(question.application)
+    return question
+
+
+def _ticked(answer: object) -> list[str]:
+    return [str(value) for value in answer if value != CONTINUE]  # type: ignore[union-attr]
+
+
+def ask_checkbox(message: str, choices: Sequence[Choice]) -> list[str]:
+    """That checkbox for a command that is not the wizard (`keryx auth login slack`):
+    asked where the cursor is, under whatever the command has printed, with no screen
+    cleared and no going back. Ctrl-C or the end of input raises `Aborted`."""
+    answer = _checkbox(message, choices).ask()
+    if answer is None:
+        raise Aborted
+    return _ticked(answer)
 
 
 def _enter_ticks(application) -> None:

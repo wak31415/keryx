@@ -1040,7 +1040,9 @@ async def test_a_restart_that_loaded_nothing_says_so(tmp_path):
     summary = await harness.coordinator.status_summary(record, phone_up=True)
 
     assert "the checkout did not change" in summary
-    assert "task 7" in summary
+    # Texted and spoken as it stands, so it names no task number (which is internal).
+    assert "the work this restart was to load may not have landed" in summary
+    assert "task 7" not in summary
 
 
 async def test_an_unchanged_checkout_is_only_worth_saying_when_a_task_was_loading(tmp_path):
@@ -1115,7 +1117,7 @@ async def test_a_commit_made_before_the_restart_still_counts_as_loaded(tmp_path,
     assert "did not change" not in summary
 
 
-async def test_the_call_back_names_the_task_the_restart_loaded(harness):
+async def test_the_call_back_says_the_restart_was_loading_work_and_carries_its_id(harness):
     harness.store.save(pending(task_id=12))
 
     await harness.coordinator.resume(wait_ready=lambda: ready())
@@ -1123,7 +1125,8 @@ async def test_the_call_back_names_the_task_the_restart_loaded(harness):
     parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
     info = harness.tokens.redeem(parameters["token"])
     assert info is not None
-    assert "task 12" in info.extra["opening_context"]
+    assert "to load work they had asked for" in info.extra["opening_context"]
+    assert "task 12" not in info.extra["opening_context"]  # not the model's to say
     # So `mark_reported` may stamp it before the PIN: the call opened with its result.
     assert info.extra["task_id"] == 12
 
@@ -1666,7 +1669,10 @@ async def test_the_call_back_leads_with_the_work_that_asked_for_the_restart(tmp_
     assert "add a recall tool" in context  # what they asked for
     assert "I added the recall tool" in context  # what came back
     assert "back up after" in context  # and whether it is running
-    assert f"mark_reported for task {task.id}" in context
+    # The id is there as a tool argument, with the rule beside it, and nowhere else.
+    assert f"mark_reported with task_ids [{task.id}]" in context
+    assert "never say a task number out loud" in context
+    assert "about task" not in context
     await store.close()
 
 
@@ -1681,7 +1687,7 @@ async def test_a_restart_naming_a_task_that_is_gone_still_confirms_itself(tmp_pa
     parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
     context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
     assert "restarted" in context
-    assert "task 999" in context
+    assert "to load work they had asked for" in context and "task 999" not in context
     await store.close()
 
 

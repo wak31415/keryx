@@ -52,7 +52,8 @@ def register_restart_tools(
                     "reason": {
                         "type": "string",
                         "description": "Why it is being restarted, in a few words — they "
-                        "hear this back on the confirmation call.",
+                        "hear this back on the confirmation call, so name the work by "
+                        "what it was and never by a task number.",
                     },
                     "upgrade": {
                         "type": "boolean",
@@ -61,9 +62,11 @@ def register_restart_tools(
                     },
                     "task_id": {
                         "type": "integer",
-                        "description": "The task whose change this restart is loading, if "
-                        "it is loading one. Pass it: the confirmation then checks that the "
-                        "change is actually running rather than only that you came back.",
+                        "description": "The id of the task whose change this restart is "
+                        "loading, if it is loading one. Pass it: the confirmation then "
+                        "checks that the change is actually running rather than only that "
+                        "you came back. It is a handle for this call, and you do not say "
+                        "it out loud.",
                     },
                 },
                 "required": [],

@@ -38,9 +38,12 @@ from keryx.session import (
 )
 from keryx.tools import ToolContext, ToolRegistry
 from keryx.transports.base import AudioIn, Dtmf, Hangup
+from keryx.trust import TrustLevel
 
 # audio/pcmu is 8 kHz 8-bit -> 8 bytes per millisecond.
 PCMU_BYTES_PER_MS = 8
+#: One line of the digest, as `continuity.briefing` writes it.
+SWEEP_DIGEST = "- They asked for: the sweep (finished; task_id 41)"
 
 
 def make_settings(tmp_path, **overrides) -> Settings:
@@ -220,13 +223,13 @@ async def test_session_opens_with_a_greeting_request(make_session, phone, provid
 
 
 async def test_opening_context_replaces_the_greeting(make_session, phone, provider):
-    session = make_session(phone, provider, opening_context="[callback] Task 3 is done.")
+    session = make_session(phone, provider, opening_context="[callback] The sweep is done.")
 
     async with running(session):
         await eventually(lambda: provider.injected)
 
-    assert provider.injected[0] == ("[callback] Task 3 is done.", True)
-    assert "Task 3 is done." in provider.config.instructions
+    assert provider.injected[0] == ("[callback] The sweep is done.", True)
+    assert "The sweep is done." in provider.config.instructions
 
 
 async def test_session_publishes_session_started_and_registers(
@@ -612,6 +615,108 @@ async def test_request_end_is_idempotent(make_session, phone, provider, publishe
     assert [event.reason for event in ended(published)] == ["first"]
 
 
+# --- the carrier says the call is over -------------------------------------
+#
+# A media socket can outlive the call it carried: the stream breaks, no `stop` arrives, and
+# our end of the socket closes many seconds later. The carrier's status callback is then
+# the only news that nobody is listening, and `call_ended` is how the session hears it.
+
+CALL_SID = "CA00000000000000000000000000000001"
+
+
+async def test_a_call_the_carrier_ended_is_over_at_once(make_session, phone, provider):
+    """A session left live until the socket closes is one a result is announced into."""
+    sessions = SessionRegistry()
+    session = make_session(phone, provider, registry=sessions, call_sid=CALL_SID)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+
+    sessions.for_call(CALL_SID).call_ended("completed")
+
+    # Before anything else gets to run: the notifier asks `live()` and takes the answer.
+    assert sessions.live() == []
+    assert await session.announce("Task 3 is done.", needs=TrustLevel.NONE, task_id=3) is False
+    await asyncio.wait_for(task, TIMEOUT)
+    assert "Task 3 is done." not in " ".join(text for text, _ in provider.injected)
+
+
+async def test_a_call_the_carrier_ended_is_torn_down_once_like_a_hangup(
+    make_session, phone, provider, published
+):
+    """The memory update, the transcript and the registry all hang off this one ending."""
+    sessions = SessionRegistry()
+    session = make_session(phone, provider, registry=sessions, call_sid=CALL_SID)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+
+    session.call_ended("completed")
+    session.call_ended("completed")  # a callback delivered twice
+    phone.feed(Hangup("stop"))  # the frame that should have come first, late
+    await asyncio.wait_for(task, TIMEOUT)
+    session.call_ended("completed")  # and one after the end
+
+    assert [(event.reason, event.authorized) for event in ended(published)] == [("hangup", True)]
+    assert phone.calls == ["hangup"]
+    assert provider.closed is True
+    assert sessions.for_call(CALL_SID) is None
+    assert session.transcript_path.read_text().count("--- session ended") == 1
+
+
+async def test_a_call_that_is_over_has_no_goodbye_to_drain(make_session, provider):
+    """A drain waits for the far end to say it played everything, and there is no far end."""
+    transport = DrainingFakeTransport(channel="phone", audio_format="audio/pcmu")
+    session = make_session(transport, provider)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+
+    session.call_ended("completed")
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert transport.calls == ["hangup"]
+
+
+async def test_a_call_ended_mid_goodbye_stops_waiting_and_keeps_its_reason(
+    make_session, phone, provider, published
+):
+    session = make_session(phone, provider)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+    provider.feed(ResponseStarted(response_id="resp_1"))
+    await eventually(lambda: session.response_active)
+    session.request_end("user")  # waits for the response, which nobody is hearing
+
+    session.call_ended("completed")
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert [event.reason for event in ended(published)] == ["user"]
+
+
+async def test_nothing_is_stamped_as_told_once_the_call_is_over(
+    make_session, phone, provider, tools
+):
+    """The model goes on talking into a dead line, and `mark_reported` is how it ends a
+    result. Here that call is already on its way when the news of the hangup arrives:
+    read by the session, and not yet run."""
+    stamped: list[dict] = []
+
+    async def handler(ctx: ToolContext, args: dict) -> dict:
+        stamped.append(args)
+        return {"reported": args["task_ids"]}
+
+    tools.register("mark_reported", "Bookkeeping.", {"type": "object", "properties": {}}, handler)
+    session = make_session(phone, provider)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+
+    stamp = {"task_ids": [7], "still_to_say": False}
+    provider.feed(FunctionCall(call_id="call_1", name="mark_reported", arguments=stamp))
+    session.call_ended("completed")
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert stamped == []
+    assert provider.tool_results == []
+
+
 # --- silence timeout -------------------------------------------------------
 
 
@@ -749,10 +854,10 @@ async def test_announce_injects_a_system_message(make_session, phone, provider):
     session = make_session(phone, provider)
 
     async with running(session):
-        assert await session.announce("Task 3 finished.") is True
+        assert await session.announce("The sweep finished.") is True
 
     text, respond = provider.injected[-1]
-    assert text == f"[system] Task 3 finished.\n{ANNOUNCE_INSTRUCTIONS}"
+    assert text == f"[system] The sweep finished.\n{ANNOUNCE_INSTRUCTIONS}"
     assert respond is True
     assert "mark_reported" not in text  # not a task's result: nothing to stamp
 
@@ -763,12 +868,14 @@ async def test_a_task_announced_into_a_call_asks_for_its_stamp(make_session, pho
     session = make_session(phone, provider)
 
     async with running(session):
-        assert await session.announce("Task 3 finished: done.", task_id=3) is True
+        assert await session.announce("The sweep finished: done.", task_id=3) is True
 
     text, _ = provider.injected[-1]
-    assert text.startswith("[system] Task 3 finished: done.\n")
+    assert text.startswith("[system] The sweep finished: done.\n")
     assert ANNOUNCE_REPORT_INSTRUCTIONS.format(task_id=3) in text
     assert "task_ids [3]" in text
+    # The id is there for that call, and the note says it is for nothing else.
+    assert "never say a task number" in text
 
 
 async def test_announce_is_false_before_and_after_the_session(make_session, phone, provider):
@@ -787,7 +894,7 @@ async def test_announce_is_false_when_the_provider_send_fails(make_session, phon
 
     async with running(session):
         provider.send_error = RuntimeError("socket gone")
-        assert await session.announce("Task 3 finished.") is False
+        assert await session.announce("The sweep finished.") is False
         provider.send_error = None
 
 
@@ -913,6 +1020,21 @@ def test_session_registry_finds_the_phone_session_on_a_number(make_session, phon
     assert sessions.on_the_line(None) is None
 
 
+def test_session_registry_finds_the_session_of_a_call(make_session, phone, local, provider):
+    """Live or not, as with a number: an ending session is found, and is told nothing new."""
+    sessions = SessionRegistry()
+    other = make_session(FakeTransport(), provider, call_sid="CA00000000000000000000000000000002")
+    mine = make_session(phone, provider, call_sid=CALL_SID)
+    for session in (make_session(local, provider), other, mine):
+        sessions.add(session)
+
+    assert sessions.for_call(CALL_SID) is mine
+    assert sessions.for_call("CA00000000000000000000000000000003") is None
+    # A session that was given no call is not the session of a callback that names none.
+    assert sessions.for_call("") is None
+    assert sessions.for_call(None) is None
+
+
 async def test_the_session_takes_its_turn_detection_from_settings(
     make_session, phone, provider, settings
 ):
@@ -984,7 +1106,7 @@ async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provi
     briefer = FakeBriefer(
         Briefing(
             memory="They are mid-way through the orchard sync.",
-            pending="- task 41 (finished) — they asked for: the ingest script",
+            pending="- They asked for: the ingest script (finished; task_id 41)",
             pending_count=1,
         )
     )
@@ -995,7 +1117,7 @@ async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provi
 
     instructions = provider.config.instructions
     assert "orchard sync" in instructions
-    assert "task 41" in instructions
+    assert "task_id 41" in instructions
     assert briefer.builds == 1  # once per session, before the provider is connected
 
 
@@ -1023,7 +1145,7 @@ async def test_unreported_work_is_pushed_at_the_opening_message_too(
     make_session, phone, provider
 ):
     """A realtime model leads with what it was just handed far more reliably."""
-    briefer = FakeBriefer(Briefing(pending="- task 41 (finished)", pending_count=1))
+    briefer = FakeBriefer(Briefing(pending=SWEEP_DIGEST, pending_count=1))
     session = make_session(phone, provider, briefer=briefer)
 
     async with running(session):
@@ -1059,16 +1181,16 @@ async def test_a_briefer_that_raises_does_not_cost_the_call(make_session, phone,
 async def test_a_call_back_keeps_its_own_opening_context_and_gains_the_nudge(
     make_session, phone, provider
 ):
-    briefer = FakeBriefer(Briefing(pending="- task 41 (finished)", pending_count=2))
+    briefer = FakeBriefer(Briefing(pending=SWEEP_DIGEST, pending_count=2))
     session = make_session(
-        phone, provider, briefer=briefer, opening_context="You are calling them back about task 41."
+        phone, provider, briefer=briefer, opening_context="You are calling back about the sweep."
     )
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
     opening = provider.injected[0][0]
-    assert opening.startswith("You are calling them back about task 41.")
+    assert opening.startswith("You are calling back about the sweep.")
     assert "2 tasks finished" in opening
 
 
@@ -1077,8 +1199,8 @@ async def test_a_call_back_about_the_only_news_opens_with_its_context_alone(
 ):
     """The task it rang about is still unreported, so it is in the digest too — and a nudge
     about it, "after your greeting", made the model greet, tease and wait (#63)."""
-    context = "You are calling them back about task 41."
-    briefer = FakeBriefer(Briefing(pending="- task 41", pending_count=1, task_ids=(41,)))
+    context = "You are calling back about the sweep."
+    briefer = FakeBriefer(Briefing(pending=SWEEP_DIGEST, pending_count=1, task_ids=(41,)))
     session = make_session(
         phone, provider, briefer=briefer, opening_context=context, opening_task_id=41
     )
@@ -1090,8 +1212,9 @@ async def test_a_call_back_about_the_only_news_opens_with_its_context_alone(
 
 
 async def test_a_call_back_hears_of_the_other_news_after_its_own(make_session, phone, provider):
-    context = "You are calling them back about task 41."
-    briefing = Briefing(pending="- task 40\n- task 41", pending_count=2, task_ids=(40, 41))
+    context = "You are calling back about the sweep."
+    pending = f"{SWEEP_DIGEST}\n{SWEEP_DIGEST}"
+    briefing = Briefing(pending=pending, pending_count=2, task_ids=(40, 41))
     session = make_session(
         phone,
         provider,

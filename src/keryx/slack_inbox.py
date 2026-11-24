@@ -1,0 +1,563 @@
+"""What the owner asks of Keryx on Slack, acted on.
+
+The other direction from `notify`: there Keryx carries a result out, here the owner sends
+something in. One `SocketModeListener` runs per workspace that has `requests` ticked
+(`integrations.slack_socket`), started by `keryx serve` and by nothing else, and every
+event it hears comes to `SlackInbox.handle`.
+
+**A message is a `Request` when it is the owner's and it is meant for Keryx.** The owner
+is the one member id the workspace's settings name. Meant for Keryx is one of two things
+(the owner's two rulings of 2026-11-23):
+
+- **In the app's own direct messages, every message of theirs is.** A message there can
+  only be for the app, so no mention is asked for: a new message starts work, and a reply
+  in a thread there (under a report, say) resumes its task. That it *is* the app's direct
+  message is read from the event's own fields, held to their shapes: a `message` whose
+  `channel_type` is `im` and whose conversation id is a direct message's. Never from its
+  text. A mention that is there is still taken out of the request.
+- **Anywhere else, only one that mentions the app** (`<@…>`, the id `auth.test` gave at
+  connect) in the owner's own words: with `read` ticked as well, in any conversation
+  the app has been added to, through `app_mention`. No mention, no action: no reaction, no sentence.
+
+Anyone else's message is dropped the same in both places.
+
+**Because a direct message needs no mention, Keryx must never write one as the owner.**
+A message Keryx sent in the owner's name could not trigger Keryx while every request
+needed a mention it could not write. In the app's own direct messages that is no longer
+so, which is why `integrations.slack_write.send` refuses the app itself as a recipient:
+its member id, the conversation with it, a thread there.
+
+**Where a request may be typed, by what is ticked.** With `requests`, the
+direct-message conversation with the app (`message.im`). With `read` as well
+(`SlackWorkspace.mentions`), also a conversation the app was added to, through
+`app_mention`: the one message that mentions it, and nothing else of that conversation,
+which Keryx is never sent. The pair, because the thread around a mention is other
+people's words, which only the owner's own token may read: without `read` the work
+would be handed one line of a conversation it cannot see.
+
+**Two things a request may do, both without the phone PIN** (SECURITY.md has what that
+costs). In a thread that is a task's, it is a follow-up to that task: what `send_followup`
+does on a call, counted against the daily cap like a dispatch, because no PIN and no
+keypress stand in front of it here. Anywhere else it starts new work: an ordinary task —
+no task kind, the same cap, the same agent — dispatched with the request's text and
+nothing more.
+
+**A request is the owner's words; everything else on Slack is context.** This module
+never reads context: not the rest of the thread, not the message a reply is under. A task
+is handed the request and a pointer to where it was typed (`SlackThread`), and a subagent
+that needs the thread reads it itself, fenced, with `keryx slack` (`integrations.slack_context`).
+
+**Answered where it was asked** (the owner's ruling of 2026-11-23). The reaction, the
+report, every later report of that task and any one-sentence refusal all go in the thread
+the request was typed in: the thread under the message itself when it stood alone, or the
+thread it was a reply in. In a shared conversation that means its members read the report
+too, which the box that allows it says before it is ticked.
+
+**What is a request is decided in one function, `owner_request`, and it fails closed.**
+Everything it needs is on file or it refuses: the workspace's id, the owner's member id,
+the app's own. The checks are the team, the owner, the event's type and subtype, that it
+is the app's direct message or mentions the app, and once only. A mention only counts
+where the owner wrote it: not on a quoted line (`>` at its start) and not inside a code
+block, and quoted lines are left out of the request in either place. Whose authorization
+delivered the event is *not* a check: Slack's own examples disagree about its shape.
+**So the direct-message rule does not rest on the event alone.** Keryx's manifest
+subscribes the app to `message.im` as a *bot* event only, which is the app's own direct
+messages and no others; but a user-level `message.im`, added by hand, would deliver
+every direct message the owner has with anybody, each indistinguishable in its payload
+from one typed to the app. `owner_request` stays a pure function of the payload and the
+workspace, and beside it `SlackInbox._apps_own` shows the conversation to be the app's:
+before the first message with no mention is acted on in a `D…` conversation, the bot is
+asked for that conversation's latest message (`integrations.slack.in_conversation`,
+which needs the `im:history` the app has with `requests`), and Slack answers a bot only
+for a conversation it is a party to. Yes or no is remembered for the life of the
+process, so it is one request per conversation; anything else is remembered as nothing,
+that message is left alone, and the next one asks again. A message that mentions the
+app, an `app_mention`, and a reply that resumes a task whose row already ties it to
+that conversation need no such call. Because the real payload has only ever been
+read in Slack's documentation, every event that is not acted on writes one log line with a
+reason and nothing else — never the text, the member or the conversation — so a live test
+shows at once which check refused. The settings are read again for every message, so
+unticking `requests` for a workspace, or turning the plugin off, stops Keryx acting at
+once; and the first event that then arrives closes that workspace's connection
+(`SlackInbox._close`), which the service opens again only at its next start.
+
+**Each message is acted on once.** Slack sends an event again when its acknowledgement was
+lost, and promises no order. A message is a repeat when its task remembers acting on it
+(`Task.slack_seen`, the last several, which survives a restart) or this process has seen
+it; never merely because a later one arrived first.
+
+On Slack Keryx is brief: a reaction on the message it acted on (a reaction notifies
+nobody), then the report when the work is done. A refusal is one sentence, and it names
+nobody: the app carries the assistant's name there (`integrations.slack.app_name`), so
+what it posts in its own conversation is the assistant speaking, and a sentence that
+began "Keryx …" under that name would read as somebody else's. Nor does it name a task
+by its number, which is internal: it is posted in the task's thread, and says so. What a
+message says is never logged.
+"""
+
+import asyncio
+import contextlib
+import logging
+import re
+from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from keryx.config import Settings
+from keryx.integrations import slack
+from keryx.integrations.slack import SlackPoster, SlackResult, SlackWebApi
+from keryx.integrations.slack_socket import SocketModeListener
+from keryx.plugins import slack as plugin
+from keryx.plugins.slack import SLACK_CHANNEL, SlackWorkspace
+from keryx.tasks.manager import TaskLimitError, TaskManager
+from keryx.tasks.models import SlackThread, Task, TaskStatus, seen_on_slack
+
+log = logging.getLogger("keryx.slack.inbox")
+
+#: How many messages this process remembers having seen, to drop one delivered twice.
+MAX_SEEN = 512
+
+NOTHING_TO_RESUME = "There is no task in this thread to resume; ask again to start one."
+#: Said in the task's own thread, which is what says which task: never its number, which
+#: is internal (the owner's ruling of 2026-11-23).
+CANCELLED = "The task in this thread was cancelled, so there is nothing here to resume."
+STARTING = "The task in this thread is only just starting, so send that again in a moment."
+NOT_PASSED_ON = "That could not be confirmed to have reached the task in this thread."
+CAP_REACHED = "Today's task limit ({cap}) is reached, so this was not started."
+NOT_STARTED = "That could not be started."
+TEXT_ONLY = "Only text is read here: send that again as a message without the file."
+NOTHING_ASKED = "There was nothing to do in that: say what you want in words of your own."
+
+#: The events a request may arrive as, and the subtypes of a message that may be one: an
+#: ordinary message has none, a reply "also sent to the channel" is `thread_broadcast`, and
+#: one with a file is `file_share`, which is answered and not acted on. Every other
+#: subtype (an edit, a deletion, a join) is nothing the owner asked.
+MESSAGE, MENTION = "message", "app_mention"
+_SPACES = re.compile(r"[ \t]{2,}")
+SUBTYPES = ("", "thread_broadcast", "file_share")
+
+
+@dataclass(frozen=True)
+class Request:
+    """What the owner asked, in their own words, and where they typed it.
+
+    The only text from Slack that is ever an instruction. `text` is the message with the
+    mention of the app taken out; nothing of the conversation around it is in here.
+    """
+
+    text: str
+    channel: str
+    ts: str
+    #: The message its thread hangs from, when it is a reply; None for one of its own.
+    thread_ts: str | None = None
+    #: It is a request only because it was typed in the app's own direct messages: it
+    #: mentions nothing, so that it *is* the app's conversation is all that makes it one.
+    unmentioned: bool = False
+    #: It came with a file, which Keryx does not read.
+    files: bool = False
+
+    @property
+    def root(self) -> str:
+        """The message the thread it belongs to hangs from: its own, when it starts one."""
+        return self.thread_ts or self.ts
+
+
+@dataclass(frozen=True)
+class Dropped:
+    """An event that is nobody's request, and the one word for why."""
+
+    reason: str
+
+
+def envelope_problem(payload: Any) -> str | None:
+    """Why `payload` cannot be a request, from its shape alone; None when it might be.
+
+    Asked before any setting is read: the app's own reports come back as events too, and
+    each of those should cost nothing.
+    """
+    if not isinstance(payload, dict) or payload.get("type") != "event_callback":
+        return "not_an_event"
+    event = payload.get("event")
+    if not isinstance(event, dict) or event.get("type") not in (MESSAGE, MENTION):
+        return "not_a_message"
+    if event.get("bot_id") or event.get("subtype") == "bot_message":
+        return "bot_message"
+    if (event.get("subtype") or "") not in SUBTYPES:
+        return "subtype"
+    return None
+
+
+def owner_request(payload: Any, workspace: SlackWorkspace) -> Request | Dropped:
+    """The owner's request in `payload`, or why there is none. The one place it is decided.
+
+    Fails closed: a workspace with no id, owner or bot member on file accepts nothing.
+    """
+    if problem := envelope_problem(payload):
+        return Dropped(problem)
+    if not (workspace.team_id and workspace.owner_id and workspace.bot_user_id):
+        return Dropped("not_on_file")
+    if payload.get("team_id") != workspace.team_id:
+        return Dropped("other_team")
+    event = payload["event"]
+    if event.get("user") != workspace.owner_id:
+        return Dropped("not_the_owner")
+    if "edited" in event:
+        # A message that was changed after it was sent, however the change arrives (a
+        # mention edited in may come as an `app_mention` of its own): what is acted on
+        # is what was typed and sent, once, never a later version of it.
+        return Dropped("edited")
+    mentioned = event["type"] == MENTION
+    if mentioned and not workspace.mentions:
+        return Dropped("mentions_off")
+    if not mentioned and event.get("channel_type") != "im":
+        return Dropped("not_a_direct_message")
+    # An id and a timestamp, held to their shapes before they go anywhere: into a request
+    # to Slack, a task's row, or the pointer a subagent is handed.
+    channel, ts, thread_ts = event.get("channel"), event.get("ts"), event.get("thread_ts")
+    if not (slack.is_conversation(channel) and slack.is_ts(ts)):
+        return Dropped("malformed")
+    if thread_ts is not None and not slack.is_ts(thread_ts):
+        return Dropped("malformed")
+    # The app's own direct messages: the `message` event the bot is sent for a
+    # conversation of type `im`, whose id is a direct message's. Decided on the event's
+    # own fields, never on anything in its text.
+    direct = not mentioned and slack.is_dm(channel)
+    if not (mentioned or direct):
+        return Dropped("not_a_direct_message")
+    text = event.get("text")
+    asked, addressed = own_words(text if isinstance(text, str) else "", workspace.bot_user_id)
+    # In the app's direct messages every message of the owner's is a request (the
+    # owner's ruling of 2026-11-23): a message there can only be meant for the app.
+    # Everywhere else, only one that mentions it in the owner's own words.
+    if not (addressed or direct):
+        return Dropped("no_mention")
+    return Request(
+        text=asked,
+        channel=channel,
+        ts=ts,
+        thread_ts=thread_ts if thread_ts and thread_ts != ts else None,
+        unmentioned=direct and not addressed,
+        files=event.get("subtype") == "file_share" or bool(event.get("files")),
+    )
+
+
+def own_words(text: str, bot_user_id: str) -> tuple[str, bool]:
+    """What the owner wrote in `text` themselves, with any mention of the app taken out,
+    and whether they mentioned it in words of their own.
+
+    A line that starts with `>` (`&gt;` as Slack sends it) quotes somebody else,
+    everything from a `>>>` on is quoted to the end of the message, and what is between
+    a pair of ``` is something pasted: a mention in any of them is not theirs, and
+    quoted lines are not part of what they asked. Each step is one pass over the text.
+    """
+    lines = text.split("\n")
+    # `>>>` quotes everything after it, to the end of the message: nothing from that
+    # line on is the owner's own words.
+    rest = next((index for index, line in enumerate(lines)
+                 if line.lstrip().startswith("&gt;&gt;&gt;")), len(lines))
+    lines = [line for line in lines[:rest] if not line.lstrip().startswith("&gt;")]
+    # Outside code: the even pieces of the text split on the fence.
+    pieces = "\n".join(lines).split("```")
+    found = False
+    for index in range(0, len(pieces), 2):
+        pieces[index], here = _without_mention(pieces[index], bot_user_id)
+        found = found or here
+    # The mention is not part of what was asked; the gap it leaves is closed.
+    return _SPACES.sub(" ", slack.plain_text("```".join(pieces))), found
+
+
+#: One of Slack's angle-bracket spans: from a `<` to the next `>`, or to the next `<`
+#: when it is never closed. One character class, so a failed match never retries a run.
+_SPAN = re.compile(r"<([^<>]*)(>?)")
+#: The most of a name Slack may write after a member's id in a mention.
+_NAME_CHARS = 200
+
+
+def _without_mention(text: str, bot_user_id: str) -> tuple[str, bool]:
+    """`text` with each mention of the app replaced by a space, and whether there was one.
+
+    A mention is a span of its own, `<@ID>` or `<@ID|name>`, exactly: not a longer or a
+    shorter id, not one inside another span that was never closed (a link's address), and
+    not the entity-escaped text of one, which is somebody writing about a mention.
+    """
+    plain, named = f"@{bot_user_id}", f"@{bot_user_id}|"
+    kept: list[str] = []
+    last, nested, found = 0, False, False
+    for span in _SPAN.finditer(text):
+        body, closed = span.group(1), bool(span.group(2))
+        if closed and not nested and (
+            body == plain or (body.startswith(named) and len(body) - len(named) <= _NAME_CHARS)
+        ):
+            kept += [text[last:span.start()], " "]
+            last, found = span.end(), True
+        nested = not closed
+    kept.append(text[last:])
+    return "".join(kept), found
+
+
+@dataclass(frozen=True)
+class InboxApi:
+    """What the inbox does on Slack beside listening, replaced in the tests."""
+
+    react: Callable[[str, str, str], SlackResult] = slack.add_reaction
+    #: Whether the app is a party to a conversation, asked with its bot token.
+    party: Callable[[str, str], SlackResult] = slack.in_conversation
+    poster: Callable[[str, str], SlackPoster] = SlackWebApi
+    listener: Callable[..., Any] = SocketModeListener
+
+
+class SlackInbox:
+    """Listens to each workspace that may be heard, and acts on what the owner asks."""
+
+    def __init__(
+        self, settings: Settings, manager: TaskManager, *, api: InboxApi | None = None
+    ) -> None:
+        self._settings = settings
+        self._manager = manager
+        self._api = api or InboxApi()
+        self._listeners: dict[str, asyncio.Task] = {}
+        #: Listeners that were closed and have not finished unwinding, for `stop`.
+        self._closing: set[asyncio.Task] = set()
+        self._seen: OrderedDict[tuple[str, str, str], None] = OrderedDict()
+        #: Direct-message conversations that were shown to be the app's own (True) or
+        #: somebody else's (False), by the workspace's id: asked of Slack once each.
+        self._own: OrderedDict[tuple[str, str], bool] = OrderedDict()
+
+    def start(self) -> list[str]:
+        """Start one listener for each workspace with `requests` ticked; their names.
+
+        A listener's task that ever ends (it should not: `run` only stops when it is
+        cancelled) is noticed, logged and forgotten, so the next `start` makes another.
+
+        Idempotent, and never raises: a plugin file that does not parse, or a workspace
+        missing a token, is a workspace not listened to, and `doctor` says which. A
+        listener still running for a workspace that may no longer be heard is closed
+        (`_close`).
+        """
+        try:
+            found = [each for each in plugin.connected(self._settings) if each.listens]
+        except Exception:
+            log.exception("could not read the Slack workspaces; none is listened to")
+            return []
+        for name in set(self._listeners) - {each.name for each in found}:
+            self._close(name)
+        for each in found:
+            if each.name in self._listeners:
+                continue
+            listener = self._api.listener(
+                each.name, each.token(slack.APP), lambda payload, name=each.name:
+                self.handle(name, payload)
+            )
+            running = asyncio.create_task(listener.run(), name=f"slack-listener-{each.name}")
+            running.add_done_callback(lambda task, name=each.name: self._ended(name, task))
+            self._listeners[each.name] = running
+            log.info("Slack: listening for the owner's messages in %s", each.name)
+        return [each.name for each in found]
+
+    def _close(self, name: str) -> None:
+        """Close the connection to workspace `name`, which may no longer be heard: its
+        box was unticked, it was logged out, or the plugin was turned off.
+
+        Keryx stops *acting* the moment the settings say so, because they are read again
+        for every event; this is what stops it *listening*, with the app-level token the
+        sign-in has by then forgotten. It runs when the next event arrives over that
+        connection, which is the first time anything looks. Opened again only by the
+        next start of the service, which is what ticking the box again says.
+        """
+        listener = self._listeners.pop(name, None)
+        if listener is None:
+            return
+        self._closing.add(listener)
+        listener.cancel()
+        log.info("Slack: closed the connection for %s, where nothing may be heard any "
+                 "more; it is opened again only when Keryx next starts", name)
+
+    def _ended(self, name: str, task: asyncio.Task) -> None:
+        """A listener's task is over: said when it was not us who stopped it."""
+        if self._listeners.get(name) is task:
+            del self._listeners[name]
+        self._closing.discard(task)
+        if task.cancelled():
+            return
+        failure = task.exception()
+        log.error("Slack: the listener for %s ended (%s); nothing is heard there until Keryx "
+                  "restarts", name, type(failure).__name__ if failure else "it returned")
+
+    async def stop(self) -> None:
+        """Stop every listener. Idempotent."""
+        listeners = [*self._listeners.values(), *self._closing]
+        self._listeners = {}
+        for listener in listeners:
+            listener.cancel()
+        for listener in listeners:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await listener
+
+    # --- one event -----------------------------------------------------------------------
+
+    async def handle(self, name: str, payload: Any) -> None:
+        """Act on one event from workspace `name`'s app, if it is the owner's request."""
+        if problem := envelope_problem(payload):
+            return _dropped(name, problem)
+        # As the settings stand now: a box unticked since startup stops this at once,
+        # and the connection the event came over is closed with it.
+        workspace = plugin.workspace(self._settings, name)
+        if workspace is None or not workspace.listens:
+            self._close(name)
+            return _dropped(name, "not_listening")
+        request = owner_request(payload, workspace)
+        if isinstance(request, Dropped):
+            return _dropped(name, request.reason)
+        if not self._first_time(name, request):
+            return _dropped(name, "seen")
+        thread = SlackThread(name, request.channel, request.root, asked_at=request.ts,
+                             team_id=workspace.team_id)
+        task = await self._manager.task_in_slack_thread(thread)
+        if task is not None and seen_on_slack(task.slack_seen, request.ts):
+            return _dropped(name, "already_acted_on")
+        if request.unmentioned and task is None:
+            # Nothing but where it was typed makes this a request, and nothing on file
+            # ties a task to that conversation: it is shown to be the app's own first.
+            own = await self._apps_own(workspace, request.channel)
+            if own is not True:
+                return _dropped(name, "not_the_apps_dm" if own is False else "dm_not_shown")
+        if request.files:
+            await self._say(workspace, request, TEXT_ONLY)
+        elif not request.text:
+            await self._say(workspace, request, NOTHING_ASKED)
+        elif task is None:
+            # No task lives in this thread, or it is no thread at all: new work, whose
+            # thread is the one the request was typed in.
+            await self._start(workspace, request, thread)
+        else:
+            await self._resume(workspace, request, task)
+
+    async def _apps_own(self, workspace: SlackWorkspace, channel: str) -> bool | None:
+        """Whether `channel` is the app's own direct-message conversation: True, False,
+        or None when it could not be told this time.
+
+        A direct message with no mention is a request only because of where it was typed,
+        and the event alone cannot say whose conversation that is: with a user-level
+        `message.im` subscription the app would be sent every direct message the owner
+        has, each looking just like one typed to it. So before the first such message in
+        a conversation is acted on, the bot is asked for that conversation's latest
+        message. Slack answers a bot only for a conversation it is a party to.
+
+        Asked once: the answer is remembered for the life of the process, yes or no, by
+        the workspace's own id. Anything else (a timeout, a rate limit) is remembered as
+        nothing: that message is not acted on, and the next one asks again.
+        """
+        key = (workspace.team_id, channel)
+        if key in self._own:
+            return self._own[key]
+        try:
+            asked = await asyncio.to_thread(self._api.party, workspace.token(slack.BOT), channel)
+        except Exception as exc:
+            log.warning("Slack: could not show that %s is the app's own conversation in %s "
+                        "(%s): that message is left alone, and the next one is tried again",
+                        channel, workspace.name, type(exc).__name__)
+            return None
+        if asked.ok:
+            verdict = True
+        elif asked.error in slack.NOT_A_PARTY:
+            verdict = False
+            log.warning(
+                "Slack: the app in %s is being sent direct messages that are not its own "
+                "(conversation %s). Only a user-level `message.im` event subscription "
+                "does that: remove it in the Slack console, under the app's Event "
+                "Subscriptions, 'Subscribe to events on behalf of users'. Nothing typed "
+                "in that conversation without a mention of the app is acted on.",
+                workspace.name, channel,
+            )
+        else:
+            log.warning("Slack: could not show that %s is the app's own conversation in %s "
+                        "(%s): that message is left alone, and the next one is tried again",
+                        channel, workspace.name, asked.problem)
+            return None
+        self._own[key] = verdict
+        while len(self._own) > MAX_SEEN:
+            self._own.popitem(last=False)
+        return verdict
+
+    def _first_time(self, name: str, request: Request) -> bool:
+        key = (name, request.channel, request.ts)
+        if key in self._seen:
+            return False
+        self._seen[key] = None
+        while len(self._seen) > MAX_SEEN:
+            self._seen.popitem(last=False)
+        return True
+
+    async def _start(
+        self, workspace: SlackWorkspace, request: Request, thread: SlackThread
+    ) -> None:
+        """Dispatch the request as a task: its text, and where it was typed, nothing else."""
+        try:
+            task = await self._manager.dispatch(
+                request.text, origin_channel=SLACK_CHANNEL, origin_caller=None, slack=thread
+            )
+        except TaskLimitError as limit:
+            await self._say(workspace, request, CAP_REACHED.format(cap=limit.cap))
+            return
+        except Exception:
+            log.exception("could not start a task from a Slack message in %s", workspace.name)
+            await self._say(workspace, request, NOT_STARTED)
+            return
+        log.info("Slack: task %s started from a message in %s", task.id, workspace.name)
+        await self._acknowledge(workspace, request)
+
+    async def _resume(self, workspace: SlackWorkspace, request: Request, task: Task) -> None:
+        """Hand the request to the task its thread belongs to, as a follow-up."""
+        if task.status is TaskStatus.CANCELLED:
+            await self._say(workspace, request, CANCELLED)
+            return
+        try:
+            await self._manager.followup_from_slack(task.id, request.text, request.ts)
+        except TaskLimitError as limit:
+            await self._say(workspace, request, CAP_REACHED.format(cap=limit.cap))
+            return
+        except KeyError:  # deleted since it was looked up
+            await self._say(workspace, request, NOTHING_TO_RESUME)
+            return
+        except ValueError:
+            # Not taken: its subagent is not open yet, or it was cancelled this instant.
+            now = await self._manager.get(task.id)
+            gone = now is not None and now.status is TaskStatus.CANCELLED
+            await self._say(workspace, request, CANCELLED if gone else STARTING)
+            return
+        except Exception:
+            # A steer that failed for real may have landed, so it is not sent a second way.
+            log.exception("a follow-up from Slack to task %s failed", task.id)
+            await self._say(workspace, request, NOT_PASSED_ON)
+            return
+        log.info("Slack: a reply in %s went to task %s as a follow-up", workspace.name, task.id)
+        await self._acknowledge(workspace, request)
+
+    # --- what Keryx says back ------------------------------------------------------------
+
+    async def _acknowledge(self, workspace: SlackWorkspace, request: Request) -> None:
+        """A reaction on the message that was acted on. Its failure costs nothing."""
+        try:
+            result = await asyncio.to_thread(
+                self._api.react, workspace.token(slack.BOT), request.channel, request.ts
+            )
+            if not result.ok:
+                log.warning("could not acknowledge a Slack message in %s: %s", workspace.name,
+                            result.problem)
+        except Exception:
+            log.exception("could not acknowledge a Slack message in %s", workspace.name)
+
+    async def _say(self, workspace: SlackWorkspace, request: Request, sentence: str) -> None:
+        """One sentence in the request's thread, where it was asked. Never raises."""
+        try:
+            poster = self._api.poster(workspace.token(slack.BOT), request.channel)
+            await poster.post(sentence, thread_ts=request.root)
+        except Exception:
+            log.exception("could not answer a Slack message in %s", workspace.name)
+
+
+def _dropped(name: str, reason: str) -> None:
+    """The one line an event that was not acted on leaves: where, and a reason. Never
+    what it said, who sent it or which conversation it was in."""
+    log.info("Slack: an event in %s was not acted on (%s)", name, reason)

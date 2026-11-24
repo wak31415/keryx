@@ -110,8 +110,8 @@ by the next patch.
 uv run pytest -q --cov --cov-report=term:skip-covered
 ```
 
-**The floor is 96%, and it is a ratchet rather than a target.** It was last raised on
-2026-09-27 (`fail_under` in `pyproject.toml`), to the number actually measured floored to a
+**The floor is 97%, and it is a ratchet rather than a target.** It was last raised on
+2026-11-23 (`fail_under` in `pyproject.toml`), to the number actually measured floored to a
 whole point, so a rounding wobble does not fail CI while real erosion does. Raise it when the measured number has moved up;
 do not lower it to make a branch pass. `pytest --cov` fails below it, and CI prints the
 per-module table into the run summary.

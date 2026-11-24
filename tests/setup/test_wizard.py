@@ -248,6 +248,20 @@ def test_the_agent_instructions_name_this_machines_paths(make_ctx):
     assert str(ctx.settings.data_dir / "projects") in text
     assert "--from-env" in text and "never set it yourself" in text
     assert "keryx auth login google --headless" in text and "--callback-url - < " in text
+    flat = " ".join(text.split())
+    assert "they run `keryx auth login slack --stdin --allow …` themselves" in flat
+    assert "--email" not in text
+    # Where the tokens are, as Slack's console lays it out, and the order they are asked in.
+    assert ("`OAuth & Permissions > OAuth Tokens`: their own User OAuth Token and, below "
+            "it, the Bot User OAuth Token") in flat
+    assert "`Basic Information > App-Level Tokens > Generate Token and Scopes`" in flat
+    assert "the order they are copied: app-level, user, bot" in flat
+    assert "Those tokens are not yours to see" in flat
+    # With requests a Slack message can start work with no PIN: the owner's choice alone,
+    # said with `--allow`, and never the level and the option those replaced.
+    assert "Never choose one for them" in flat and "`--allow none` for reports and files" in flat
+    assert "`keryx auth login slack` shows a box to tick for each" in flat
+    assert "--access" not in text and "`converse`" not in text
     assert "{" not in text
 
 

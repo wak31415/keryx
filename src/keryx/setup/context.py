@@ -4,8 +4,8 @@
 `Prompter`, saves through the store as the owner, and reads a fresh `Settings` after every
 save, so a later section sees what an earlier one wrote. Everything that reaches the
 network, a login or a subagent is a field of `Probes`, which the tests replace wholesale:
-nothing in the wizard can call OpenAI, Twilio, Google, ssh or a coding agent unless a probe
-does.
+nothing in the wizard can call OpenAI, Twilio, Google, Slack, ssh or a coding agent unless a
+probe does.
 """
 
 import subprocess
@@ -19,6 +19,7 @@ from keryx.agents.base import RunResult
 from keryx.config import Settings
 from keryx.config.permissions import OWNER
 from keryx.config.store import FROM_ENV, ConfigError, ConfigStore
+from keryx.integrations import slack
 from keryx.issues import GhStatus, gh_status
 from keryx.notify.twilio_out import RestTwilioAdmin, TwilioAdmin
 from keryx.setup.ui import Prompter
@@ -140,13 +141,18 @@ class Probes:
     google_browser_signin: Callable[[Settings, Any, Any], Any] = _google_browser_signin
     google_finish: Callable[[Settings, str], Any] = _google_finish
     google_discard: Callable[[Settings, Any], bool] = _google_discard
-    http_post: Callable[..., Any] = httpx.post
     #: `~/.ssh/config`, read locally (`plugins.ssh_hosts`): never a connection.
     ssh_hosts: Callable[[], list] = _ssh_hosts
     ssh_master_alive: Callable[[str], bool] = _master_alive
     cluster_partitions: Callable[[str], list[str]] = _partitions
     #: `gh auth status`, for the issue reports section (`keryx.issues.gh_status`).
     gh_status: Callable[[], GhStatus] = gh_status
+    #: The Slack step's calls (`integrations.slack`): is this a token and whose (a bot
+    #: token's workspace, a user token's member), the member an address belongs to, one
+    #: message to a member or channel, and whether an app-level token opens a connection.
+    slack_auth_test: Callable[[str], slack.Workspace] = slack.auth_test
+    slack_post: Callable[[str, str, str], slack.SlackResult] = slack.post_text
+    slack_connection: Callable[[str], slack.Connection] = slack.open_connection
 
 
 @dataclass
@@ -159,6 +165,10 @@ class SetupContext:
     probes: Probes = field(default_factory=Probes)
     #: Walking a section that is already done, to change it: ask again what is set.
     review: bool = False
+    #: What a section has already asked the outside world in this walk, by whatever key
+    #: it likes. For a step that saves nothing until its end (Slack's): going back and
+    #: typing the same token again must not show it to Slack a second time.
+    memo: dict = field(default_factory=dict)
     _settings: Settings | None = None
 
     @property

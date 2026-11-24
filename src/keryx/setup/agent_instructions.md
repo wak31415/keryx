@@ -12,7 +12,9 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    (a variable already in your environment) or `… --stdin`. If you do not have a secret,
    ask the person to run `keryx setup`, which asks for it hidden; do not ask them to paste
    it to you.
-3. **Sign-ins.** `keryx auth status --json` lists each one. For a coding agent,
+3. **Sign-ins.** `keryx auth status --json` lists each one; Google and Slack are marked
+   `optional` there, since Keryx runs without them, and never make it exit 1. Each
+   `keryx auth login` takes its own options and refuses another's. For a coding agent,
    `keryx auth login claude|codex` runs its own login on the terminal. Google is one
    sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides:
    `keryx auth login google --headless` prints a link: relay it; the person approves it
@@ -24,13 +26,62 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `--account ADDRESS`. Only when the first command
    says there is no Google OAuth client does the person have to make one (the steps:
    `{google_guide}`), which you then pass once with `--client-file PATH`.
+   For Slack, the app always sends them reports and files, and there are three more
+   things Keryx may do there, each theirs to switch on: `requests` (it acts on what they
+   type to the app), `read` (it reads their Slack as them when they ask) and `send` (it
+   sends messages as them, after a yes). `keryx auth login slack`, run by you with
+   nothing connected, prints what each means and saves nothing: read them that and ask
+   which they want. Never choose one for them, and never suggest one to save a step:
+   with `requests` any message of theirs to the app (and, with `read` as well, one that
+   mentions it elsewhere) can start work without the phone PIN, with `read` Keryx reads
+   their messages, and with `send` it can post in their name. What they said is `--allow`,
+   once for each (`--allow requests --allow read`), or `--allow none` for reports and
+   files alone; the same options go on both commands below. `--allow none` is also what
+   to use when they give no answer, **but only where Slack is not connected yet**. On a
+   workspace that is connected, `--allow` says everything that stays on and whatever it
+   leaves out is switched off at once, so `none` there switches everything off: read what
+   is on from `keryx auth status --json` (`slack.workspaces[].allow`) and pass exactly
+   that, unless they asked you for a change, and never `none` by default. The best way
+   is theirs: run with no option at a terminal,
+   `keryx auth login slack` shows a box to tick for each and then does everything else,
+   so offer that first. `keryx auth login slack --allow …` prints a link and its steps.
+   Relay the link and the steps; the
+   person creates and installs the Slack app it describes and copies two tokens from one
+   place, `OAuth & Permissions > OAuth Tokens`: their own User OAuth Token and, below it,
+   the Bot User OAuth Token (the user token is how Slack says which member they are; no
+   address is asked for, and Keryx keeps that token only with `read` or `send` switched
+   on: with neither it is asked once who they are and not saved, and a workspace that is
+   already connected is asked for none). With `requests` there is a third, made before
+   installing,
+   at `Basic Information > App-Level Tokens > Generate Token and Scopes`. The steps are
+   in the order of Slack's console, and the tokens are asked for in the order they are
+   copied: app-level, user, bot. Those tokens are not yours to see: they
+   run `keryx auth login slack --stdin --allow …` themselves, at a terminal, and it asks
+   for each hidden (run with no option there, the same command shows the boxes and the
+   steps first and then waits for the tokens; only
+   with the tokens already in variables of your environment do you run it, for a first
+   connection: `printenv BOT_VAR USER_VAR | keryx auth login slack --stdin --allow
+   none`, one token to a line, with `--allow` saying what they chose). It checks them,
+   takes the member the user token belongs to as them, sends
+   reports to that member, turns `slack_report` on and sends them one test message; ask
+   whether it arrived. Switching `read` on also turns on reading Slack on a call
+   (`slack_read`), and `send` sending as them (`slack_message`), and each says so: what
+   they switched on is their yes to both, with nothing more to install, and
+   `keryx plugins remove NAME` turns one off. Running the login again changes what is
+   on: whatever `--allow` leaves out is switched off at once, before anything else and
+   with or without `--stdin`, so only ever leave something out because they asked. To
+   send reports somewhere else afterwards: `keryx plugins install slack_report --set
+   channel_id=ID`.
 4. **Plugins, if they want them.** `keryx plugins --json` lists the optional voice tools —
-   Slack, email, reading the calendar, adding to it, documents, billing, cluster stats —
+   Slack, reading Slack and sending Slack messages as them (each turned on by the Slack
+   login when they switch it on there; never install either for them), email, reading the
+   calendar, adding to it, documents, billing, cluster stats —
    each on or off, and why one is refused.
    `keryx plugins install NAME [--set KEY=VALUE …]` turns one on (`cluster_stats` takes
    `--cluster HOST=PARTITION`, for a host `keryx plugins hosts --json` shows with a
-   ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin` or
-   `keryx auth login google`. `keryx auth logout google` ends that sign-in, and is theirs
+   ControlMaster); its secret is never a `--set`, but `keryx config set KEY --stdin`,
+   `keryx auth login google`, or for Slack `keryx auth login slack`, which turns the
+   plugin on as well. `keryx auth logout google` ends the Google sign-in, and is theirs
    to ask for.
    Filing bug reports and feature requests about Keryx as GitHub issues is not yours to
    turn on: it is theirs, in `keryx setup` (Issue reports), and you never set

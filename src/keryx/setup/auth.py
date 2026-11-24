@@ -10,11 +10,21 @@ answer. With the browser somewhere else (`--headless`, or no display) the owner 
 the address they land on: at a terminal that is still one command, and without one — a
 coding agent relaying the link — it is two, the second with `--callback-url`. `gmail` and
 `google-workspace` are the names the two older sign-ins had, and run this one.
+
+Slack is the same shape (`setup/slack.py`). At a terminal it is one command with no
+flags: a box to tick for each thing Keryx may do there beyond sending reports, then the
+link that creates the owner's Slack app for exactly that (or, for an app there is, the
+manifest that changes it), then each token it takes, asked for hidden, checked, and
+`slack_report` turned on. Without a terminal it is two, with `--allow` saying what is
+ticked and the second with `--stdin` and the tokens on standard input, which is how a
+coding agent or a pipe hands them over; with nothing connected and no `--allow`, the
+choices are printed and nothing is guessed. Unticking needs no token and is done at
+once. `--workspace NAME` is a further workspace, with its own app.
 """
 
 import asyncio
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +36,7 @@ from keryx.config.store import ConfigStore
 from keryx.doctor import GOOGLE_CHECK, Check, run_doctor_checks
 from keryx.integrations.gmail import signed_in as gmail_signed_in
 from keryx.integrations.google import mcp_server, read_token
-from keryx.setup import agents, google
+from keryx.setup import agents, google, slack
 
 Echo = Callable[[str], None]
 
@@ -37,17 +47,30 @@ SIGN_INS = {
     "codex": ("Codex agent",),
     "google": (GOOGLE_CHECK,),
     "twilio": ("Twilio credentials",),
+    #: The plugin's own check: on, off, or a token with the plugin off.
+    "slack": ("slack_report",),
 }
 #: The names the two older Google sign-ins had: still accepted by `login`, and still
 #: reported by `status`, for one release.
 GOOGLE_ALIASES = ("gmail", "google-workspace")
-LOGINS = ("claude", "codex", "google", *GOOGLE_ALIASES)
+LOGINS = ("claude", "codex", "google", *GOOGLE_ALIASES, "slack")
 #: What `logout` can end: a grant Keryx holds, and the files a sign-in left.
-LOGOUTS = ("google",)
+LOGOUTS = ("google", "slack")
+#: Sign-ins Keryx runs without: `doctor` calls each optional, with a soft check that is
+#: `missing` until somebody signs in. One that has failed (a Google sign-in that connected
+#: nothing, a Slack token with its plugin off) is reported as failed, and marked, so
+#: `keryx auth status` says so without exiting 1. Google's two older names copy its entry,
+#: mark and all.
+OPTIONAL = ("google", "slack")
 
 
 class AuthError(RuntimeError):
     """A sign-in that could not go on, in one sentence."""
+
+
+class AuthStopped(AuthError):
+    """A sign-in the owner left at one of its questions: nothing was saved, and the
+    sentence says how to pick it up. Not a failure of anything, so it is not called one."""
 
 
 def status(
@@ -59,6 +82,9 @@ def status(
     for name, prefixes in SIGN_INS.items():
         found = [check for check in checks if check.name.startswith(prefixes)]
         report[name] = _entry(name, found)
+        if name in OPTIONAL:
+            report[name]["optional"] = True
+    report["slack"]["workspaces"] = _slack_workspaces(settings)
     token = read_token(settings)
     report["google"]["services"] = list(token.connected) if token is not None else []
     for alias in GOOGLE_ALIASES:
@@ -91,6 +117,36 @@ def status(
     return report
 
 
+def _slack_workspaces(settings: Settings) -> list[dict[str, Any]]:
+    """Each connected Slack workspace: what is ticked for it, and what that still lacks."""
+    from keryx.integrations.slack import ordered
+    from keryx.plugins.slack import connected, in_words
+
+    try:
+        found = connected(settings)
+    except Exception:  # settings that do not parse are `doctor`'s to report
+        return []
+    return [
+        {"name": each.name, "team": each.team, "label": each.label,
+         "allow": [str(one) for one in ordered(each.allowed)], "said": in_words(each.allowed),
+         "listens": each.listens, "missing": list(each.missing), "owner": each.owner_id}
+        for each in found
+    ]
+
+
+def slack_lines(entry: dict[str, Any]) -> list[str]:
+    """What `auth status` prints under Slack: one line per workspace, what is on and
+    off there first, in plain words."""
+    lines = []
+    for each in entry.get("workspaces", []):
+        name = each["label"]
+        state = f", without {' or '.join(each['missing'])}" if each["missing"] else ""
+        owner = (f", you are {each['owner']}" if each.get("owner")
+                 else ", no owner on file yet (the next `keryx auth login slack` adds one)")
+        lines.append(f"{name}: {each['said']}{state}{owner}")
+    return lines
+
+
 def _entry(name: str, found: list[Check]) -> dict[str, Any]:
     if not found:
         # An agent that is not enabled has no doctor check: say so rather than guess.
@@ -108,6 +164,17 @@ class LoginOptions:
     services: tuple[str, ...] | None = None
     #: Google: the account the owner means to sign in as, when it is not the one saved.
     account: str | None = None
+    #: Slack: what standard input held, one token to a line (None: nothing was piped, so
+    #: print the link and the steps, and at a terminal ask what to tick first and for
+    #: the tokens after), whether `--stdin` was given (at a terminal: ask without the
+    #: steps), whether to send one test message, which workspace (None: the first) and
+    #: what is ticked, each `--allow` as it was typed (None: ask at a terminal; without
+    #: one, what the workspace has, and nothing guessed for one that is not connected).
+    tokens: str | None = field(default=None, repr=False)
+    stdin: bool = False
+    test: bool = True
+    workspace: str | None = None
+    allow: tuple[str, ...] | None = None
 
 
 def login(
@@ -120,14 +187,22 @@ def login(
     run_login: Callable[[Sequence[str]], int],
     post: Callable[..., Any] | None = None,
     ask: Callable[[str], str] | None = None,
+    ask_secret: Callable[[str], str] | None = None,
+    choose: Callable[[str, Sequence[Any]], Sequence[str]] | None = None,
 ) -> None:
     """Do the one sign-in `name` names; raises `AuthError` with what went wrong.
 
     `ask` puts one question to the person at the terminal and is None when there is no
     terminal, which is what makes a pasted-back Google sign-in two commands instead of one.
+    `ask_secret` is the same with the typing hidden, for Slack's tokens: it raises
+    `EOFError` or `KeyboardInterrupt` when the person leaves the question. `choose` shows
+    a list of boxes to tick and answers with the ones ticked, for what Slack may do.
     """
     if name in BACKENDS:
         _agent_login(name, settings, options=options, echo=echo, run_login=run_login)
+        return
+    if name == "slack":
+        _slack(settings, store, options=options, echo=echo, ask=ask_secret, choose=choose)
         return
     if name == "google" or name in GOOGLE_ALIASES:
         try:
@@ -144,11 +219,24 @@ def logout(
     *,
     echo: Echo,
     sign_out: Callable[[Settings], Any] | None = None,
+    store: ConfigStore | None = None,
+    workspace: str | None = None,
 ) -> None:
     """End the sign-in `name` names: revoke it where it was granted, and remove what it
-    left on this machine. `sign_out` is `google.sign_out`, looked up when called."""
+    left on this machine. `sign_out` is `google.sign_out`, looked up when called.
+
+    Slack is one workspace at a time (`workspace`; none is the first): its tokens and its
+    settings are forgotten, and nothing is revoked, because the app is the owner's own.
+    """
     if name not in LOGOUTS:
         raise AuthError(f"nothing called {name!r} to sign out of; one of: {', '.join(LOGOUTS)}")
+    if name == "slack":
+        try:
+            slack.logout(settings, store or ConfigStore(),
+                         workspace=slack.workspace_name(workspace), echo=echo)
+        except slack.SlackSetupError as exc:
+            raise AuthError(str(exc)) from None
+        return
     out = (sign_out or google.sign_out)(settings)
     if not out.removed:
         echo("Not signed in to Google: there is nothing to remove.")
@@ -191,6 +279,56 @@ def _agent_login(
             "store the token it printed with: "
             "keryx config set CLAUDE_CODE_OAUTH_TOKEN --stdin"
         )
+
+
+def _slack(
+    settings: Settings,
+    store: ConfigStore,
+    *,
+    options: LoginOptions,
+    echo: Echo,
+    ask: Callable[[str], str] | None = None,
+    choose: Callable[[str, Sequence[Any]], Sequence[str]] | None = None,
+) -> None:
+    """Slack's sign-in. A terminal (`ask`) is asked what to tick, shown the steps and
+    asked for the tokens there. Without one, `--stdin` checks and saves what was piped
+    in (`slack.hand_over`), and no `--stdin` prints the steps and the `--stdin` command
+    for what `--allow` adds. **On all three, whatever was unticked is taken away first**
+    (`slack.untick`), at once and with nothing asked of Slack. **What is ticked is never
+    guessed**: with nothing connected and no `--allow`, the choices are printed, and
+    tokens piped in are refused."""
+    try:
+        workspace = slack.workspace_name(options.workspace)
+        allowed = slack.parse_allow(options.allow)
+        slack.mend(settings, echo)
+        if ask is not None and options.tokens is None:
+            slack.login(settings, store, ask=ask, echo=echo, choose=choose,
+                        test=options.test, steps=not options.stdin, workspace=workspace,
+                        allowed=allowed)
+            return
+        if options.tokens is not None:
+            if allowed is None and not slack.is_connected(settings, workspace):
+                raise slack.SlackSetupError(
+                    "nothing says what Keryx may do there, and it is not guessed: add "
+                    f"--allow {slack.NONE} for reports and files alone, or --allow once "
+                    f"for each of {', '.join(slack.PERMISSIONS)} (`keryx auth login "
+                    "slack` says what each is). Nothing was saved")
+            slack.hand_over(settings, store, tokens=options.tokens, test=options.test,
+                            echo=echo, workspace=workspace, allowed=allowed)
+            return
+        if allowed is not None:
+            # Taking a permission away needs nothing from Slack: done here and now.
+            unticked = slack.untick(settings, store, workspace=workspace, allowed=allowed,
+                                    echo=echo, steps_follow=True)
+            if unticked.done:
+                return
+            settings = unticked.settings
+        slack.start(settings, echo, workspace=workspace, allowed=allowed,
+                    api=slack.SlackApi())
+    except slack.Stopped as exc:
+        raise AuthStopped(str(exc)) from None
+    except slack.SlackSetupError as exc:
+        raise AuthError(str(exc)) from None
 
 
 def _google(

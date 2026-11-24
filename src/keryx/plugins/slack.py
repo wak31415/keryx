@@ -1,28 +1,97 @@
-"""The `send_to_slack` plugin, and the one question everything else asks about Slack.
+"""The `slack_report` plugin, and the one question everything else asks about Slack.
 
 The tool posts to the owner's DM, as their own bot, once they have asked for something in
-writing — so it needs the PIN. Its settings are `send_to_slack.toml` (`channel_id`,
+writing — so it needs the PIN. Its settings are `slack_report.toml` (`channel_id`,
 `mcp_server`); the bot token is `SLACK_BOT_TOKEN` in `secrets.toml`, or the named MCP
 server's own `env` in `~/.claude.json` (`integrations.slack.slack_credentials`).
+`channel_id` is a channel's id or a member's: setup stores the owner's member id, found
+from their address, and Slack delivers that to their messages from the app.
+
+**An app of Keryx's own outranks a named MCP server, for everything at once**
+(`_route`). A saved bot token is that app. With one, the token posted with is Keryx's,
+and `SlackRoute.mcp_server` is None, so the two things that ask it follow: a subagent is
+told to send with `keryx slack report` and never pointed at the server, and a Codex
+subagent is not handed the server. The name stays in the file, unused, and counts again
+when the token is gone (`keryx auth logout slack`). One function decides, so what posts
+and what the agents are told cannot disagree; `agents_send_with` says which it is.
 
 Four things besides the tool want Slack, and each asks `slack_route(settings)` rather than
 reading a setting: the PIN-lockout alert (`notify.pin_alert`, at alert time, so turning
-Slack on needs no restart), every finished task's report (`notify.notifier`, the same way),
-the subagent's Slack paragraph (`agents.base`), and the MCP
+Slack on needs no restart), every finished task's report (`notify.notifier`, the same way,
+through `report_route`), the subagent's Slack paragraph (`agents.base`), and the MCP
 server a Codex subagent is handed (`agents.codex`). With the plugin off there is no route,
 and none of them reaches Slack.
+
+**Workspaces.** One Slack app per workspace, each a `SlackWorkspace`: a name, what the
+owner ticked for it (`allowed`, a set of `integrations.slack.Permission`), the owner's
+member id there, where to post, and its tokens. The first is `default`:
+the top of the TOML and the three plain `SLACK_*_TOKEN` settings, which is exactly what a
+single-workspace install has always been, so it needs no migration. Each further one is a
+`[workspace-NAME]` table and an entry of `SLACK_WORKSPACE_TOKENS`. Everything is sent to
+`default` unless a workspace is named, and `workspaces(settings)` is the one place the two
+halves are joined (`on_file` under it, for Keryx's own half alone).
 """
 
-from dataclasses import dataclass
+import contextlib
+import dataclasses
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from keryx import plugins
 from keryx.config import Settings
-from keryx.integrations.slack import SlackSender, SlackWebApi, slack_credentials
+from keryx.config.settings import SLACK_DEFAULT_WORKSPACE
+from keryx.integrations.slack import (
+    APP,
+    BASE,
+    BOT,
+    FILE_BOT_SCOPES,
+    PERMISSIONS,
+    USER,
+    Allowed,
+    FileRefused,
+    LocalFile,
+    Permission,
+    SlackFiles,
+    SlackPoster,
+    SlackSender,
+    SlackWebApi,
+    is_conversation,
+    local_files,
+    permissions,
+    slack_credentials,
+    used_kinds,
+)
+from keryx.integrations.slack import mentions as _mentions
 
-TOOL = "send_to_slack"
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from keryx.tasks.models import Task
+
+TOOL = "slack_report"
+#: The first workspace's name: the one the top of the TOML describes.
+DEFAULT = SLACK_DEFAULT_WORKSPACE
+#: Where a task's request came from when it was typed to the app on Slack.
+SLACK_CHANNEL = "slack"
 
 FAILED_MESSAGE = "Slack would not take the message; tell them it did not go through"
+
+#: What the app always does, and what each thing the owner may tick is, in a few plain
+#: words: how `doctor`, `keryx plugins` and `keryx auth status` say what is on and off.
+#: Never a name out of the code.
+ALWAYS = "sending you reports and files"
+IN_WORDS = {
+    Permission.REQUESTS: "acting on what you type to the app",
+    Permission.READ: "reading Slack as you",
+    Permission.SEND: "sending messages as you",
+}
+
+
+def in_words(allowed: Allowed) -> str:
+    """What is on and what is off there, in plain words, on one line."""
+    on = [ALWAYS, *(IN_WORDS[each] for each in PERMISSIONS if each in allowed)]
+    off = [IN_WORDS[each] for each in PERMISSIONS if each not in allowed]
+    return f"on: {', '.join(on)}" + (f"; off: {', '.join(off)}" if off else "")
 
 
 @dataclass(frozen=True)
@@ -31,6 +100,8 @@ class SlackRoute:
 
     token: str | None
     channel: str | None
+    #: The MCP server subagents send through: the one the file names, and None once
+    #: Keryx has a bot token of its own, which outranks it.
     mcp_server: str | None
 
     def sender(self) -> SlackSender | None:
@@ -40,14 +111,34 @@ class SlackRoute:
         return None
 
 
-def _route(settings: Settings, values: dict) -> SlackRoute:
+def _route(settings: Settings, values: Mapping[str, Any]) -> SlackRoute:
+    """The one place the plugin's own token and a named MCP server are ranked.
+
+    A saved bot token is an app of Keryx's own, and it outranks the server for what
+    posts and for what subagents are told alike. The server still fills in a channel the
+    file leaves blank, as it always did.
+    """
     server = values["mcp_server"] or None
     channel = values["channel_id"] or None
-    token = plugins.secret(settings, "slack_bot_token")
+    own = plugins.secret(settings, "slack_bot_token")
+    token = own
     credentials = slack_credentials(token, channel, server=server)
     if credentials is not None:
         token, channel = credentials
-    return SlackRoute(token=token, channel=channel, mcp_server=server)
+    return SlackRoute(token=token, channel=channel, mcp_server=None if own else server)
+
+
+def agents_send_with(settings: Settings, values: Mapping[str, Any]) -> str:
+    """How a subagent is told to send the owner something, in words for `doctor` and
+    `keryx plugins`: the same ranking the route itself makes, said out loud."""
+    named = values.get("mcp_server") or ""
+    if _route(settings, values).mcp_server:
+        return f"subagents send through the {named} MCP server"
+    said = "subagents send with `keryx slack report`"
+    if named:
+        said += (f" (the {named} MCP server named in the file is not used while Keryx "
+                 "has an app of its own)")
+    return said
 
 
 def slack_route(settings: Settings) -> SlackRoute | None:
@@ -61,6 +152,415 @@ def slack_sender(settings: Settings) -> SlackSender | None:
     """What the notifiers post with: None while the plugin is off or has no token."""
     route = slack_route(settings)
     return route.sender() if route is not None else None
+
+
+# --- workspaces --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SlackWorkspace:
+    """One workspace's Slack app as Keryx holds it: its settings and its tokens."""
+
+    name: str
+    #: What the owner ticked for it, beyond sending them reports and files.
+    allowed: Allowed = BASE
+    #: Where it posts: the owner's member id, or a channel's id.
+    channel: str = ""
+    #: The owner's member id there: the only member whose messages are acted on.
+    owner_id: str = ""
+    team: str = ""
+    team_id: str = ""
+    #: The app's own member id there: a message is acted on only when it mentions it.
+    bot_user_id: str = ""
+    #: The tokens there are, by kind (`bot`, `app`, `user`).
+    tokens: Mapping[str, str] = field(default_factory=dict, repr=False)
+
+    def token(self, kind: str) -> str | None:
+        return self.tokens.get(kind) or None
+
+    @property
+    def label(self) -> str:
+        """The name the owner reads: Slack's own for the first workspace, and their word
+        for a further one with Slack's beside it. `name` stays the key everything is
+        stored under and the value `--workspace` takes."""
+        if self.name == DEFAULT:
+            return self.team or "your first workspace"
+        return f"{self.name} ({self.team})" if self.team else self.name
+
+    @property
+    def missing(self) -> tuple[str, ...]:
+        """What it needs for what is ticked that is not there, in words to print; empty
+        when whole."""
+        gaps = [f"its {kind} token" for kind in used_kinds(self.allowed)
+                if not self.token(kind)]
+        if not self.channel:
+            gaps.append("somewhere to post")
+        if Permission.REQUESTS in self.allowed:
+            if not self.owner_id:
+                gaps.append("your member id")
+            if not self.team_id:
+                gaps.append("the workspace's id")
+            if not self.bot_user_id:
+                gaps.append("the app's own member id")
+        return tuple(gaps)
+
+    @property
+    def sends(self) -> bool:
+        return bool(self.token(BOT) and self.channel)
+
+    @property
+    def listens(self) -> bool:
+        """Whether Keryx may hear the owner's direct messages to this app, and can.
+
+        Everything a message is held to has to be on file: without the owner's member id,
+        the workspace's id or the app's own member id (the mention that triggers it)
+        there is nothing to hold one to, so nothing is heard.
+        """
+        return bool(
+            Permission.REQUESTS in self.allowed
+            and self.token(BOT) and self.token(APP)
+            and self.owner_id and self.team_id and self.bot_user_id
+        )
+
+    @property
+    def mentions(self) -> bool:
+        """Whether the owner's mention of the app in a conversation it was added to is
+        acted on there (`integrations.slack.mentions`)."""
+        return _mentions(self.allowed)
+
+    @property
+    def reads(self) -> bool:
+        """Whether Keryx may read Slack as the owner here, and holds the token to. What
+        is ticked decides, never a token being on file."""
+        return bool(Permission.READ in self.allowed and self.token(USER))
+
+    @property
+    def writes(self) -> bool:
+        """Whether a message may be sent there as the owner: it is ticked, the user
+        token it is sent with is there, and so is the member that token belongs to."""
+        return bool(Permission.SEND in self.allowed and self.token(USER) and self.owner_id)
+
+    def poster(self, channel: str | None = None) -> SlackWebApi | None:
+        """What posts as this workspace's bot, to `channel` or where it usually posts."""
+        token, where = self.token(BOT), channel or self.channel
+        return SlackWebApi(token, where) if token and where else None
+
+    def files(self) -> SlackFiles | None:
+        """What sends a file as this workspace's bot; None with no bot token."""
+        token = self.token(BOT)
+        return SlackFiles(token) if token else None
+
+
+def _workspace(name: str, values: Mapping[str, Any], tokens: Mapping[str, str]) -> SlackWorkspace:
+    return SlackWorkspace(
+        name=name,
+        allowed=permissions(values.get("allow") or ()),
+        channel=str(values.get("channel_id") or ""),
+        owner_id=str(values.get("owner_id") or ""),
+        team=str(values.get("team") or ""),
+        team_id=str(values.get("team_id") or ""),
+        bot_user_id=str(values.get("bot_user_id") or ""),
+        tokens={kind: token for kind, token in tokens.items() if token},
+    )
+
+
+def workspace_tokens(settings: Settings) -> dict[str, dict[str, str]]:
+    """Every further workspace's tokens: what `settings` started with, under what the
+    store holds now.
+
+    Read from the store each time it is asked, as the billing admin keys are, so a
+    workspace connected while the service runs can be posted to with no restart.
+    """
+    held = dict(settings.slack_workspace_tokens)
+    with contextlib.suppress(Exception):
+        held.update(plugins.current_settings().slack_workspace_tokens)
+    return held
+
+
+def on_file(
+    settings: Settings, name: str, values: Mapping[str, Any] | None = None
+) -> SlackWorkspace:
+    """Workspace `name` as it is saved: its part of the plugin's file, and Keryx's own
+    tokens for it. Never a named MCP server's token or channel, which `workspaces` lays
+    over the first workspace for sending and which connecting must not mistake for its own.
+    """
+    if values is None:
+        values = plugins.read_config(settings, TOOL)
+    if name == DEFAULT:
+        return _workspace(name, values, {
+            BOT: plugins.secret(settings, "slack_bot_token") or "",
+            APP: plugins.secret(settings, "slack_app_token") or "",
+            USER: plugins.secret(settings, "slack_user_token") or "",
+        })
+    return _workspace(
+        name, values["workspaces"].get(name) or {}, workspace_tokens(settings).get(name) or {}
+    )
+
+
+def workspaces(settings: Settings, values: Mapping[str, Any] | None = None) -> list[SlackWorkspace]:
+    """Every workspace the plugin's settings name, `default` first, on or off.
+
+    `values` is the plugin's settings when the caller has read them already. This and
+    `on_file` under it are the only places a workspace's settings and its tokens are
+    joined. The first workspace's bot token and channel are the route's, so a named MCP
+    server still fills in for either; its other two tokens, and every token of a further
+    workspace, are Keryx's own.
+    """
+    if values is None:
+        values = plugins.read_config(settings, TOOL)
+    route = _route(settings, values)
+    own = on_file(settings, DEFAULT, values)
+    first = dataclasses.replace(
+        own,
+        channel=route.channel or "",
+        tokens={**own.tokens, **({BOT: route.token} if route.token else {})},
+    )
+    return [first] + [
+        on_file(settings, name, values) for name in values["workspaces"] if name != DEFAULT
+    ]
+
+
+def connected(settings: Settings) -> list[SlackWorkspace]:
+    """The workspaces Keryx can post to now: none while the plugin is off."""
+    if not plugins.is_on(settings, TOOL):
+        return []
+    return [each for each in workspaces(settings) if each.sends]
+
+
+def can_read(settings: Settings) -> bool:
+    """Whether any workspace may be read as the owner now. Never raises: a plugin file
+    that does not parse is a machine that cannot, and `doctor` says why."""
+    try:
+        return any(each.reads and each.owner_id for each in connected(settings))
+    except Exception:
+        return False
+
+
+def reading_off(settings: Settings) -> bool:
+    """Whether Keryx has a Slack app of its own that may not read as the owner: the
+    state in which a question about their Slack has no tool and no command to answer it.
+    Not so with no app (a named MCP server is the owner's own, with nothing to tick),
+    and not once reading is ticked for any workspace. Never raises."""
+    try:
+        route = slack_route(settings)
+        own = route is not None and route.mcp_server is None
+        return own and can_report(settings) and not can_read(settings)
+    except Exception:
+        return False
+
+
+def can_write(settings: Settings) -> bool:
+    """Whether a message may be sent as the owner in any workspace now. Never raises."""
+    try:
+        return any(each.writes for each in connected(settings))
+    except Exception:
+        return False
+
+
+def can_report(settings: Settings) -> bool:
+    """Whether Keryx's own bot can post to the owner now. Never raises."""
+    try:
+        return any(each.name == DEFAULT and each.sends for each in connected(settings))
+    except Exception:
+        return False
+
+
+class ReportRefused(RuntimeError):
+    """`keryx slack report` could not post, in a sentence that holds no token."""
+
+
+@dataclass(frozen=True)
+class _Destination:
+    """One of the two places a report may go, with everything that sends there."""
+
+    #: The workspace's name, for the command that mends its app.
+    workspace: str
+    poster: SlackPoster
+    files: SlackFiles | None
+    #: Where it posts as it is on file: a conversation's id, or the owner's member id.
+    channel: str
+    thread_ts: str | None
+    #: Said back to whoever ran the command.
+    where: str
+
+
+def _destination(settings: Settings, task: "Task | None",
+                 workspace_name: str | None) -> _Destination:
+    """Where a report goes: the thread a Slack-typed task was asked in (`report_route`,
+    so never another workspace), else where that workspace's reports go. Those are the
+    only two places, for words and for a file alike."""
+    if task is not None and task.origin_channel == SLACK_CHANNEL:
+        route = report_route(settings, task)
+        if route is None:
+            raise ReportRefused("the workspace that task was asked in is not connected, "
+                                "and a report never leaves its workspace")
+        home = workspace(settings, route.workspace)
+        return _Destination(
+            workspace=route.workspace, poster=route.poster,
+            files=home.files() if home is not None else None,
+            channel=task.slack_channel or "", thread_ts=route.thread_ts,
+            where="the thread the task was asked in",
+        )
+    name = (workspace_name or DEFAULT).strip().lower()
+    found = workspace(settings, name)
+    poster = found.poster() if found is not None and found.sends else None
+    if found is None or poster is None:
+        raise ReportRefused(f"no Slack workspace called {name[:40]} can be posted to: "
+                            "`keryx auth login slack` connects one")
+    return _Destination(workspace=name, poster=poster, files=found.files(),
+                        channel=found.channel, thread_ts=None,
+                        where=f"the {name} workspace, where their reports go")
+
+
+def _not_taken(error: str, file: LocalFile, workspace_name: str) -> str:
+    """Why Slack did not take a file, in one sentence. For an app made before Keryx
+    could send one, the sentence is what to do about it."""
+    if error == "missing_scope":
+        named = "" if workspace_name == DEFAULT else f" --workspace {workspace_name}"
+        return (f"the Slack app lacks the {' and '.join(FILE_BOT_SCOPES)} permission, which "
+                f"sending a file takes: run `keryx auth login slack{named}` again, paste "
+                "the manifest it prints into the app and reinstall it")
+    return f"Slack did not take {file.name} ({error})"
+
+
+async def report(settings: Settings, text: str, *, task: "Task | None" = None,
+                 workspace_name: str | None = None,
+                 files: Sequence[str | Path] = ()) -> str:
+    """Post `text` to the owner, as Keryx, for `keryx slack report`; where it went.
+
+    To where that workspace's reports go, or, for a task that was typed on Slack, into
+    the thread it was asked in (`_destination`). Those are the only two places: there is
+    no argument that names a conversation.
+
+    `files` are paths sent with it, to the same place and no other. Slack's reference
+    gives `files.completeUploadExternal` a `channel_id` that is a conversation's id, and
+    the owner's destination is usually their member id. `chat.postMessage` is documented
+    to take one and answers with the conversation it landed in (a `D…`); that the upload
+    takes one is not (only its plural `channels` is said to, and not where that lands),
+    so nothing here rests on it. The order is fixed: every file is handed to Slack
+    first, unshared, which is where an app without the scope or a file Slack will not
+    take is found out, with nothing posted yet; then the words are posted as every
+    report is; then the files are shared into the conversation Slack said the words
+    landed in, in the same thread when there is one. With no words, a destination that
+    is a conversation already takes the files alone, and a member's is led by the
+    files' names, because a message is how its conversation is learnt.
+    """
+    from keryx.config.files import keryx_home
+
+    text = text.strip()
+    try:
+        attached = local_files(files, private=[keryx_home()])
+    except FileRefused as error:
+        raise ReportRefused(f"{error}. Nothing was posted") from None
+    if not (text or attached):
+        raise ReportRefused("there is nothing on standard input to post")
+    to = _destination(settings, task, workspace_name)
+    uploaded = []
+    for file in attached:
+        if to.files is None:
+            raise ReportRefused("that workspace has no bot token to send a file with. "
+                                "Nothing was posted")
+        sent = await to.files.upload(file)
+        if not sent.ok:
+            raise ReportRefused(f"{_not_taken(sent.error, file, to.workspace)}. "
+                                "Nothing was posted")
+        uploaded.append(sent)
+    channel, said = to.channel, False
+    if text or not is_conversation(channel):
+        lead = text or ", ".join(file.name for file in attached)
+        posted = await to.poster.post(lead, thread_ts=to.thread_ts)
+        if not posted.ok:
+            raise ReportRefused(f"Slack did not take it ({posted.error})")
+        channel, said = posted.channel, True
+    if not uploaded:
+        return to.where
+    after = "the text was posted, but " if said else ""
+    if not is_conversation(channel):
+        raise ReportRefused(f"{after}Slack did not say which conversation it landed in, "
+                            "so no file was sent")
+    shared = await to.files.share(uploaded, channel=channel, thread_ts=to.thread_ts)
+    if not shared.ok:
+        again = ": send the file again without the text" if said else ""
+        raise ReportRefused(f"{after}Slack did not take the file ({shared.error}){again}")
+    names = [file.name for file in attached]
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f"{to.where}, with {listed}"
+
+
+def workspace(settings: Settings, name: str) -> SlackWorkspace | None:
+    """The connected workspace called `name`, as its settings stand now."""
+    return next((each for each in connected(settings) if each.name == name), None)
+
+
+@dataclass(frozen=True)
+class ReportRoute:
+    """Where one task's report goes on Slack, and how."""
+
+    workspace: str
+    poster: SlackPoster
+    #: The thread it is a reply in. None is a message of its own, whose timestamp then
+    #: becomes the task's thread.
+    thread_ts: str | None = None
+    #: Whether a reply is also shown in the conversation itself.
+    broadcast: bool = False
+    #: Where the *same* workspace would post a message of its own, for a thread that is
+    #: gone for good. Never another workspace's destination.
+    usual: SlackPoster | None = None
+    #: Slack's own id for the workspace posted to, kept beside the thread it starts.
+    team_id: str = ""
+
+
+def report_route(settings: Settings, task: "Task") -> ReportRoute | None:
+    """Where `task`'s report goes, or None when it goes nowhere on Slack.
+
+    A task has a thread from the moment it is asked for on Slack, or from its first report.
+    Every report is a reply there, so one task stays one thread and a message typed in it
+    always finds the task. **A task is answered where it was asked** (the owner's ruling of
+    2026-11-23): in their direct messages with the app, or in the thread of a conversation
+    the app was mentioned in, where its other members read the report too. A reply under a
+    report Keryx posted is also shown in the conversation, as each report always was; one
+    under the owner's own message is not, since they are in that thread already.
+
+    **A report never leaves the workspace its task belongs to**, and a workspace is the
+    team Slack knows, not the name it is connected under. `default` is a name: log out of
+    one workspace and log in to another as the first, and the name means another team.
+    So a recorded thread is only ever posted to with a token of the team it was recorded
+    in (`Task.slack_team_id` against the connection's `team_id`, compared here), and its
+    fallback is that same connection's. A task asked for on Slack whose team is no longer
+    connected under that name is posted nowhere (it is still in the task, for the next
+    call's digest and `keryx tasks show`), because whatever is connected now may be
+    somebody else's employer. A task asked for anywhere else was always the first
+    workspace's, so with no thread, or with one in a team that is gone, it goes where the
+    first workspace usually posts, as a message of its own, and that becomes its thread.
+    A thread with no team beside it is one recorded while the connection had none on file
+    either (an install from before requests): it stands only for as long as that is so.
+    """
+    found = {each.name: each for each in connected(settings)}
+    asked_here = task.origin_channel == SLACK_CHANNEL
+    home = found.get(task.slack_workspace or "")
+    same_team = home is not None and (task.slack_team_id or "") == home.team_id
+    if task.slack_channel and task.slack_thread_ts and home is not None and same_team:
+        poster = home.poster(task.slack_channel)
+        # When its thread is gone for good, a task asked for on Slack falls back to the
+        # owner's own direct messages with the app, never to a channel that workspace's
+        # reports happen to go to.
+        usual = home.poster(home.owner_id) if asked_here and home.owner_id else home.poster()
+        if poster is not None:
+            return ReportRoute(
+                workspace=home.name,
+                poster=poster,
+                thread_ts=task.slack_thread_ts,
+                broadcast=not asked_here,
+                usual=usual,
+                team_id=home.team_id,
+            )
+    if asked_here:
+        return None
+    first = found.get(DEFAULT)
+    poster = first.poster() if first is not None else None
+    if first is None or poster is None:
+        return None
+    return ReportRoute(workspace=DEFAULT, poster=poster, team_id=first.team_id)
 
 
 def description(owner: str) -> str:
@@ -93,10 +593,48 @@ PARAMETERS = {
     },
     "required": ["message"],
 }
+#: Added to the description when there is more than one workspace to choose from.
+SEVERAL = (
+    " They have more than one Slack workspace: send to their usual one, and name another "
+    "in `workspace` only when they said which."
+)
 
 
-def send_to_slack_tool(config_path: Path, *, sender: SlackSender | None = None):
-    """The tool `send_to_slack.py` defines, configured by the TOML at `config_path`."""
+def parameters(names: list[str]) -> dict:
+    """What the tool takes: a message, and which workspace only when there are several."""
+    if len(names) < 2:
+        return PARAMETERS
+    return {
+        **PARAMETERS,
+        "properties": {
+            **PARAMETERS["properties"],
+            "workspace": {
+                "type": "string",
+                "enum": names,
+                "description": (
+                    f"Which Slack workspace to send to. Leave it out for {names[0]}, their "
+                    "usual one; name another only when they said which."
+                ),
+            },
+        },
+    }
+
+
+def slack_report_tool(
+    config_path: Path,
+    *,
+    sender: SlackSender | None = None,
+    senders: Mapping[str, SlackSender] | None = None,
+):
+    """The tool `slack_report.py` defines, configured by the TOML at `config_path`: Keryx
+    sends something to the owner, as Keryx.
+
+    `to` and `thread` are not arguments, on purpose: this tool only ever posts where the
+    owner's reports go. Sending as the owner, to somebody else, is `slack_message`.
+
+    `sender` stands in for the first workspace's, and `senders` for every workspace's by
+    name, in the tests.
+    """
     from keryx.tools.custom import CustomTool, ToolUnavailable
 
     settings = plugins.loading_settings()
@@ -104,26 +642,59 @@ def send_to_slack_tool(config_path: Path, *, sender: SlackSender | None = None):
         values = plugins.read_config_file(TOOL, config_path)
     except plugins.PluginConfigError as error:
         raise ToolUnavailable(str(error)) from None
-    if sender is None:
-        sender = _route(settings, values).sender()
-    if sender is None:
+    if senders is None and sender is not None:
+        senders = {DEFAULT: sender}
+    if senders is None:
+        senders = {each.name: each.poster() for each in workspaces(settings, values)
+                   if each.sends}
+    if DEFAULT not in senders:
         raise ToolUnavailable(
-            "no bot token and channel: `keryx config set SLACK_BOT_TOKEN --stdin`, and "
-            f"channel_id in {config_path.name} (or an mcp_server whose config has both)"
+            "no bot token and channel: `keryx auth login slack` sets both (by hand: "
+            "`keryx config set SLACK_BOT_TOKEN --stdin`, and "
+            f"channel_id in {config_path.name}, or an mcp_server whose config has both)"
         )
+    names = list(senders)
 
-    async def send_to_slack(ctx, arguments: dict) -> dict:
+    async def slack_report(ctx, arguments: dict) -> dict:
         message = str(arguments.get("message") or "").strip()
         if not message:
             return {"error": "message is required: say what to send"}
-        if not await sender.send(message):
+        name = str(arguments.get("workspace") or DEFAULT).strip().lower()
+        if name not in senders:
+            return {"error": f"there is no Slack workspace called {name}: one of "
+                             f"{', '.join(names)}"}
+        if not await senders[name].send(message):
             return {"error": FAILED_MESSAGE}
         return {"status": "sent"}
 
     return CustomTool(
         name=TOOL,
-        description=description(settings.owner_label),
-        parameters=PARAMETERS,
-        handler=send_to_slack,
+        description=description(settings.owner_label) + (SEVERAL if len(names) > 1 else ""),
+        parameters=parameters(names),
+        handler=slack_report,
         needs_pin=True,
     )
+
+
+#: What the tool and its plugin were called until 2026-11-23. A machine that installed it
+#: then still has `send_to_slack.py`, whose one line calls this name: it stays an entry
+#: point for as long as such a file may be on a machine, and what it builds is the same
+#: tool, offered as `slack_report`.
+def send_to_slack_tool(config_path: Path, **fakes):
+    """`slack_report_tool`, for a `send_to_slack.py` installed before the rename.
+
+    With `slack_report.py` beside it, it stands aside: two files would otherwise define
+    one tool, the older one would load first and win, and it would read the settings
+    nothing writes any more. The new pair is then the one loaded, and this file is said
+    to be removable.
+    """
+    from keryx.tools.custom import ToolUnavailable
+
+    # (Not when this *is* that file: an edited one line keeps calling this name after
+    # the owner's install has renamed it.)
+    if config_path.stem != TOOL and (config_path.parent / f"{TOOL}.py").exists():
+        raise ToolUnavailable(
+            f"{TOOL}.py is beside this file and is the one that is loaded: this copy, "
+            f"under the plugin's old name, and {config_path.name} can be deleted"
+        )
+    return slack_report_tool(config_path, **fakes)

@@ -775,15 +775,35 @@ def _projects_root_check(settings: Settings) -> Check:
 
 #: What turning each plugin on does not reach while it is off, when its secret is set anyway.
 _UNUSED_SECRET = {
-    "send_to_slack": "PIN-lockout alerts are not going to Slack",
+    "slack_report": "PIN-lockout alerts are not going to Slack",
     "check_billing": "nothing reads it",
     "check_email": "questions about your email are dispatched as tasks instead",
 }
 
 
+def _turn_on(settings: Settings, name: str) -> str:
+    """The one command that turns an optional plugin on from off, as a hint's ending.
+
+    `keryx plugins install NAME` for most. Slack's cannot start that way: `slack_report`
+    needs a token and somewhere to send, which its sign-in gets before turning it on;
+    and the two that act as the owner follow what is ticked in that sign-in, which
+    turns each on with its box. Where the box is ticked and the tool is off, it was
+    turned off by hand, and the install is all there is to do.
+    """
+    from keryx.plugins.slack import can_read, can_write
+
+    if name == "slack_report":
+        return "`keryx auth login slack`"
+    ticked = {"slack_read": ("reading Slack as you", can_read),
+              "slack_message": ("sending messages as you", can_write)}
+    if name in ticked and not ticked[name][1](settings):
+        return f"`keryx auth login slack`, and tick {ticked[name][0]}"
+    return f"`keryx plugins install {name}`"
+
+
 def _secret_without_plugin(settings: Settings, name: str) -> str | None:
     """The secret (or sign-in) this plugin uses that is there while the plugin is off."""
-    if name == "send_to_slack" and settings.slack_bot_token:
+    if name == "slack_report" and settings.slack_bot_token:
         return env_var_name("slack_bot_token")
     if name == "check_billing":
         for field in ("openai_admin_key", "anthropic_admin_key"):
@@ -796,12 +816,21 @@ def _secret_without_plugin(settings: Settings, name: str) -> str | None:
     return None
 
 
-def _plugin_detail(status: plugins.Status) -> str:
+def _plugin_detail(status: plugins.Status, settings: Settings) -> str:
     values = status.values or {}
-    if status.name == "send_to_slack":
+    if status.name == "slack_report":
+        from keryx.plugins.slack import agents_send_with
+
         where = values.get("channel_id") or "the MCP server's channel"
-        server = values.get("mcp_server")
-        return f"posts to {where}" + (f"; subagents use the {server} MCP server" if server else "")
+        # Which way subagents send is said where the file names a server, because the
+        # name alone does not: a bot token of Keryx's own outranks it.
+        named = f"; {agents_send_with(settings, values)}" if values.get("mcp_server") else ""
+        return f"posts to {where}{named}"
+    if status.name == "slack_message":
+        return "sends one message as you, after saying who to and what and hearing a yes"
+    if status.name == "slack_read":
+        return (f"reads Slack as you, only when you ask; {values.get('model')} answers a "
+                "question about what it read")
     if status.name in ("check_email", "find_document"):
         return f"{values.get('model')}, {values.get('effort')} effort"
     if status.name == "check_calendar":
@@ -817,6 +846,40 @@ def _plugin_detail(status: plugins.Status) -> str:
         return f"{values.get('provider')}" + (f", budget ${budget:g}" if budget else "")
     guard = values.get("guard") or "the built-in guard"
     return f"{', '.join(values.get('clusters') or {})} through {guard}"
+
+
+def slack_workspace_checks(settings: Settings, values: dict) -> list[Check]:
+    """One soft check per Slack workspace: what is on and off there, in plain words, and
+    whether everything that needs is there. Never a token, only which kind is missing. A workspace
+    connected before user tokens has no owner on file: that is said, with how to add
+    one, and is not a failure, because nothing it does needs one."""
+    from keryx.plugins.slack import DEFAULT, in_words, workspaces
+
+    try:
+        found = workspaces(settings, values)
+    except Exception as exc:  # a table somebody edited by hand: said, never raised
+        return [Check("slack_report: workspaces", False, f"could not be read: {exc}",
+                      severity="soft", section="plugins")]
+    checks = []
+    for each in found:
+        name = f"slack_report: {each.name}"
+        team = f"{each.team}, " if each.team else ""
+        said = in_words(each.allowed)
+        flags = "" if each.name == DEFAULT else f" --workspace {each.name}"
+        if not each.missing:
+            owner = "" if each.owner_id else (
+                "; no owner on file yet (it was connected before Keryx asked for a user "
+                f"token): `keryx auth login slack{flags}` adds one")
+            checks.append(Check(name, True, f"{team}posts to {each.channel}; {said}{owner}",
+                                severity="soft", section="plugins"))
+            continue
+        checks.append(Check(
+            name, False,
+            f"{team}{said}; but without {' or '.join(each.missing)} — "
+            f"`keryx auth login slack{flags}`",
+            severity="soft", section="plugins",
+        ))
+    return checks
 
 
 def plugin_checks(settings: Settings) -> list[Check]:
@@ -835,8 +898,10 @@ def plugin_checks(settings: Settings) -> list[Check]:
     for status in statuses:
         name = status.name
         if status.on:
-            checks.append(Check(name, True, f"on — {_plugin_detail(status)}", severity="soft",
-                                section="plugins"))
+            checks.append(Check(name, True, f"on — {_plugin_detail(status, settings)}",
+                                severity="soft", section="plugins"))
+            if name == "slack_report":
+                checks.extend(slack_workspace_checks(settings, status.values or {}))
         elif status.installed:
             checks.append(Check(name, False, f"on but refused: {status.refused}",
                                 severity="soft", section="plugins"))
@@ -850,7 +915,7 @@ def plugin_checks(settings: Settings) -> list[Check]:
         else:
             checks.append(Check(
                 name, False,
-                f"off (optional) — `keryx setup` → Plugins, or `keryx plugins install {name}`",
+                f"off (optional) — `keryx setup` → Plugins, or {_turn_on(settings, name)}",
                 severity="soft", section="plugins", unset=True,
             ))
     return checks

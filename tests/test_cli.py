@@ -1277,7 +1277,8 @@ def test_plugins_lists_every_one_off_on_a_fresh_machine(settings_stub):
     assert result.exit_code == 0, result.output
     found = json.loads(result.output)["plugins"]
     assert [(one["name"], one["on"]) for one in found] == [
-        ("send_to_slack", False), ("check_email", False),
+        ("slack_report", False), ("slack_read", False), ("slack_message", False),
+        ("check_email", False),
         ("check_calendar", False), ("add_calendar_event", False),
         ("find_document", False), ("check_billing", False), ("cluster_stats", False),
     ]
@@ -1288,6 +1289,76 @@ def test_plugins_lists_them_in_columns_whatever_the_longest_name(settings_stub):
 
     assert len(lines) == len(plugins.PLUGINS)
     assert {line.index(" off ") for line in lines} == {len("add_calendar_event") + 1}
+
+
+def test_plugins_says_which_way_subagents_send_when_slack_names_a_server(
+    settings_stub, monkeypatch
+):
+    """Only where the file names one: the line says what is in use, which with a bot
+    token of Keryx's own is the command and not the server."""
+    with_token = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: with_token)
+    plugins.write_config(with_token, "slack_report", {"channel_id": "U0OWNER"})
+    plugins.install(with_token, "slack_report")
+
+    plain = runner.invoke(app, ["plugins"]).output
+    plugins.write_config(with_token, "slack_report", {"mcp_server": "chat"})
+    named = runner.invoke(app, ["plugins"]).output
+
+    assert "subagents send" not in plain
+    assert ("subagents send with `keryx slack report` (the chat MCP server named in the "
+            "file is not used while Keryx has an app of its own)") in named
+    assert "xoxb" not in named
+
+
+def test_plugins_says_what_is_on_and_off_in_each_slack_workspace_in_plain_words(
+    settings_stub, monkeypatch
+):
+    """Never a level, an option, or a name out of the code: what Keryx does there."""
+    connected = settings_stub.model_copy(update={
+        "slack_bot_token": "xoxb-1", "slack_app_token": "xapp-1",
+        "slack_workspace_tokens": {"work": {"bot": "xoxb-w", "user": "xoxp-w"}},
+    })
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: connected)
+    monkeypatch.setattr(plugins, "current_settings", lambda: connected)
+    plugins.write_config(connected, "slack_report", {
+        "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER", "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+        "workspaces": {"work": {"allow": ["read", "send"], "channel_id": "U0WORK",
+                                "owner_id": "U0WORK", "team": "Lab"}},
+    })
+    plugins.install(connected, "slack_report")
+
+    listed = runner.invoke(app, ["plugins"]).output
+
+    assert ("Acme: on: sending you reports and files, acting on what you type to the app; "
+            "off: reading Slack as you, sending messages as you") in listed
+    assert ("work (Lab): on: sending you reports and files, reading Slack as you, sending "
+            "messages as you; off: acting on what you type to the app") in listed
+    for word in ("converse", "announce", "level", "--allow", "requests", "xoxb", "xoxp"):
+        assert word not in listed
+
+
+def test_a_slack_table_that_cannot_be_read_is_doctors_to_report_not_the_listings(
+    settings_stub, monkeypatch
+):
+    from keryx import cli
+
+    def broken(settings, name, values):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr("keryx.plugins.slack.on_file", broken)
+
+    assert cli._slack_said(settings_stub, {"workspaces": {}}) == []
+
+
+def test_plugins_says_nothing_of_boxes_for_slack_that_is_off_or_only_a_servers(
+    settings_stub, monkeypatch
+):
+    monkeypatch.setattr(plugins, "current_settings", lambda: settings_stub)
+    plugins.write_config(settings_stub, "slack_report", {"mcp_server": "chat"})
+
+    assert "sending you reports" not in runner.invoke(app, ["plugins"]).output
 
 
 def test_a_google_plugin_names_the_sign_in_when_given_a_setting_it_lacks(settings_stub):
@@ -1321,22 +1392,106 @@ def test_plugins_install_with_values_turns_one_on(settings_stub):
 
 
 def test_plugins_install_never_takes_a_secret(settings_stub):
-    result = runner.invoke(app, ["plugins", "install", "send_to_slack",
+    result = runner.invoke(app, ["plugins", "install", "slack_report",
                                  "--set", "SLACK_BOT_TOKEN=xoxb-secret"])
 
     assert result.exit_code == 1
     assert "keryx config set SLACK_BOT_TOKEN --stdin" in result.output
     assert "xoxb-secret" not in result.output
-    assert not plugins.config_path(settings_stub, "send_to_slack").exists()
+    assert not plugins.config_path(settings_stub, "slack_report").exists()
 
 
 def test_plugins_install_says_when_it_is_installed_but_refused(settings_stub):
-    result = runner.invoke(app, ["plugins", "install", "send_to_slack",
+    result = runner.invoke(app, ["plugins", "install", "slack_report",
                                  "--set", "channel_id=D123"])
 
     assert result.exit_code == 1
-    assert "send_to_slack is installed but refused" in result.output
+    assert "slack_report is installed but refused" in result.output
     assert "SLACK_BOT_TOKEN --stdin" in result.output
+
+
+def test_plugins_install_renames_a_pair_installed_under_the_plugins_old_name(
+    settings_stub, monkeypatch
+):
+    """`send_to_slack` became `slack_report`: only this command moves the files."""
+    with_token = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: with_token)
+    tools = with_token.custom_tools_dir
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "send_to_slack.py").write_text(plugins._template("send_to_slack.py"))
+    (tools / "send_to_slack.toml").write_text('channel_id = "U0OWNER"\n')
+    for path in tools.iterdir():
+        path.chmod(0o600)
+
+    listed = json.loads(runner.invoke(app, ["plugins", "--json"]).output)["plugins"]
+    assert [one["name"] for one in listed].count("slack_report") == 1
+    assert "send_to_slack" not in [one["name"] for one in listed]
+    assert sorted(path.name for path in tools.iterdir() if path.is_file()) == [
+        "send_to_slack.py", "send_to_slack.toml"], "listing moved nothing"
+
+    result = runner.invoke(app, ["plugins", "install", "send_to_slack"])
+
+    assert result.exit_code == 0, result.output
+    assert "send_to_slack is now called slack_report: its files were renamed" in result.output
+    assert "slack_report is on, from the next call" in result.output
+    assert sorted(path.name for path in tools.iterdir() if path.suffix in (".py", ".toml")) == [
+        "slack_report.py", "slack_report.toml"]
+    assert plugins.read_config(with_token, "slack_report")["channel_id"] == "U0OWNER"
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    ["owner_id=U0COLLEAGUE", "allow=send", "access=write", "team_id=T0OTHER",
+     "bot_user_id=U0OTHERBOT", "team=Other", "workspaces=x"],
+)
+def test_plugins_install_cannot_set_what_only_connecting_slack_settles(
+    settings_stub, monkeypatch, assignment
+):
+    """One owner, fixed at connect: `--set owner_id=…` would be an option to change it,
+    and `--set allow=send` a box nobody's tokens were checked for (as `--set access=…`,
+    the level it replaced, would be)."""
+    with_token = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: with_token)
+    plugins.write_config(with_token, "slack_report", {
+        "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX"})
+    plugins.install(with_token, "slack_report")
+    before = plugins.read_config(with_token, "slack_report")
+
+    for extra in ([], ["--template"]):
+        result = runner.invoke(app, ["plugins", "install", "slack_report",
+                                     "--set", assignment, *extra])
+
+        key = assignment.split("=")[0]
+        assert result.exit_code == 1
+        assert result.output.strip() == (
+            f"{key} is settled by `keryx auth login slack` when the workspace is connected, "
+            "from what Slack says of its tokens, and is never set by hand")
+    assert plugins.read_config(with_token, "slack_report") == before
+
+
+def test_plugins_install_still_sets_where_reports_go_and_the_mcp_server(
+    settings_stub, monkeypatch
+):
+    with_token = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: with_token)
+
+    result = runner.invoke(app, ["plugins", "install", "slack_report", "--set",
+                                 "channel_id=C0REPORTS", "--set", "mcp_server=slack"])
+
+    assert result.exit_code == 0, result.output
+    saved = plugins.read_config(with_token, "slack_report")
+    assert (saved["channel_id"], saved["mcp_server"]) == ("C0REPORTS", "slack")
+    assert (saved["owner_id"], saved["allow"]) == ("", [])
+
+
+def test_no_other_plugins_install_can_carry_those_keys_either(settings_stub):
+    for name in plugins.PLUGINS:
+        if name == "slack_report":
+            continue
+        result = runner.invoke(app, ["plugins", "install", name, "--set", "owner_id=U0X"])
+        assert result.exit_code == 1 and "has no setting 'owner_id'" in result.output
+    assert not plugins.config_path(settings_stub, "slack_report").exists()
 
 
 def test_plugins_install_takes_the_clusters_and_the_guard(settings_stub, tmp_path):
@@ -1393,6 +1548,71 @@ def test_plugins_remove_turns_one_off_and_keeps_its_settings(settings_stub):
     assert "check_billing is off from the next call" in result.output
     assert "was not on" in again.output
     assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 9
+
+
+def test_a_line_from_before_the_boxes_is_never_answered_with_the_level_names(
+    settings_stub, monkeypatch
+):
+    """`keryx doctor`, `keryx plugins` and `keryx auth status`, for a file whose old
+    `access` line was mistyped: each says the line is not understood and what rewrites
+    it, and none lists the four levels a setting that is gone could take."""
+    settings = settings_stub.model_copy(update={"slack_bot_token": "xoxb-1"})
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+    plugins.write_config(settings, "slack_report", {"channel_id": "U0OWNER"})
+    plugins.install(settings, "slack_report")
+    path = plugins.config_path(settings, "slack_report")
+    path.write_text('access = "reed"\n' + path.read_text().replace("allow = []\n", ""))
+
+    for command in (["doctor"], ["plugins"], ["auth", "status"]):
+        output = " ".join(runner.invoke(app, command).output.split())
+        assert "the access line is not understood" in output, command
+        assert "`keryx auth login slack` rewrites it" in output, command
+        assert "announce" not in output and "converse" not in output, command
+
+
+def slack_that_reads_and_sends(settings):
+    """A workspace with reading and sending ticked, and all three Slack tools on."""
+    settings = settings.model_copy(update={"slack_bot_token": "xoxb-1",
+                                           "slack_user_token": "xoxp-1"})
+    plugins.write_config(settings, "slack_report", {
+        "channel_id": "U0OWNER", "owner_id": "U0OWNER", "allow": ["read", "send"],
+        "team": "Acme", "team_id": "T0ACME", "bot_user_id": "U0KERYX"})
+    for name in ("slack_report", "slack_read", "slack_message"):
+        plugins.install(settings, name)
+    return settings
+
+
+@pytest.mark.parametrize("name", ["slack_report", "send_to_slack"])
+def test_turning_slack_report_off_turns_off_the_two_that_act_as_the_owner(
+    settings_stub, monkeypatch, name
+):
+    """The off switch its own settings file names. Left on, `slack_read` and
+    `slack_message` would be refused at every call and `keryx tools` would exit 1 until
+    somebody removed them by hand: they go with it, as when the wizard turns it off."""
+    settings = slack_that_reads_and_sends(settings_stub)
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+
+    result = runner.invoke(app, ["plugins", "remove", name, "--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert f"{name} is off from the next call" in result.output
+    assert "slack_read is off with it, from the next call." in result.output
+    assert "slack_message is off with it, from the next call." in result.output
+    for tool in ("slack_report", "slack_read", "slack_message"):
+        assert not plugins.tool_path(settings, tool).is_file()
+    listed = runner.invoke(app, ["tools"])
+    assert listed.exit_code == 0 and "refused" not in listed.output
+
+
+def test_turning_one_of_the_two_off_leaves_the_others_as_they_are(settings_stub, monkeypatch):
+    settings = slack_that_reads_and_sends(settings_stub)
+    monkeypatch.setattr("keryx.cli.load_settings", lambda **overrides: settings)
+
+    result = runner.invoke(app, ["plugins", "remove", "slack_read", "--yes"])
+
+    assert result.exit_code == 0 and "off with it" not in result.output
+    assert plugins.tool_path(settings, "slack_report").is_file()
+    assert plugins.tool_path(settings, "slack_message").is_file()
 
 
 @pytest.mark.parametrize("argv", [["install", "check_billing"], ["remove", "check_billing"]])
@@ -1460,3 +1680,73 @@ def test_tools_json_is_one_document(settings_stub):
         "refused": [],
     }
 
+
+
+# --- keryx serve: hearing Slack starts last ------------------------------------------------
+
+
+class _StartupState:
+    """As much of an `AppState` as the startup sequence touches, recording its order."""
+
+    def __init__(self, *, listening=("default",), restart_error=None, slack_error=None):
+        self.order: list[str] = []
+        state = self
+
+        class Restart:
+            async def resume(self, wait_ready):
+                state.order.append("restart confirmed")
+                if restart_error is not None:
+                    raise restart_error
+
+        class Manager:
+            async def resume_queued(self):
+                state.order.append("queue picked up")
+                return []
+
+        class Inbox:
+            def start(self):
+                state.order.append("slack heard")
+                if slack_error is not None:
+                    raise slack_error
+                return list(listening)
+
+        self.restart, self.manager, self.slack_inbox = Restart(), Manager(), Inbox()
+
+
+async def test_slack_is_heard_only_after_a_restart_is_confirmed_and_the_queue_picked_up(capsys):
+    """A message that started a task sooner would be counted as work the restart interrupted."""
+    from keryx.cli import _settle_then_listen
+
+    state = _StartupState(listening=("default", "work"))
+
+    await _settle_then_listen(state, ready=None)
+
+    assert state.order == ["restart confirmed", "queue picked up", "slack heard"]
+    said = capsys.readouterr().out
+    assert "listening to Slack for your messages in default" in said
+    assert "listening to Slack for your messages in work" in said
+
+
+async def test_startup_housekeeping_that_fails_does_not_leave_slack_unheard(caplog):
+    from keryx.cli import _settle_then_listen
+
+    state = _StartupState(restart_error=RuntimeError("no record"))
+
+    await _settle_then_listen(state, ready=None)
+
+    assert state.order == ["restart confirmed", "slack heard"]
+    assert "the startup housekeeping failed" in caplog.text
+
+
+async def test_slack_that_cannot_be_heard_never_stops_the_server(caplog, capsys):
+    from keryx.cli import _settle_then_listen
+
+    state = _StartupState(slack_error=RuntimeError("no"))
+    await _settle_then_listen(state, ready=None)
+    assert "could not start listening to Slack" in caplog.text
+    assert "listening to Slack" not in capsys.readouterr().out
+
+    silent = _StartupState()
+    silent.slack_inbox = None
+    await _settle_then_listen(silent, ready=None)
+    assert silent.order == ["restart confirmed", "queue picked up"]

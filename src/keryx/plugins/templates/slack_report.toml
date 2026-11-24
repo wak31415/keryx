@@ -1,0 +1,55 @@
+# slack_report: "send me that on Slack" posts to your DM, and a PIN lockout is posted there
+# too. Changes here count from the next call; no restart.
+#
+# The tokens are secrets, so they are not in this file: they are in secrets.toml, set by
+# `keryx auth login slack` (the bot token alone can also come from the MCP server below).
+# `keryx plugins remove slack_report` turns all of this off.
+
+# Where it posts. Your member id (U…) reaches you in your messages from the app, and
+# `keryx auth login slack` takes it from your user token; a channel's id (in the
+# conversation's details) works too. Blank: the SLACK_CHANNEL_ID in the MCP server's
+# config below.
+channel_id = {channel_id}
+
+# What Keryx may do in this workspace beyond sending you reports and files, which is
+# also what your Slack app was created with. Any of these, in any combination:
+#   "requests": it acts on every direct message you type to the app itself, with no
+#     mention needed: a new message starts work and a reply under a task's report resumes
+#     that task, without the phone PIN.
+#   "read": it reads Slack as you when you ask it about messages. With "requests" as
+#     well, you can also mention the app in a conversation it was added to, and it
+#     answers in that thread.
+#   "send": it can send a message as you, to a person or a channel, after reading it
+#     back to you and a yes.
+# `keryx auth login slack` writes this: run it and tick what you want. Taking one out
+# here by hand takes effect at once; adding one needs the app changed in Slack and
+# perhaps another token, which that command walks you through.
+allow = {allow}
+
+# Your own member id in this workspace. Only messages from this member are ever acted
+# on. It is settled when the workspace is connected and nothing changes it afterwards:
+# `keryx auth logout slack` and a new login connects as somebody else.
+owner_id = {owner_id}
+
+# The workspace this is, and the app's own member id there, as Slack gave them when
+# the token was checked. A message is acted on only when it is from the workspace with
+# this id; outside your direct messages with the app it also has to mention the app,
+# which is a mention of that member id whatever the app is called (it carries your
+# assistant's name), and nothing is ever sent to it as you.
+team = {team}
+team_id = {team_id}
+bot_user_id = {bot_user_id}
+
+# The user-scope MCP server in ~/.claude.json (in $CLAUDE_CONFIG_DIR, when that is set)
+# that gives subagents Slack, for a machine with no Slack app of Keryx's own: subagents
+# are told to use it, and the token and channel are read from its config. Once
+# `keryx auth login slack` has saved a bot token, that app is used for everything and
+# this name is not: subagents send with `keryx slack report`, files included. Blank: none.
+mcp_server = {mcp_server}
+{extra}
+
+# Further workspaces, one [workspace-NAME] table each with the same settings as the
+# top of this file, written by `keryx auth login slack --workspace NAME` and removed by
+# `keryx auth logout slack --workspace NAME`. Everything is sent to the workspace at the
+# top unless one of these is named.
+{workspaces}

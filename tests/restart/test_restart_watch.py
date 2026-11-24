@@ -240,12 +240,13 @@ async def test_the_alert_carries_the_error_the_logs_have(harness):
     assert "ModuleNotFoundError" in harness.sms_body()
 
 
-async def test_the_alert_names_the_task_the_restart_was_loading(harness):
+async def test_the_alert_says_the_restart_was_loading_work_without_its_number(harness):
     harness.store.save(pending(task_id=9))
 
     await harness.run()
 
-    assert "task 9" in harness.sms_body()
+    assert "It was loading work you had asked for." in harness.sms_body()
+    assert "task 9" not in harness.sms_body()
 
 
 async def test_a_service_that_answers_but_never_confirmed_is_worded_differently(tmp_path):

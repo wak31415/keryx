@@ -238,7 +238,8 @@ def mcp_servers(settings: Settings) -> dict[str, Mapping[str, Any]]:
 
     Claude reaches Slack through its own configuration (the user-scope servers in
     `~/.claude.json`); Codex has none, so it is handed over explicitly. It is the server the
-    `send_to_slack` plugin names, and none while that is off. Google's is added for both
+    `slack_report` plugin names, and none while that is off, or once Keryx has a Slack app
+    of its own, which outranks it (`plugins.slack._route`). Google's is added for both
     agents by `AgentContext.build`.
     """
     from keryx.plugins.slack import slack_route
@@ -542,7 +543,8 @@ class CodexAgentRunner(AdapterRunner):
     async def connect(self, context: AgentContext, resume: str | None) -> CodexAdapter:
         """Start an app-server and a thread on it — or resume one — for `context`."""
         config, server_env = mcp_config(context.mcp_servers)
-        env = {**server_env, **await self._credential_env(context.auth)}
+        env = {**context.task_env, **server_env,
+               **await self._credential_env(context.auth)}
         client = self._client_factory(env, context.cwd)
         options = {
             "cwd": str(context.cwd),

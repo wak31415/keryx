@@ -43,10 +43,10 @@ from keryx.tasks.models import Task, TaskKind
 
 
 def turn_on_slack(settings, server: str) -> None:
-    """The `send_to_slack` plugin on, naming `server` as the subagents' Slack."""
+    """The `slack_report` plugin on, naming `server` as the subagents' Slack."""
     settings.ensure_dirs()
-    plugins.write_config(settings, "send_to_slack", {"mcp_server": server})
-    plugins.install(settings, "send_to_slack")
+    plugins.write_config(settings, "slack_report", {"mcp_server": server})
+    plugins.install(settings, "slack_report")
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -597,7 +597,17 @@ async def test_the_stored_login_blanks_every_credential_it_did_not_choose(settin
 
     await open_session(settings, codex)
 
-    assert codex.env == {"OPENAI_API_KEY": "", "CODEX_API_KEY": "", "CODEX_ACCESS_TOKEN": ""}
+    credentials = {key: value for key, value in codex.env.items() if key != "KERYX_TASK_ID"}
+    assert credentials == {"OPENAI_API_KEY": "", "CODEX_API_KEY": "", "CODEX_ACCESS_TOKEN": ""}
+
+
+async def test_the_app_server_is_told_which_task_it_is_working_on(settings):
+    """So a command of Keryx's that the agent runs can hold it to its own task."""
+    codex = FakeCodex()
+
+    await open_session(settings, codex)
+
+    assert codex.env["KERYX_TASK_ID"].isdigit()
 
 
 async def test_the_token_goes_in_the_environment_and_is_never_persisted(settings):

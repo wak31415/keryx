@@ -93,6 +93,8 @@ OPTIONAL_STR_FIELDS = (
     "google_oauth_client_secret",
     "user_google_email",
     "slack_bot_token",
+    "slack_app_token",
+    "slack_user_token",
     "service_unit",
     "approval_quiet_hours",
     "openai_admin_key",
@@ -135,6 +137,19 @@ GOOGLE_CLIENT_FILE = "google_client_secret.json"
 DIRECTORY_FIELDS = ("data_dir", "state_dir", "cache_dir")
 #: Where a problem with Keryx is filed unless `ISSUE_REPO` says otherwise: its own tracker.
 UPSTREAM_REPO = "wak31415/keryx"
+#: The tokens a Slack workspace may have, by the name each is stored under: the bot's,
+#: the app-level one Socket Mode connects with, and the owner's own.
+SLACK_TOKEN_KINDS = ("bot", "app", "user")
+#: The workspace the three plain `SLACK_*_TOKEN` settings belong to: the one everything
+#: is sent to unless another is named. It is never a key of `SLACK_WORKSPACE_TOKENS`.
+SLACK_DEFAULT_WORKSPACE = "default"
+#: A further workspace's name: a short lower-case word of the owner's own.
+SLACK_WORKSPACE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+#: Settings that are a table of tables, kept in their file as one line of JSON. A build
+#: of Keryx from before the setting rewrites that line as it found it, where a TOML table
+#: two deep would come back as the text of a dict (`store.validate` writes the line, and
+#: `_parse_json_map` reads it).
+STORED_AS_JSON = frozenset({"SLACK_WORKSPACE_TOKENS"})
 #: An assistant's name: a letter, then up to 31 letters, spaces, apostrophes or hyphens.
 ASSISTANT_NAME_PATTERN = re.compile(r"[^\W\d_](?:[^\W\d_]|[ '’-]){0,31}")
 ASSISTANT_NAME_RULE = (
@@ -268,7 +283,8 @@ class Settings(BaseSettings):
         "What the assistant on the phone is called: the name it answers to and introduces "
         "itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, "
         f"spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or "
-        f"`{DEFAULT_VOICE}`.",
+        f"`{DEFAULT_VOICE}`. Your Slack app is called by it too, from the next time its "
+        "manifest is saved (`keryx auth login slack` prints it).",
         group="voice",
         service_writable=True,
     )
@@ -559,9 +575,37 @@ class Settings(BaseSettings):
     # `DATA_DIR/tools` (`keryx.plugins`). These stay here so they live in `secrets.toml`.
     slack_bot_token: str | None = setting(
         None,
-        "The bot token the `send_to_slack` plugin posts with (and the PIN-lockout alert).",
+        "The bot token (`xoxb-`) of your Slack app: what the `slack_report` plugin, each "
+        "finished task's report and the PIN-lockout alert post with. `keryx auth login "
+        "slack` sets it.",
         group="plugins",
         repr=False,
+    )
+    slack_app_token: str | None = setting(
+        None,
+        "The app-level token (`xapp-`, with `connections:write`) Keryx listens to your "
+        "Slack app with, once it may act on what you type to the app. `keryx auth login "
+        "slack` sets it.",
+        group="plugins",
+        repr=False,
+    )
+    slack_user_token: str | None = setting(
+        None,
+        "Your own user token (`xoxp-`) from your Slack app. It reads Slack as you and "
+        "sends as you, each only once you have ticked it, and is kept only while one of "
+        "the two is ticked: with neither, Keryx asks it once which member you are and "
+        "does not save it. `keryx auth login slack` sets it.",
+        group="plugins",
+        repr=False,
+    )
+    slack_workspace_tokens: dict[str, dict[str, str]] = setting(
+        description="The tokens of each further Slack workspace, by the name you gave it, as "
+        'one line of JSON: `{"work": {"bot": "xoxb-…", "app": "xapp-…", "user": '
+        '"xoxp-…"}}`. `keryx auth login slack --workspace NAME` writes it; the three '
+        "settings above are the first workspace's.",
+        group="plugins",
+        repr=False,
+        default_factory=dict,
     )
     # Read-only, and on an *admin*-scoped credential: the key the voice agent talks to the
     # model with cannot read `/v1/organization/costs`.
@@ -811,7 +855,7 @@ class Settings(BaseSettings):
     def _agent_name_is_lowercase(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
 
-    @field_validator("projects", mode="before")
+    @field_validator("projects", "slack_workspace_tokens", mode="before")
     @classmethod
     def _parse_json_map(cls, value: object) -> object:
         """A JSON object given as text — `keryx config set PROJECTS '{"a": "/b"}'`."""
@@ -820,6 +864,30 @@ class Settings(BaseSettings):
                 return json.loads(value) if value.strip() else {}
             except json.JSONDecodeError as error:
                 raise ValueError('must be a JSON object, like {"name": "value"}') from error
+        return value
+
+    @field_validator("slack_workspace_tokens", mode="after")
+    @classmethod
+    def _workspace_tokens_are_named_and_known(
+        cls, value: dict[str, dict[str, str]]
+    ) -> dict[str, dict[str, str]]:
+        """Each workspace a short word, each token one of the three kinds and not blank.
+
+        Nothing here repeats a value: what is refused is a name, or a kind.
+        """
+        for name, tokens in value.items():
+            if name == SLACK_DEFAULT_WORKSPACE or not SLACK_WORKSPACE_NAME.fullmatch(name):
+                raise ValueError(
+                    "names each workspace with a short lower-case word (letters, digits, "
+                    f"_ and -), and never {SLACK_DEFAULT_WORKSPACE!r}, whose tokens are "
+                    "SLACK_BOT_TOKEN, SLACK_APP_TOKEN and SLACK_USER_TOKEN"
+                )
+            unknown = sorted(set(tokens) - set(SLACK_TOKEN_KINDS))
+            if unknown or not all(token.strip() for token in tokens.values()):
+                raise ValueError(
+                    f"holds, for each workspace, only {', '.join(SLACK_TOKEN_KINDS)}, "
+                    "and none of them blank"
+                )
         return value
 
     @field_validator(*OPTIONAL_STR_FIELDS, mode="before")

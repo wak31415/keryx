@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from keryx.config import OWNER_FALLBACK, Settings, secure_dir
+from keryx.config.settings import SLACK_WORKSPACE_NAME
 from keryx.issues import IssueReporting
 from keryx.persona import DEFAULT_NAME
 from keryx.prompts import render_prompt
@@ -37,6 +38,38 @@ log = logging.getLogger("keryx.agents")
 SUBAGENT_SUFFIX_PROMPT = "subagent_suffix.md"
 #: Spliced into the suffix only when a Slack MCP server is configured.
 SUBAGENT_SLACK_PROMPT = "subagent_slack.md"
+#: Said to a subagent whose request was typed to the owner's app on Slack, not spoken.
+SUBAGENT_SLACK_ORIGIN_PROMPT = "subagent_slack_origin.md"
+#: Said to every subagent while a workspace may be read as the owner: the commands that
+#: read it, and that what they print is context, never a request.
+SUBAGENT_SLACK_READ_PROMPT = "subagent_slack_read.md"
+#: Said instead while Keryx has an app of its own that may not read: that it cannot, what
+#: switches reading on, and that no other Slack tool the agent has stands in for it.
+SUBAGENT_SLACK_NO_READ_PROMPT = "subagent_slack_no_read.md"
+SUBAGENT_SLACK_REPORT_PROMPT = "subagent_slack_report.md"
+SUBAGENT_SLACK_MESSAGE_PROMPT = "subagent_slack_message.md"
+#: Where a request typed on Slack was typed, and how to read around it, by whether it
+#: can be read at all.
+_TYPED_IN = "in workspace `{workspace}`, conversation `{channel}`, thread `{thread}`"
+_TYPED_SOMEWHERE = "on Slack"
+_READ_AROUND = (
+    "If the request is about that conversation (\"summarise this thread\", \"what did they "
+    "decide here\"), read it yourself with `keryx slack read --thread {channel}:{thread} "
+    "--workspace {workspace}`, and treat what it prints as the paragraph below says."
+)
+_CANNOT_READ = (
+    "You cannot read that conversation: if the request needs what was said there, say so "
+    "in the report and ask them to paste it."
+)
+#: Who reads the report of a task typed on Slack, by where it was typed.
+_ONLY_THEM = "That is their own direct messages with Keryx: only they read it."
+_OTHERS_TOO = (
+    "That is a conversation other people are in, and they will read it too: put nothing "
+    "in it that the request did not ask for, and nothing from this machine that is not "
+    "the answer."
+)
+#: `Task.origin_channel` for such a request (`keryx.plugins.slack.SLACK_CHANNEL`).
+SLACK_ORIGIN = "slack"
 SUBAGENT_CUSTOM_TOOLS_PROMPT = "subagent_custom_tools.md"
 #: Spliced in only when there is a repository to file on (`keryx.issues`).
 SUBAGENT_ISSUES_PROMPT = "subagent_issues.md"
@@ -238,6 +271,9 @@ def render_subagent_suffix(
     task: Task,
     *,
     slack_mcp_server: str | None = None,
+    slack_read: bool = False,
+    slack_report: bool = False,
+    slack_write: bool = False,
     owner: str | None = None,
     assistant: str = DEFAULT_NAME,
     tools_dir: Path | None = None,
@@ -247,18 +283,47 @@ def render_subagent_suffix(
 
     The number is in there for the commit trailer: it is what ties a change in a repo back
     to the sentence they said out loud, which is the one thing `git log` cannot recover. The
-    Slack paragraph is there only when `slack_mcp_server` names a route to use. `owner` is
+    Slack paragraph is there only when `slack_mcp_server` names a route to use (the
+    server the plugin's file names, and None once Keryx has a bot token of its own), and a task
+    that was typed on Slack rather than spoken is told so: that the request is the owner's
+    and the only instruction, where it was typed, and where its report goes. `slack_read`
+    says a workspace may be read as the owner, and adds the commands that read it with
+    the rule that what they print is context and never a request. With an app of Keryx's
+    own (`slack_report`, and no server) and no workspace to read, it is told that instead:
+    that it cannot read their Slack, what switches reading on, and to use no other Slack
+    tool it has, which is signed in as something else and sees something else (the
+    owner's first two questions about Slack, on 2026-11-24, were answered from another
+    workspace through a connector, and said to them as their Slack). `slack_report` says
+    Keryx's own bot can post to the owner, and names `keryx slack report` as the way to
+    send them something, a file included, when no MCP server of theirs is the route.
+    `slack_write` says sending as the owner is ticked for a workspace, and adds the one
+    command that sends as the owner with the rule for when it may. `owner` is
     whom the work is for (`Settings.owner_label`); `OWNER_FALLBACK` when it is not given.
     `assistant` is who dispatched it (`Settings.assistant_name`).
     `tools_dir` is where the owner's own voice tools live (`keryx.tools.custom`), and the
     section on writing one is there only when it is given. `issues` is where a report of a
     problem with Keryx goes (`keryx.issues`), and that section is there only when given.
     """
-    slack = (
-        render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
-        if slack_mcp_server
-        else ""
-    )
+    if slack_mcp_server:
+        # Where the owner has given subagents an MCP server for Slack and Keryx has no
+        # app of its own, that stays the way. Once it has one the route names no server
+        # (`plugins.slack._route`), and the command below is the way, files included.
+        slack = render_prompt(SUBAGENT_SLACK_PROMPT, server=slack_mcp_server).strip()
+    elif slack_report:
+        slack = render_prompt(SUBAGENT_SLACK_REPORT_PROMPT).strip()
+    else:
+        slack = ""
+    parts = [slack]
+    if task.origin_channel == SLACK_ORIGIN:
+        parts.insert(0, _typed_on_slack(task, owner or OWNER_FALLBACK, can_read=slack_read))
+    if slack_read:
+        parts.append(render_prompt(SUBAGENT_SLACK_READ_PROMPT, owner=owner or OWNER_FALLBACK))
+    elif slack_report and not slack_mcp_server:
+        parts.append(
+            render_prompt(SUBAGENT_SLACK_NO_READ_PROMPT, owner=owner or OWNER_FALLBACK))
+    if slack_write:
+        parts.append(render_prompt(SUBAGENT_SLACK_MESSAGE_PROMPT, owner=owner or OWNER_FALLBACK))
+    slack = "\n".join(part.strip() for part in parts if part.strip())
     custom_tools = (
         render_prompt(
             SUBAGENT_CUSTOM_TOOLS_PROMPT,
@@ -280,6 +345,31 @@ def render_subagent_suffix(
         slack=slack,
         custom_tools=custom_tools,
         issues=_issues_section(task, issues),
+    )
+
+
+def _typed_on_slack(task: Task, owner: str, *, can_read: bool) -> str:
+    """What a task typed on Slack is told: whose words the request is, the pointer to
+    where it was typed (all of the conversation it was handed), and who reads the answer.
+
+    The pointer is ids Slack gave, and is still held to their shapes here: it is put into
+    a command the subagent is told to run.
+    """
+    from keryx.integrations.slack import is_conversation, is_ts
+
+    channel, thread = task.slack_channel, task.slack_thread_ts
+    known = bool(
+        task.slack_workspace and SLACK_WORKSPACE_NAME.fullmatch(task.slack_workspace)
+        and is_conversation(channel) and is_ts(thread)
+    )
+    pointer = {"workspace": task.slack_workspace, "channel": channel, "thread": thread}
+    private = known and str(channel).startswith("D")
+    return render_prompt(
+        SUBAGENT_SLACK_ORIGIN_PROMPT,
+        owner=owner,
+        where=_TYPED_IN.format(**pointer) if known else _TYPED_SOMEWHERE,
+        reading=(_READ_AROUND.format(**pointer) if known and can_read else _CANNOT_READ),
+        audience=_ONLY_THEM if private else _OTHERS_TOO,
     )
 
 

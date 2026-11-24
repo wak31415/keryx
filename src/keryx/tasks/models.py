@@ -96,6 +96,12 @@ def _deserialize_field(name: str, value: Any) -> Any:
     return value
 
 
+#: Columns an earlier cut of a branch added and nothing reads any more. A database that
+#: met one keeps it: dropping a column under a build that still writes it would break that
+#: build, and the database runs ahead of the code. So they are passed over without the
+#: "newer schema" warning, which would be untrue of them.
+RETIRED_COLUMNS = frozenset({"slack_last_ts", "slack_asked_channel", "slack_asked_ts"})
+
 #: Columns already reported by `_warn_unknown_columns`. A process behind the schema reads
 #: rows constantly, and the news is about the *column*, so it is worth saying exactly once.
 _warned_columns: set[str] = set()
@@ -103,7 +109,7 @@ _warned_columns: set[str] = set()
 
 def _warn_unknown_columns(names: Iterable[str]) -> None:
     """Say once, per column, that the database is carrying something we cannot model."""
-    fresh = sorted(set(names) - _warned_columns)
+    fresh = sorted(set(names) - _warned_columns - RETIRED_COLUMNS)
     if not fresh:
         return
     _warned_columns.update(fresh)
@@ -178,6 +184,30 @@ class Task:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
+    #: The Slack thread this task lives in (schema v7): the workspace by the owner's name
+    #: for it, the conversation, and the timestamp of the message the thread hangs from.
+    #: That is the thread the owner asked in, when the task was asked for on Slack (their
+    #: direct messages with the app, or a conversation the app was mentioned in), and
+    #: otherwise the first report Keryx posted for it. Set once: every report is a reply
+    #: there, and a message the owner types there, mentioning the app, is a follow-up to
+    #: this task. Asked and answered in the same place, wherever that is.
+    slack_workspace: str | None = None
+    slack_channel: str | None = None
+    slack_thread_ts: str | None = None
+    #: The Slack workspace that thread is in, by Slack's own id for it (schema v8).
+    #: `slack_workspace` is the owner's *name* for a connection, and a name can come to
+    #: mean another workspace (log out of one, log in to another as the first): a thread
+    #: is only ever posted to with a token of the team it was recorded in.
+    slack_team_id: str | None = None
+    #: The last few Slack messages this task has acted on, space-separated (schema v8).
+    #: Slack delivers an event again when its acknowledgement was lost, and promises no
+    #: order: a message is a repeat when it is in here, never because it is older.
+    slack_seen: str | None = None
+    #: How many times a Slack reply re-ran this task on `slack_reruns_on`, a UTC date
+    #: (schema v8). Counted against the daily cap, because nothing else stands between a
+    #: Slack message and a run: no PIN, no keypress.
+    slack_reruns: int = 0
+    slack_reruns_on: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -215,11 +245,60 @@ class Task:
         )
 
     def short_status_line(self) -> str:
-        """A speakable one-liner, e.g. 'task 3 (running): add README to ...'."""
+        """A speakable one-liner, e.g. 'running: add README to ...'.
+
+        Without the task's number: that is internal, and nothing written to be spoken
+        carries it.
+        """
         description = self.description
         if len(description) > 80:
             description = description[:80] + "…"
-        return f"task {self.id} ({self.status}): {description}"
+        return f"{self.status}: {description}"
+
+
+#: How many acted-on Slack messages a task remembers (`Task.slack_seen`).
+SLACK_SEEN_MAX = 20
+
+
+def slack_ts_key(ts: str) -> tuple[int, int]:
+    """A Slack timestamp as something to order by; one that is not one sorts first."""
+    whole, _, part = ts.partition(".")
+    try:
+        return int(whole), int(part or 0)
+    except ValueError:
+        return (0, 0)
+
+
+def seen_on_slack(seen: str | None, ts: str) -> bool:
+    """Whether a task that remembers `seen` has already acted on the message at `ts`.
+
+    It has when it remembers it. And once its memory is full (`SLACK_SEEN_MAX`), it has
+    when `ts` is older than everything it remembers: what was dropped to make room was
+    always the oldest, so a message older than all that is left is one it once held, the
+    message that opened the task included. (A reply that really is new and older than
+    twenty others the task has acted on is dropped too: that is the price, and it is the
+    safe side of it.)
+    """
+    held = (seen or "").split()
+    if ts in held:
+        return True
+    return len(held) >= SLACK_SEEN_MAX and slack_ts_key(ts) < min(map(slack_ts_key, held))
+
+
+@dataclass(frozen=True)
+class SlackThread:
+    """A thread on Slack: which workspace, which conversation, and the message it hangs from.
+
+    `asked_at` is the message that asked, when it is a reply in the thread and not the
+    message the thread hangs from.
+    """
+
+    workspace: str
+    channel: str
+    ts: str
+    asked_at: str | None = None
+    #: The workspace's own id at Slack, which is what the thread really belongs to.
+    team_id: str = ""
 
 
 @dataclass(frozen=True)

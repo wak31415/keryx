@@ -33,7 +33,7 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 |---|---|---|---|
 | `OPENAI_API_KEY` | *required* (secret) | never | OpenAI API key with Realtime access. The only setting Keryx cannot start without. |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1` | no | The realtime speech-to-speech model a call runs on. |
-| `ASSISTANT_NAME` | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. |
+| `ASSISTANT_NAME` | `Lyra` | yes | What the assistant on the phone is called: the name it answers to and introduces itself by. Lyra and Jarvis each bring a voice of their own; any other name — letters, spaces, apostrophes and hyphens, up to 32 — speaks in `OPENAI_VOICE`, or `marin`. Your Slack app is called by it too, from the next time its manifest is saved (`keryx auth login slack` prints it). |
 | `OPENAI_VOICE` | `` | yes | The Realtime voice the assistant speaks in. Empty is the assistant's own (`ASSISTANT_NAME`); a voice the key's organization may not use makes every call fail to open. |
 | `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | no | Transcribes what the caller says, for the call log. |
 | `TRANSCRIPTION_LANGUAGE` | `` | yes | The language you speak on a call, as an ISO-639-1 code (`en`, `de`, `fr`), for the call log's transcription — which `recall` and the memory read. Empty lets the transcriber guess each turn. The voice model itself hears the audio either way. |
@@ -102,7 +102,10 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
-| `SLACK_BOT_TOKEN` | (secret) | never | The bot token the `send_to_slack` plugin posts with (and the PIN-lockout alert). |
+| `SLACK_BOT_TOKEN` | (secret) | never | The bot token (`xoxb-`) of your Slack app: what the `slack_report` plugin, each finished task's report and the PIN-lockout alert post with. `keryx auth login slack` sets it. |
+| `SLACK_APP_TOKEN` | (secret) | never | The app-level token (`xapp-`, with `connections:write`) Keryx listens to your Slack app with, once it may act on what you type to the app. `keryx auth login slack` sets it. |
+| `SLACK_USER_TOKEN` | (secret) | never | Your own user token (`xoxp-`) from your Slack app. It reads Slack as you and sends as you, each only once you have ticked it, and is kept only while one of the two is ticked: with neither, Keryx asks it once which member you are and does not save it. `keryx auth login slack` sets it. |
+| `SLACK_WORKSPACE_TOKENS` | (secret) | never | The tokens of each further Slack workspace, by the name you gave it, as one line of JSON: `{"work": {"bot": "xoxb-…", "app": "xapp-…", "user": "xoxp-…"}}`. `keryx auth login slack --workspace NAME` writes it; the three settings above are the first workspace's. |
 | `OPENAI_ADMIN_KEY` | (secret) | never | An OpenAI *admin* key for the `check_billing` plugin; the ordinary key gets a 401 on the costs endpoint. |
 | `ANTHROPIC_ADMIN_KEY` | (secret) | never | An `sk-ant-admin…` key, for what the subagents have cost (`check_billing`). |
 

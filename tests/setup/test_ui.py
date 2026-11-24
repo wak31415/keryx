@@ -39,6 +39,14 @@ def test_every_kind_of_line_is_drawn_in_the_gutter(prompter):
         assert fragment in text, fragment
 
 
+def test_a_link_is_drawn_whole_on_one_line_however_long(prompter):
+    url = "https://example.com/apps?manifest=%7B%22name%22%3A%22a%20b%22%7D" + "x" * 300
+
+    prompter.link(url)
+
+    assert url in drawn(prompter).splitlines()  # not wrapped, not decoded
+
+
 def test_a_spinner_wraps_the_block(prompter):
     with prompter.spinner("working"):
         pass
@@ -288,3 +296,60 @@ def test_continue_is_not_an_answer(prompter, questionary):
     assert prompter.checkbox("Which?", [Choice("a", "A")]) == ["a"]
     labels = [choice.title for choice in recorded[0][2]["choices"]]
     assert labels[-1] == ui.CONTINUE_TITLE
+
+
+# --- the same checkbox, for a command that is not the wizard --------------------------------
+
+
+def test_a_command_can_ask_the_same_checkbox_without_a_screen_of_its_own(questionary, capsys):
+    """`keryx auth login slack` shows the boxes under what it has printed: nothing is
+    cleared, Continue is still not an answer, and what comes back is what was ticked."""
+    answers, recorded = questionary
+    answers.update(checkbox=["read", ui.CONTINUE])
+    choices = [Choice("requests", "Act", hint="sees little", checked=True),
+               Choice("read", "Read", hint="sees more")]
+
+    assert ui.ask_checkbox("What else?", choices) == ["read"]
+
+    [(kind, args, kwargs)] = recorded
+    assert (kind, args) == ("checkbox", ("What else?",))
+    assert [choice.value for choice in kwargs["choices"][:2]] == ["requests", "read"]
+    assert [choice.checked for choice in kwargs["choices"][:2]] == [True, False]
+    assert kwargs["choices"][-1].title == ui.CONTINUE_TITLE
+    assert kwargs["instruction"] == ui.CHECKBOX_HINT
+    assert capsys.readouterr().out == ""  # no screen cleared, no header drawn
+
+
+def test_leaving_that_checkbox_is_aborted(questionary):
+    with pytest.raises(Aborted):
+        ui.ask_checkbox("What else?", [Choice("a", "A")])
+
+
+def test_the_hints_beside_a_question_use_no_middle_dot():
+    assert "·" not in ui.CHECKBOX_HINT + KEYS_HINT
+
+
+def test_a_box_that_was_ticked_comes_up_ticked_and_enter_unticks_it():
+    """The real control, as the wizard and the command both build it: what a workspace
+    already has is ticked when the boxes are shown, and is theirs to untick."""
+    import questionary as real
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    choices = [Choice("requests", "Act", checked=True), Choice("read", "Read")]
+    with create_pipe_input() as pipe:
+        asked = real.checkbox
+
+        def piped(*args, **kwargs):
+            return asked(*args, input=pipe, output=DummyOutput(), **kwargs)
+
+        real.checkbox = piped
+        try:
+            unchanged = ui._checkbox("m", choices)
+            pipe.send_text(DOWN + DOWN + "\r")  # straight to Continue
+            assert ui._ticked(unchanged.unsafe_ask()) == ["requests"]
+            swapped = ui._checkbox("m", choices)
+            pipe.send_text("\r" + DOWN + "\r" + DOWN + "\r")  # untick, tick, Continue
+            assert ui._ticked(swapped.unsafe_ask()) == ["read"]
+        finally:
+            real.checkbox = asked

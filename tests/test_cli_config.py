@@ -13,6 +13,8 @@ from typer.testing import CliRunner
 from keryx.cli import app
 from keryx.config.files import read_toml
 from keryx.config.store import ConfigStore
+from keryx.integrations.slack import Connection, SlackResult, Workspace
+from keryx.setup.slack import SlackApi
 
 runner = CliRunner()
 
@@ -276,8 +278,9 @@ def test_auth_status_json_lists_every_sign_in(home):
 
     report = json.loads(result.output)
     assert set(report) == {
-        "openai", "claude", "codex", "google", "gmail", "google-workspace", "twilio"
+        "openai", "claude", "codex", "google", "gmail", "google-workspace", "twilio", "slack"
     }  # fmt: skip
+    assert report["slack"]["state"] == "missing"
     assert report["openai"]["state"] == "missing"
     assert report["google"]["state"] == "missing"
     # The two older names are still there for a script that reads them, as the same sign-in.
@@ -434,6 +437,53 @@ def test_auth_logout_knows_only_google(home):
     assert run("auth", "logout", "claude").exit_code == 2
 
 
+def test_auth_logout_slack_forgets_the_workspace_and_turns_the_plugin_off(home, monkeypatch):
+    """Nothing is revoked at Slack: the app is the owner's own, and the command says so."""
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--allow", "none",
+                 input="xoxb-very-secret\nxoxp-user-secret\n")
+
+    result = run("auth", "logout", "slack")
+
+    assert result.exit_code == 0, result.output
+    assert "Acme is disconnected" in result.output and "slack_report is off." in result.output
+    assert "api.slack.com/apps" in result.output
+    assert home._secrets() == {}
+    assert json.loads(run("auth", "status", "--json").output)["slack"]["state"] == "missing"
+
+
+def test_auth_logout_slack_takes_a_further_workspace_by_name(home, monkeypatch):
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--allow", "none", "--no-test",
+        input="xoxb-first-secret\nxoxp-user-secret\n")
+    run("auth", "login", "slack", "--stdin", "--workspace", "work", "--allow", "none",
+        "--no-test", input="xoxb-work-secret\nxoxp-user-secret\n")
+
+    refused = run("auth", "logout", "slack")
+    result = run("auth", "logout", "slack", "--workspace", "Work")
+
+    assert refused.exit_code == 1 and "work would be left with none" in refused.output
+    assert result.exit_code == 0, result.output
+    assert "work (Acme) is disconnected" in result.output
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-first-secret"}
+    assert run("auth", "logout", "slack", "--workspace", "work").exit_code == 1
+
+
+def test_auth_logout_workspace_is_slacks_alone_and_the_service_may_not(home, monkeypatch):
+    assert run("auth", "logout", "google", "--workspace", "work").exit_code == 2
+    monkeypatch.setenv("KERYX_ACTOR", "service")
+    assert run("auth", "logout", "slack").exit_code == 1
+
+
+def test_auth_login_slack_has_no_option_that_changes_the_owner(home, monkeypatch):
+    """One owner, fixed at connect: `--owner` is not an option of the command."""
+    fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--owner", "U0NEWME")
+
+    assert result.exit_code == 2 and "No such option" in result.output
+
+
 def test_auth_login_google_refuses_a_service_it_does_not_know(home):
     result = run("auth", "login", "google", "--services", "gmail,chat")
 
@@ -465,6 +515,561 @@ def test_auth_login_runs_the_agents_own_login(home, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert ran == [["/venv/bin/codex", "login"]]
+
+
+def fake_slack(monkeypatch, *, workspace=None):
+    """Slack as `keryx auth login slack` reaches it, answering without a network."""
+    asked = []
+    def auth_test(token):
+        if token.startswith("xoxp-"):
+            asked.append("user")
+            return Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER")
+        asked.append("auth")
+        return workspace or Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")
+
+    api = SlackApi(
+        auth_test=auth_test,
+        post_text=lambda token, channel, text: asked.append(channel) or SlackResult(),
+        open_connection=lambda token: asked.append("open") or Connection(url="wss://x/?t=1"),
+    )
+    monkeypatch.setattr("keryx.setup.slack.SlackApi", lambda: api)
+    return asked
+
+
+def test_auth_login_slack_alone_with_no_terminal_prints_the_choices_and_guesses_none(home):
+    """Nothing connected, nobody to tick a box and no `--allow`: what there is to choose,
+    in full, and the command that says one. No link, and nothing saved."""
+    result = run("auth", "login", "slack")
+
+    assert result.exit_code == 0, result.output
+    assert "api.slack.com/apps" not in result.output
+    assert result.output.startswith("Always on: Keryx sends you reports and files on Slack")
+    assert "  keryx auth login slack --allow none\n" in result.output
+    assert "  keryx auth login slack --allow requests --allow read\n" in result.output
+    assert "Nothing was chosen for you, and nothing was saved." in result.output
+    assert home.stored() == {}
+
+
+def test_auth_login_slack_saying_what_is_ticked_prints_the_link_and_the_next_command(home):
+    result = run("auth", "login", "slack", "--allow", "none")
+
+    assert result.exit_code == 0, result.output
+    assert "https://api.slack.com/apps?new_app=1&manifest_json=" in result.output
+    assert "keryx auth login slack --stdin --allow none\n" in result.output
+    assert "User OAuth Token" in result.output and "--email" not in result.output
+    assert home.stored() == {}
+
+
+def test_allow_is_given_once_for_each_box_and_the_link_is_for_exactly_those(home):
+    from keryx.integrations.slack import Permission, new_app_url
+
+    result = run("auth", "login", "slack", "--allow", "read", "--allow", "requests")
+
+    assert result.exit_code == 0, result.output
+    both = frozenset({Permission.REQUESTS, Permission.READ})
+    assert new_app_url(both, assistant="Lyra") in result.output
+    assert "keryx auth login slack --stdin --allow requests --allow read\n" in result.output
+    assert home.stored() == {}
+
+
+def test_access_is_not_an_option_any_more(home):
+    """It was never released: gone outright, with no alias."""
+    result = run("auth", "login", "slack", "--access", "read")
+
+    assert result.exit_code == 2 and "No such option" in result.output
+    assert "--access" not in run("auth", "login", "--help").output
+    assert "--allow" in run("auth", "login", "--help").output
+
+
+def test_tokens_piped_to_a_new_login_that_does_not_say_what_is_ticked_are_refused(
+    home, monkeypatch
+):
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--stdin", input="xoxb-very-secret\nxoxp-user-secret\n")
+
+    assert result.exit_code == 1
+    assert "nothing says what Keryx may do there, and it is not guessed" in result.output
+    assert "--allow none" in result.output and "xoxb-very-secret" not in result.output
+    assert asked == [] and home.stored() == {}
+
+
+def test_logging_in_again_with_an_app_made_before_files_prints_the_manifest_that_adds_them(
+    home, monkeypatch
+):
+    """Slack is asked what the bot token may do, and the answer decides what is printed:
+    never the link that makes a second app, and nothing is saved by asking."""
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--allow", "none", "--no-test",
+        input="xoxb-very-secret\nxoxp-user-secret\n")
+    stored = home.stored()
+    asked = fake_slack(monkeypatch, workspace=Workspace(
+        team="Acme", team_id="T0ACME", user_id="U0KERYX", scopes=("chat:write",)))
+
+    result = run("auth", "login", "slack")
+
+    assert result.exit_code == 0, result.output
+    assert asked == ["auth"] and home.stored() == stored
+    assert "with an app made before Keryx asked for files:write" in result.output
+    assert '"files:write"' in result.output and "new_app=1" not in result.output
+    assert "keryx auth login slack --stdin < /dev/null" in result.output
+    assert "xoxb-very-secret" not in result.output
+
+
+def test_auth_login_slack_takes_the_token_on_stdin_and_turns_the_plugin_on(
+    home, tmp_path, monkeypatch
+):
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--stdin", "--allow", "none",
+                 input="xoxb-very-secret\nxoxp-user-secret\n")
+
+    assert result.exit_code == 0, result.output
+    assert "connected to the Acme workspace" in result.output
+    assert "slack_report is on, from the next call" in result.output
+    assert "xoxb-very-secret" not in result.output
+    assert "you are U0OWNER there: reports go to you" in result.output
+    assert "keryx plugins install slack_report --set channel_id=ID" in result.output
+    assert "xoxp-user-secret" not in result.output
+    assert asked == ["auth", "user", "U0OWNER"]
+    # With neither reading nor sending ticked the user token says who they are, once.
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-very-secret"}
+    assert "The user token said which member you are, and is not saved" in result.output
+    assert stat.S_IMODE(home.secrets_path.stat().st_mode) == 0o600
+    assert 'channel_id = "U0OWNER"' in (
+        tmp_path / "keryx" / "tools" / "slack_report.toml"
+    ).read_text()
+    assert json.loads(run("auth", "status", "--json").output)["slack"]["state"] == "ok"
+
+
+def test_auth_login_slack_no_test_sends_nothing(home, monkeypatch):
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--stdin", "--allow", "none", "--no-test",
+                 input="xoxb-very-secret\nxoxp-user-secret\n")
+
+    assert result.exit_code == 0, result.output
+    assert asked == ["auth", "user"]
+
+
+def test_auth_login_slack_with_a_refused_token_says_slacks_code_and_saves_nothing(
+    home, monkeypatch
+):
+    fake_slack(monkeypatch, workspace=Workspace(error="invalid_auth"))
+
+    result = run("auth", "login", "slack", "--stdin", "--allow", "none",
+                 input="xoxb-very-secret\nxoxp-user-secret\n")
+
+    assert result.exit_code == 1
+    assert "slack sign-in failed: Slack does not recognise that token (invalid_auth)" in (
+        result.output
+    )
+    assert "xoxb-very-secret" not in result.output
+    assert home.stored() == {}
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [("--stdin",), ("--no-test",), ("--allow", "requests"), ("--workspace", "work")],
+)
+def test_slacks_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags):
+    """Not ignored: `gmail --stdin` silently doing nothing reads as having been taken."""
+    ran = []
+    monkeypatch.setattr("keryx.cli.run_command", lambda argv: ran.append(argv) or 0)
+
+    for name in ("google", "gmail", "codex"):
+        result = run("auth", "login", name, *flags, input="xoxb-very-secret\nxoxp-user-secret\n")
+
+        assert result.exit_code == 2
+        assert "--stdin, --no-test, --allow and --workspace are for slack" in result.output
+    assert ran == [] and home.stored() == {}
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ("--services", "gmail"),
+        ("--account", "sam@example.com"),
+        ("--client-file", "client.json"),
+        ("--callback-url", "http://localhost:1/?state=s&code=c"),
+        ("--callback-url", "-"),
+    ],
+)
+def test_googles_flags_are_refused_for_any_other_sign_in(home, monkeypatch, flags):
+    """The same rule the other way round, said the same way."""
+    ran = []
+    monkeypatch.setattr("keryx.cli.run_command", lambda argv: ran.append(argv) or 0)
+    asked = fake_slack(monkeypatch)
+
+    for name in ("slack", "codex"):
+        result = run("auth", "login", name, *flags, input="http://localhost:1/?code=c\n")
+
+        assert result.exit_code == 2
+        assert "--services, --account, --client-file and --callback-url are for google" in (
+            result.output
+        )
+    assert ran == [] and asked == [] and home.stored() == {}
+
+
+@pytest.mark.parametrize("flag", ["--headless", "--browser"])
+def test_slack_has_no_browser_step_to_choose(home, monkeypatch, flag):
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", flag, "--stdin",
+        input="xoxb-very-secret\nxoxp-user-secret\n")
+
+    assert result.exit_code == 2
+    assert "--headless and --browser are for claude, codex and google" in result.output
+    assert asked == [] and home.stored() == {}
+
+
+@pytest.mark.parametrize("name", ["slack", "google"])
+def test_standard_input_is_never_claimed_twice(home, monkeypatch, name):
+    """`--stdin` is Slack's token and `--callback-url -` is Google's address: one command
+    cannot ask for both, so neither can read what was meant for the other."""
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", name, "--stdin", "--callback-url", "-",
+                 input="xoxb-very-secret\nxoxp-user-secret\n")
+
+    assert result.exit_code == 2
+    assert " are for " in result.output and "xoxb-very-secret" not in result.output
+    assert asked == [] and home.stored() == {}
+
+
+def test_auth_login_slack_at_a_terminal_asks_for_the_token_hidden(home, monkeypatch, capsys):
+    """`--stdin` with nothing piped: the prompt hides what is typed, and nothing echoes it."""
+    from keryx import cli
+
+    fake_slack(monkeypatch)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    prompts = []
+    monkeypatch.setattr(
+        cli.typer, "prompt",
+        lambda key, hide_input, **more: prompts.append((key, hide_input)) or (
+            " xoxb-typed-secret " if key.startswith("Bot") else " xoxp-typed-secret "),
+    )
+
+    cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=True,
+                   test=True, allow=["none"])
+
+    assert prompts == [
+        ("User token (xoxp-…, OAuth & Permissions > OAuth Tokens > User OAuth Token)", True),
+        ("Bot token (xoxb-…, OAuth & Permissions > OAuth Tokens > Bot User OAuth Token)", True),
+    ]
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret"}
+    said = capsys.readouterr()
+    # `--stdin` at a terminal is the asking alone: the steps are not printed again.
+    assert said.out.startswith("connected to the Acme workspace")
+    assert "xoxb-typed-secret" not in said.out + said.err
+
+
+def at_a_terminal(monkeypatch, answers, *, ticked=None):
+    """Standard input as a terminal, and the hidden prompt answering from `answers` in
+    turn (an exception class is raised, as the prompt does when it is left). `ticked` is
+    what is ticked when the boxes are shown; with none given, showing them fails."""
+    from keryx import cli
+
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    prompts = []
+
+    def boxes(question, choices):
+        assert ticked is not None, "the boxes were shown, and the test did not expect them"
+        prompts.append((question, [(box.value, box.checked) for box in choices]))
+        return list(ticked)
+
+    monkeypatch.setattr(cli, "_ask_boxes", boxes)
+
+    def prompt(key, **more):
+        prompts.append((key, more))
+        answer = answers.pop(0)
+        if isinstance(answer, type):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(cli.typer, "prompt", prompt)
+    return prompts
+
+
+def test_at_a_terminal_auth_login_slack_is_one_command_that_waits_for_the_tokens(
+    home, monkeypatch, capsys
+):
+    """The owner's rulings: no second command, and no option. The boxes, the link for
+    what was ticked and the steps, then each token that needs asked for there, hidden;
+    then what a login always said."""
+    from keryx import cli
+
+    asked = fake_slack(monkeypatch)
+    prompts = at_a_terminal(
+        monkeypatch, ["xapp-typed-secret", "xoxp-typed-secret", "xoxb-typed-secret"],
+        ticked=["requests"])
+
+    cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=False,
+                   test=True)
+
+    hidden = {"hide_input": True, "default": "", "show_default": False}
+    assert prompts == [
+        ("What else may Keryx do in your Slack?",
+         [("requests", False), ("read", False), ("send", False)]),
+        ("App-level token (xapp-…, Basic Information > App-Level Tokens)", hidden),
+        ("User token (xoxp-…, OAuth & Permissions > OAuth Tokens > User OAuth Token)", hidden),
+        ("Bot token (xoxb-…, OAuth & Permissions > OAuth Tokens > Bot User OAuth Token)", hidden),
+    ]
+    said = capsys.readouterr()
+    assert "https://api.slack.com/apps?new_app=1&manifest_json=" in said.out
+    assert said.out.startswith("Always on: Keryx sends you reports and files on Slack")
+    assert said.out.index("Then come back to this terminal, which is waiting") < said.out.index(
+        "connected to the Acme workspace; SLACK_BOT_TOKEN")
+    assert "--stdin" not in said.out and "standard input" not in said.out
+    assert "--allow" not in said.out and "level" not in said.out
+    assert "sent a test message: it is in Slack, under Apps" in said.out
+    assert "typed-secret" not in said.out + said.err
+    assert asked == ["auth", "user", "open", "U0OWNER"]
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-typed-secret",
+                               "SLACK_APP_TOKEN": "xapp-typed-secret"}
+
+
+def test_leaving_the_terminals_questions_saves_nothing_and_says_how_to_pick_it_up(
+    home, monkeypatch, capsys
+):
+    """Ctrl-C or Ctrl-D at a prompt: one sentence, which is not called a failure."""
+    from keryx import cli
+
+    asked = fake_slack(monkeypatch)
+    at_a_terminal(monkeypatch, ["xapp-typed-secret", cli.typer.Abort])
+
+    with pytest.raises(cli.typer.Exit) as stopped:
+        cli.auth_login("slack", headless=None, client_file=None, callback_url=None,
+                       stdin=False, test=True, allow=["requests"])
+
+    said = capsys.readouterr()
+    assert stopped.value.exit_code == 1
+    assert said.err.strip() == ("Nothing was saved: run `keryx auth login slack --allow "
+                                "requests` again to pick this up.")
+    assert "failed" not in said.err and "typed-secret" not in said.out + said.err
+    assert asked == [] and home.stored() == {}
+
+
+def test_leaving_the_boxes_changes_nothing_and_is_not_called_a_failure(
+    home, monkeypatch, capsys
+):
+    from keryx import cli
+    from keryx.setup import ui
+
+    fake_slack(monkeypatch)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+
+    def left(question, choices):
+        raise ui.Aborted
+
+    monkeypatch.setattr(ui, "ask_checkbox", left)
+
+    with pytest.raises(cli.typer.Exit) as stopped:
+        cli.auth_login("slack", headless=None, client_file=None, callback_url=None,
+                       stdin=False, test=True)
+
+    assert stopped.value.exit_code == 1
+    assert capsys.readouterr().err.strip() == (
+        "Nothing was saved: run `keryx auth login slack` again to pick this up.")
+    assert home.stored() == {}
+
+
+def test_unticking_a_box_at_a_terminal_is_applied_at_once_with_no_token_asked_for(
+    home, monkeypatch, capsys
+):
+    from keryx import cli
+
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--allow", "requests", "--no-test",
+        input="xoxb-bot-secret\nxapp-app-secret\nxoxp-user-secret\n")
+    prompts = at_a_terminal(monkeypatch, [], ticked=[])
+
+    cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=False,
+                   test=True)
+
+    # The boxes, with what the workspace has ticked, and nothing after them.
+    assert prompts == [("What else may Keryx do in your Slack?",
+                        [("requests", True), ("read", False), ("send", False)])]
+    said = capsys.readouterr().out
+    assert "Acme: acting on what you type to the app is off, from this moment." in said
+    assert "The app in Slack still holds the permissions it was made with" in said
+    assert "SLACK_APP_TOKEN" not in home._secrets()
+
+
+def test_without_a_terminal_the_login_prints_the_steps_names_stdin_and_ends(home, monkeypatch):
+    """A coding agent or a pipe: nothing is asked, and `--stdin` is named as the way to
+    hand the tokens over. The one place that sentence is printed."""
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--allow", "requests")
+
+    assert result.exit_code == 0, result.output
+    assert ("Then hand the tokens over on standard input, never on the command line, one "
+            "to a line in any order:\n  keryx auth login slack --stdin --allow requests"
+            ) in result.output
+    assert "come back to this terminal" not in result.output
+    assert asked == [] and home.stored() == {}
+
+
+def test_at_a_terminal_each_token_still_needed_is_asked_for_and_a_saved_one_may_be_kept(
+    home, monkeypatch, capsys
+):
+    from keryx import cli
+
+    fake_slack(monkeypatch)
+    home.set({"SLACK_BOT_TOKEN": "xoxb-saved"})
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    prompts = []
+
+    def prompt(key, hide_input, **more):
+        prompts.append((key, hide_input))
+        if key.startswith("Bot"):
+            return ""
+        return "xapp-typed-secret" if key.startswith("App") else "xoxp-typed-secret"
+
+    monkeypatch.setattr(cli.typer, "prompt", prompt)
+
+    cli.auth_login("slack", headless=None, client_file=None, callback_url=None, stdin=True,
+                   test=False, allow=["requests"])
+
+    assert prompts == [
+        ("App-level token (xapp-…, Basic Information > App-Level Tokens)", True),
+        ("User token (xoxp-…, OAuth & Permissions > OAuth Tokens > User OAuth Token)", True),
+        ("Bot token (xoxb-…, OAuth & Permissions > OAuth Tokens > Bot User OAuth Token), or "
+         "Enter to keep the one saved", True),
+    ]
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-saved",
+                               "SLACK_APP_TOKEN": "xapp-typed-secret"}
+    assert "xapp-typed-secret" not in "".join(capsys.readouterr())
+
+
+def test_an_allow_or_a_workspace_name_that_is_not_one_stops_before_a_token_is_asked_for(
+    home, monkeypatch
+):
+    from keryx import cli
+
+    asked = fake_slack(monkeypatch)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: pytest.fail("asked for a token"))
+
+    for flags in ({"allow": ["everything"]}, {"allow": ["none", "read"]},
+                  {"workspace": "My Work", "allow": ["none"]}):
+        with pytest.raises(cli.typer.Exit) as stopped:
+            cli.auth_login("slack", headless=None, client_file=None, callback_url=None,
+                           stdin=True, test=True, **flags)
+        assert stopped.value.exit_code == 1
+    assert asked == [] and home.stored() == {}
+
+
+def test_auth_login_slack_takes_what_is_ticked_and_its_tokens_one_to_a_line(
+    home, tmp_path, monkeypatch
+):
+    asked = fake_slack(monkeypatch)
+
+    result = run("auth", "login", "slack", "--stdin", "--allow", "requests", "--no-test",
+        input="xapp-app-secret\nxoxb-bot-secret\nxoxp-user-secret\n")
+
+    assert result.exit_code == 0, result.output
+    assert "On: sending you reports and files, acting on what you type to the app" in (
+        result.output)
+    assert "level" not in result.output and "secret" not in result.output
+    assert asked == ["auth", "user", "open"]
+    assert home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-bot-secret",
+                               "SLACK_APP_TOKEN": "xapp-app-secret"}
+    text = (tmp_path / "keryx" / "tools" / "slack_report.toml").read_text()
+    assert 'allow = ["requests"]' in text and 'owner_id = "U0OWNER"' in text
+    assert "access =" not in text
+    status = run("auth", "status").output
+    assert ("Acme: on: sending you reports and files, acting on what you type to the app; "
+            "off: reading Slack as you, sending messages as you, you are U0OWNER") in status
+    assert "secret" not in status
+
+
+def test_auth_login_slack_that_unticks_is_done_at_once_and_asks_slack_nothing(
+    home, monkeypatch
+):
+    asked = fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--allow", "requests", "--no-test",
+        input="xapp-app-secret\nxoxb-bot-secret\nxoxp-user-secret\n")
+    asked.clear()
+
+    result = run("auth", "login", "slack", "--allow", "none")
+
+    assert result.exit_code == 0, result.output
+    assert "Acme: acting on what you type to the app is off, from this moment." in result.output
+    assert "SLACK_APP_TOKEN is forgotten" in result.output
+    assert asked == [] and home._secrets() == {"SLACK_BOT_TOKEN": "xoxb-bot-secret"}
+
+
+def test_auth_login_slack_for_a_further_workspace_stores_it_under_its_name(
+    home, tmp_path, monkeypatch
+):
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--allow", "none", "--no-test",
+        input="xoxb-first-secret\nxoxp-user-secret\n")
+
+    result = run("auth", "login", "slack", "--stdin", "--workspace", "Work", "--allow", "none",
+                 "--no-test", input="xoxb-work-secret\nxoxp-user-secret\n")
+
+    assert result.exit_code == 0, result.output
+    assert "connected to the Acme workspace as work" in result.output
+    assert home._secrets() == {
+        "SLACK_BOT_TOKEN": "xoxb-first-secret",
+        "SLACK_WORKSPACE_TOKENS": '{"work": {"bot": "xoxb-work-secret"}}',
+    }
+    assert "[workspace-work]" in (tmp_path / "keryx" / "tools" / "slack_report.toml").read_text()
+
+
+def test_slack_turned_off_with_its_token_kept_is_said_and_does_not_fail_auth_status(
+    home, monkeypatch
+):
+    """Soft, as in `doctor`: `auth status` exited 0 here before it listed Slack at all."""
+    fake_slack(monkeypatch)
+    run("auth", "login", "slack", "--stdin", "--allow", "none",
+                 input="xoxb-very-secret\nxoxp-user-secret\n")
+    assert run("plugins", "remove", "slack_report", "--yes").exit_code == 0
+
+    result = run("auth", "status")
+    report = json.loads(run("auth", "status", "--json").output)
+
+    assert result.exit_code == 0, result.output
+    line = next(line for line in result.output.splitlines() if line.startswith("slack"))
+    assert "failed" in line and "slack_report is off" in line
+    assert report["slack"]["state"] == "failed" and report["slack"]["optional"] is True
+    assert "optional" not in report["openai"]
+
+
+def test_a_google_sign_in_that_connected_nothing_is_said_and_does_not_fail_auth_status(
+    home, tmp_path
+):
+    """Google is optional in `doctor` (soft, and `missing` when nobody signed in), so it is
+    here: the one state of it that is `failed` is reported, under all three names."""
+    from keryx.integrations import google as account
+    from keryx.plugins import current_settings
+
+    account.write_token(current_settings(), account.GoogleToken("rt", "cid", "cs", (), "a@b.c"))
+
+    result = run("auth", "status")
+    report = json.loads(run("auth", "status", "--json").output)
+
+    assert result.exit_code == 0, result.output
+    assert report["google"]["state"] == "failed" and report["google"]["services"] == []
+    for name in ("google", "gmail", "google-workspace", "slack"):
+        assert report[name]["optional"] is True
+    for name in ("openai", "claude", "codex", "twilio"):
+        assert "optional" not in report[name]
+
+
+def test_auth_status_still_fails_for_a_sign_in_keryx_needs(home, monkeypatch):
+    monkeypatch.setattr(
+        "keryx.setup.auth.status",
+        lambda settings, store, smoke: {
+            "slack": {"state": "failed", "detail": "off", "optional": True},
+            "claude": {"state": "failed", "detail": "no key"},
+        },
+    )
+
+    assert run("auth", "status").exit_code == 1
 
 
 # --- setup ----------------------------------------------------------------------------------------
@@ -590,6 +1195,7 @@ def test_auth_status_says_off_for_an_agent_that_is_not_enabled(home, monkeypatch
         ("auth", "login", "google"),
         ("auth", "login", "google-workspace"),
         ("auth", "logout", "google"),
+        ("auth", "login", "slack", "--stdin"),
         ("memory", "seed", "--file", "-", "--force"),
         ("setup",),
     ],

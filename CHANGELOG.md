@@ -9,6 +9,142 @@ the version starts with 0.
 
 ### Added
 
+- **You tick what Keryx may do in your Slack.** Sending you reports and files is always
+  on, as before, and reads nothing. Three more things are yours to switch on, each a box
+  of its own, in any combination: acting on what you type to the app, reading your Slack
+  as you when you ask, and sending messages as you after a yes. `keryx auth login slack`
+  and `keryx setup` show the same three boxes before anything else, each saying what it
+  lets Keryx see, and the app is created for exactly what you ticked. Nothing is ticked
+  for you.
+- **Write back on Slack.** With acting on what you type ticked, every message you send
+  the app itself is a request, with no mention needed: a new message starts a task, and a reply under a task's report
+  continues that task. Nobody else's message does anything. Anywhere else Keryx acts
+  only on a message of yours that mentions it. Keryx marks a message it has acted on with 👀. None of this needs the phone PIN, and
+  `SECURITY.md` describes the trade; a reply that re-runs a task counts against the daily
+  task cap. It listens over Socket Mode, so nothing new is exposed to the internet.
+- **Your Slack app carries your assistant's name.** The app the link creates is called
+  Lyra, Jarvis or whatever `ASSISTANT_NAME` says (fitted to what Slack takes, and Keryx
+  when nothing usable is left), and everything that tells you what to type follows it:
+  `@Lyra`, not `@Keryx`. What the app posts about itself in Slack no longer says "Keryx".
+  An app made earlier keeps its name until its manifest is saved again, which `keryx auth
+  login slack` prints with the steps.
+- **An icon for your Slack app.** Keryx ships its mark as a PNG, and the connect steps
+  end with an optional one that says where the file is and where to upload it. The
+  app's manifest also sets a background colour, the mark's violet.
+- **Ask from any conversation.** With acting on what you type and reading both ticked,
+  add the app to a channel and mention it there.
+  It reacts to your message and answers in that thread, where the others in the
+  conversation read the answer too. Ask in your direct messages with the app for anything
+  you would not say in front of them.
+- **Your Slack on a call: the `slack_read` plugin.** One tool whose arguments are filters
+  that combine: a conversation (a channel's or a person's name), a thread, words to look
+  for, who wrote it, what is waiting on you or what mentions you, and how many days back,
+  with an optional question about what it found. "Anything waiting for me on Slack?",
+  "what did Sam say about the budget?", "what was the last thing Sam sent me?",
+  "summarise the team channel" and "read me that thread" are each answered on the call in
+  a few seconds, as a question about your email is, and never handed to a coding agent
+  for a read. A list is the newest few messages; a question is answered from up to forty.
+  What is waiting is a best effort, since Slack has no such list, and it says so, and
+  says when part of the check failed. A name that could mean several things is asked
+  about, never guessed, and is matched without its accents, since speech has none. When
+  nothing is found it says how far back it looked (a week unless you said, a month at
+  most). It needs the PIN and reading ticked, only ever reads, and only when you ask.
+- **Ticking a box is enough.** Ticking reading turns on `slack_read`, and ticking sending
+  turns on `slack_message`, each saying so in one line: there is no `keryx plugins
+  install` to run afterwards and no second question in `keryx setup`. Unticking, or
+  disconnecting, turns each off again, and `keryx plugins remove NAME` turns one off by
+  hand until what is ticked next changes. `keryx doctor` names the one command that
+  turns each on from where the install stands.
+- **Without reading ticked, Keryx says that it cannot read your Slack.** Asked on a call what is
+  new on Slack, it says in a sentence that reading is not switched on and what switches
+  it on, where it used to hand the question to a coding agent. An agent is told the same,
+  and told not to read your Slack with any other Slack tool it has: such a tool is
+  signed in as something else, possibly to another workspace, and what it found used to
+  be reported as your Slack.
+- **Messages sent as you: the `slack_message` plugin.** With sending ticked Keryx can
+  send one message as you: to a person, a channel, or as a reply in a thread. On a call
+  it never sends on the first ask: it says who the message goes to and the exact words,
+  and sends only after you say yes. It cannot edit, delete, upload or notify a whole
+  channel. A coding agent working on your request can send one too, and nothing asks you
+  first then: `SECURITY.md` says plainly what that risk is. Unticking it removes the
+  capability at once, and turns the plugin off. Ticked without reading, it is given what
+  finds who you mean (the names of your conversations and of members) and no message.
+- **A coding agent can send you a file on Slack.** "Send me the plot on Slack" now arrives
+  from your own app: `keryx slack report --file PATH` (repeat it for more) sends files to
+  where your reports go, or into the thread you asked in, with what is on standard input
+  as the words that go with them. The app needs one more permission for it,
+  `files:write`, which the manifest now has whatever is ticked. **An app you made before
+  this needs updating once**: run `keryx auth login slack` again, which asks Slack what
+  your app may do, prints the manifest to paste into it, and waits while you reinstall
+  it. Until then text reports work exactly as they did, and a file fails with a sentence
+  that says the same.
+- **`keryx plugins install slack_report --set`** takes where reports go (`channel_id`)
+  and the MCP server, and refuses what is ticked, the owner and what Slack said of the
+  workspace: those are settled by `keryx auth login slack`, which checks the tokens.
+- **`send_to_slack` is now `slack_report`.** Nothing to do: an installed plugin keeps
+  loading from the files it has and is offered under the new name. `keryx plugins install
+  slack_report` renames those files if you want them renamed.
+- **`keryx slack read|conversations|members|report|message`** are how a coding agent uses
+  Slack for a request that is about it. `read` takes the same filters as the voice tool
+  (plus `--limit` and `--before` to read further back) and prints what it read as fenced
+  context; `report` posts to you as Keryx, and inside a task only to that task's own
+  thread or to where your reports go; `message` sends as you, with sending ticked, in
+  two runs:
+  the first prints who a name is and the id to send to, and only the second, with
+  `--confirm` and that id, sends. Your user token is never handed to the agent.
+- **What is read from Slack is treated as other people's words, never as instructions.**
+  Only your own request is acted on. Everything read is wrapped, attributed to who wrote
+  it, and kept apart from what you asked, as a guard against a message that tries to give
+  Keryx orders. `SECURITY.md` says what that does and does not protect against.
+- **The Slack steps follow Slack's console.** They are grouped by page, one visit each,
+  and name every place as a path: `Basic Information > App-Level Tokens > Generate Token
+  and Scopes` for the app-level token, then the install, then `OAuth & Permissions >
+  OAuth Tokens`, which lists the User OAuth Token and the Bot User OAuth Token below it.
+  The tokens are asked for in that order (app-level, user, bot), at the terminal and in
+  `keryx setup`, and each prompt names the same place. `--stdin` still takes them in any
+  order.
+- **Connecting Slack is one command at a terminal, with no options.** `keryx auth login
+  slack` shows the boxes, prints the link and the steps for what you ticked, and then
+  waits: it asks for each token that needs, hidden, keeps one it already has when you
+  press Enter, and asks again for one that is the wrong kind or that Slack refuses.
+  Ctrl-C saves nothing. Every token is checked before anything is saved.
+- **Run it again to change what is ticked.** The boxes come up as they stand. Ticking
+  one more prints the manifest to paste into the app you already have, never a second
+  app. Unticking needs nothing from Slack and counts at once: the tokens it no longer
+  uses are forgotten, its voice tool is turned off and a running Keryx stops, whether or
+  not you ever change the app in Slack; the manifest that takes the permission away
+  there too is printed. `keryx setup` asks the same question first and saves nothing
+  until every token has been checked. Whose messages are acted on is settled when you
+  connect and nothing changes it afterwards: where reports are sent never does, and
+  connecting as somebody else is a logout and a new login.
+- **Without a terminal, `--allow` says what is ticked.** A script or a coding agent runs
+  `keryx auth login slack --allow requests --allow read` (once for each of `requests`,
+  `read` and `send`, or `--allow none` for reports and files alone): it prints the steps
+  and ends, and `--stdin` with the same options takes the tokens on standard input, one
+  to a line. With nothing connected and no `--allow`, it prints the choices and guesses
+  none.
+- **Connecting Slack always takes your user token, and no address.** A bot token
+  does not say who installed the app; a user token does. So `keryx auth login slack` now
+  takes the bot token and your user token (plus the app-level token when acting on what
+  you type is ticked), Slack says which member you are, and reports go to you. `--email`
+  is gone, and so is the question about where to send. With neither reading nor sending
+  ticked the user token has one permission (`emoji:read`) and is used only to ask Slack
+  whose it is. The bot no longer asks for
+  `users:read` or `users:read.email`. A workspace connected before this keeps working
+  untouched; the next login shows how to update the app you have. To send reports
+  somewhere else: `keryx plugins install slack_report --set channel_id=ID`.
+- **`keryx auth logout slack [--workspace NAME]`** forgets a Slack workspace's tokens and
+  settings.
+- **More than one Slack workspace.** `keryx auth login slack --workspace NAME` connects
+  another, with its own app, boxes and tokens. Reports and alerts keep going to your first
+  workspace, `slack_report` can be told which one to use, and a task asked for in one
+  workspace is answered there and nowhere else. `keryx doctor` and `keryx auth status`
+  list each workspace with what is on and off there, in plain words, and anything it
+  still lacks.
+- **A task's reports stay in one Slack thread.** The first report is a message of its own;
+  later reports of the same task are replies under it, also shown in the conversation,
+  and a long report is one thread.
+
 - **One Google sign-in for everything: `keryx auth login google`.** It connects Gmail,
   Calendar, Drive, Docs, Sheets and Slides at once, for the coding agents and for email
   answers on a call, and `--services gmail,calendar` chooses fewer. With a browser on the
@@ -42,6 +178,23 @@ the version starts with 0.
 
 ### Changed
 
+- `check_email` and `slack_read` answer a question with `claude-sonnet-5-5` by default (it
+  was `claude-opus-5-5`). A tool already installed keeps the model in its file; `keryx
+  plugins install NAME --set model=…` changes it.
+
+- **Your own Slack app is used for everything once it is connected.** A machine that named
+  a Slack MCP server for subagents (`mcp_server` in `slack_report.toml`) before it had an
+  app kept sending subagents through that server afterwards, so a file asked for on a
+  call arrived from the old bot. With a bot token saved, subagents are now told to send
+  with `keryx slack report`, a Codex subagent is no longer handed the server, and the
+  name in the file is left alone and unused. A machine with only the server and no token
+  behaves as before. `keryx doctor` and `keryx plugins` say which is in use.
+- **Task numbers are no longer said or posted.** On a call the assistant calls a task by
+  what you asked for, and no longer opens with its number after handing work over. A
+  report posted to Slack is headed "Finished:" or "Failed:" and your request cut to a
+  line, or just "Finished" as a reply in the task's own thread, and a text, the restart
+  confirmation and the restart alert name no number either. The numbers are still what
+  `keryx tasks` lists and what a report link and the `Keryx-Task:` commit trailer carry.
 - `keryx auth login gmail` and `keryx auth login google-workspace` run the one Google
   sign-in. Both names are accepted for one more release, and `keryx auth status --json`
   still lists them beside the new `google`.
@@ -94,6 +247,11 @@ the version starts with 0.
   grew with the square of its length. Reading a body now takes time in proportion to it.
 - `keryx auth status` reported Gmail as missing however it was signed in.
 - `--headless` was ignored by both Google sign-ins.
+- **A result is no longer read out to a call that has already dropped.** When the audio
+  connection broke without closing, Keryx kept its side of the call open for some seconds
+  after Twilio had ended it. A task that finished in that time was read out to nobody and
+  recorded as heard, so you never heard it. Keryx now ends its side as soon as Twilio
+  reports the call over, and the result waits for the next call or the call-back.
 
 ## [0.2.0] - 2026-11-09
 

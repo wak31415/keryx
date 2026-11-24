@@ -230,7 +230,7 @@ def test_short_status_line_format():
     )
 
     assert (
-        task.short_status_line() == "task 3 (running): add README to orchard-sensor-net"
+        task.short_status_line() == "running: add README to orchard-sensor-net"
     )
 
 
@@ -240,7 +240,7 @@ def test_short_status_line_truncates_long_description_with_ellipsis():
 
     line = task.short_status_line()
 
-    assert line == f"task 1 (queued): {'x' * 80}…"
+    assert line == f"queued: {'x' * 80}…"
 
 
 def test_short_status_line_does_not_truncate_at_exactly_80_chars():
@@ -249,7 +249,7 @@ def test_short_status_line_does_not_truncate_at_exactly_80_chars():
 
     line = task.short_status_line()
 
-    assert line == f"task 1 (queued): {'x' * 80}"
+    assert line == f"queued: {'x' * 80}"
     assert "…" not in line
 
 

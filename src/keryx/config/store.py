@@ -14,6 +14,7 @@ Reading is `Settings`' job (its sources are these two files); this module reads 
 to rewrite them, and to say where a value came from.
 """
 
+import json
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -36,6 +37,7 @@ from keryx.config.settings import (
     META_TABLES,
     NOT_STORED,
     PLACEHOLDER_KEY,
+    STORED_AS_JSON,
     Settings,
     canonical_key,
     env_var_name,
@@ -107,7 +109,11 @@ def validate(values: Mapping[str, Any]) -> dict[str, Any]:
             problems.append(f"{env_var_name(name) if name else 'the value'} {message}")
         raise ConfigError("; ".join(problems)) from None
     dumped = probe.model_dump(mode="json", include=set(fields))
-    return {key: dumped[name] for name, key in fields.items()}
+    kept = {key: dumped[name] for name, key in fields.items()}
+    for key in STORED_AS_JSON & set(kept):
+        # One line of JSON, or nothing at all when the table is empty.
+        kept[key] = json.dumps(kept[key], sort_keys=True) if kept[key] else None
+    return kept
 
 
 def default_value(key: str) -> Any:
@@ -322,6 +328,11 @@ class ConfigStore:
                 home.pop(key, None)
             else:
                 home[key] = value
+        for held in (config, secrets):
+            for key in STORED_AS_JSON & set(held):
+                if isinstance(held[key], dict):
+                    # A table somebody wrote by hand: kept, in the shape every build keeps.
+                    held[key] = json.dumps(held[key], sort_keys=True)
         if secrets != before[1]:
             write_private(self.secrets_path, dump_toml(secrets, SECRETS_HEADER))
         if config != before[0]:

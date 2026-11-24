@@ -114,10 +114,14 @@ def redact_transcript(path: Path, pin: str | None) -> None:
 
 
 def describe_tasks(tasks: list["Task"]) -> str:
-    """The tasks a call dispatched, as one line for the prompt."""
+    """The tasks a call dispatched, as one line for the prompt.
+
+    By what was asked, never by number: the memory this is folded into is read to the
+    voice model on every call, and a task's number is internal.
+    """
     if not tasks:
         return _NO_TASKS
-    return "; ".join(f"task {task.id} ({task.status}) — {task.description}" for task in tasks)
+    return "; ".join(f"{task.description} ({task.status})" for task in tasks)
 
 
 def memory_path(data_dir: Path) -> Path:

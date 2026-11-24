@@ -80,10 +80,10 @@ def test_render_includes_the_opening_context(settings):
         caller=None,
         trust=TrustLevel.FULL,
         projects=[],
-        opening_context="Task 7 finished: the report is ready.",
+        opening_context="The sweep finished: the report is ready.",
     )
 
-    assert "Task 7 finished: the report is ready." in rendered
+    assert "The sweep finished: the report is ready." in rendered
 
 
 def test_render_defaults_projects_to_everything_the_manager_can_resolve(settings, tmp_path):
@@ -180,7 +180,7 @@ def test_below_full_the_prompt_still_carries_the_map_of_their_world(owners_world
         channel="phone",
         caller="+15550001111",
         trust=trust,
-        pending="- task 41 (finished) — their bank balance",
+        pending="- They asked for: their bank balance (finished; task_id 41)",
         memory="They are waiting on the letter from the lawyer.",
     )
 
@@ -200,7 +200,7 @@ def test_with_the_briefing_held_back_the_prompt_carries_none_of_it(owners_world,
         channel="phone",
         caller="+15550001111",
         trust=trust,
-        pending="- task 41 (finished) — their bank balance",
+        pending="- They asked for: their bank balance (finished; task_id 41)",
         memory="They are waiting on the letter from the lawyer.",
     )
 
@@ -226,7 +226,7 @@ def test_with_no_pin_on_the_machine_nothing_of_theirs_is_rendered(owners_world, 
         channel="phone",
         caller="+15550001111",
         trust=trust,
-        pending="- task 41 (finished) — their bank balance",
+        pending="- They asked for: their bank balance (finished; task_id 41)",
         memory="They are waiting on the letter from the lawyer.",
     )
 
@@ -297,11 +297,11 @@ def test_the_digest_is_not_part_of_what_is_held_back(owners_world, trust):
         channel="phone",
         caller="+15550001111",
         trust=trust,
-        pending="- task 41 (finished) — their bank balance",
+        pending="- They asked for: their bank balance (finished; task_id 41)",
     )
 
     assert "## What the owner has not heard yet" in rendered
-    assert "task 41" in rendered
+    assert "task_id 41" in rendered
 
 
 # --- Slack is opt-in -------------------------------------------------------
@@ -313,10 +313,10 @@ def test_the_digest_is_not_part_of_what_is_held_back(owners_world, trust):
 
 
 def test_voice_prompt_does_not_send_search_results_unasked(unwrapped):
-    """The web_search branch used to end with 'send_to_slack it as well'."""
+    """The web_search branch used to end with 'slack_report it as well'."""
     text = unwrapped(load_prompt("voice_system.md"))
 
-    assert "send_to_slack it as well" not in text
+    assert "slack_report it as well" not in text
     assert "do not send it anywhere in writing unless they asked for that" in text
 
 
@@ -392,11 +392,11 @@ def test_an_empty_memory_is_only_admitted_to_a_trusted_session(settings):
 
 def test_the_unreported_digest_reaches_the_prompt_under_its_own_heading(settings):
     rendered = _rendered(
-        settings, pending="- task 41 (finished) — they asked for: the ingest script"
+        settings, pending="- They asked for: the ingest script (finished; task_id 41)"
     )
 
     assert "## What the owner has not heard yet" in rendered
-    assert "task 41" in rendered
+    assert "task_id 41" in rendered
 
 
 def test_the_memory_reaches_the_prompt_as_background_not_as_news(settings, unwrapped):
@@ -481,10 +481,30 @@ def test_the_prompt_never_predicts_the_pin(unwrapped):
 
 
 def test_the_prompt_treats_an_accepted_pin_as_nothing_to_say(unwrapped):
-    """The task number is the proof it worked; "you're authorized now" is a spare turn."""
+    """The answer is the proof it worked; "you're authorized now" is a spare turn."""
     text = unwrapped(load_prompt("voice_system.md"))
 
     assert "When it is accepted, say nothing about it" in text
+    assert "the answer, or that the work is under way" in text
+
+
+def test_the_prompt_keeps_task_numbers_out_of_the_assistants_mouth(unwrapped):
+    """The owner's ruling of 2026-11-23: a task's number is internal.
+
+    The prompt used to list task ids among the numbers to say plainly, and after every
+    dispatch the call led with one; the owner never used a number back.
+    """
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "Never say a task's number" in text
+    assert "call a task by what they asked for" in text
+    assert "(task ids, times, counts)" not in text
+    assert "gives you a task number" not in text
+    assert "or the task number" not in text
+    # Wherever the number is named at all, the same sentence forbids saying it.
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if re.search(r"task('s)? (number|id)", sentence, re.IGNORECASE):
+            assert re.search(r"\b(never|not)\b", sentence, re.IGNORECASE), sentence
 
 
 def test_the_prompt_asks_for_the_callback_to_be_confirmed_once(unwrapped):
@@ -618,9 +638,93 @@ def test_a_quick_read_of_their_mail_calendar_or_documents_goes_to_the_tool_that_
     mine = text[answer:dispatch]
 
     assert "when you have a tool for it on this call" in mine
-    for read in ("what is in their mail", "what is on their calendar", "what a document says"):
+    for read in ("what is in their mail", "what is on their calendar", "what a document says",
+                 "what is waiting for them"):
         assert read in mine
     assert "call it rather than dispatching" in mine
+    theirs = text[dispatch : text.index("There are no task types")]
+    assert "a Slack message to somebody else when you have no tool that sends one" in theirs
+    # One message is the tool's when there is one, and only after their yes.
+    assert ("sending one Slack message for them, when you have a tool that does and they "
+            "have said yes to it") in text[: dispatch]
+    assert "slack_read" not in text
+
+
+def test_anything_on_their_slack_is_the_read_tools_and_a_dispatch_is_for_work(unwrapped):
+    """The routing named only "what is waiting for them on Slack" as the tool's, and "a
+    long thread" and "anything across many messages" as a task: so what somebody wrote,
+    or a channel summarised, was dispatched beside a tool that answers it in seconds."""
+    text = unwrapped(load_prompt("voice_system.md"))
+    answer, dispatch = text.index("**You answer it.**"), text.index("**Claude does it.**")
+    mine, theirs = text[answer:dispatch], text[dispatch : text.index("There are no task types")]
+
+    assert ("what is on their Slack (what is waiting for them, what somebody wrote, what a "
+            "channel or a thread says)") in mine
+    assert "a long thread there" not in theirs
+    assert "anything across many messages or files" not in theirs
+    assert ("and on Slack what one look cannot answer: work to be done with what is found, "
+            "or a written report across many conversations") in theirs
+    assert "anything across many emails or files" in theirs
+
+
+def _slack_with(settings, *allow):
+    """`settings` with Keryx's own Slack app connected, and `allow` ticked."""
+    from keryx import plugins
+    from keryx.config.store import ConfigStore
+
+    plugins.write_config(settings, "slack_report", {
+        "channel_id": "U0OWNER", "owner_id": "U0OWNER", "allow": list(allow), "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+    })
+    plugins.install(settings, "slack_report")
+    secrets = {"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_USER_TOKEN": "xoxp-1"}
+    ConfigStore().set(secrets)
+    return settings.model_copy(update={key.lower(): value for key, value in secrets.items()})
+
+
+@pytest.mark.parametrize("allow", [(), ("requests",), ("send",), ("requests", "send")])
+def test_with_an_app_that_may_not_read_slack_the_voice_says_so_rather_than_dispatching(
+    settings, unwrapped, allow,
+):
+    """Without reading ticked there is no tool that reads Slack and no command either,
+    and nothing said so: the question was dispatched, and answered from whatever else the
+    agent had."""
+    text = unwrapped(_rendered(_slack_with(settings, *allow)))
+
+    assert "Reading their Slack is not switched on." in text
+    assert "do not dispatch it" in text
+    assert ("say in one sentence that reading Slack is not switched on, and that signing in "
+            "to Slack again at their keyboard, and ticking it there, switches it on") in text
+    assert "the command is `keryx auth login slack`." in text
+    assert "--access" not in text and "read level" not in text
+    assert "Sending them something on Slack is not affected" in text
+    assert "{" not in text and "}" not in text
+
+
+def test_the_voice_is_told_reading_slack_is_off_only_while_an_app_of_keryx_cannot(
+    settings, unwrapped,
+):
+    off = "Reading their Slack is not switched on."
+
+    assert off not in unwrapped(_rendered(settings)), "no Slack at all is nothing to say"
+    assert off not in unwrapped(_rendered(_slack_with(settings, "requests", "read")))
+    assert off not in unwrapped(_rendered(_slack_with(settings, "read")))
+    assert off not in unwrapped(_rendered(_slack_with(settings, "requests", "read", "send")))
+
+
+def test_what_slack_cannot_do_is_withheld_with_the_rest_before_the_pin(settings, unwrapped):
+    connected = _slack_with(settings, "requests").model_copy(
+        update={"briefing_before_pin": False})
+
+    text = unwrapped(_rendered(connected, trust=TrustLevel.NONE))
+
+    assert "Reading their Slack is not switched on." not in text
+
+
+def test_the_slack_paragraph_names_the_default_agent(settings, unwrapped):
+    codex = _slack_with(settings, "requests").model_copy(update={"agent_backend": "codex"})
+
+    assert "so nothing can: not you, and not Codex" in unwrapped(_rendered(codex))
 
 
 def test_putting_one_new_event_on_their_calendar_goes_to_the_tool_that_adds_one(unwrapped):
@@ -644,7 +748,7 @@ def test_what_those_tools_cannot_do_is_still_dispatched(unwrapped):
 
     for work in ("replying to or sending mail", "changing or deleting an event",
                  "inviting people", "an event that repeats", "editing or creating a document",
-                 "anything across many messages or files"):
+                 "anything across many emails or files"):
         assert work in theirs
     assert theirs.rstrip().endswith("Dispatch it.")
 

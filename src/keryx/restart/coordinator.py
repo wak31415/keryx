@@ -99,12 +99,12 @@ RESTART_CONTEXT = (
     "more work."
 )
 #: The clause that names the work a restart was loading, for the context above.
-LOADING_TASK = ", to load the work from task {task_id}"
+LOADING_TASK = ", to load work they had asked for"
 #: The other opening context: a restart the *work itself* asked for, where the call is
 #: both "here is what came of it" and "and here is whether it is running". Two calls a
 #: minute apart about the same piece of work is what this exists to avoid.
 RESTART_WITH_TASK_CONTEXT = (
-    "You are calling the user back about task {task_id}, which they asked you for earlier and "
+    "You are calling the user back about work they asked you for earlier, "
     "which has now finished — and about the restart it needed, because the work changed "
     "your own code and you have just restarted to load it. What they asked for: "
     "{request}. Result: {detail}. Restart: {status}.{history} In your first turn — do not stop "
@@ -112,8 +112,9 @@ RESTART_WITH_TASK_CONTEXT = (
     "is about, tell them what came of the work, and then say whether the change is actually "
     "running. If the restart line mentions errors in the log, or says the checkout did not "
     "change, that is the headline: say plainly that the update may not have taken, say what "
-    "the error was, and offer to put Claude on it. Call mark_reported for task {task_id} once "
-    "you have told them. Keep it short. This is a new call: they may have to give the PIN "
+    "the error was, and offer to put Claude on it. Call mark_reported with task_ids "
+    "[{task_id}] once you have told them; that id is for the tool call only, so never say a "
+    "task number out loud. Keep it short. This is a new call: they may have to give the PIN "
     "again before you can start more work."
 )
 #: The same confirmation as a text, when no call can be placed.
@@ -519,8 +520,9 @@ class RestartCoordinator:
             # A restart asked for in order to load a change, running the same checkout it
             # was running before, has loaded nothing. Worth saying: the alternative is a
             # confident "all done" over work that never reached the disk.
+            # Without the task's number: this line is texted and read out as it stands.
             parts.append(
-                f"the checkout did not change, so the work from task {record.task_id} may "
+                "the checkout did not change, so the work this restart was to load may "
                 "not have landed"
             )
 
@@ -616,7 +618,7 @@ class RestartCoordinator:
             return RESTART_CONTEXT.format(
                 when=f"{format_duration(record.age_seconds())} ago",
                 reason=reason,
-                change=LOADING_TASK.format(task_id=record.task_id) if record.task_id else "",
+                change=LOADING_TASK if record.task_id else "",
                 status=status,
             )
         request = task.description

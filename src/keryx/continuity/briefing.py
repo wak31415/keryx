@@ -66,7 +66,9 @@ _DIGEST_HEADING = (
     "These finished while you were not talking to the owner, and the owner has not heard about "
     "them yet. Lead with them: say what landed in a sentence or two — not a recital — and then "
     "call mark_reported with the ids you actually mentioned. Calling it is what records that "
-    "they heard; saying so does not, so never tell them you have marked anything."
+    "they heard; saying so does not, so never tell them you have marked anything. Each "
+    "task_id below is for that call and your other tools only: never say a task number out "
+    "loud, and call each piece of work by what they asked for."
 )
 _DIGEST_MORE = "\n\n(and {count} more waiting; these are the oldest.)"
 #: Appended to the message that opens the session, because a realtime model leads with
@@ -156,11 +158,16 @@ def _shorten(text: str, limit: int) -> str:
 
 
 def _digest_line(task: Task) -> str:
-    """One unreported task, as a line the model can speak from."""
+    """One unreported task, as a line the model can speak from.
+
+    It opens with what they asked for, because that is what the model calls the task by.
+    The id comes last and is spelled as the tool argument it is: a line that opened with
+    the task and its number was read out that way, and the number is internal.
+    """
     verb = "failed" if task.status is TaskStatus.FAILED else "finished"
     detail = task.error if task.status is TaskStatus.FAILED else task.summary
     request = _shorten(task.description, MAX_DIGEST_REQUEST_CHARS)
-    line = f"- task {task.id} ({verb}) — they asked for: {request}"
+    line = f"- They asked for: {request} ({verb}; task_id {task.id})"
     if detail:
         line += f"\n  Result: {_shorten(detail, MAX_DIGEST_SUMMARY_CHARS)}"
     return line

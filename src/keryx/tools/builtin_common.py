@@ -9,6 +9,12 @@ before it can reach a text-to-speech engine, and a failure comes back as a sente
 assistant can say. Several of those sentences are shared by more than one tool, and prose
 that gets read down a phone is worth reviewing in one place.
 
+**A task's id is a handle, never a thing to say** (the owner's ruling of 2026-11-23). The
+tools take and return `task_id` because the model needs it to call them, and that is all
+it is for: every piece of wording that mentions it says so, and gives the model the other
+thing to say, which is what the task was about. Told to "say the task number once", calls
+led with it after every dispatch, and the owner never once used a number back.
+
 **The parsing.** `_task_id`, `_clamp_limit` and friends turn whatever a speech model put in
 an argument into something a task store can take, without ever raising.
 
@@ -38,7 +44,7 @@ actually named (`VoiceSession.reportable_task_ids`).
 Both read `ctx.trust` live, so a PIN keyed while the model was thinking is honoured on the
 very next call, and the digits themselves never pass through here: `submit_pin` hands what
 the caller said straight to the session, which is the only thing that compares it.
-`get_task` is the other one — a task number in, a `Task` or the error dict to hand back.
+`get_task` is the other one — a task's id in, a `Task` or the error dict to hand back.
 """
 
 import asyncio
@@ -136,7 +142,7 @@ CALLBACK_OWNER_ONLY_MESSAGE = (
 #: milliseconds: arranging it and having arranged it are one fact, not two.
 CALLBACK_SET_MESSAGE = (
     "Arranged. Tell them once, in a short clause — \"I'll ring you when it lands\" — and "
-    "stop there. Not the task number again, not what that call will contain, and not a "
+    "stop there. Never the task number, not what that call will contain, and not a "
     "second confirmation if you already said you were setting it up."
 )
 CALLBACK_ALREADY_DONE_MESSAGE = (
@@ -158,9 +164,22 @@ CONTINUE_REPORTING_MESSAGE = (
     "not given it yet, and any other news. Do not greet them again or repeat what you "
     "already said."
 )
+#: What `dispatch_task` hands back for work that has not landed. It used to ask for the
+#: task number, once, and so every such turn on the calls opened with it. The task_id
+#: beside this message is for the next tool call; the sentence is about the work.
 STILL_RUNNING_MESSAGE = (
-    "still running. Say the task number once and that you will tell them when it lands. "
-    "Nothing about what the answer will contain — you do not know yet."
+    "still running. Tell them once, in one short sentence, that it is under way and that "
+    "you will tell them when it lands. Never say the task number: task_id is only for "
+    "your tool calls. Nothing about what the answer will contain — you do not know yet."
+)
+#: A `task_id` nothing answers to. The model may say an error, so it carries no number.
+NO_SUCH_TASK_MESSAGE = (
+    "there is no task with that task_id; find the right one with list_tasks, and do not "
+    "say any task number to them"
+)
+BAD_TASK_ID_MESSAGE = (
+    "task_id must be the id an earlier tool result or the briefing gave for the task, "
+    "for example 3; it is for tool calls and not something to say"
 )
 SEARCH_FAILED_MESSAGE = "the search came back empty; say so, or offer to put Claude on it"
 RECALL_EMPTY_MESSAGE = (
@@ -200,9 +219,14 @@ _STATUS_FILTERS: dict[str, tuple[TaskStatus, ...]] = {
     "failed": (TaskStatus.FAILED,),
 }
 
-#: The task number every task-scoped tool takes, and the whole parameter schema of a
-#: tool that takes nothing else. Read-only once registered, so one copy is shared.
-_TASK_ID_PROPERTY = {"type": "integer", "description": "The task number."}
+#: The task's id, which every task-scoped tool takes, and the whole parameter schema of
+#: a tool that takes nothing else. Read-only once registered, so one copy is shared.
+_TASK_ID_PROPERTY = {
+    "type": "integer",
+    "description": "The task's id, as an earlier tool result or the briefing gave it. It "
+    "is a handle for tool calls: never say it out loud, and when they mean a task you "
+    "have no id for, find it with list_tasks rather than asking them for a number.",
+}
 _TASK_ID_SCHEMA = {
     "type": "object",
     "properties": {"task_id": _TASK_ID_PROPERTY},
@@ -370,7 +394,7 @@ async def _report_excerpt(task: Task) -> str | None:
 def pin_gate(ctx: ToolContext, settings: Settings) -> dict | None:
     """The refusal a phone caller gets before the PIN, if any.
 
-    Called first, before a task number is even looked up, so a refusal says nothing about
+    Called first, before a task's id is even looked up, so a refusal says nothing about
     what exists. Reaching into a running task opens the same bypassPermissions subagent
     that dispatching one would; a note, a stamp or a message sent outlives the call; and
     `recall` reads far past what this call was handed. See the module docstring for what
@@ -441,8 +465,8 @@ async def get_task(manager: TaskManager, arguments: dict) -> Task | dict:
     """The task named by `arguments`, or the error dict to hand back instead."""
     task_id = _task_id(arguments)
     if task_id is None:
-        return {"error": "task_id must be a task number, for example 3"}
+        return {"error": BAD_TASK_ID_MESSAGE}
     task = await manager.get(task_id)
     if task is None:
-        return {"error": f"no task {task_id}"}
+        return {"error": NO_SUCH_TASK_MESSAGE}
     return task

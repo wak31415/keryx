@@ -61,7 +61,8 @@ keryx auth status --json
 
 `config list` is every setting with whether it is set and where from — a secret's value is
 never in it. `doctor` groups each check by `section` with a `state` of ok, missing or failed.
-`auth status` is every sign-in.
+`auth status` is every sign-in; Google and Slack are marked `optional` in it, because Keryx
+runs without them.
 
 Then tell them, in three or four sentences: what Keryx does with what you are about to
 collect, that it goes to the realtime provider on every call, and that nothing is written
@@ -76,10 +77,14 @@ runs its own login, which opens a browser or prints a code — theirs to finish,
 
 ## 3. The plugins they want
 
-Seven voice tools are plugins, off until they are turned on: `send_to_slack` and
-`check_email` (most people want both), `check_calendar`, `add_calendar_event` (it writes to
-their calendar, so it is its own yes), `find_document`, `check_billing` and
-`cluster_stats`. Ask which they want; do not turn one on unasked.
+Nine voice tools are plugins, off until they are turned on: `slack_report` and
+`check_email` (most people want both), `slack_read` (it reads their Slack as them, and
+is turned on by the Slack login when they switch reading on there), `slack_message` (it
+sends a message *as them*, and is turned on by the Slack login when they switch sending
+on there, which is theirs to say: never install it yourself because they said yes to
+something else), `check_calendar`,
+`add_calendar_event` (it writes to their calendar, so it is its own yes), `find_document`,
+`check_billing` and `cluster_stats`. Ask which they want; do not turn one on unasked.
 
 ```bash
 keryx plugins --json            # each one: on or off, its files, why one is refused
@@ -88,14 +93,89 @@ keryx plugins hosts --json      # the ssh hosts cluster_stats could ask
 keryx plugins install cluster_stats --cluster HOST=PARTITION
 ```
 
-A plugin's secret is never a `--set`: Slack's bot token and the billing admin keys are
+A plugin's secret is never a `--set`: the billing admin keys are
 `keryx config set KEY --stdin` (theirs to type, through `keryx setup` if you do not have
 it), and email, the two calendar plugins and `find_document` need the Google sign-in,
-`keryx auth login google` (the sign-ins step of the instructions; the same sign-in gives the agents Calendar,
-Drive, Docs, Sheets and Slides, and the address they paste back goes in on standard input,
-never into the command). A plugin installed before its service is connected is refused with
-the reason, and loads by itself once the sign-in includes it. Offer
-`cluster_stats` only a host whose `control_master` is true — Keryx never opens a
+`keryx auth login google` (the sign-ins step of the instructions; the same sign-in gives
+the agents Calendar, Drive, Docs, Sheets and Slides, and the address they paste back goes
+in on standard input, never into the command). A plugin installed before its service is
+connected is refused with the reason, and loads by itself once the sign-in includes it.
+
+Slack is a sign-in too, and it turns `slack_report` on by itself (it was called
+`send_to_slack`; a machine that installed it under that name needs nothing done):
+
+```bash
+keryx auth login slack                        # says what there is to switch on: read it to them
+keryx auth login slack --allow none           # what they chose: a link and steps, to relay
+keryx auth login slack --stdin --allow none   # theirs to run: it asks for each token hidden
+```
+
+Run by you, with no terminal, each of these prints and ends. At a terminal of their own,
+`keryx auth login slack` with no option is the whole sign-in in one command: it shows a
+box to tick for each thing Keryx may do, prints the steps for exactly that and then
+waits for the tokens, so someone who would rather do it all themselves runs only that.
+Offer it first.
+
+**What Keryx may do in their Slack is theirs to choose, and it comes first**, because it
+decides the app the link creates. Sending them reports and files is always on. The first
+command prints the three things that may be added, each on its own: `requests` (it acts
+on what they type to the app, which is named after their assistant: every message of
+theirs there, with no mention needed, can resume or start work *without the phone
+PIN*), `read` (it reads Slack as them when they ask about messages; with `requests` as
+well, they can also mention it in a conversation it was added to, where it answers in
+that thread for the others there to read too) and `send` (it sends messages as them, to
+other people and channels, after reading each back and a yes). Read them those
+sentences and ask. Never choose `requests`, `read` or `send` for them, and never suggest
+one to save a step. What they say goes on both of the other commands as `--allow`, once
+for each (`--allow requests --allow read`); `--allow none` is reports and files alone,
+which is what to use when they give no answer **on a workspace that is not connected
+yet**. Nothing is guessed: with no `--allow` on a workspace that is not connected, the
+command prints the choices and saves nothing. **On a workspace that is connected, never
+pass `--allow none` by default**: `--allow` there says everything that stays on, and
+whatever it leaves out is switched off at once, so `none` switches off everything they
+had on. Read what is on from `keryx auth status --json` (`slack.workspaces[].allow`)
+and pass exactly that selection, unless they asked you for a change.
+A first connection takes two tokens whatever is ticked, their own user token and
+the bot token (the user token is how Slack says which member they are; there is no
+address to give and nothing is asked about where to send: reports go to them). Keryx
+keeps the user token only while `read` or `send` is on: with neither it is asked once
+who they are and not saved, and a workspace that is already connected, whose owner is
+on file, is asked for none. With
+`requests`, the app-level token is asked for
+first (on standard input it goes with the other two, one to a line, in any order). The command names the member it takes them to be: read them
+that line. It is settled then and nothing changes it afterwards; connecting as somebody
+else is `keryx auth logout slack` and a new login, which is theirs to ask for. Running
+the login again is how they change what is on: at a terminal the boxes come up ticked
+as they stand, and without one `--allow` says everything that is to stay on. Whatever
+it leaves out is switched off at once, with nothing asked of Slack and before anything
+else the command does, with or without `--stdin`; whatever it
+adds prints the manifest to paste into the app they have. A machine
+that connected Slack before user tokens were asked for keeps working as it is: only if
+they want more switched on, or an owner on file, do they run the login again, and the
+first command then prints how to update the app they have. The same goes for an app
+made before Keryx could send files: the first command asks Slack what the app may do,
+and when it lacks `files:write` it prints the manifest to paste into the app and the
+reinstall that follows. Relay those steps; text reports work meanwhile.
+
+The link opens Slack's own page for a new app with theirs already filled in. The steps
+the first command prints follow Slack's console, one visit to each page, and the tokens
+are asked for in the order they are copied. Say the places as the steps do, as paths:
+
+- with `requests`, before installing: `Basic Information > App-Level Tokens >
+  Generate Token and Scopes`, with the `connections:write` scope, gives the app-level
+  token (`xapp-…`);
+- they install the app to their workspace and click Allow;
+- `OAuth & Permissions > OAuth Tokens` then lists the User OAuth Token (`xoxp-…`) and,
+  below it, the Bot User OAuth Token (`xoxb-…`): they copy both, in that order.
+
+Do not ask them to paste a token to you: they run the second command themselves. It checks each token with Slack, takes the member their
+user token belongs to as them (so there is no address to give and no channel id to look
+up), and sends one test message — ask them whether it arrived. An app they connected
+before keeps working. A second
+workspace is the same two commands with `--workspace NAME`, and `keryx auth logout slack
+[--workspace NAME]` disconnects one.
+
+Offer `cluster_stats` only a host whose `control_master` is true — Keryx never opens a
 connection of its own — and ask them which partition its GPUs are in rather than guessing.
 Every other setting of a plugin is in the TOML file `keryx plugins` names.
 

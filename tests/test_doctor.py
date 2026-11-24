@@ -2,10 +2,12 @@
 
 import dataclasses
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
 
+from keryx import doctor as doctor_module
 from keryx import plugins
 from keryx.agents.registry import BACKENDS
 from keryx.config import Settings, pin_file
@@ -68,6 +70,8 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
         owner_name="Sam",
         projects_root=tmp_path / "projects",
         slack_bot_token="xoxb-test",
+        slack_app_token="xapp-test",
+        slack_user_token="xoxp-test",
         openai_admin_key="sk-admin-test",
     )
     sign_in(settings)
@@ -80,7 +84,11 @@ def healthy(tmp_path, monkeypatch, every_agent_installed):
     # only when a tool is called).
     with_agent(monkeypatch, "claude", cli="/bin/claude")
     for name, values in {
-        "send_to_slack": {"channel_id": "D123"},
+        "slack_report": {"channel_id": "D123", "allow": ["requests", "read", "send"],
+                         "owner_id": "U0OWNER",
+                         "team_id": "T0ACME", "bot_user_id": "U0KERYX"},
+        "slack_read": {},
+        "slack_message": {},
         "check_email": {},
         "check_calendar": {},
         "add_calendar_event": {"default_minutes": 45},
@@ -635,11 +643,37 @@ def test_a_missing_projects_root_only_warns_and_says_where_tasks_go(healthy):
     assert not healthy.projects_root.exists()  # reported, never created
 
 
+def test_slack_says_which_way_subagents_send_when_the_file_names_a_server(
+    healthy, monkeypatch, tmp_path
+):
+    """The file may name an MCP server from before Keryx had an app of its own: with a
+    bot token saved the server is not used, and `doctor` says that, not the file."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    (tmp_path / "claude").mkdir()
+    (tmp_path / "claude" / ".claude.json").write_text(json.dumps({"mcpServers": {"chat": {
+        "env": {"SLACK_BOT_TOKEN": "xoxb-server", "SLACK_CHANNEL_ID": "D999"}}}}))
+    plugins.write_config(healthy, "slack_report", {"mcp_server": "chat"})
+    servers_only = healthy.model_copy(update={"slack_bot_token": None})
+    monkeypatch.setattr(plugins, "current_settings", lambda: servers_only)
+
+    own = by_name(run_doctor_checks(healthy))["slack_report"].detail
+    theirs = by_name(run_doctor_checks(servers_only))["slack_report"].detail
+
+    assert own == (
+        "on — posts to D123; subagents send with `keryx slack report` (the chat MCP server "
+        "named in the file is not used while Keryx has an app of its own)")
+    assert theirs.endswith("; subagents send through the chat MCP server")
+
+
 def test_every_plugin_on_names_what_it_does(healthy):
     checks = by_name(run_doctor_checks(healthy))
 
-    assert checks["send_to_slack"].detail == "on — posts to D123"
-    assert checks["check_email"].detail == "on — claude-opus-5-5, low effort"
+    assert checks["slack_report"].detail == "on — posts to D123"
+    assert checks["slack_read"].detail == (
+        "on — reads Slack as you, only when you ask; claude-sonnet-5-5 answers a question "
+        "about what it read"
+    )
+    assert checks["check_email"].detail == "on — claude-sonnet-5-5, low effort"
     assert checks["check_calendar"].detail == (
         "on — reads every calendar ticked in Google Calendar, up to 25 events an answer"
     )
@@ -651,6 +685,92 @@ def test_every_plugin_on_names_what_it_does(healthy):
     assert checks["cluster_stats"].detail == "on — alpha through the built-in guard"
     assert all(checks[name].section == "plugins" for name in plugins.PLUGINS)
     assert "xoxb-test" not in str(checks)
+
+
+def test_each_slack_workspace_has_a_check_that_says_what_is_on_and_what_it_lacks(settings):
+    settings = settings.model_copy(update={
+        "slack_bot_token": "xoxb-first-secret",
+        "slack_workspace_tokens": {"work": {"bot": "xoxb-work-secret", "app": "xapp-work-secret"}},
+    })
+    plugins.write_config(settings, "slack_report", {
+        "channel_id": "U0OWNER", "allow": ["requests"], "owner_id": "U0OWNER", "team": "Acme",
+        "team_id": "T0ACME", "bot_user_id": "U0KERYX",
+        "workspaces": {"work": {"allow": ["requests"], "channel_id": "U0WORK",
+                                "owner_id": "U0WORK", "bot_user_id": "U0WORKBOT"}},
+    })
+    plugins.install(settings, "slack_report")
+
+    checks = {check.name: check for check in doctor_module.plugin_checks(settings)}
+
+    first, work = checks["slack_report: default"], checks["slack_report: work"]
+    assert (first.state, first.severity, first.section) == ("failed", "soft", "plugins")
+    on_and_off = ("on: sending you reports and files, acting on what you type to the app; "
+                  "off: reading Slack as you, sending messages as you")
+    assert first.detail == (
+        f"Acme, {on_and_off}; but without its app token — `keryx auth login slack`"
+    )
+    # Nothing says which workspace it is, so no message could be held to it: not heard.
+    assert not work.ok and work.detail == (
+        f"{on_and_off}; but without the workspace's id — "
+        "`keryx auth login slack --workspace work`"
+    )
+    assert not any("secret" in check.detail for check in checks.values())
+    # In plain words: no level, no option, and no name out of the code.
+    for check in (first, work):
+        assert not any(word in check.detail for word in (
+            "converse", "announce", "level", "--access", "--allow", "requests"))
+
+
+def test_an_install_from_before_the_boxes_is_one_workspace_with_none_ticked_and_fine(settings):
+    settings = settings.model_copy(update={"slack_bot_token": "xoxb-first-secret"})
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "slack_report").write_text('channel_id = "D123"\n')
+    plugins.install(settings, "slack_report")
+
+    checks = {check.name: check for check in doctor_module.plugin_checks(settings)}
+
+    assert checks["slack_report"].detail == "on — posts to D123"
+    assert checks["slack_report: default"].ok
+    assert checks["slack_report: default"].detail == (
+        "posts to D123; on: sending you reports and files; off: acting on what you type "
+        "to the app, reading Slack as you, sending messages as you; no owner on file yet "
+        "(it was connected before Keryx asked for a user token): `keryx auth login slack` "
+        "adds one"
+    )
+
+
+def test_a_workspace_with_no_owner_on_file_is_said_in_one_line_and_never_fails(settings):
+    """An install from before user tokens goes on posting: nothing it does needs an
+    owner, so doctor says how to add one and passes."""
+    settings = settings.model_copy(update={"slack_bot_token": "xoxb-first-secret"})
+    settings.custom_tools_dir.mkdir(parents=True, exist_ok=True)
+    plugins.config_path(settings, "slack_report").write_text('channel_id = "D123"\n')
+    plugins.install(settings, "slack_report")
+
+    older = {check.name: check for check in doctor_module.plugin_checks(settings)}
+    plugins.write_config(settings, "slack_report", {"owner_id": "U0OWNER"})
+    with_owner = {check.name: check for check in doctor_module.plugin_checks(settings)}
+
+    assert older["slack_report: default"].ok and older["slack_report: default"].state == "ok"
+    assert older["slack_report: default"].detail.count("\n") == 0
+    assert "no owner on file" not in with_owner["slack_report: default"].detail
+    assert with_owner["slack_report: default"].detail == (
+        "posts to D123; on: sending you reports and files; off: acting on what you type "
+        "to the app, reading Slack as you, sending messages as you")
+
+
+def test_slack_workspaces_that_cannot_be_read_are_said_not_raised(settings, monkeypatch):
+    from keryx import doctor
+
+    def broken(settings, values):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr("keryx.plugins.slack.workspaces", broken)
+
+    [check] = doctor.slack_workspace_checks(settings, {})
+
+    assert not check.ok and check.detail == "could not be read: no"
+
 
 
 def test_a_plugin_that_is_off_is_optional_and_says_how(healthy):
@@ -676,7 +796,7 @@ def test_a_plugin_that_is_on_and_refused_says_why(healthy):
 @pytest.mark.parametrize(
     ("name", "says"),
     [
-        ("send_to_slack", "SLACK_BOT_TOKEN is set but send_to_slack is off, so PIN-lockout "
+        ("slack_report", "SLACK_BOT_TOKEN is set but slack_report is off, so PIN-lockout "
                           "alerts are not going to Slack"),
         ("check_billing", "OPENAI_ADMIN_KEY is set but check_billing is off"),
         ("check_email", "an older Gmail-only sign-in is set but check_email is off"),
@@ -691,6 +811,47 @@ def test_a_secret_set_for_a_plugin_that_is_off_is_a_warning(healthy, name, says)
     assert (check.ok, check.state, check.severity) == (False, "failed", "soft")
     assert says in check.detail
     assert f"keryx plugins install {name}" in check.detail
+
+
+def test_slack_that_was_never_connected_is_pointed_at_its_sign_in(healthy):
+    """`plugins install slack_report` has no token and nowhere to send; the sign-in gets both."""
+    bare = healthy.model_copy(update={"slack_bot_token": None})
+    for name in ("slack_report", "check_billing"):
+        plugins.remove(bare, name)
+        plugins.off_path(bare, name).unlink()
+
+    checks = by_name(run_doctor_checks(bare))
+
+    slack = checks["slack_report"]
+    assert (slack.state, slack.severity) == ("missing", "soft")
+    assert slack.detail == "off (optional) — `keryx setup` → Plugins, or `keryx auth login slack`"
+    assert "`keryx plugins install check_billing`" in checks["check_billing"].detail
+
+
+def test_a_slack_voice_tool_that_is_off_is_pointed_at_the_one_command_that_turns_it_on(
+    healthy,
+):
+    """It named two commands, a login and then an install, whatever was ticked: with the
+    box ticked the login changes nothing (the tool was turned off by hand), and without
+    it the login, and ticking it there, is all it takes."""
+    for name in ("slack_read", "slack_message"):
+        plugins.remove(healthy, name)
+        plugins.off_path(healthy, name).unlink()
+
+    ticked = by_name(run_doctor_checks(healthy))
+    plugins.write_config(healthy, "slack_report", {"allow": ["requests"]})
+    unticked = by_name(run_doctor_checks(healthy))
+
+    assert ticked["slack_read"].detail == (
+        "off (optional) — `keryx setup` → Plugins, or `keryx plugins install slack_read`")
+    assert ticked["slack_message"].detail.endswith("`keryx plugins install slack_message`")
+    assert unticked["slack_read"].detail == (
+        "off (optional) — `keryx setup` → Plugins, or `keryx auth login slack`, and tick "
+        "reading Slack as you")
+    assert unticked["slack_message"].detail.endswith(
+        "`keryx auth login slack`, and tick sending messages as you")
+    said = unticked["slack_read"].detail + unticked["slack_message"].detail
+    assert "and then" not in said and "--access" not in said and "level" not in said
 
 
 def test_a_google_sign_in_does_not_nag_about_email_answers_being_off(healthy):

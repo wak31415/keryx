@@ -7,6 +7,7 @@ redeemed by the media socket afterwards.
 """
 
 import asyncio
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,8 +20,19 @@ from fakes import FakeVoiceSession
 from keryx.config import Settings
 from keryx.events import EventBus, SessionEnded, TaskCompleted, TaskFailed
 from keryx.inline_waits import InlineWaits
-from keryx.notify.notifier import SLACK_PREAMBLE, SMS_BODY_LIMIT, Notifier
+from keryx.integrations.slack import Posted
+from keryx.notify.notifier import (
+    DONE_NOTE,
+    FAILED_NOTE,
+    MAX_LABEL_CHARS,
+    RESTART_REASON,
+    SLACK_PREAMBLE,
+    SMS_BODY_LIMIT,
+    Notifier,
+    request_label,
+)
 from keryx.notify.reports import report_token
+from keryx.plugins.slack import ReportRoute
 from keryx.session import SessionRegistry
 from keryx.stream_tokens import StreamTokenStore, confers_possession
 from keryx.tasks.models import Task, TaskKind, TaskStatus
@@ -28,6 +40,16 @@ from keryx.tasks.store import TaskStore
 from keryx.trust import TrustLevel
 
 OWNER = "+15550000001"
+#: What every task here is asked for unless a test says otherwise, and so what names it.
+ASKED = "look something up"
+#: A task's number, as it must never be written to the owner or put in the model's mouth.
+A_TASK_NUMBER = re.compile(r"\btask[ _-]*(?:number|no\.?|id)?[ _-]*#?\d", re.IGNORECASE)
+
+
+def heard(detail: str, *, failed: bool = False, asked: str = ASKED) -> str:
+    """The note a live call is handed about a finished task."""
+    return (FAILED_NOTE if failed else DONE_NOTE).format(request=asked, detail=detail)
+
 CALLER = "+15551234567"
 HOST = "keryx.example"
 SECRET = "a-report-secret"
@@ -98,7 +120,7 @@ class Harness:
         """A row in the store, defaulting to a finished local-origin chat task."""
         values: dict = {
             "kind": TaskKind.AGENT,
-            "description": "look something up",
+            "description": ASKED,
             "report_path": str(self.settings.data_dir / "tasks" / "1.md"),
         }
         values.update(fields)
@@ -132,20 +154,48 @@ class Harness:
 
 
 class FakeSlack:
-    """A `SlackSender` that records what it posted; `on` is the plugin, `error` a failure."""
+    """A `SlackPoster` that records what it posted; `on` is the plugin, `error` a failure,
+    and `landed` where Slack says the message went (with `error`: why it refused it)."""
 
     def __init__(self) -> None:
         self.on = True
         self.error: Exception | None = None
         self.sent: list[str] = []
         self.fallbacks: list[str | None] = []
+        #: The thread each post was a reply in (None: a message of its own), and whether
+        #: it was also shown in the conversation.
+        self.threads: list[tuple[str | None, bool]] = []
+        self.landed: Posted = Posted(channel="D0OWNER", ts="1700000000.000100")
+        #: What the workspace's usual destination answers, when a thread is gone.
+        self.usual_landed: Posted = Posted(channel="D0OWNER", ts="1700000000.000700")
+        self.usual_posts: list[str] = []
 
-    async def send(self, text: str, *, fallback: str | None = None) -> bool:
+    async def post(self, text, *, fallback=None, thread_ts=None, broadcast=False):
         if self.error is not None:
             raise self.error
         self.sent.append(text)
         self.fallbacks.append(fallback)
-        return True
+        self.threads.append((thread_ts, broadcast))
+        return self.landed
+
+    def route(self, task) -> ReportRoute | None:
+        """What `plugins.slack.report_route` answers: the task's thread once it has one."""
+        if not self.on:
+            return None
+        if task.slack_thread_ts:
+            return ReportRoute(task.slack_workspace, self, thread_ts=task.slack_thread_ts,
+                               broadcast=task.origin_channel != "slack", usual=self.usual())
+        return ReportRoute("default", self)
+
+    def usual(self):
+        fake = self
+
+        class Usual:
+            async def post(self, text, *, fallback=None, thread_ts=None, broadcast=False):
+                fake.usual_posts.append(text)
+                return fake.usual_landed
+
+        return Usual()
 
 
 class FakeRestarter:
@@ -187,7 +237,7 @@ async def harnesses(tmp_path) -> Callable[..., Harness]:
             tokens,
             inline_waits,
             restarter,
-            slack=lambda: slack if slack.on else None,
+            reports=slack.route,
         )
         notifier.start()
         harness = Harness(
@@ -219,7 +269,7 @@ async def test_a_live_phone_session_hears_the_result_and_nothing_else_goes_out(h
 
     await harness.finished(task, "the tests pass now")
 
-    assert session.announced == [f"Task {task.id} finished: the tests pass now"]
+    assert session.announced == [heard("the tests pass now")]
     assert session.announced_tasks == [task.id]  # so the call is asked to stamp it (#82)
     assert harness.twilio.sms == []
     assert harness.twilio.calls == []
@@ -234,7 +284,7 @@ async def test_every_live_session_hears_it(harness):
 
     await harness.finished(task, "done")
 
-    assert phone.announced == local.announced == [f"Task {task.id} finished: done"]
+    assert phone.announced == local.announced == [heard("done")]
 
 
 async def test_a_session_that_is_no_longer_live_is_skipped(harness):
@@ -266,7 +316,7 @@ async def test_a_call_that_has_not_given_the_pin_hears_it_and_is_still_not_a_del
 
     await harness.finished(task, "the balance is 1,234 pounds")
 
-    assert stranger.announced == [f"Task {task.id} finished: the balance is 1,234 pounds"]
+    assert stranger.announced == [heard("the balance is 1,234 pounds")]
     assert (await harness.row(task)).announced is True  # a delivery was attempted
     assert [call["to"] for call in harness.twilio.calls] == [CALLER]
 
@@ -290,7 +340,7 @@ async def test_only_the_local_channel_hearing_it_does_not_replace_the_sms(harnes
 
     await harness.finished(task, "I looked it up")
 
-    assert session.announced == [f"Task {task.id} finished: I looked it up"]
+    assert session.announced == [heard("I looked it up")]
     row = await harness.row(task)
     assert (row.announced, row.sms_sent) == (True, True)
     assert harness.twilio.sms[0][0] == OWNER
@@ -315,7 +365,7 @@ async def test_a_session_holding_the_line_for_the_task_is_not_told_twice(harness
         await harness.finished(task, "done")
 
     assert waiting.announced == []
-    assert other.announced == [f"Task {task.id} finished: done"]
+    assert other.announced == [heard("done")]
     assert harness.twilio.sms == []
     assert (await harness.row(task)).announced is True
 
@@ -339,7 +389,7 @@ async def test_waiting_on_another_task_does_not_silence_this_one(harness):
     with harness.inline_waits.holding("sess-a", task.id + 1):
         await harness.finished(task, "done")
 
-    assert session.announced == [f"Task {task.id} finished: done"]
+    assert session.announced == [heard("done")]
 
 
 async def test_the_wait_is_over_once_the_hold_is_released(harness):
@@ -350,7 +400,7 @@ async def test_the_wait_is_over_once_the_hold_is_released(harness):
         pass
     await harness.finished(task, "done")
 
-    assert session.announced == [f"Task {task.id} finished: done"]
+    assert session.announced == [heard("done")]
 
 
 async def test_nobody_is_called_back_while_they_are_holding_the_line(harness):
@@ -373,8 +423,9 @@ async def test_a_phone_task_texts_the_caller_a_summary_and_a_report_link(harness
 
     to, body = harness.twilio.sms[0]
     assert to == CALLER
-    summary_line, url = body.split("\n")
-    assert summary_line == f"Task {task.id} finished: I read the docs"
+    named, summary_line, url = body.split("\n")
+    assert (named, summary_line) == (f"Finished: {ASKED}", "I read the docs")
+    assert not A_TASK_NUMBER.search(named + summary_line)
     assert url.startswith(f"https://{HOST}/reports/{task.id}?t=")
     assert parse_qs(urlparse(url).query)["t"] == [report_token(task.id, SECRET)]
     assert (await harness.row(task)).sms_sent is True
@@ -401,9 +452,7 @@ async def test_a_failed_task_says_so(harness):
 
     await harness.failed(task, "the build never went green")
 
-    assert harness.sms_body.startswith(
-        f"Task {task.id} failed: the build never went green"
-    )
+    assert harness.sms_body.startswith(f"Failed: {ASKED}\nthe build never went green")
 
 
 async def test_a_very_long_summary_is_cut_down_to_a_sendable_body(harness):
@@ -411,8 +460,8 @@ async def test_a_very_long_summary_is_cut_down_to_a_sendable_body(harness):
 
     await harness.finished(task, "x" * 5000)
 
-    summary_line, url = harness.sms_body.split("\n")
-    assert len(summary_line) == SMS_BODY_LIMIT
+    summary, url = harness.sms_body.rsplit("\n", 1)
+    assert len(summary) == SMS_BODY_LIMIT
     assert url.startswith(f"https://{HOST}/reports/{task.id}?t=")
 
 
@@ -422,7 +471,7 @@ async def test_without_a_public_host_the_sms_is_just_the_summary(harnesses):
 
     await harness.finished(task, "done")
 
-    assert harness.sms_body == f"Task {task.id} finished: done"
+    assert harness.sms_body == f"Finished: {ASKED}\ndone"
 
 
 async def test_a_task_with_no_report_is_texted_without_a_link(harness):
@@ -430,7 +479,7 @@ async def test_a_task_with_no_report_is_texted_without_a_link(harness):
 
     await harness.finished(task, "done")
 
-    assert harness.sms_body == f"Task {task.id} finished: done"
+    assert harness.sms_body == f"Finished: {ASKED}\ndone"
 
 
 async def test_nothing_is_sent_when_twilio_is_not_configured(harness):
@@ -479,7 +528,10 @@ async def test_a_requested_call_back_dials_out_with_a_redeemable_stream_token(ha
     assert info.caller == CALLER
     assert info.extra["task_id"] == task.id
     context = info.extra["opening_context"]
-    assert f"task {task.id}" in context
+    # The id is there as a tool argument and nowhere else, with the rule beside it.
+    assert f"get_task_result with task_id {task.id}" in context
+    assert "never say a task number out loud" in context
+    assert not A_TASK_NUMBER.search(context.replace(f"task_id {task.id}", ""))
     # A call-back is a new call, so it has to say what this was about, not just the answer.
     assert "look something up" in context
 
@@ -691,7 +743,8 @@ MARKERS = "\n\nRESTART_REQUIRED: loads the new tool\n\nSPOKEN_SUMMARY: Two issue
 
 
 async def test_slack_gets_the_report_alone_even_when_they_heard_it(harness):
-    """Not the request above it, nor the spoken summary that is the report again."""
+    """Not the request above it, beyond the one line that names it, nor the spoken summary
+    that is the report again."""
     harness.session(channel="phone")
     task = await harness.task(
         origin_channel="phone",
@@ -704,8 +757,9 @@ async def test_slack_gets_the_report_alone_even_when_they_heard_it(harness):
 
     await harness.finished(task, "Two issues are open.")
 
-    assert harness.slack.sent == [f"**Task {task.id} finished**\n\n{REPORT}"]
-    assert harness.slack.fallbacks == [f"Task {task.id} finished"]
+    named = "Finished: Follow the steps in /home/someone/steps.md --- then stop."
+    assert harness.slack.sent == [f"**{named}**\n\n{REPORT}"]
+    assert harness.slack.fallbacks == [named]
 
 
 async def test_with_no_report_to_read_the_summary_is_posted(harness):
@@ -713,7 +767,7 @@ async def test_with_no_report_to_read_the_summary_is_posted(harness):
 
     await harness.finished(task, "Two issues are open.")
 
-    assert harness.slack.sent == [f"**Task {task.id} finished**\n\nTwo issues are open."]
+    assert harness.slack.sent == [f"**Finished: {ASKED}**\n\nTwo issues are open."]
 
 
 async def test_a_failure_leads_with_its_error_above_what_the_run_wrote(harness):
@@ -725,9 +779,9 @@ async def test_a_failure_leads_with_its_error_above_what_the_run_wrote(harness):
     await harness.failed(task, "it broke")
 
     assert harness.slack.sent == [
-        f"**Task {task.id} failed: it broke**\n\nI'll start with the logs."
+        f"**Failed: {ASKED}**\n\nit broke\n\nI'll start with the logs."
     ]
-    assert harness.slack.fallbacks == [f"Task {task.id} failed: it broke"]
+    assert harness.slack.fallbacks == [f"Failed: {ASKED}"]
 
 
 async def test_a_failure_with_nothing_written_is_its_error_alone(harness):
@@ -735,7 +789,70 @@ async def test_a_failure_with_nothing_written_is_its_error_alone(harness):
 
     await harness.failed(task, "it broke")
 
-    assert harness.slack.sent == [f"**Task {task.id} failed: it broke**"]
+    assert harness.slack.sent == [f"**Failed: {ASKED}**\n\nit broke"]
+
+
+# A task's number is internal (the owner's ruling of 2026-11-23): what the owner reads
+# names the task by what they asked for.
+
+
+@pytest.mark.parametrize("failed", [False, True])
+async def test_nothing_the_owner_reads_or_hears_carries_the_tasks_number(harnesses, failed):
+    harness = harnesses()
+    for _ in range(40):  # so the task's number is one no other text here could contain
+        await harness.task()
+    session = harness.session(channel="phone")
+    session.trust = TrustLevel.NONE  # hears it, and the text still goes out
+    task = await harness.task(description="count the open issues")
+    assert task.id == 41
+
+    await (harness.failed(task, "it broke") if failed else harness.finished(task, "two"))
+
+    written = [*session.announced, harness.sms_body.rsplit("\n", 1)[0], *harness.slack.sent,
+               *harness.slack.fallbacks]
+    assert len(written) == 4
+    for text in written:
+        assert "count the open issues" in text
+        assert "41" not in text and not A_TASK_NUMBER.search(text)
+
+
+async def test_a_later_report_in_the_tasks_own_thread_is_headed_by_one_word(harness):
+    """The thread hangs from the report that named the request, so it is not said again."""
+    task = await harness.task(slack_workspace="default", slack_channel="D0OWNER",
+                              slack_thread_ts="1700000000.000100")
+
+    await harness.finished(task, "and the second part is in")
+
+    assert harness.slack.sent == ["**Finished**\n\nand the second part is in"]
+    assert harness.slack.threads == [("1700000000.000100", True)]
+    # A notification is read away from the thread, so it still says which task.
+    assert harness.slack.fallbacks == [f"Finished: {ASKED}"]
+
+
+async def test_a_report_moved_out_of_a_thread_that_is_gone_names_its_request_again(harness):
+    task = await harness.task(slack_workspace="default", slack_channel="D0OLDAPP",
+                              slack_thread_ts="1600000000.000100")
+    harness.slack.landed = Posted(error="thread_not_found")
+
+    await harness.finished(task, "found it")
+
+    assert harness.slack.sent == ["**Finished**\n\nfound it"]
+    assert harness.slack.usual_posts == [f"**Finished: {ASKED}**\n\nfound it"]
+
+
+def test_a_request_names_its_task_in_one_short_line():
+    assert request_label("Add a README\n\nto the   sensor repo.") == (
+        "Add a README to the sensor repo."
+    )
+    long = request_label("word " * 60)
+    assert len(long) == MAX_LABEL_CHARS and long.endswith("…")
+
+
+def test_a_label_cannot_mention_anybody_or_close_the_bold_it_sits_in():
+    label = request_label("tell <@U0SOMEONE> and <!channel> that **`main`** is green")
+
+    assert label == "tell @U0SOMEONE and !channel that main is green"
+    assert request_label(" <> ") == "what you asked for"
 
 
 @pytest.mark.parametrize("slack_on", [True, False])
@@ -747,7 +864,7 @@ async def test_the_call_back_points_at_the_report_and_says_where_it_went(harness
 
     parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
     context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
-    assert f"get_task_result for task {task.id}" in context
+    assert f"get_task_result with task_id {task.id}" in context
     assert (SLACK_PREAMBLE in context) is slack_on
 
 
@@ -763,6 +880,346 @@ async def test_a_slack_failure_costs_nothing_else(harness):
     assert SLACK_PREAMBLE not in context
 
 
+async def test_where_the_first_report_landed_becomes_the_tasks_thread(harness):
+    """Slack's answer, not what was asked for: a member's id lands in a direct message."""
+    task = await harness.task()
+
+    await harness.finished(task, "found it")
+
+    stored = await harness.store.get(task.id)
+    assert (stored.slack_workspace, stored.slack_channel, stored.slack_thread_ts) == (
+        "default", "D0OWNER", "1700000000.000100"
+    )
+    assert harness.slack.threads == [(None, False)]
+
+
+async def test_a_later_report_is_a_reply_in_that_thread_shown_in_the_conversation(harness):
+    task = await harness.task()
+    await harness.finished(task, "found it")
+    harness.slack.landed = Posted(channel="D0OWNER", ts="1700000000.000900")
+
+    await harness.finished(await harness.store.get(task.id), "found more")
+
+    assert harness.slack.threads == [(None, False), ("1700000000.000100", True)]
+    # The thread is the first report's, for good: a reply under it always finds the task.
+    assert (await harness.store.get(task.id)).slack_thread_ts == "1700000000.000100"
+
+
+async def test_a_task_asked_for_on_slack_answers_in_its_thread_and_the_phone_stays_quiet(
+    harness,
+):
+    task = await harness.task(
+        origin_channel="slack", slack_workspace="work", slack_channel="D0WORK",
+        slack_thread_ts="1700000000.000500", slack_seen="1700000000.000500",
+    )
+
+    await harness.finished(task, "found it")
+
+    assert harness.slack.threads == [("1700000000.000500", False)]
+    assert harness.twilio.sms == [] and harness.twilio.calls == []
+    stored = await harness.store.get(task.id)
+    assert (stored.slack_workspace, stored.slack_channel) == ("work", "D0WORK")
+    assert not stored.sms_sent and stored.reported_at is None
+
+
+async def test_a_failure_asked_for_on_slack_is_said_in_its_thread_too(harness):
+    task = await harness.task(
+        origin_channel="slack", slack_workspace="default", slack_channel="D0OWNER",
+        slack_thread_ts="1700000000.000500",
+    )
+
+    await harness.failed(task, "it broke")
+
+    # In the thread it was asked in, the thread says which task: one word heads it.
+    assert harness.slack.sent == ["**Failed**\n\nit broke"]
+    assert harness.slack.fallbacks == [f"Failed: {ASKED}"]
+    assert harness.slack.threads == [("1700000000.000500", False)]
+    assert harness.twilio.sms == []
+
+
+@pytest.mark.parametrize("gone", ["channel_not_found", "thread_not_found", "not_in_channel",
+                                  "invalid_auth"])
+async def test_a_thread_that_is_gone_for_good_gets_a_message_of_its_own_in_the_same_workspace(
+    harness, gone
+):
+    """A token since replaced by another app's cannot reach the old thread."""
+    task = await harness.task(slack_workspace="default", slack_channel="D0OLDAPP",
+                              slack_thread_ts="1600000000.000100")
+    harness.slack.landed = Posted(error=gone)
+
+    await harness.finished(task, "found it")
+
+    assert harness.slack.threads == [("1600000000.000100", True)]
+    assert len(harness.slack.usual_posts) == 1
+    stored = await harness.store.get(task.id)
+    assert (stored.slack_workspace, stored.slack_channel, stored.slack_thread_ts) == (
+        "default", "D0OWNER", "1700000000.000700"
+    )
+
+
+@pytest.mark.parametrize("passing", ["ratelimited", "unreachable", "http_503", "fatal_error"])
+async def test_a_post_that_only_failed_this_once_never_moves_the_thread(harness, passing):
+    """The report is then not on Slack, and the call-back does not say it is."""
+    task = await harness.task(slack_workspace="default", slack_channel="D0OWNER",
+                              slack_thread_ts="1600000000.000100", callback_requested=True,
+                              callback_number=CALLER)
+    harness.slack.landed = Posted(error=passing)
+
+    await harness.finished(task, "found it")
+
+    assert harness.slack.usual_posts == []
+    assert (await harness.store.get(task.id)).slack_thread_ts == "1600000000.000100"
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
+    assert SLACK_PREAMBLE not in context and f"get_task_result with task_id {task.id}" in context
+
+
+async def test_a_thread_that_is_gone_and_a_fallback_that_fails_leave_the_thread_as_it_was(harness):
+    task = await harness.task(slack_workspace="default", slack_channel="D0OLDAPP",
+                              slack_thread_ts="1600000000.000100")
+    harness.slack.landed = Posted(error="channel_not_found")
+    harness.slack.usual_landed = Posted(error="ratelimited")
+
+    await harness.finished(task, "found it")
+
+    assert (await harness.store.get(task.id)).slack_thread_ts == "1600000000.000100"
+
+
+async def test_a_report_slack_refuses_has_no_thread_and_is_not_said_to_be_there(harness):
+    harness.slack.landed = Posted(error="channel_not_found")
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+
+    await harness.finished(task, "found it")
+
+    assert (await harness.store.get(task.id)).slack_thread_ts is None
+    parameters = stream_parameters(harness.twilio.calls[0]["twiml"])
+    context = harness.tokens.redeem(parameters["token"]).extra["opening_context"]
+    assert SLACK_PREAMBLE not in context
+
+
+async def test_a_thread_that_cannot_be_recorded_costs_nothing_else(harness, monkeypatch):
+    task = await harness.task(callback_requested=True, callback_number=CALLER)
+    update = harness.store.update
+
+    async def refuse_the_thread(task_id, **fields):
+        if "slack_thread_ts" in fields:
+            raise RuntimeError("the database is locked")
+        return await update(task_id, **fields)
+
+    monkeypatch.setattr(harness.store, "update", refuse_the_thread)
+
+    await harness.finished(task, "found it")
+
+    assert len(harness.twilio.calls) == 1 and harness.slack.sent
+
+
+# --- the real route and the real client under the Notifier ---------------------------------
+#
+# Only Slack's HTTP is faked here: what is posted with which workspace's token, where.
+
+
+class FakeSlackHttp:
+    """`chat.postMessage`, by token: each answers as scripted, else takes the message."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str | None]] = []
+        self.texts: list[str] = []
+        self.script: dict[str, list] = {}
+
+    def __call__(self, request, timeout=None):
+        import io
+        import json
+
+        token = request.get_header("Authorization").removeprefix("Bearer ")
+        body = json.loads(request.data)
+        self.calls.append((token, body["channel"], body.get("thread_ts")))
+        self.texts.append(body["blocks"][0]["text"])
+        answers = self.script.get(token) or []
+        answer = answers.pop(0) if answers else None
+        if isinstance(answer, Exception):
+            raise answer
+        if answer is None:  # also what a None in a script means: take this one
+            answer = {"ok": True, "channel": "D0" + token[-5:].upper(),
+                      "ts": f"17000000{len(self.calls):02d}.000100"}
+        return io.BytesIO(json.dumps(answer).encode())
+
+
+@pytest.fixture
+async def two_workspaces(tmp_path, monkeypatch):
+    """An employer's workspace first, with nothing ticked, and a personal one that acts on
+    what is typed to it."""
+    from keryx import plugins
+    from keryx.plugins.slack import report_route
+
+    settings = make_settings(
+        tmp_path, slack_bot_token="xoxb-first",
+        slack_workspace_tokens={"personal": {"bot": "xoxb-perso", "app": "xapp-perso"}},
+    )
+    plugins.write_config(settings, "slack_report", {
+        "channel_id": "C0EMPLOYER", "team_id": "T0EMPLOYER",
+        "workspaces": {"personal": {"channel_id": "U0ME", "allow": ["requests"],
+                                    "owner_id": "U0ME", "team_id": "T0PERSONAL"}},
+    })
+    plugins.install(settings, "slack_report")
+    http = FakeSlackHttp()
+    monkeypatch.setattr("urllib.request.urlopen", http)
+    store = TaskStore(":memory:")
+    bus = EventBus()
+    notifier = Notifier(bus, store, SessionRegistry(), FakeTwilioOut(), settings,
+                        StreamTokenStore(), InlineWaits(), FakeRestarter(),
+                        reports=lambda task: report_route(settings, task))
+    notifier.start()
+    yield store, bus, http
+    notifier.stop()
+    await store.close()
+
+
+def personal_task(**fields) -> Task:
+    return Task(id=None, kind=TaskKind.AGENT, description="a private thing",
+                origin_channel="slack", slack_workspace="personal",
+                slack_team_id="T0PERSONAL", slack_channel="D0PERSO",
+                slack_thread_ts="1700000000.000500", **fields)
+
+
+async def test_a_post_that_times_out_in_one_workspace_never_puts_the_report_in_another(
+    two_workspaces,
+):
+    store, bus, http = two_workspaces
+    task = await store.create(personal_task())
+    http.script["xoxb-perso"] = [TimeoutError("timed out")]
+
+    await bus.publish(TaskCompleted(task.id, "the private answer"))
+
+    assert http.calls == [("xoxb-perso", "D0PERSO", "1700000000.000500")]
+    assert (await store.get(task.id)).slack_thread_ts == "1700000000.000500"
+
+
+async def test_a_rate_limit_leaves_the_task_in_its_thread(two_workspaces):
+    store, bus, http = two_workspaces
+    task = await store.create(Task(
+        id=None, kind=TaskKind.AGENT, description="x", origin_channel="phone",
+        slack_workspace="default", slack_team_id="T0EMPLOYER", slack_channel="D0FIRST",
+        slack_thread_ts="1700000000.000500",
+    ))
+    http.script["xoxb-first"] = [{"ok": False, "error": "ratelimited"}]
+
+    await bus.publish(TaskCompleted(task.id, "answer"))
+
+    assert len(http.calls) == 1
+    after = await store.get(task.id)
+    assert (after.slack_channel, after.slack_thread_ts) == ("D0FIRST", "1700000000.000500")
+
+
+async def test_a_personal_thread_that_is_gone_falls_back_to_the_owners_dm_there_and_no_further(
+    two_workspaces,
+):
+    store, bus, http = two_workspaces
+    task = await store.create(personal_task())
+    http.script["xoxb-perso"] = [{"ok": False, "error": "channel_not_found"}]
+
+    await bus.publish(TaskCompleted(task.id, "the private answer"))
+
+    assert http.calls == [("xoxb-perso", "D0PERSO", "1700000000.000500"),
+                          ("xoxb-perso", "U0ME", None)]
+    after = await store.get(task.id)
+    assert (after.slack_workspace, after.slack_channel) == ("personal", "D0PERSO")
+    assert after.slack_thread_ts == "1700000002.000100"
+
+
+async def test_a_task_asked_for_in_a_channel_is_answered_in_that_thread(two_workspaces):
+    """Answered where it was asked, with that workspace's bot, and nowhere else."""
+    store, bus, http = two_workspaces
+    task = await store.create(Task(
+        id=None, kind=TaskKind.AGENT, description="summarise this", origin_channel="slack",
+        slack_workspace="personal", slack_team_id="T0PERSONAL", slack_channel="C0SHARED",
+        slack_thread_ts="1700000000.000500",
+    ))
+
+    await bus.publish(TaskCompleted(task.id, "they decided to ship"))
+
+    assert http.calls == [("xoxb-perso", "C0SHARED", "1700000000.000500")]
+    after = await store.get(task.id)
+    assert (after.slack_channel, after.slack_thread_ts) == ("C0SHARED", "1700000000.000500")
+
+
+async def test_the_first_report_records_the_team_its_thread_is_in(two_workspaces):
+    store, bus, http = two_workspaces
+    task = await store.create(Task(id=None, kind=TaskKind.AGENT, description="q"))
+
+    await bus.publish(TaskCompleted(task.id, "answer"))
+
+    after = await store.get(task.id)
+    assert (after.slack_workspace, after.slack_team_id) == ("default", "T0EMPLOYER")
+    assert after.slack_thread_ts
+
+
+async def test_a_task_of_a_team_no_longer_connected_under_its_name_is_posted_nowhere(
+    two_workspaces,
+):
+    """`personal` was logged out and another team logged in under the same name."""
+    store, bus, http = two_workspaces
+    task = await store.create(Task(
+        id=None, kind=TaskKind.AGENT, description="summarise this", origin_channel="slack",
+        slack_workspace="personal", slack_team_id="T0BEFORE", slack_channel="C0SHARED",
+        slack_thread_ts="1700000000.000500",
+    ))
+
+    await bus.publish(TaskCompleted(task.id, "they decided to ship"))
+
+    assert http.calls == []
+
+
+async def test_a_long_first_report_whose_second_piece_fails_still_has_its_thread(
+    two_workspaces, tmp_path
+):
+    """Its first piece is on Slack: a reply under it has to find the task."""
+    store, bus, http = two_workspaces
+    report = tmp_path / "keryx" / "tasks" / "1.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# Task 1\n\nq\n\n---\n\n" + "\n\n".join(["word " * 200] * 40))
+    task = await store.create(Task(id=None, kind=TaskKind.AGENT, description="q",
+                                   report_path=str(report)))
+    http.script["xoxb-first"] = [None, {"ok": False, "error": "msg_too_long"}]
+
+    await bus.publish(TaskCompleted(task.id, "answer"))
+
+    after = await store.get(task.id)
+    assert (after.slack_channel, after.slack_thread_ts) == ("D0FIRST", "1700000001.000100")
+
+
+async def test_a_task_typed_in_a_workspace_since_disconnected_is_posted_nowhere(
+    two_workspaces, tmp_path
+):
+    from keryx import plugins
+
+    store, bus, http = two_workspaces
+    settings = make_settings(tmp_path)
+    plugins.write_config(settings, "slack_report", {"workspaces": {}})
+    task = await store.create(personal_task())
+
+    await bus.publish(TaskCompleted(task.id, "the private answer"))
+
+    assert http.calls == []
+
+
+async def test_a_long_first_report_is_one_thread(two_workspaces, tmp_path):
+    store, bus, http = two_workspaces
+    report = tmp_path / "keryx" / "tasks" / "1.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    paragraph = "word " * 200
+    report.write_text("# Task 1\n\nq\n\n---\n\n" + "\n\n".join([paragraph] * 40))
+    task = await store.create(Task(id=None, kind=TaskKind.AGENT, description="q",
+                                   report_path=str(report)))
+
+    await bus.publish(TaskCompleted(task.id, "answer"))
+
+    assert len(http.calls) > 1
+    first, *rest = http.calls
+    assert first == ("xoxb-first", "C0EMPLOYER", None)
+    assert {thread for _, _, thread in rest} == {"1700000001.000100"}
+    assert (await store.get(task.id)).slack_thread_ts == "1700000001.000100"
+
+
 # --- (4) a task that changed Keryx's own code ------------------------------
 
 
@@ -776,7 +1233,7 @@ async def test_a_task_that_needs_a_restart_asks_for_one(harness):
 
     assert harness.restarter.requests == [
         {
-            "reason": "to load what task 1 changed",
+            "reason": RESTART_REASON,
             "number": CALLER,
             "origin_channel": "phone",
             "origin_session_id": "sess-1",
@@ -915,7 +1372,7 @@ async def test_a_call_back_waits_while_their_phone_is_on_a_call_with_keryx(harne
 
     await harness.finished(task, "the build is green")
 
-    assert on_the_line.announced == [f"Task {task.id} finished: the build is green"]
+    assert on_the_line.announced == [heard("the build is green")]
     assert harness.twilio.calls == []
 
     await harness.hang_up(on_the_line)

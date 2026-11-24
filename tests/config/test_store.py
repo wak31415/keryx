@@ -1,6 +1,7 @@
 """The configuration store: what goes in which file, what `Settings` reads back, and in
 what order it looks."""
 
+import json
 import os
 import stat
 import tomllib
@@ -311,3 +312,119 @@ def test_the_service_names_an_agent_in_any_case(store, settings):
     assert store.stored()["AGENT_BACKEND"] == "codex"
 
 
+
+
+# --- the Slack tokens -----------------------------------------------------------------
+
+
+def test_every_slack_token_is_a_secret_in_the_secrets_file(store):
+    tokens = {"work": {"bot": "xoxb-w", "app": "xapp-w"}, "lab": {"bot": "xoxb-l"}}
+
+    store.set({"SLACK_APP_TOKEN": "xapp-1", "SLACK_USER_TOKEN": "xoxp-1",
+               "SLACK_WORKSPACE_TOKENS": tokens})
+
+    # The table is one line of JSON: a shape a build from before it writes back untouched.
+    assert read_toml(store.secrets_path) == {
+        "SLACK_APP_TOKEN": "xapp-1", "SLACK_USER_TOKEN": "xoxp-1",
+        "SLACK_WORKSPACE_TOKENS": json.dumps(tokens, sort_keys=True),
+    }
+    assert "SLACK" not in store.config_path.read_text() if store.config_path.exists() else True
+    settings = load()
+    assert settings.slack_workspace_tokens == tokens
+    assert (settings.slack_app_token, settings.slack_user_token) == ("xapp-1", "xoxp-1")
+    assert "xoxb-w" not in repr(settings) and "xapp-1" not in repr(settings)
+    rows = {row["key"]: row for row in store.describe(settings)}
+    for key in ("SLACK_APP_TOKEN", "SLACK_USER_TOKEN", "SLACK_WORKSPACE_TOKENS"):
+        assert rows[key]["secret"] and rows[key]["protected"] and rows[key]["value"] is None
+
+
+def test_the_service_may_never_write_a_slack_token(store):
+    for values in ({"SLACK_APP_TOKEN": "xapp-1"}, {"SLACK_USER_TOKEN": "xoxp-1"},
+                   {"SLACK_WORKSPACE_TOKENS": {"work": {"bot": "xoxb-w"}}}):
+        with pytest.raises(ConfigError, match="it is protected"):
+            store.set(values, actor="service")
+    with pytest.raises(ConfigError, match="protected"):
+        store.unlock("SLACK_WORKSPACE_TOKENS")
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        {"default": {"app": "xapp-1"}},
+        {"Work Space": {"bot": "xoxb-1"}},
+        {"work": {"robot": "xoxb-1"}},
+        {"work": {"bot": "  "}},
+    ],
+)
+def test_workspace_tokens_of_the_wrong_shape_are_refused_without_repeating_one(store, tokens):
+    with pytest.raises(ConfigError) as refused:
+        store.set({"SLACK_WORKSPACE_TOKENS": tokens})
+
+    assert "SLACK_WORKSPACE_TOKENS" in str(refused.value)
+    assert "xoxb-1" not in str(refused.value) and "xapp-1" not in str(refused.value)
+    assert not store.secrets_path.exists()
+
+
+def test_workspace_tokens_may_come_from_the_environment_as_json(monkeypatch):
+    monkeypatch.setenv("SLACK_WORKSPACE_TOKENS", '{"work": {"bot": "xoxb-env"}}')
+
+    assert load().slack_workspace_tokens == {"work": {"bot": "xoxb-env"}}
+
+
+def _older_dump_toml(data: dict) -> str:
+    """`dump_toml` as the build before the workspace tokens had it, kept here to play the
+    part of an older worktree writing the same `secrets.toml`."""
+    from keryx.config.files import _toml_string, toml_key
+
+    def value(item):
+        if isinstance(item, bool):
+            return "true" if item else "false"
+        if isinstance(item, int | float):
+            return repr(item)
+        if isinstance(item, list | tuple):
+            return "[" + ", ".join(value(each) for each in item) + "]"
+        return _toml_string(str(item))
+
+    tables = {key: item for key, item in data.items() if isinstance(item, dict)}
+    lines = [f"{toml_key(key)} = {value(item)}" for key, item in data.items()
+             if key not in tables]
+    for name, table in tables.items():
+        lines += ["", f"[{toml_key(name)}]"]
+        lines += [f"{toml_key(key)} = {value(item)}" for key, item in table.items()]
+    return "\n".join(lines).strip("\n") + "\n"
+
+
+def test_an_older_build_saving_any_secret_leaves_the_workspace_tokens_as_they_were(store):
+    """This machine runs several worktrees against one `KERYX_HOME`. A build from before
+    the setting reads the file, changes one key and writes it all back: the tokens of a
+    further workspace must come through that, and the newer build must still start."""
+    tokens = {"work": {"bot": "xoxb-w", "app": "xapp-w"}}
+    store.set({"SLACK_BOT_TOKEN": "xoxb-1", "SLACK_WORKSPACE_TOKENS": tokens})
+
+    older = read_toml(store.secrets_path)
+    older["TWILIO_AUTH_TOKEN"] = "tok-123"
+    write_private(store.secrets_path, _older_dump_toml(older))
+
+    assert load().slack_workspace_tokens == tokens
+    assert load().twilio_auth_token == "tok-123"
+
+
+def test_emptying_the_workspace_tokens_removes_the_line(store):
+    store.set({"SLACK_WORKSPACE_TOKENS": {"work": {"bot": "xoxb-w"}}})
+
+    store.set({"SLACK_WORKSPACE_TOKENS": {}})
+
+    assert "SLACK_WORKSPACE_TOKENS" not in read_toml(store.secrets_path)
+    assert load().slack_workspace_tokens == {}
+
+
+def test_workspace_tokens_somebody_wrote_as_a_table_by_hand_are_still_read(store):
+    store.home.mkdir(parents=True, exist_ok=True)
+    write_private(store.secrets_path, '[SLACK_WORKSPACE_TOKENS.work]\nbot = "xoxb-w"\n')
+
+    assert load().slack_workspace_tokens == {"work": {"bot": "xoxb-w"}}
+    # And the next write puts them in the shape every build carries through.
+    store.set({"SLACK_APP_TOKEN": "xapp-1"})
+    assert read_toml(store.secrets_path)["SLACK_WORKSPACE_TOKENS"] == (
+        '{"work": {"bot": "xoxb-w"}}'
+    )

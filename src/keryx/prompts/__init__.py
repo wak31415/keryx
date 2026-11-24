@@ -185,6 +185,22 @@ _ISSUES_NOTE = (
     "they are plainly fed up with something you did or keep asking for something you "
     "cannot do."
 )
+#: The paragraph that tells the voice model reading Slack is not switched on. Only
+#: rendered while Keryx has a Slack app of its own that may not read as the owner
+#: (`plugins.slack.reading_off`): then no tool reads Slack on the call and no command
+#: does in a task, and a model told nothing dispatches the question anyway, to an agent
+#: that answers it from whatever other Slack tool it has. With reading ticked the read
+#: tool's own description is all there is, as for every other plugin.
+_SLACK_NOTE = (
+    "Reading their Slack is not switched on. Keryx's Slack app may send them things, and "
+    "may not read their channels or their messages with other people, so nothing can: "
+    "not you, and not Claude. When they ask what is new on Slack, what somebody wrote "
+    "there, or for a channel or a thread to be summarised, do not dispatch it: say in one "
+    "sentence that reading Slack is not switched on, and that signing in to Slack again "
+    "at their keyboard, and ticking it there, switches it on. Only if they ask how: the "
+    "command is `keryx auth login slack`. Say it once, and do not offer to look some "
+    "other way. Sending them something on Slack is not affected."
+)
 #: A whole word "Claude" that is not "Claude Code" (which is the approval bridge's, and
 #: stays Claude's whoever does the dispatched work).
 _CLAUDE_WORD = re.compile(r"\bClaude\b(?! Code)")
@@ -211,6 +227,13 @@ def _agents_note(agents: Sequence[str]) -> str:
     names = [BACKENDS[name].spoken_name if name in BACKENDS else name for name in agents]
     listed = ", ".join(names[:-1]) + f" or {names[-1]}"
     return _AGENTS_NOTE.format(names=listed, default=names[0])
+
+
+def _slack_note(settings: "Settings") -> str:
+    """The reading-is-off paragraph, or nothing: no Slack app, or one that may read."""
+    from keryx.plugins.slack import reading_off  # noqa: PLC0415 - plugins import prompts
+
+    return _SLACK_NOTE if reading_off(settings) else ""
 
 
 def _format_skills(skills: list[Skill]) -> str:
@@ -274,7 +297,9 @@ def render_voice_prompt(
     from a `Briefing` (see `keryx.continuity.briefing`) and are dropped the same way: a
     first call on a fresh machine renders neither section, rather than an empty heading.
     The optional tools (the plugins, and the owner's own) say everything about themselves
-    in their descriptions, so nothing here depends on which the session has. `can_text`
+    in their descriptions, so nothing here depends on which the session has. The one
+    thing said about a tool that is *not* there is that reading Slack is switched off
+    (`_SLACK_NOTE`), because nothing else could say it. `can_text`
     defaults to `TwilioOut.can_text`, and decides whether the prompt may promise a text.
     A `FULL` session with no memory is told it knows nothing about the owner yet.
     `agents` is what `dispatch_task` offers, the default first; with more than one, the
@@ -345,6 +370,9 @@ def render_voice_prompt(
         issues=_name_the_agent(_ISSUES_NOTE, spoken)
         if IssueReporting.from_settings(settings) is not None
         else "",
+        # Which optional tools a call has is theirs to say; what no tool and no task can
+        # do is said here, and is a fact about the owner's setup, withheld with the rest.
+        slack="" if withheld else _name_the_agent(_slack_note(settings), spoken),
         **_DELIVERY[texting],
     )
     return template.format_map(_Defaulting(values))

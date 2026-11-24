@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from keryx.agents.base import RunResult
+from keryx.integrations.slack import Connection, SlackResult, Workspace
 from keryx.issues import GhStatus
 from keryx.notify.twilio_out import TwilioError, TwilioNumber
 from keryx.setup.context import Probes
@@ -57,6 +58,9 @@ class ScriptedPrompter:
 
     def panel(self, title: str, body: str) -> None:
         self._say("panel", f"{title}\n{body}")
+
+    def link(self, url: str) -> None:
+        self._say("link", url)
 
     def table(self, headers, rows) -> None:
         for row in rows:
@@ -188,9 +192,43 @@ class FakeWorld:
     #: What `gh auth status` says, in order: the last one repeats.
     gh: list = field(default_factory=lambda: [GhStatus(installed=True, signed_in=True,
                                                      account="octocat")])
+    #: What Slack says of each token it is shown, and whether it takes a message. With
+    #: one answer here, it is what a bot token is told and `slack_user` what a user token
+    #: is; with several, they are every token's answers in order (the last one repeats).
+    #: A token is never in `calls`.
+    slack_workspaces: list = field(
+        default_factory=lambda: [Workspace(team="Acme", team_id="T0ACME", user_id="U0KERYX")]
+    )
+    slack_user: Workspace = field(
+        default_factory=lambda: Workspace(team="Acme", team_id="T0ACME", user_id="U0OWNER")
+    )
+    slack_scripted: bool = False
+    slack_sent: SlackResult = field(default_factory=SlackResult)
+    #: What Slack says of each app-level token it is asked to open a connection with.
+    slack_connections: list = field(
+        default_factory=lambda: [Connection(url="wss://slack.example/?ticket=t")]
+    )
     calls: list[tuple] = field(default_factory=list)
 
     def probes(self) -> Probes:
+        def slack_auth_test(token):
+            self.calls.append(("slack_auth",))
+            if len(self.slack_workspaces) > 1:
+                self.slack_scripted = True
+                return self.slack_workspaces.pop(0)
+            if token.startswith("xoxp-") and not self.slack_scripted:
+                return self.slack_user
+            return self.slack_workspaces[0]
+
+        def slack_post(token, channel, text):
+            self.calls.append(("slack_post", channel, text))
+            return self.slack_sent
+
+        def slack_connection(token):
+            self.calls.append(("slack_open",))
+            many = len(self.slack_connections) > 1
+            return self.slack_connections.pop(0) if many else self.slack_connections[0]
+
         async def smoke(settings, agent):
             self.calls.append(("smoke", agent))
             return self.smoke_result
@@ -238,9 +276,6 @@ class FakeWorld:
 
             return run
 
-        def post(*args, **kwargs):
-            raise AssertionError("no token exchange in this test")
-
         def gh_status():
             self.calls.append(("gh",))
             return self.gh.pop(0) if len(self.gh) > 1 else self.gh[0]
@@ -265,11 +300,13 @@ class FakeWorld:
             google_browser_signin=google_browser,
             google_finish=google_finish,
             google_discard=google_discard,
-            http_post=post,
             ssh_hosts=lambda: self.calls.append(("ssh_hosts",)) or list(self.ssh_hosts),
             ssh_master_alive=lambda alias: self.calls.append(("master", alias))
             or alias in self.masters_up,
             cluster_partitions=lambda alias: self.calls.append(("partitions", alias))
             or list(self.partitions.get(alias, [])),
             gh_status=gh_status,
+            slack_auth_test=slack_auth_test,
+            slack_post=slack_post,
+            slack_connection=slack_connection,
         )

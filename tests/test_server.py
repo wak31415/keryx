@@ -19,10 +19,12 @@ from twilio.request_validator import RequestValidator
 
 from keryx.app import build_app_state
 from keryx.config import Settings
+from keryx.events import SessionEnded, TaskCompleted
 from keryx.realtime.base import AudioDelta
 from keryx.server import LINE_BUSY_MESSAGE, create_app
 from keryx.session import PIN_PAUSED_MESSAGE
 from keryx.stream_tokens import outbound_extra
+from keryx.tasks.models import Task, TaskKind
 from keryx.trust import TrustLevel
 
 AUTH_TOKEN = "an-auth-token"
@@ -523,3 +525,140 @@ def test_a_token_claiming_possession_with_no_owner_number_opens_at_nothing(tmp_p
 
     with TestClient(create_app(state)) as client:
         assert run_media_session(client, state, token) is TrustLevel.NONE
+
+
+# --- a call Twilio says is over --------------------------------------------
+#
+# The media socket can outlive the call: the stream breaks, no `stop` ever arrives on it,
+# and our end closes many seconds later. The status callback is then the first news that
+# nobody is listening.
+
+OTHER_CALL_SID = "CA00000000000000000000000000000002"
+#: Every status Twilio ends a call with. `completed` is the one an answered call gets.
+OVER = ("completed", "busy", "failed", "no-answer", "canceled")
+
+
+def open_stream(ws, state, call_sid: str = CALL_SID):
+    """Start a media stream on `ws` for `call_sid`, and hand back its session."""
+    ws.send_text(start_frame(state.stream_tokens.issue(CALLER, {"call_sid": call_sid}), call_sid))
+    ws.receive_text()  # the audio delta: the session is open by now
+    return live_session(state)
+
+
+@pytest.fixture
+def speaking(state):
+    """A provider that says one thing, so a test can tell when its session has opened."""
+    provider = FakeProvider()
+    provider.feed(AudioDelta(item_id="item_1", audio=b"\x00"))
+    state.provider_factory = lambda: provider
+    return provider
+
+
+@pytest.fixture
+def ends(state):
+    """Every `SessionEnded`: what the memory update and a waiting call-back hang off."""
+    seen: list[SessionEnded] = []
+    state.bus.subscribe(SessionEnded, seen.append)
+    return seen
+
+
+async def _a_task_finishes(state) -> Task:
+    """A result lands, and the notifier does whatever it does with it."""
+    task = await state.store.create(Task(id=None, kind=TaskKind.AGENT, description="dig"))
+    await state.bus.publish(TaskCompleted(task.id, "found it"))
+    return await state.store.get(task.id)
+
+
+def test_a_result_that_lands_after_twilio_said_the_call_was_over_is_told_to_nobody(
+    client, state, speaking, ends, caplog
+):
+    """With the session still live it was announced down a dead line, the model "said" it
+    and stamped it, and the owner never heard it on that call or the next."""
+    with client.websocket_connect("/twilio/media") as ws:
+        open_stream(ws, state)
+
+        with caplog.at_level(logging.INFO, logger="keryx.server"):
+            response = post_signed(
+                client, "/twilio/status", {"CallSid": CALL_SID, "CallStatus": "completed"}
+            )
+        assert response.status_code == 204
+        assert f"call {CALL_SID} is now completed" in caplog.text
+        assert state.sessions.live() == []  # by the time Twilio has its answer
+
+        task = client.portal.call(_a_task_finishes, state)
+
+        assert task.announced is False  # so the call-back, the text and Slack still go
+        assert task.reported_at is None  # and it rides the top of the next call
+        assert "found it" not in " ".join(text for text, _ in speaking.injected)
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()  # the session ended with no `stop` on the stream
+    eventually(lambda: speaking.closed)
+    eventually(lambda: [event.reason for event in ends] == ["hangup"])
+
+
+@pytest.mark.parametrize("status", OVER)
+def test_every_status_that_ends_a_call_ends_its_session(client, state, speaking, ends, status):
+    with client.websocket_connect("/twilio/media") as ws:
+        open_stream(ws, state)
+
+        post_signed(client, "/twilio/status", {"CallSid": CALL_SID, "CallStatus": status})
+
+        assert state.sessions.live() == []
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
+    eventually(lambda: len(ends) == 1)
+
+
+def test_the_status_after_an_ordinary_hangup_ends_nothing_twice(client, state, speaking, ends):
+    """The usual order: `stop` on the stream, the session ends, then the callback."""
+    with client.websocket_connect("/twilio/media") as ws:
+        open_stream(ws, state)
+        ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
+    eventually(lambda: len(ends) == 1)
+
+    response = post_signed(
+        client, "/twilio/status", {"CallSid": CALL_SID, "CallStatus": "completed"}
+    )
+
+    assert response.status_code == 204
+    assert len(ends) == 1
+
+
+@pytest.mark.parametrize(
+    "form",
+    [
+        {"CallSid": CALL_SID, "CallStatus": "in-progress"},  # news, but not that it is over
+        {"CallSid": OTHER_CALL_SID, "CallStatus": "completed"},  # somebody else's call
+        {"CallStatus": "completed"},  # no call named at all
+    ],
+)
+def test_a_status_that_is_not_this_calls_end_leaves_it_alone(client, state, speaking, form):
+    with client.websocket_connect("/twilio/media") as ws:
+        session = open_stream(ws, state)
+
+        assert post_signed(client, "/twilio/status", form).status_code == 204
+
+        assert state.sessions.live() == [session]
+        ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
+
+
+def test_an_unsigned_status_callback_cannot_end_a_call(client, state, speaking):
+    """This port is on the internet: only Twilio may say a call is over."""
+    with client.websocket_connect("/twilio/media") as ws:
+        session = open_stream(ws, state)
+
+        response = client.post(
+            "/twilio/status",
+            data={"CallSid": CALL_SID, "CallStatus": "completed"},
+            headers={"X-Twilio-Signature": "nope"},
+        )
+
+        assert response.status_code == 403
+        assert state.sessions.live() == [session]
+        ws.send_text(json.dumps({"event": "stop", "streamSid": STREAM_SID}))
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_text()
