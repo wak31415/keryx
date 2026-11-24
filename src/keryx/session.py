@@ -22,7 +22,8 @@ Shape of a session:
   because a session that never ends holds its channel open for nobody: the silence
   timer is armed from session start (not just from the first response), the goodbye it
   asks for is itself backstopped, and an opening that cannot even be sent ends the
-  session on the spot.
+  session on the spot. The one hurried ending is `call_ended()`: the carrier has said
+  nobody is on the line, so there is no goodbye to finish and nothing left to wait for.
 
 Send failures (a socket that dropped between two awaits) are swallowed everywhere:
 the provider reports the drop as a `Disconnected` event, which is where reconnects are
@@ -250,6 +251,7 @@ class VoiceSession:
         keypad: Keypad | None = None,
         pin_guard: PinGuard | None = None,
         opening_task_id: int | None = None,
+        call_sid: str | None = None,
     ) -> None:
         self._transport = transport
         self._provider = provider
@@ -269,6 +271,9 @@ class VoiceSession:
         self.session_id = session_id or secrets.token_hex(4)
         self.channel: str = transport.channel
         self.caller: str | None = transport.caller
+        #: The carrier's own name for this phone call, which is what its status callback
+        #: names when it says the call is over (`SessionRegistry.for_call`). None off the phone.
+        self.call_sid = call_sid or None
         self.authorized = authorized
         #: True when this call is one Keryx placed to the owner's own number, proved by
         #: the stream token Keryx minted for it and by nothing else (`keryx.trust`).
@@ -285,6 +290,8 @@ class VoiceSession:
         self._end_reason: str | None = None
         self._end_after_response: str | None = None  # reason to end on the next response
         self._grace_expired = False
+        #: The carrier said nobody is on the line (`call_ended`), whatever the transport thinks.
+        self._call_over = False
 
         self._response_active = False
         self._current_item_id: str | None = None
@@ -481,6 +488,32 @@ class VoiceSession:
         self._cancel_silence_timer()
         log.info("session %s ending (%s)", self.session_id, reason)
         self._maybe_finish()
+
+    def call_ended(self, reason: str) -> None:
+        """The carrier says the call is over: end now, as a hangup, whatever is being said.
+
+        The transport normally says so itself (`Hangup`). But a media socket can outlive
+        the call it carried: the stream breaks, no `stop` arrives on it, and our end closes
+        many seconds later. For all that time the session was live with nobody on it, and a
+        result that finished then was announced down a dead line, "said", and stamped as
+        told — the one loss nothing recovers, because a stamped task leaves the digest.
+
+        So everything that matters has happened by the time this returns. The session is
+        not live, so `announce` answers False and whoever asked falls back to the digest,
+        the call-back and Slack; no tool the model calls from here is run (`_run_tool`);
+        and teardown is on its way, without waiting out a response nobody hears or
+        draining playback nobody will acknowledge. A `stop` or a closed socket that turns
+        up afterwards finds its pump already stopped. Idempotent, and nothing at all once
+        the session has ended.
+        """
+        if self._call_over or self._state is SessionState.ENDED:
+            return
+        self._call_over = True
+        log.info("session %s: the call is over (%s)", self.session_id, reason)
+        self._end_reason = self._end_reason or "hangup"
+        self._state = SessionState.ENDING
+        self._cancel_silence_timer()
+        self._finish_now.set()
 
     def authorize(self) -> None:
         """Mark the caller as authorized for destructive work (PIN accepted)."""
@@ -1004,7 +1037,15 @@ class VoiceSession:
         else answers a question the caller is waiting on, and still gets its turn — as does a
         `mark_reported` called before the result was given, or the call goes quiet with the
         news half told.
+
+        Nothing runs once the carrier has said the call is over. Teardown is already on
+        its way and cancels what it can, but a call the model made in the gap is answering
+        nobody, and a `mark_reported` among them would record as told a result that was
+        spoken down a dead line.
         """
+        if self._call_over:
+            log.info("session %s: %s not run, the call is over", self.session_id, call.name)
+            return
         ctx = ToolContext(session=self, channel=self.channel, caller=self.caller)
         result = await self._tools.call(call.name, call.arguments, ctx)
         await self._safe_call(
@@ -1099,10 +1140,11 @@ class VoiceSession:
         self._silence_task = self._max_call_task = self._grace_task = None
 
         drain = getattr(self._transport, "drain", None)
-        if drain is not None:
+        if drain is not None and not self._call_over:
             # Both transports queue playback — the speaker locally, Twilio's own buffer on
             # the phone — and the model produces audio faster than either plays it, so
-            # hanging up here would cut off the goodbye.
+            # hanging up here would cut off the goodbye. Not once the carrier has said the
+            # call is over: the transport may not know, and would wait for an ack from no one.
             try:
                 await asyncio.wait_for(
                     drain(DRAIN_TIMEOUT_SECONDS), DRAIN_TIMEOUT_SECONDS + 1.0
@@ -1228,6 +1270,16 @@ class SessionRegistry:
         return next(
             (s for s in self._sessions if s.channel == "phone" and s.caller == number), None
         )
+
+    def for_call(self, call_sid: str | None) -> VoiceSession | None:
+        """The session of the phone call the carrier calls `call_sid`, if it is still here.
+
+        Registered rather than live, like `on_the_line`: a session saying goodbye is still
+        that call's, and `call_ended` is what decides there is nothing left to tell it.
+        """
+        if not call_sid:
+            return None
+        return next((s for s in self._sessions if s.call_sid == call_sid), None)
 
 
 def _dispatch_agents(schemas: list[dict]) -> list[str]:

@@ -228,6 +228,11 @@ the version starts with 0.
   grew with the square of its length. Reading a body now takes time in proportion to it.
 - `keryx auth status` reported Gmail as missing however it was signed in.
 - `--headless` was ignored by both Google sign-ins.
+- **A result is no longer read out to a call that has already dropped.** When the audio
+  connection broke without closing, Keryx kept its side of the call open for some seconds
+  after Twilio had ended it. A task that finished in that time was read out to nobody and
+  recorded as heard, so you never heard it. Keryx now ends its side as soon as Twilio
+  reports the call over, and the result waits for the next call or the call-back.
 
 ## [0.2.0] - 2026-11-09
 

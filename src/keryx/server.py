@@ -9,7 +9,9 @@ One inbound call touches three of these routes:
 2. `WS /twilio/media` — the audio socket. It has no signature of its own, so the token
    from step 1 (single-use, 60 s, and only valid for the call it was minted for) is what
    authorizes it, and the line is counted again; a `VoiceSession` runs on top.
-3. `POST /twilio/status` — call-progress callbacks, logged and acknowledged.
+3. `POST /twilio/status` — call-progress callbacks, logged and acknowledged. One that says
+   the call is over also ends that call's session, if the media socket has not: a stream
+   can break without a `stop`, and its socket then outlives the call by many seconds.
 
 `GET /reports/{id}?t=…` is the fourth public route: the link the Notifier texts, guarded
 by the HMAC token in `t` rather than by a signature.
@@ -49,6 +51,8 @@ POLICY_VIOLATION = 1008
 # Websocket close code for "try again later": a valid stream past the line limit.
 TRY_AGAIN_LATER = 1013
 REPORT_MEDIA_TYPE = "text/markdown; charset=utf-8"
+#: The `CallStatus` values Twilio ends a call with; every other one is progress.
+CALL_OVER_STATUSES = frozenset({"completed", "busy", "failed", "no-answer", "canceled"})
 
 
 @dataclass
@@ -111,12 +115,24 @@ def create_app(state: AppState) -> FastAPI:
 
     @app.post("/twilio/status")
     async def twilio_status(request: Request) -> Response:
-        """Log a call-progress callback."""
+        """Log a call-progress callback, and end the session of a call that is over.
+
+        Nearly always that is old news: the stream's `stop` came first and the session
+        has ended. When the stream broke instead, this is the only word that nobody is
+        listening, and until the socket closes the session would go on being told results
+        (`VoiceSession.call_ended`). Behind the signature like everything else here, so
+        only Twilio can say a call is over.
+        """
         form = await request.form()
         if not verify_twilio_request(request, form, settings):
             raise HTTPException(status_code=403, detail="invalid Twilio signature")
 
-        log.info("call %s is now %s", form.get("CallSid"), form.get("CallStatus"))
+        status = form.get("CallStatus")
+        log.info("call %s is now %s", form.get("CallSid"), status)
+        if status in CALL_OVER_STATUSES:
+            session = state.sessions.for_call(str(form.get("CallSid") or ""))
+            if session is not None:
+                session.call_ended(str(status))
         return Response(status_code=204)
 
     @app.websocket("/twilio/media")
@@ -220,6 +236,9 @@ async def _open_session(
         possession=possession,
         opening_context=token_info.extra.get("opening_context"),
         opening_task_id=token_info.extra.get("task_id"),
+        # From the stream's own `start` frame: a call Keryx placed has no sid when its
+        # token is minted. It names the session a status callback is about, nothing more.
+        call_sid=transport.call_sid,
         registry=state.sessions,
         briefer=state.briefer,
         # Post-PIN keypad digits: how an approval is confirmed, and the only route by

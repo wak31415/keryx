@@ -440,6 +440,9 @@ Keryx knows at the top of a call is assembled every time by
   stamp it from a delivery path — hearing something twice is recoverable, never hearing it
   is not. A report posted to Slack is a delivery path like the rest, a task asked for on
   Slack included: it is in the next call's digest until the voice has said it.
+  A call the carrier says is over is no session to tell: `/twilio/status` ends it at once
+  (`VoiceSession.call_ended`), `stop` on the stream or not, because a media socket can
+  outlive its call, and a result announced into that gap was stamped as told to nobody.
 - **The memory.** `keryx/continuity/memory.py` owns `data_dir/memory.md` outright — the
   file API *and* the writer. It subscribes to `SessionEnded` and, for an authorized call only,
   dispatches a subagent (`prompts/memory_update.md`) that folds the call into the file —

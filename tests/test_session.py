@@ -38,6 +38,7 @@ from keryx.session import (
 )
 from keryx.tools import ToolContext, ToolRegistry
 from keryx.transports.base import AudioIn, Dtmf, Hangup
+from keryx.trust import TrustLevel
 
 # audio/pcmu is 8 kHz 8-bit -> 8 bytes per millisecond.
 PCMU_BYTES_PER_MS = 8
@@ -614,6 +615,108 @@ async def test_request_end_is_idempotent(make_session, phone, provider, publishe
     assert [event.reason for event in ended(published)] == ["first"]
 
 
+# --- the carrier says the call is over -------------------------------------
+#
+# A media socket can outlive the call it carried: the stream breaks, no `stop` arrives, and
+# our end of the socket closes many seconds later. The carrier's status callback is then
+# the only news that nobody is listening, and `call_ended` is how the session hears it.
+
+CALL_SID = "CA00000000000000000000000000000001"
+
+
+async def test_a_call_the_carrier_ended_is_over_at_once(make_session, phone, provider):
+    """A session left live until the socket closes is one a result is announced into."""
+    sessions = SessionRegistry()
+    session = make_session(phone, provider, registry=sessions, call_sid=CALL_SID)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+
+    sessions.for_call(CALL_SID).call_ended("completed")
+
+    # Before anything else gets to run: the notifier asks `live()` and takes the answer.
+    assert sessions.live() == []
+    assert await session.announce("Task 3 is done.", needs=TrustLevel.NONE, task_id=3) is False
+    await asyncio.wait_for(task, TIMEOUT)
+    assert "Task 3 is done." not in " ".join(text for text, _ in provider.injected)
+
+
+async def test_a_call_the_carrier_ended_is_torn_down_once_like_a_hangup(
+    make_session, phone, provider, published
+):
+    """The memory update, the transcript and the registry all hang off this one ending."""
+    sessions = SessionRegistry()
+    session = make_session(phone, provider, registry=sessions, call_sid=CALL_SID)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+
+    session.call_ended("completed")
+    session.call_ended("completed")  # a callback delivered twice
+    phone.feed(Hangup("stop"))  # the frame that should have come first, late
+    await asyncio.wait_for(task, TIMEOUT)
+    session.call_ended("completed")  # and one after the end
+
+    assert [(event.reason, event.authorized) for event in ended(published)] == [("hangup", True)]
+    assert phone.calls == ["hangup"]
+    assert provider.closed is True
+    assert sessions.for_call(CALL_SID) is None
+    assert session.transcript_path.read_text().count("--- session ended") == 1
+
+
+async def test_a_call_that_is_over_has_no_goodbye_to_drain(make_session, provider):
+    """A drain waits for the far end to say it played everything, and there is no far end."""
+    transport = DrainingFakeTransport(channel="phone", audio_format="audio/pcmu")
+    session = make_session(transport, provider)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+
+    session.call_ended("completed")
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert transport.calls == ["hangup"]
+
+
+async def test_a_call_ended_mid_goodbye_stops_waiting_and_keeps_its_reason(
+    make_session, phone, provider, published
+):
+    session = make_session(phone, provider)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+    provider.feed(ResponseStarted(response_id="resp_1"))
+    await eventually(lambda: session.response_active)
+    session.request_end("user")  # waits for the response, which nobody is hearing
+
+    session.call_ended("completed")
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert [event.reason for event in ended(published)] == ["user"]
+
+
+async def test_nothing_is_stamped_as_told_once_the_call_is_over(
+    make_session, phone, provider, tools
+):
+    """The model goes on talking into a dead line, and `mark_reported` is how it ends a
+    result. Here that call is already on its way when the news of the hangup arrives:
+    read by the session, and not yet run."""
+    stamped: list[dict] = []
+
+    async def handler(ctx: ToolContext, args: dict) -> dict:
+        stamped.append(args)
+        return {"reported": args["task_ids"]}
+
+    tools.register("mark_reported", "Bookkeeping.", {"type": "object", "properties": {}}, handler)
+    session = make_session(phone, provider)
+    task = asyncio.create_task(session.run())
+    await eventually(lambda: session.is_live)
+
+    stamp = {"task_ids": [7], "still_to_say": False}
+    provider.feed(FunctionCall(call_id="call_1", name="mark_reported", arguments=stamp))
+    session.call_ended("completed")
+    await asyncio.wait_for(task, TIMEOUT)
+
+    assert stamped == []
+    assert provider.tool_results == []
+
+
 # --- silence timeout -------------------------------------------------------
 
 
@@ -915,6 +1018,21 @@ def test_session_registry_finds_the_phone_session_on_a_number(make_session, phon
     assert sessions.on_the_line(phone.caller) is on_the_phone  # the Mac is not a line
     assert sessions.on_the_line("+15550000000") is None
     assert sessions.on_the_line(None) is None
+
+
+def test_session_registry_finds_the_session_of_a_call(make_session, phone, local, provider):
+    """Live or not, as with a number: an ending session is found, and is told nothing new."""
+    sessions = SessionRegistry()
+    other = make_session(FakeTransport(), provider, call_sid="CA00000000000000000000000000000002")
+    mine = make_session(phone, provider, call_sid=CALL_SID)
+    for session in (make_session(local, provider), other, mine):
+        sessions.add(session)
+
+    assert sessions.for_call(CALL_SID) is mine
+    assert sessions.for_call("CA00000000000000000000000000000003") is None
+    # A session that was given no call is not the session of a callback that names none.
+    assert sessions.for_call("") is None
+    assert sessions.for_call(None) is None
 
 
 async def test_the_session_takes_its_turn_detection_from_settings(
