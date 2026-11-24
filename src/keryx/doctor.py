@@ -45,7 +45,8 @@ from keryx.config.permissions import is_protected
 from keryx.config.store import ConfigStore
 from keryx.continuity.memory import memory_path, read_memory
 from keryx.install import Install, how_installed
-from keryx.integrations.gmail import token_path
+from keryx.integrations import google
+from keryx.integrations.gmail import legacy_token_path
 from keryx.issues import GH_INSTALL_URL, SKILL, gh_status
 from keryx.logging_util import mask_number
 from keryx.restart.service import candidate_target, resolve_target
@@ -536,15 +537,17 @@ def private_paths(settings: Settings, store: ConfigStore) -> list[tuple[Path, in
         (settings.state_dir / "logs", DATA_DIR_MODE),
         (settings.cache_dir, DATA_DIR_MODE),
         (pin_file(settings.config_dir), DATA_FILE_MODE),
-        (token_path(settings), DATA_FILE_MODE),
+        (google.token_path(settings), DATA_FILE_MODE),
+        (legacy_token_path(settings), DATA_FILE_MODE),
+        (settings.data_dir / google.PENDING_FILE, DATA_FILE_MODE),
         (settings.data_dir / "report_secret", DATA_FILE_MODE),
     ]
     if (client := settings.google_client_file()) is not None:
         candidates.append((client, DATA_FILE_MODE))
-    google = settings.data_dir / "google"
-    if google.is_dir():
-        candidates.append((google, DATA_DIR_MODE))
-        candidates += [(path, DATA_FILE_MODE) for path in sorted(google.iterdir())
+    exported = google.mcp_credentials_dir(settings)
+    if exported.is_dir():
+        candidates.append((exported, DATA_DIR_MODE))
+        candidates += [(path, DATA_FILE_MODE) for path in sorted(exported.iterdir())
                        if path.is_file()]
     seen: set[Path] = set()
     found = []
@@ -668,52 +671,61 @@ def _unlocked_check(store: ConfigStore) -> Check:
 # --- google, and what Keryx knows -----------------------------------------------
 
 
-def _google_check(settings: Settings) -> Check:
-    """Optional, and only about `workspace-mcp` — agents sending mail and using the calendar.
+#: The one Google check's name, which `keryx auth status` finds it by.
+GOOGLE_CHECK = "Google"
+SIGN_IN_TO_GOOGLE = "`keryx auth login google`"
 
-    With it off, Gmail and Calendar reach Claude's subagents through the Claude CLI's own
-    claude.ai connectors, which need nothing from us. Codex has no connectors, so with Codex
-    enabled, off means its tasks have no mailbox and no calendar at all.
+
+def _google_check(settings: Settings) -> Check:
+    """Optional: the one Google sign-in, with whose client, and what it connected.
+
+    Not signed in is `missing`, never a failure. Two older installs are fine as they are and
+    said to be: one that signed its agents in through `workspace-mcp` itself, and one with
+    the Gmail-only token `check_email` used to have.
     """
-    if not settings.google_workspace_mcp:
-        if "codex" in settings.enabled_agents:
-            return Check(
-                "Google for agents",
-                False,
-                "not set up (optional) — Codex tasks have no Gmail or Calendar; `keryx "
-                "setup` connects Google",
-                severity="soft",
-                section="google",
-                unset=True,
-            )
-        return Check(
-            "Google for agents",
+
+    def check(ok: bool, detail: str, *, unset: bool = False) -> Check:
+        return Check(GOOGLE_CHECK, ok, detail, severity="soft", section="google", unset=unset)
+
+    client = google.resolve_client(settings)
+    token = google.read_token(settings)
+    if token is not None:
+        published = google.published_client()
+        ours = published is not None and published.client_id == token.client_id
+        whose = "Keryx's Google app" if ours else "your own Google client"
+        offered = client.services if client is not None else tuple(google.SERVICES)
+        missing = [name for name in offered if name not in token.connected]
+        detail = f"signed in as {token.email or 'an unnamed account'} with {whose}"
+        detail += f"; connected: {google.labels(token.connected)}" if token.connected else ""
+        if missing:
+            detail += f"; not connected: {google.labels(missing)} — {SIGN_IN_TO_GOOGLE} adds them"
+        if token.connected and not settings.google_workspace_mcp:
+            detail += "; agents do not get the Google tools while GOOGLE_WORKSPACE_MCP is off"
+        elif token.connected and not token.client_secret:
+            detail += "; agents do not get the Google tools from a client with no secret"
+        saved = settings.user_google_email
+        if saved and token.email and saved.lower() != token.email.lower():
+            detail += f"; USER_GOOGLE_EMAIL still says {saved}"
+        return check(bool(token.connected), detail)
+    older = google.mcp_server(settings)
+    if older is not None:
+        return check(
             True,
-            "Claude's own connectors carry Gmail and Calendar",
-            severity="soft",
-            section="google",
+            f"signed in the older way, for agents only ({google.labels(older.services)}); "
+            f"{SIGN_IN_TO_GOOGLE} connects everything with one sign-in",
         )
-    if not settings.google_oauth_client():
-        return Check(
-            "Google for agents",
-            False,
-            "GOOGLE_WORKSPACE_MCP is on but there is no OAuth client — `keryx setup`",
-            severity="soft",
-            section="google",
+    if legacy_token_path(settings).is_file():
+        return check(
+            True,
+            "an older Gmail-only sign-in, for email answers on a call; "
+            f"{SIGN_IN_TO_GOOGLE} connects everything with one sign-in",
         )
-    credentials_dir = settings.data_dir / "google"
-    stored = sorted(credentials_dir.glob("*")) if credentials_dir.is_dir() else []
-    if not stored:
-        return Check(
-            "Google for agents",
-            False,
-            f"nothing in {credentials_dir} — `keryx auth login google-workspace`",
-            severity="soft",
-            section="google",
-            unset=True,
-        )
-    return Check("Google for agents", True, str(credentials_dir), severity="soft",
-                 section="google")
+    if client is None:
+        how = "no OAuth client yet: `keryx setup` walks you through making one"
+    else:
+        how = f"{SIGN_IN_TO_GOOGLE} signs in with {client.whose}"
+    codex = "Codex tasks have no Gmail or Calendar; " if "codex" in settings.enabled_agents else ""
+    return check(False, f"not signed in (optional) — {codex}{how}", unset=True)
 
 
 def _memory_check(settings: Settings) -> Check:
@@ -777,8 +789,10 @@ def _secret_without_plugin(settings: Settings, name: str) -> str | None:
         for field in ("openai_admin_key", "anthropic_admin_key"):
             if getattr(settings, field):
                 return env_var_name(field)
-    if name == "check_email" and token_path(settings).is_file():
-        return "a Gmail sign-in"
+    # The Google sign-in is the agents' too, so only the Gmail-only token an older sign-in
+    # left says that somebody meant to have email answers.
+    if name == "check_email" and legacy_token_path(settings).is_file():
+        return "an older Gmail-only sign-in"
     return None
 
 
@@ -788,8 +802,16 @@ def _plugin_detail(status: plugins.Status) -> str:
         where = values.get("channel_id") or "the MCP server's channel"
         server = values.get("mcp_server")
         return f"posts to {where}" + (f"; subagents use the {server} MCP server" if server else "")
-    if status.name == "check_email":
+    if status.name in ("check_email", "find_document"):
         return f"{values.get('model')}, {values.get('effort')} effort"
+    if status.name == "check_calendar":
+        which = "your own calendar" if values.get("calendars") == "primary" else (
+            "every calendar ticked in Google Calendar"
+        )
+        return f"reads {which}, up to {values.get('max_events'):g} events an answer"
+    if status.name == "add_calendar_event":
+        return (f"one event on your own calendar, {values.get('default_minutes'):g} minutes "
+                "when no end is said, nobody invited")
     if status.name == "check_billing":
         budget = values.get("monthly_budget")
         return f"{values.get('provider')}" + (f", budget ${budget:g}" if budget else "")

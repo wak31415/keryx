@@ -175,7 +175,7 @@ def parity_notes(settings: Settings, enabled: Sequence[str]) -> list[str]:
     if "codex" in enabled and not settings.google_workspace_mcp:
         notes.append(
             "Codex has no claude.ai connectors, so its tasks have no Gmail or Calendar until "
-            "you connect Google for agents (the Google section below)."
+            "you sign in to Google (the Google section below)."
         )
     if "codex" in enabled:
         notes.append(

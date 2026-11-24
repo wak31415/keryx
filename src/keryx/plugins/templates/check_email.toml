@@ -1,9 +1,9 @@
 # check_email: questions about your email answered on a call in about five seconds, from
 # one Gmail read and one model call. Changes here count from the next call; no restart.
 #
-# It reads Gmail with a read-only sign-in kept in its own token file, made by
-# `keryx auth login gmail`, and answers through the bundled claude CLI (the claude
-# extra). `keryx plugins remove check_email` turns this off.
+# It reads Gmail with your Google sign-in (`keryx auth login google`) and only ever reads,
+# and it answers through the bundled claude CLI (the claude extra).
+# `keryx plugins remove check_email` turns this off and leaves the sign-in alone.
 
 # The model that answers.
 model = {model}

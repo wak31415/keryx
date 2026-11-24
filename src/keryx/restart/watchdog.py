@@ -39,7 +39,7 @@ from typing import Any
 
 from keryx.config import PLACEHOLDER_KEY, Settings, load_settings
 from keryx.config.settings import tolerate_broken_files
-from keryx.logging_util import LOG_FORMAT, mask_number
+from keryx.logging_util import configure_logging, mask_number
 from keryx.notify.deliver import safe_send_sms
 from keryx.notify.twilio_out import TwilioOut, say_twiml
 from keryx.restart.health import health_probe
@@ -92,7 +92,7 @@ def main() -> None:
     tolerate_broken_files.set(True)
     settings = load_settings(openai_api_key=PLACEHOLDER_KEY, pin=None)
     settings.ensure_dirs()
-    logging.basicConfig(level=settings.log_level.upper(), format=LOG_FORMAT)
+    configure_logging(settings.log_level.upper())
     print(asyncio.run(watch(settings)))
 
 

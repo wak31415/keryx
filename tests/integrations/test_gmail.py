@@ -1,8 +1,8 @@
 """Tests for `check_email`'s integration: a day, a search, answered mail, the model call.
 
 No network: Gmail is a fake keyed by API path (and, for `HttpGmail`, an httpx
-MockTransport); the model is a fake summariser, or a fake runner standing in for the
-`claude` CLI. Mail in here is invented.
+MockTransport); the model is a fake summariser (the real one has its own tests, in
+`test_summariser.py`). Mail in here is invented.
 """
 
 import asyncio
@@ -10,19 +10,18 @@ import base64
 import json
 import logging
 import stat
-import sys
+import time
 from datetime import datetime
 
 import httpx
 import pytest
 
-from keryx.integrations import gmail
+from keryx.integrations import gmail, google
 from keryx.integrations.gmail import (
     DAY_PROMPT,
     MAX_BODY_CHARS,
     SEARCH_PROMPT,
     SMART_FILTER,
-    ClaudeCliSummariser,
     Email,
     EmailError,
     EmailReader,
@@ -31,15 +30,18 @@ from keryx.integrations.gmail import (
     build_email_reader,
     build_query,
     collect,
+    credentials_path,
     day_window,
     email_problem,
     fold_search,
     fold_thread,
+    legacy_token_path,
     plan_search,
     search,
-    token_path,
+    signed_in,
     worth_reading,
 )
+from keryx.integrations.summariser import SummaryError
 
 NOW = datetime(2026, 9, 24, 15, 0).astimezone()
 START, END, _ = day_window("yesterday", NOW)
@@ -100,6 +102,10 @@ class FakeGmail:
         self.threads = threads
         self.bodies = bodies or {}
         self.calls: list[tuple[str, dict]] = []
+        self.closed = 0
+
+    async def aclose(self):
+        self.closed += 1
 
     async def get(self, path, params=None):
         self.calls.append((path, dict(params or {})))
@@ -311,6 +317,42 @@ def test_html_alone_is_stripped_to_its_words():
     assert body_text(payload) == "Deadline & budget"
 
 
+def html(markup: str) -> dict:
+    return {"mimeType": "text/html", "body": {"data": b64(markup.encode())}}
+
+
+def test_script_and_style_blocks_go_whole_and_what_is_between_them_stays():
+    body = body_text(html(
+        "<STYLE type='text/css'>p { color: red }</style ><p>Hello <b>Ann</b>,</p>"
+        "<script>track()</SCRIPT>the report is <i>due</i> Friday.<style>unclosed { x"
+    ))
+
+    assert body == "Hello Ann , the report is due Friday. unclosed { x"
+
+
+#: Mail written to make stripping it expensive. Anyone can send one, and the body of a
+#: message read in full is megabytes if they like: `<[^>]+>` took 0.25 s on 40,000 `<` and
+#: four times that on twice as many, on the event loop.
+HOSTILE_MAIL = {
+    "nothing but <": "<" * 200_000,
+    "style blocks never closed": "<style>" * 20_000 + "x" * 100_000,
+    "script blocks never closed": "<script src=x>" * 10_000 + "x" * 100_000,
+    "openers and closers of the other kind": "<script>" * 10_000 + "</style>" * 10_000,
+    "many closed blocks": "<style>a</style>b" * 20_000,
+    "a tag never closed after many": "<a " * 50_000 + "x" * 50_000,
+}
+
+
+@pytest.mark.parametrize("markup", HOSTILE_MAIL.values(), ids=HOSTILE_MAIL.keys())
+def test_no_mail_can_make_reading_its_body_expensive(markup):
+    """A cost test: every pass over a body is linear in it."""
+    started = time.perf_counter()
+
+    body_text(html(markup))
+
+    assert time.perf_counter() - started < 0.5
+
+
 def test_quoted_lines_go_and_a_long_body_is_cut_short():
     assert body_text(plain("mine\n> theirs\nmine too")) == "mine\nmine too"
     long = body_text(plain("word " * 2000))
@@ -357,6 +399,42 @@ async def test_an_empty_day_is_said_without_a_model_call(fixed_day):
         "else is already answered."
     )
     assert summariser.calls == []
+
+
+async def test_the_connections_are_closed_when_it_has_answered_or_failed(fixed_day):
+    api = FakeGmail({"t1": [message("m1", "t1", 10)]})
+
+    await EmailReader(api, FakeSummariser()).ask("anything?", day="yesterday")
+    with pytest.raises(EmailError):
+        await EmailReader(api, FakeSummariser(delay=5), timeout_s=0.05).ask(
+            "anything?", day="yesterday"
+        )
+
+    assert api.closed == 2
+
+
+async def test_gmails_own_client_closes_what_the_shared_request_opened(tmp_path):
+    api = HttpGmail(token_file(tmp_path))
+    opened = api._api._http()
+
+    await api.aclose()
+
+    assert opened.is_closed
+
+
+async def test_a_model_call_that_fails_is_model_failed_with_its_sentence(fixed_day):
+    class Broken:
+        async def summarise(self, system, prompt):
+            raise SummaryError("claude exited 1: nope")
+
+    threads = {"t1": [message("m1", "t1", 10)]}
+
+    with pytest.raises(EmailError) as raised:
+        await EmailReader(FakeGmail(threads), Broken()).ask("anything?", day="yesterday")
+
+    assert raised.value.code == "model_failed"
+    assert raised.value.detail == "claude exited 1: nope"
+    assert "the answer failed" in raised.value.spoken
 
 
 async def test_an_answer_that_takes_too_long_is_stopped_and_said(fixed_day):
@@ -716,99 +794,105 @@ async def test_no_credential_reaches_the_log(tmp_path, caplog):
     assert "csecret" not in caplog.text + str(raised.value)
 
 
-# ----------------------------------------------------------------- the model call
+async def test_a_client_with_no_secret_sends_none(tmp_path):
+    seen: list[httpx.Request] = []
+    client = httpx.AsyncClient(
+        transport=transport([ok_token()], [httpx.Response(200, json={})], seen)
+    )
+    api = HttpGmail(token_file(tmp_path, client_secret=""), client=client)
+
+    await api.get("profile")
+
+    assert b"client_secret" not in seen[0].content and b"client_id=cid" in seen[0].content
 
 
-class FakeRun:
-    def __init__(self, code=0, out=None, err=""):
-        self.code, self.err = code, err
-        self.out = json.dumps({"result": "Ann needs the numbers."}) if out is None else out
-        self.calls: list[tuple[list[str], str, dict]] = []
+@pytest.mark.parametrize("scope", [google.GMAIL_MODIFY, google.GMAIL_READONLY])
+async def test_either_gmail_scope_reads_the_mail(tmp_path, scope):
+    client = httpx.AsyncClient(
+        transport=transport([ok_token()], [httpx.Response(200, json={"a": 1})], [])
+    )
+    api = HttpGmail(token_file(tmp_path, scopes=["openid", scope]), client=client)
 
-    async def __call__(self, argv, stdin, env):
-        self.calls.append((list(argv), stdin, env))
-        return self.code, self.out, self.err
-
-
-async def test_the_summary_is_one_bare_cli_call_on_the_claude_sign_in(settings):
-    settings.anthropic_api_key = "sk-ant-key"
-    run = FakeRun()
-
-    text = await ClaudeCliSummariser(
-        "/bin/claude", settings, model="claude-opus-5-5", effort="low", run=run
-    ).summarise("sys", "mail")
-
-    [(argv, stdin, env)] = run.calls
-    assert text == "Ann needs the numbers."
-    assert argv[:2] == ["/bin/claude", "-p"]
-    assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
-    assert argv[argv.index("--effort") + 1] == "low"
-    assert argv[argv.index("--tools") + 1] == ""
-    assert "--strict-mcp-config" in argv and "--no-session-persistence" in argv
-    assert argv[argv.index("--system-prompt") + 1] == "sys"
-    assert stdin == "mail"
-    assert env == {"ANTHROPIC_API_KEY": "sk-ant-key"}
-    assert "sk-ant-key" not in " ".join(argv)
+    assert await api.get("profile") == {"a": 1}
 
 
-@pytest.mark.parametrize(
-    "run",
-    [
-        FakeRun(code=1, out="", err="auth failed for sk-ant-key"),
-        FakeRun(out=json.dumps({"result": "boom", "is_error": True})),
-        FakeRun(out="not json"),
-    ],
-)
-async def test_a_failed_summary_is_model_failed_and_never_quotes_the_key(settings, run):
-    settings.anthropic_api_key = "sk-ant-key"
+async def test_a_sign_in_that_does_not_include_gmail_is_signed_out_before_any_request(tmp_path):
+    seen: list[httpx.Request] = []
+    client = httpx.AsyncClient(transport=transport([], [], seen))
+    api = HttpGmail(token_file(tmp_path, scopes=[google.CALENDAR_READONLY]), client=client)
 
     with pytest.raises(EmailError) as raised:
-        await ClaudeCliSummariser(
-            "/bin/claude", settings, model="m", effort="low", run=run
-        ).summarise("s", "p")
+        await api.get("profile")
 
-    assert raised.value.code == "model_failed"
-    assert "sk-ant-key" not in raised.value.detail
-
-
-async def test_the_real_runner_feeds_stdin_and_returns_what_came_out():
-    code, out, err = await gmail._run_cli(
-        [sys.executable, "-c", "import sys; print(sys.stdin.read().upper())"], "hello", {}
-    )
-
-    assert (code, out.strip(), err) == (0, "HELLO", "")
-
-
-async def test_a_cancelled_runner_kills_its_process():
-    task = asyncio.create_task(
-        gmail._run_cli([sys.executable, "-c", "import time; time.sleep(30)"], "", {})
-    )
-    await asyncio.sleep(0.2)
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(task, 5)
+    assert raised.value.code == "signed_out" and seen == []
+    assert "keryx auth login google" in raised.value.spoken
 
 
 # --------------------------------------------------------------------------- build
 
 
+def google_token(settings, services=("gmail",)):
+    return google.write_token(
+        settings,
+        google.GoogleToken(
+            refresh_token="rt",
+            client_id="cid",
+            client_secret="cs",
+            scopes=google.requested_scopes(services),
+            email="ada@example.com",
+        ),
+    )
+
+
+def older_gmail_token(settings):
+    path = legacy_token_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"refresh_token": "old", "client_id": "c", "client_secret": "s",
+                                "scopes": [google.GMAIL_READONLY]}))
+    return path
+
+
 def test_no_sign_in_means_no_tool(settings):
-    assert "keryx auth login gmail" in email_problem(settings)
+    assert not signed_in(settings) and credentials_path(settings) is None
+    assert email_problem(settings) == "not signed in to Google: `keryx auth login google`"
+
+
+def test_the_google_sign_in_is_what_email_reads(settings):
+    path = google_token(settings)
+
+    assert signed_in(settings) and credentials_path(settings) == path
+
+
+def test_a_sign_in_without_gmail_means_no_tool_and_says_which(settings):
+    google_token(settings, ["calendar"])
+
+    assert not signed_in(settings)
+    assert "Gmail is not part of your Google sign-in" in email_problem(settings)
+
+
+def test_an_older_gmail_only_sign_in_still_answers_until_a_sign_in_reads_gmail(settings):
+    path = older_gmail_token(settings)
+    before = path.read_text()
+
+    assert signed_in(settings) and credentials_path(settings) == path
+    assert path.read_text() == before  # read, never written
+
+    google_token(settings, ["calendar"])  # a sign-in that left Gmail out: still the older one
+    assert signed_in(settings) and credentials_path(settings) == path
+
+    newer = google_token(settings, ["gmail"])
+    assert credentials_path(settings) == newer
 
 
 def test_no_claude_cli_means_no_tool(settings, monkeypatch):
-    token_path(settings).parent.mkdir(parents=True, exist_ok=True)
-    token_path(settings).write_text("{}")
+    google_token(settings)
     monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: False)
 
     assert "claude CLI is not installed" in email_problem(settings)
 
 
 def test_a_sign_in_and_a_cli_is_the_tool_with_its_token_kept_private(settings, monkeypatch):
-    path = token_path(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{}")
+    path = google_token(settings)
     path.chmod(0o644)
     monkeypatch.setattr("keryx.agents.registry.installed", lambda agent: True)
     spec = gmail_backend_with_cli(monkeypatch)

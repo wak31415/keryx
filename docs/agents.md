@@ -105,7 +105,8 @@ checked is marked, and listed under "possible".
 | Tokens recorded on the task (`keryx tasks show`, per project in `keryx tasks usage`) | ✅ | ✅ |
 | Dollar cost recorded on the task | ✅ | — a plan call has no price |
 | Slack, through the server the `send_to_slack` plugin names (`mcp_server`) | ✅ | ✅ handed over from `~/.claude.json` |
-| Gmail and Calendar | ✅ claude.ai connectors | ✅ with `GOOGLE_WORKSPACE_MCP=true` |
+| Gmail, Calendar, Drive, Docs, Sheets and Slides, from `keryx auth login google` | ✅ | ✅ |
+| Gmail and Calendar with no Google sign-in | ✅ claude.ai connectors | — |
 | Its own instructions file | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` |
 | Its own skills, listed to the voice model | `SKILLS_DIR` | `~/.codex/skills` |
 | Nothing to install beyond Keryx (extra `claude` / `codex`) | ✅ | ✅ bundled CLI (~350 MB) |
@@ -115,10 +116,14 @@ checked is marked, and listed under "possible".
 
 Two of those are worth knowing before you switch:
 
-- **Gmail and Calendar.** Claude gets them from its claude.ai connectors, which live on the
-  Anthropic account. Codex has none, so with Codex enabled, connect Google for agents in
-  `keryx setup` (or `keryx auth login google-workspace`); `doctor` warns until you
-  have.
+- **Google.** One sign-in, `keryx auth login google` (or the Google section of
+  `keryx setup`), gives both agents the same tools for the services you connect: Gmail,
+  Calendar, Drive, Docs, Sheets and Slides. Without it, Claude still has whatever its
+  claude.ai connectors carry, which live on the Anthropic account, and Codex has nothing;
+  `doctor` says so until you have signed in. `GOOGLE_WORKSPACE_MCP=false` keeps the
+  sign-in for the answers on a call (the email, calendar and document plugins) and takes
+  the tools away from both, and
+  `keryx auth logout google` ends the sign-in altogether.
 - **The approval bridge** (`keryx approvals`) is for Claude Code sessions on your own
   screen that stop and ask you something. It has nothing to do with which agent Keryx
   dispatches to, and it stays Claude Code only.
@@ -157,8 +162,8 @@ Two more that are true of both, and worth knowing:
 
 ## Not easily possible
 
-- **claude.ai connectors for Codex.** They belong to the Anthropic account. Codex uses
-  `workspace-mcp` instead.
+- **claude.ai connectors for Codex.** They belong to the Anthropic account. Both agents
+  use `workspace-mcp` instead, on your Google sign-in.
 - **Handing a task from one agent to the other.** Session ids are not portable, so a
   follow-up always stays with the agent that started the task.
 - **A spend figure for subscription use.** Neither subscription exposes what one call

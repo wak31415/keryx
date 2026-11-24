@@ -1,9 +1,10 @@
 """Plugins: the optional voice tools, installed into the owner's tools directory when wanted.
 
-Four tools are not Keryx's to offer on every machine — `send_to_slack`, `check_email`,
-`check_billing` and `cluster_stats` each need something only some owners have — so none is
-registered from the source tree. A plugin exists when the owner turns it on, and it is then
-an ordinary custom tool (`keryx.tools.custom`): two files in `DATA_DIR/tools`,
+Some tools are not Keryx's to offer on every machine — `send_to_slack`, `check_email`,
+`check_calendar`, `add_calendar_event`, `find_document`, `check_billing` and
+`cluster_stats` each need something only some owners have — so none is registered from the
+source tree. A plugin exists when the owner turns it on, and it is then an ordinary custom
+tool (`keryx.tools.custom`): two files in `DATA_DIR/tools`,
 
 - `<name>.py`, one line calling `keryx.plugins.<module>.<name>_tool`, so the logic stays
   here with its tests and a fix reaches every installed copy; and
@@ -11,7 +12,7 @@ an ordinary custom tool (`keryx.tools.custom`): two files in `DATA_DIR/tools`,
   wizard edits in place.
 
 Its secrets are not in that file: a token or an admin key stays in `secrets.toml` through
-the store (`keryx config set KEY --stdin`), and a Gmail sign-in in its own token file.
+the store (`keryx config set KEY --stdin`), and the Google sign-in in its own token file.
 
 `PLUGINS` is the table everything else reads, in the style of `agents.registry.BACKENDS`:
 what each is called, what the wizard asks (`important`; the rest stay in the file, with
@@ -44,6 +45,9 @@ WORD = re.compile(r"[A-Za-z0-9_.-]+")
 
 #: Where a turned-off plugin's settings wait, so turning it back on remembers them.
 OFF_SUFFIX = ".toml.off"
+#: The most `check_calendar` may be set to say at once: under one page of Google's, so it
+#: can always tell that there were more. `integrations.calendar` holds the same number.
+MAX_EVENTS_SETTING = 100
 
 Kind = Literal["word", "choice", "number", "path", "table"]
 
@@ -63,6 +67,8 @@ class Key:
     choices: tuple[str, ...] = ()
     #: For a number: whether 0 is allowed (a budget of 0 is "none"; a timeout of 0 is not).
     positive: bool = False
+    #: For a number: the most it may be, when there is a most.
+    maximum: float | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +89,14 @@ class Plugin:
     module: str
     #: What must hold before it can be installed, beyond each key being valid.
     problem: Callable[[dict[str, Any]], str | None] = lambda _values: None
+    #: The Google service it reads or writes with the one sign-in (`integrations.google`'s
+    #: name for it), for a plugin that has one: its "secret" is `keryx auth login google`.
+    google: str = ""
+    #: Whether it answers through the bundled `claude` CLI, and so needs the claude extra.
+    claude: bool = False
+    #: Ticked on a first walk as well, but only once its Google service is connected:
+    #: wanted by most, and not worth a sign-in of its own to somebody who has none.
+    default_when_connected: bool = False
 
     def key(self, name: str) -> Key:
         return next(key for key in self.keys if key.name == name)
@@ -126,6 +140,55 @@ PLUGINS: dict[str, Plugin] = {
             Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
         ),
         module="email",
+        google="gmail",
+        claude=True,
+    ),
+    "check_calendar": Plugin(
+        name="check_calendar",
+        title="Calendar answers",
+        summary="What is on your calendar, said on a call in a second or two",
+        default=False,
+        important=(),
+        secrets=(),
+        keys=(
+            Key("calendars", "choice", "selected", "Which calendars it reads",
+                choices=("selected", "primary")),
+            Key("max_events", "number", 25, "The most events one answer holds", positive=True,
+                maximum=MAX_EVENTS_SETTING),
+        ),
+        module="calendar",
+        google="calendar",
+        default_when_connected=True,
+    ),
+    "add_calendar_event": Plugin(
+        name="add_calendar_event",
+        title="Add to calendar",
+        summary='"Put the dentist on my calendar Thursday at three": one event, nobody invited',
+        default=False,
+        important=(),
+        secrets=(),
+        keys=(
+            Key("default_minutes", "number", 60,
+                "How long an event is when you gave no end, in minutes", positive=True),
+        ),
+        module="calendar",
+        google="calendar",
+    ),
+    "find_document": Plugin(
+        name="find_document",
+        title="Document answers",
+        summary="A file found in your Drive on a call, and a question about it answered",
+        default=False,
+        important=(),
+        secrets=(),
+        keys=(
+            Key("model", "word", "claude-opus-5-5", "The model that answers"),
+            Key("effort", "choice", "low", "How hard it thinks", choices=("low", "medium", "high")),
+        ),
+        module="documents",
+        google="drive",
+        claude=True,
+        default_when_connected=True,
     ),
     "check_billing": Plugin(
         name="check_billing",
@@ -241,6 +304,8 @@ def _clean(name: str, key: Key, value: Any) -> Any:
         if number < 0 or (key.positive and number == 0) or number != number:
             limit = "more than 0" if key.positive else "0 or more"
             raise PluginConfigError(f"{where} must be {limit}")
+        if key.maximum is not None and number > key.maximum:
+            raise PluginConfigError(f"{where} must be {key.maximum:g} or less")
         return int(number) if number.is_integer() and isinstance(key.default, int) else number
     if key.kind == "path":
         text = "" if value is None else str(value).strip()
@@ -517,8 +582,8 @@ def command_line_values(name: str, assignments: list[str]) -> dict[str, Any]:
         if key not in keys or keys[key].kind == "table":
             known = ", ".join(k for k, spec_key in keys.items() if spec_key.kind != "table")
             hint = "; its secrets: " + ", ".join(spec.secrets) if spec.secrets else ""
-            if name == "check_email":
-                hint = "; the Gmail sign-in is `keryx auth login gmail`"
+            if spec.google:
+                hint = "; its sign-in is `keryx auth login google`"
             raise PluginConfigError(f"{name} has no setting {key!r} (it has {known}{hint})")
         values[key] = value
     cleaned = clean(name, values)

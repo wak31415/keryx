@@ -45,21 +45,55 @@ def test_the_default_probes_reach_the_real_implementations(monkeypatch, settings
     async def fake(*args, **kwargs):
         return RunResult(ok=True, spoken_summary="ready")
 
-    async def address(settings):
-        return "a@b.c"
-
     monkeypatch.setattr("keryx.setup.agents.run_smoke", fake)
     monkeypatch.setattr("keryx.setup.agents.run_task", fake)
     monkeypatch.setattr("keryx.setup.agents.is_headless", lambda: True)
-    monkeypatch.setattr("keryx.setup.google.gmail_address", address)
-    monkeypatch.setattr("keryx.setup.google.run_google_setup", lambda settings, echo: True)
+    monkeypatch.setattr(
+        "keryx.setup.google.browser_grant",
+        lambda settings, chosen, announce: ("browser", chosen, announce),
+    )
+    monkeypatch.setattr(
+        "keryx.setup.google.finish_grant", lambda settings, address: ("finished", address)
+    )
+    monkeypatch.setattr("keryx.setup.google.discard", lambda settings, grant: grant == "g")
     probes = Probes()
 
     assert asyncio.run(probes.smoke(settings, "claude")).ok
     assert asyncio.run(probes.run_task(settings, "claude", "hi")).ok
-    assert asyncio.run(probes.gmail_address(settings)) == "a@b.c"
-    assert probes.workspace_signin(settings, print) is True
+    assert probes.google_browser_signin(settings, "offer", print) == ("browser", "offer", print)
+    assert probes.google_finish(settings, "http://localhost:1/?x") == (
+        "finished", "http://localhost:1/?x")
+    assert probes.google_discard(settings, "g") is True
     assert probes.headless() is True
+
+
+@pytest.mark.parametrize(
+    ("raised", "says"),
+    [
+        ("error", "the browser did not come back"),
+        (KeyboardInterrupt(), "stopped before the browser came back"),
+    ],
+)
+def test_a_google_sign_in_that_fails_is_handed_back_not_raised(
+    monkeypatch, settings, raised, says
+):
+    """A result is recorded and replayed by the wizard; a raise would run it again. And
+    Ctrl-C while the browser is out stops the wait, not `keryx setup`."""
+    from keryx.setup.google import GoogleSetupError
+
+    error = GoogleSetupError(says) if raised == "error" else raised
+
+    def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr("keryx.setup.google.browser_grant", fail)
+    monkeypatch.setattr("keryx.setup.google.finish_grant", fail)
+    probes = Probes()
+
+    result = probes.google_browser_signin(settings, "offer", print)
+    assert isinstance(result, GoogleSetupError) and str(result) == says
+    if raised == "error":
+        assert probes.google_finish(settings, "http://localhost:1/?x") is error
 
 
 def test_a_refused_save_is_said_and_changes_nothing(make_ctx):

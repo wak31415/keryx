@@ -606,6 +606,59 @@ def test_with_texting_on_the_prompt_says_a_text(settings, unwrapped):
 # threshold in both directions: high, and not zero.
 
 
+def test_a_quick_read_of_their_mail_calendar_or_documents_goes_to_the_tool_that_reads_it(
+    unwrapped,
+):
+    """The routing used to list "their mail, their calendar" under "Claude does it" and
+    stop, so a calendar question was a dispatch even with a tool that answers it in a
+    second. The read goes to the tool when there is one; no tool is named, because which
+    ones a machine has is its owner's choice."""
+    text = unwrapped(load_prompt("voice_system.md"))
+    answer, dispatch = text.index("**You answer it.**"), text.index("**Claude does it.**")
+    mine = text[answer:dispatch]
+
+    assert "when you have a tool for it on this call" in mine
+    for read in ("what is in their mail", "what is on their calendar", "what a document says"):
+        assert read in mine
+    assert "call it rather than dispatching" in mine
+
+
+def test_putting_one_new_event_on_their_calendar_goes_to_the_tool_that_adds_one(unwrapped):
+    """The reads were routed to their tools and the one write was left under "everything
+    else": "put the dentist on my calendar" was a dispatch beside a tool that does it."""
+    text = unwrapped(load_prompt("voice_system.md"))
+    answer, dispatch = text.index("**You answer it.**"), text.index("**Claude does it.**")
+    mine = text[answer:dispatch]
+    theirs = text[dispatch : text.index("There are no task types")]
+
+    assert "putting a single new event on their own calendar" in mine
+    assert "when you have a tool that adds one" in mine
+    # With no such tool it is a task, and so is every other change to a calendar.
+    assert "a new event is Claude's whenever you have no tool that adds one" in theirs
+    assert "an event that repeats" in theirs
+
+
+def test_what_those_tools_cannot_do_is_still_dispatched(unwrapped):
+    text = unwrapped(load_prompt("voice_system.md"))
+    theirs = text[text.index("**Claude does it.**") : text.index("There are no task types")]
+
+    for work in ("replying to or sending mail", "changing or deleting an event",
+                 "inviting people", "an event that repeats", "editing or creating a document",
+                 "anything across many messages or files"):
+        assert work in theirs
+    assert theirs.rstrip().endswith("Dispatch it.")
+
+
+def test_the_routing_reads_right_on_a_machine_with_no_such_tool(unwrapped):
+    """Most machines have none of the plugins. Then their mail, calendar and documents are
+    all dispatched, and the prompt has to say so without naming a tool that is not there."""
+    text = unwrapped(load_prompt("voice_system.md"))
+    theirs = text[text.index("**Claude does it.**") : text.index("There are no task types")]
+
+    assert "whenever you have no tool that reads them" in theirs
+    assert "A tool of yours that reads the very thing they asked about is not a doubt" in text
+
+
 def test_the_prompt_keeps_dispatch_as_the_default(unwrapped):
     """The threshold below is not a licence to interview."""
     text = unwrapped(load_prompt("voice_system.md"))

@@ -74,7 +74,13 @@ anything behind, or reach a coding agent. In particular:
   agent without the PIN.
 - A coding agent's credential appearing on its command line, in a log, or in a spoken
   error. Credentials are passed only in the environment, and a refused key is redacted
-  when it is quoted back.
+  when it is quoted back. The Google sign-in is the one credential an agent's tools read
+  from a file instead (see [Signing in to Google](#signing-in-to-google)), and it is
+  redacted the same way.
+- A Google sign-in that can be completed, or whose code can be used, by anyone but the
+  person at the browser: a redirect that is accepted without this sign-in's `state`, a
+  listener reachable from another machine, or a code that can be exchanged without the
+  verifier.
 - Text that reaches a Claude Code session on your machine (an issue, a pull request, a web
   page) and gets the approval bridge to ring you about one command while running another,
   or to run a command its policy should never have offered.
@@ -147,7 +153,8 @@ caller says or does changes anything or outlasts the call.
   level whatever the settings say. A test walks every registered tool, so a new tool is
   gated unless someone adds it to one of those lists on purpose. Of the plugins,
   `check_billing` and `cluster_stats` set `needs_pin=False`, because they read a number and
-  change nothing. `send_to_slack` and `check_email` keep the default and need the PIN.
+  change nothing. `send_to_slack`, `check_email`, `check_calendar`, `add_calendar_event`
+  and `find_document` keep the default and need the PIN.
 - **An announcement tells a call nothing it could not already hear.** A result that finishes
   during a call is announced under the same rule as the briefing. Restart confirmations and
   approval escalations go only to a call that has given the PIN or that Keryx placed to your
@@ -166,7 +173,10 @@ caller says or does changes anything or outlasts the call.
 - **A spoken PIN is never written down.** Transcript lines are redacted as they are
   written, whether the PIN was said as digits or as words. Everything that reads a
   transcript back to a model redacts it again, because older logs may still contain it. No
-  log line contains the PIN.
+  log line contains the PIN, spoken or keyed, at any log level. Keryx's own lines say that
+  a digit arrived and never which. The libraries under the two connections a PIN crosses
+  (keypad digits from Twilio, and the voice model's messages) would each log what they
+  carry at `DEBUG`, so both are held above it whatever `LOG_LEVEL` says.
 
 ### Setting the first PIN, on the first call
 
@@ -351,8 +361,9 @@ documented on the branch and does not apply to anything built from `main`.
 Every key, token, and password is in `~/.config/keryx/secrets.toml` (`KERYX_HOME` moves
 it). Keryx creates the file with mode 0600 inside a 0700 directory and replaces it
 atomically, so it never exists with looser permissions. The plain settings are in
-`config.toml` beside it, along with the PIN (`pin`) and the Google client file. **Keep this
-directory out of any dotfiles repository.** It holds secrets despite its name.
+`config.toml` beside it, along with the PIN (`pin`) and the Google client file, if you made
+a client of your own. **Keep this directory out of any dotfiles repository.** It holds
+secrets despite its name.
 
 Keryx uses a file rather than a keyring on purpose. A service that systemd starts at boot,
 with nobody logged in, cannot unlock a keyring. Claude Code and Codex keep their credentials
@@ -375,6 +386,107 @@ A secret is never put on a command line, where `ps` and your shell history would
 from an environment variable. The command refuses a secret given as a plain argument.
 Nothing prints a secret back: not `keryx config get`, not `config list`, and not an error
 message.
+
+### Signing in to Google
+
+`keryx auth login google` connects your Google account once, for the coding agents and for
+the answers on a call (the email, calendar and document plugins). What it leaves, and what protects it:
+
+- **The token is a file.** `DATA_DIR/google_token.json` holds the refresh token, the
+  client it was issued to, the scopes Google granted, and your address. It is 0600 in a
+  0700 directory and replaced atomically, like every other secret here. A copy of it is in
+  `DATA_DIR/google/`, in the form the agents' Google tools (the `workspace-mcp` server)
+  read. The approval bridge's denylist names both, so no keypad approval can run a command
+  or an edit that mentions them. It knows the copy by its default path
+  (`…/keryx/google/`): if you move `DATA_DIR`, only the token is still named.
+- **Whoever has the machine has your Google account**, to the extent of what you granted.
+  That is the same position as every other key in this file, and the PIN does not change
+  it. What you grant is the narrowest set the tools work with, and it is still a lot:
+  reading and changing your mail and calendar events, reading everything in Drive, and
+  editing your Docs, Sheets and Slides. In Drive itself, Keryx can change only the files
+  it created. A coding agent you dispatch can use all of it, and prompt injection into a
+  task you authorized is still inherent. You can leave any service unticked on Google's
+  screen.
+- **`keryx auth logout google` ends it.** It revokes Keryx's access at Google and deletes
+  everything a sign-in left on this machine: the token, its copy for the agents' tools,
+  a sign-in in progress, and anything an older sign-in left. The files are deleted even
+  when Google cannot be reached, and then the command says so and names
+  <https://myaccount.google.com/permissions>, where you can end the grant yourself at any
+  time. A sign-in that Keryx refuses (nothing granted, an unexpected account) is revoked
+  the same way rather than left at Google with nobody holding it.
+- **The agents' tools cannot sign in.** The server is started with the token's location
+  and no OAuth client (one set in Keryx's own environment is taken out on the way, by
+  `env -u`), so it can refresh and use what you granted and can never open a consent
+  screen of its own behind a task nobody is watching. Tools that would need a wider scope
+  are switched off rather than left to fail. Signing in as a different account removes the
+  previous account's copy, because those tools would still accept its address. What it is
+  started with is a path and your address, and no credential: a coding agent's command
+  line is where that configuration ends up. Whatever that file holds is redacted from
+  every error a task returns or logs, read afresh each time, so the access token the
+  server mints while a task runs is covered once it is in the file. Lines Codex prints
+  about a server while it starts are redacted with what the file held at the start.
+- **A Google tool that cannot be served still opens a port.** When a tool finds no usable
+  credential (the sign-in was revoked, say), `workspace-mcp` 2.6.0 first starts its own
+  sign-in listener on `localhost:8000` and only then fails for want of a client. The
+  agent gets an error and is told to send you to `keryx auth login google`. The listener
+  stays until that task's server exits. With no client it has no sign-in to complete, but
+  it is a port another user of the machine can reach for that long, and Keryx cannot
+  switch it off in that release.
+- **Keryx's own Google client, when a release ships one, is not a secret.** It is a
+  "Desktop app" client, and its client secret is a file inside the package that anyone
+  can read. Google says so of this kind of client in its own words: "In this context, the
+  client secret is obviously not treated as a secret"
+  (<https://developers.google.com/identity/protocols/oauth2>). Knowing it lets someone
+  present their own app as Keryx on a consent screen. It does not let them into your
+  account: they would still need you to approve that screen, and they cannot use a code
+  issued to you. A client of your own (`--client-file`) replaces it entirely.
+- **What protects the exchange is PKCE, `state`, and where the answer is sent.** The
+  sign-in keeps a one-time verifier on this machine and sends Google only its hash, so
+  the code Google returns is useless to anyone who intercepts it. `state` ties that code
+  to the sign-in that asked for it. The answer goes to a loopback address, which only this
+  machine can reach.
+- **The listener is local and short-lived.** With a browser on the same machine, Keryx
+  listens on `127.0.0.1` only, on a port the operating system picks, for the length of one
+  sign-in. It accepts only the request that carries this sign-in's `state`, answers
+  anything else with an error and keeps waiting, serves every connection at once so that
+  one held open cannot keep another waiting, ends any connection that takes longer than
+  five seconds, logs nothing (the request holds the one-time code), and closes as soon as
+  it has its answer or after five minutes.
+- **The sign-in link is never put on a command line.** The link holds this sign-in's
+  `state`, and on a shared machine every user can read every process's command line. So
+  the browser is opened on the listener's own address (`/start`), which sends it on to
+  Google once, and the link itself is shown only on your terminal.
+- **An account nobody expected is never saved silently.** Once you have signed in, Keryx
+  knows your address (`USER_GOOGLE_EMAIL`). A later sign-in that comes back as any other
+  account is refused before anything is written, and the grant is revoked: `keryx setup`
+  asks whether you meant it, with no as the answer if you just press Enter, and the
+  command line refuses and names both addresses, to be run again with `--account` if you
+  did mean it. Every way of finishing somebody else's sign-in ends as *their* account, so
+  this is the check that does not depend on winning a race.
+- **The accepted risk, on a machine you share:** another user can see the listener's
+  port and ask for `/start` themselves. If they get there before your browser does, they
+  hold the link, and could finish the sign-in with a Google account of their own, so that
+  Keryx's agents would read and write *their* account while you believe it is yours. Three
+  things stand in the way. `/start` works once: when it is asked for a second time, which
+  is your browser arriving after theirs, Keryx stops the sign-in and saves nothing, and
+  because every connection is served at once they cannot hold your browser back to stop
+  that. A sign-in as an account other than the one you signed in as before is refused, as
+  above. And the command always ends by saying which account signed in. What remains is
+  the **first** sign-in on a machine, when there is no address to compare with, against a
+  program that finishes the whole exchange in the moment before your browser opens, or
+  that exhausts the listener's process so your browser is never served. Then the only
+  sign is the address the command prints. So on a machine you share with people you do
+  not trust, sign in with `--headless`: there is no listener, the browser lands on an
+  address nothing listens on, and you paste that address back yourself. A client of your
+  own in Personal mode closes it too, because Google refuses every account but yours.
+- **An address pasted back is a code in your scrollback.** It is single-use, it expires in
+  minutes, and it cannot be exchanged without the verifier, which waits in
+  `DATA_DIR/google_signin.json` (0600) until the sign-in finishes. With `--headless` at a
+  terminal the address is typed at a prompt. Without a terminal it is handed over on
+  standard input (`--callback-url -`), so it is not on a command line either. The older
+  form, the address as the option's value, still works for one release and does put the
+  code where other users of the machine can read it; they cannot use it without the
+  verifier.
 
 ### What Keryx may change about itself
 
@@ -406,7 +518,7 @@ This is **a rule Keryx's own tools obey, not a sandbox.** A coding agent runs as
 shell, and can edit `config.toml` directly, as it can edit any of your files. What the rule
 buys is that the ordinary paths refuse, and say so: the tool the voice model is given, and
 the commands a coding agent would reach for. `keryx config set` is limited to the
-service-writable keys. `auth login`, `memory seed`, `setup`, `service`, `upgrade`,
+service-writable keys. `auth login`, `auth logout`, `memory seed`, `setup`, `service`, `upgrade`,
 `forget`, `approvals --enable`, `approvals --install-hook`, `plugins install`,
 `plugins remove`, and `config lock|unlock` refuse the service outright.
 
@@ -444,6 +556,65 @@ connection that nobody can answer hangs, and a storm of them can get an address 
 setup wizard and `keryx plugins hosts` offer only hosts with a ControlMaster in
 `~/.ssh/config`. The remote command is built from constants and refuses anything but
 `squeue` and `sinfo`.
+
+The Google plugins (`check_email`, `check_calendar`, `add_calendar_event`, `find_document`)
+put text that other people wrote in front of a model, during a call you have given the PIN
+on. Anyone can send you mail, anyone who can send you an invitation can put a title on your
+calendar, and anyone can share a file with you. That text is treated as data, in these
+ways:
+
+- **Mail and documents never reach the voice model.** `check_email` and `find_document`
+  hand what they read to one separate model call that has no tools, no settings and no
+  MCP servers, and only that call's few spoken sentences come back, clipped to a short
+  length. A document's text is fenced and described to that model as material and never
+  instructions. The fence's markers carry a random token made for that one call, so a
+  document cannot contain the marker that would close it, and anything in the text that
+  looks like a marker is removed, a fixed number of times, after which whatever is left
+  has every `<` rewritten so that no marker can remain. Text in a mail or a document can
+  still change what those sentences say. It has nothing to act with.
+- **A mail or a document cannot stall the service by its shape.** Their text is processed
+  inside the service, where a slow step would hold up every call in progress. Each
+  pattern run over it takes time in proportion to its length and no more, and each has a
+  test on how long hostile input takes.
+- **Titles and names reach the voice model, cut down and labelled.** `check_calendar` has
+  no model in between, so the voice model sees each event's title, place and calendar
+  name, and `find_document` shows it each file's name and owner: one line each, clipped to
+  120 characters, never an event's description. An event's place is often a meeting link,
+  and it is passed through like any other place: the result's note and the tool's
+  description both say a web address is never read out. Each result carries a note, and
+  each tool's description repeats it, that these are other people's words, to be said and
+  never acted on. With every ticked calendar read, an event may be on somebody else's
+  calendar; it then comes with that calendar's name, and the description says to say
+  whose it is.
+- **This reduces the risk and does not remove it.** The voice model on a call that has
+  given the PIN can dispatch tasks, and a model can be talked into things. A title or a
+  sentence written as an instruction is prompt injection into a call you authorized, which
+  is the same position as the coding agents' (see Out of scope). None of these tools
+  answers without the PIN, so none of this text reaches any model on a call that has not
+  given it. If you do not want it in front of the voice model at all, leave the plugin
+  off: the question is then dispatched as a task.
+- **Reading is a matter of construction, and the one tool that writes does one thing.**
+  A reading plugin is built on a client that has no method to write with
+  (`integrations/google_api.py`), whatever the sign-in allows. `add_calendar_event` can
+  create one event on your own calendar and nothing else: it sends no attendees and asks
+  Google to notify nobody, so it cannot be used to send anything to anyone, and it cannot
+  change or delete an event. It refuses a start that passed more than a quarter of an
+  hour ago, and it never repeats a request that may have reached your calendar. The one
+  request it does send again is one Google answered 401, after refreshing the sign-in: a
+  401 is a refusal before anything was created. It also sends no event id of its own
+  that would make a second send harmless, so the accepted risk is a duplicate when a
+  request that did reach Google is reported as unconfirmed and you ask again without
+  looking; the assistant is told to say the event may be there and not to add it again.
+- **Nothing the caller says is spliced into a request.** A Drive search is a quoted term
+  with its quotes and backslashes escaped, inside a query built from constants. A file id
+  is matched against a pattern before it is put in an address, so an id cannot name
+  another endpoint.
+- **Nothing from Google is logged or quoted.** A failure is logged as a status, one of a
+  short list of Google's own reason words, and the kind of thing asked for, never a
+  response body (which can quote a token back) and never which calendar or file. Events,
+  mail and documents are counted in the log, never written to it. The HTTP client's own
+  request log, which would write every address in full (a calendar's id is an email
+  address, and a search is in the address), is held to warnings at every log level.
 
 A coding agent drafts `keryx setup`'s project summaries by reading the folders you chose,
 including whatever their READMEs say. So nothing it writes is kept until you accept it, each

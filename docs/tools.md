@@ -1,7 +1,7 @@
 # The tools the voice model can call
 
 Seventeen tools are built in. They're Keryx's own machinery for a call: dispatching work,
-following it, and getting off the phone. Four more are [plugins](#plugins) that you turn on
+following it, and getting off the phone. Seven more are [plugins](#plugins) that you turn on
 if you want them, and anything else is [a tool of your own](#your-own-tools).
 
 <!-- tools:start -->
@@ -43,12 +43,16 @@ tools — because reaching that phone proves something an inbound number cannot.
 The tools only some people want are plugins: none is offered until you turn it on, and
 turning one on or off, or changing its settings, needs no restart — each call reads them
 afresh. Slack and email are the ones most people want, so `keryx setup` ticks them the
-first time through.
+first time through, and `check_calendar` and `find_document` too once Calendar or Drive is
+connected. `add_calendar_event` writes, so it is never ticked for you.
 
 | Plugin | What it does | PIN | Its secret |
 |---|---|---|---|
 | `send_to_slack` | send a written message to your Slack DM — only when you ask for one; finished tasks' reports and PIN-lockout alerts go there too | yes | `SLACK_BOT_TOKEN`, or the MCP server's |
-| `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | the read-only Gmail sign-in (`keryx auth login gmail`) and the `claude` extra |
+| `check_email` | answer a question about your email in about five seconds: a whole day (each thread once, answered ones left out), or a Gmail search, each alternative searched on its own and the most promising threads read in full | yes | your Google sign-in (`keryx auth login google`) and the `claude` extra |
+| `check_calendar` | what is on your Google Calendar in a second or two: a day, a week, your next meeting, or a search ("when is the dentist"), across every calendar you have ticked there | yes | your Google sign-in |
+| `add_calendar_event` | put one event on your own calendar and say back what it created; it invites nobody | yes | your Google sign-in |
+| `find_document` | find a file in your Google Drive by its name or its text, and answer a question about what is in it from one export and one model call | yes | your Google sign-in and the `claude` extra |
 | `check_billing` | what the month has cost and where it is heading, from the provider's billing API | no | `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` |
 | `cluster_stats` | what is free on your Slurm clusters and whether your jobs are still running | no | none: it rides the ssh login you already have open |
 
@@ -58,7 +62,7 @@ A plugin is two files in `~/.local/share/keryx/tools/`:
   to Keryx reaches your copy; and
 - **`<name>.toml`**, its settings, with a comment on every one — edit it by hand, or walk
   `keryx setup` → Plugins again. A secret is never in it: it stays in `secrets.toml`
-  (`keryx config set KEY --stdin`), or in the Gmail sign-in's own file.
+  (`keryx config set KEY --stdin`), or in the Google sign-in's own file.
 
 To turn one on: `keryx setup` → Plugins, or `keryx plugins install NAME [--set KEY=VALUE]`.
 `keryx plugins` lists them, and why one that is on is refused (not signed in, a setting
@@ -67,8 +71,43 @@ for next time. They are custom tools like your own (below), and `keryx tools` li
 too.
 
 `check_billing` and `cluster_stats` answer before the PIN: they cannot change anything and
-read nothing of yours. `send_to_slack` writes as you and `check_email` reads your mail, so
-both wait for it.
+read nothing of yours. `send_to_slack` writes as you, `check_email`, `check_calendar` and
+`find_document` read what is yours, and `add_calendar_event` changes it, so all five wait
+for it.
+
+**The calendar is two plugins, so reading can be on without writing.** Both run on the one
+Google sign-in (`keryx auth login google`, with Calendar ticked) and answer inside the call,
+with no coding agent and no model in between:
+
+```bash
+keryx plugins install check_calendar
+keryx plugins install add_calendar_event --set default_minutes=30
+```
+
+`check_calendar` reads every calendar ticked in Google Calendar's own list, in your
+calendar's time zone, and says the time on the clock `CLOCK_FORMAT` names; set
+`calendars = "primary"` in `check_calendar.toml` for your own calendar alone.
+`max_events` is how many it says at once, 100 at most. "What's my next meeting" leaves out
+what has already started, what lasts all day and what you declined.
+`add_calendar_event` writes to your own calendar only, one event at a time, timed or all
+day. It has no way to invite anyone, repeat an event, change one or delete one: those are a
+task for a coding agent, which has the whole Google toolset. It will not add an event whose
+start has passed, with a quarter of an hour's leeway so that "from now" works: "Thursday
+at nine", said on Thursday afternoon, is next Thursday, and
+the assistant says the weekday and the date back so that a wrong week is heard. A time
+with no morning or afternoon to it ("at three") is asked about, not guessed. If Google
+never confirms an event, it says so and does not try again, so a bad line cannot leave you
+with two.
+
+**`find_document` finds, and reads when you ask it something.** "Find the doc about the
+offsite" is one Drive search by name and by text, and you hear the best match and when it
+last changed. "What does my planning doc say about hiring" also exports the best match that
+can be read (a Doc or a Slides deck as text, a Sheet as its first sheet, a text file as it
+is, the first 40,000 characters) and has one model call answer from it, in a few seconds.
+A PDF, a Word file or an image is found but cannot be read on a call, and the assistant
+says so and offers to hand it to a coding agent. It needs Drive in your Google sign-in and
+the `claude` extra, like `check_email`, and its `model` and `effort` are in
+`find_document.toml`. It only reads: creating, editing and sharing files are a task.
 
 **`check_billing` needs an admin key.** The key Keryx talks to the model with can't read
 billing: OpenAI wants an Admin key from the organization's admin-keys page, and Anthropic
@@ -116,10 +155,13 @@ there and offers to send it, rather than reading a path down the phone.
 
 Small talk, task status and small factual questions the voice answers itself — `web_search`
 goes through the Responses API, because a Realtime session has no hosted search tool of its
-own. Everything else becomes a task, and a task is just "a coding agent, on this machine" —
+own. So is a quick read of your mail, your calendar or a document, and putting one new
+event on your calendar, when the plugin for it is on; without it, and for anything it does
+not do (replying, changing an event, editing a file), that is a task too. Everything else becomes a task, and a task is just "a coding agent, on this machine" —
 Claude Code or Codex ([`agents.md`](agents.md)): one kind, every tool, the repositories,
-Gmail and Calendar, the installed skills, and subagents of its own. Nothing classifies the
-work in advance.
+the Google services you connected (Gmail, Calendar, Drive, Docs, Sheets and Slides, from
+one `keryx auth login google`), the installed skills, and subagents of its own. Nothing
+classifies the work in advance.
 
 That is why the plugins are short. **The default answer to "can Keryx do X" is "ask
 Claude to do X"** — a task already has your machine, your repositories, your mailbox and

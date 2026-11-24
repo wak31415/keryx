@@ -76,9 +76,10 @@ runs its own login, which opens a browser or prints a code — theirs to finish,
 
 ## 3. The plugins they want
 
-Four voice tools are plugins, off until they are turned on: `send_to_slack` and
-`check_email` (most people want both), `check_billing` and `cluster_stats`. Ask which they
-want; do not turn one on unasked.
+Seven voice tools are plugins, off until they are turned on: `send_to_slack` and
+`check_email` (most people want both), `check_calendar`, `add_calendar_event` (it writes to
+their calendar, so it is its own yes), `find_document`, `check_billing` and
+`cluster_stats`. Ask which they want; do not turn one on unasked.
 
 ```bash
 keryx plugins --json            # each one: on or off, its files, why one is refused
@@ -89,7 +90,11 @@ keryx plugins install cluster_stats --cluster HOST=PARTITION
 
 A plugin's secret is never a `--set`: Slack's bot token and the billing admin keys are
 `keryx config set KEY --stdin` (theirs to type, through `keryx setup` if you do not have
-it), and email needs `keryx auth login gmail` (the sign-ins step of the instructions). Offer
+it), and email, the two calendar plugins and `find_document` need the Google sign-in,
+`keryx auth login google` (the sign-ins step of the instructions; the same sign-in gives the agents Calendar,
+Drive, Docs, Sheets and Slides, and the address they paste back goes in on standard input,
+never into the command). A plugin installed before its service is connected is refused with
+the reason, and loads by itself once the sign-in includes it. Offer
 `cluster_stats` only a host whose `control_master` is true — Keryx never opens a
 connection of its own — and ask them which partition its GPUs are in rather than guessing.
 Every other setting of a plugin is in the TOML file `keryx plugins` names.

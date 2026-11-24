@@ -3,7 +3,7 @@
 One Gmail pass and one model call (`integrations.gmail`), rather than a subagent reading the
 inbox for minutes. It needs the PIN, as `recall` does: the mail is not in the briefing, and
 the question steers what is read. Its settings are `check_email.toml` (`model`, `effort`);
-the sign-in is `keryx auth login gmail`, and the answer comes from the bundled `claude`
+the sign-in is `keryx auth login google`, and the answer comes from the bundled `claude`
 CLI, so a machine without either refuses the file with the reason, and `keryx tools` and
 `doctor` say which.
 """

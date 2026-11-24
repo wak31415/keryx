@@ -199,6 +199,48 @@ def test_serve_runs_the_phone_server_on_the_configured_address(settings_stub, mo
     assert "/twilio/media" in {route.path for route in config.app.routes}
 
 
+@pytest.mark.parametrize(
+    ("level", "handed"),
+    [("DEBUG", "info"), ("INFO", "info"), ("WARNING", "warning"), ("ERROR", "error")],
+)
+def test_serve_never_runs_the_phone_server_below_info(settings_stub, monkeypatch, level, handed):
+    """`LOG_LEVEL=DEBUG` is for Keryx's own lines. uvicorn's are every frame of the Twilio
+    media socket, and a frame is a keypad digit of the PIN or the caller's number."""
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    monkeypatch.setattr(settings_stub, "log_level", level)
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 0, result.output
+    assert built["config"].log_level == handed
+    # What uvicorn's websocket protocol asks before it logs a frame or a header.
+    assert not logging.getLogger("uvicorn.error").isEnabledFor(logging.DEBUG)
+    assert logging.getLogger("uvicorn.error").isEnabledFor(logging.ERROR)
+
+
+def test_serve_keeps_a_report_links_token_out_of_the_access_log(settings_stub, monkeypatch):
+    """uvicorn's access line is the request's whole address, and `/reports/<id>?t=<token>`
+    is a link whose query is what opens it."""
+    built: dict = {}
+    stub_uvicorn(monkeypatch, built)
+    lines: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            lines.append(record.getMessage())
+
+    result = runner.invoke(app, ["serve"])
+
+    # uvicorn's own handler writes to the stream this run has already closed.
+    access = logging.getLogger("uvicorn.access")
+    monkeypatch.setattr(access, "handlers", [Capture()])
+    access.info('%s - "%s %s HTTP/%s" %d', "203.0.113.9:1", "GET", "/reports/7?t=tok", "1.1", 200)
+
+    assert result.exit_code == 0, result.output
+    assert lines == ['203.0.113.9:1 - "GET /reports/7 HTTP/1.1" 200']
+
+
 def test_serve_takes_the_address_from_the_command_line(settings_stub, monkeypatch):
     built: dict = {}
     stub_uvicorn(monkeypatch, built)
@@ -1229,15 +1271,42 @@ def test_tools_refuses_a_built_in_name_this_machine_does_not_offer(settings_stub
 # --- plugins -------------------------------------------------------------------------
 
 
-def test_plugins_lists_all_four_off_on_a_fresh_machine(settings_stub):
+def test_plugins_lists_every_one_off_on_a_fresh_machine(settings_stub):
     result = runner.invoke(app, ["plugins", "--json"])
 
     assert result.exit_code == 0, result.output
     found = json.loads(result.output)["plugins"]
     assert [(one["name"], one["on"]) for one in found] == [
         ("send_to_slack", False), ("check_email", False),
-        ("check_billing", False), ("cluster_stats", False),
+        ("check_calendar", False), ("add_calendar_event", False),
+        ("find_document", False), ("check_billing", False), ("cluster_stats", False),
     ]
+
+
+def test_plugins_lists_them_in_columns_whatever_the_longest_name(settings_stub):
+    lines = runner.invoke(app, ["plugins"]).output.splitlines()[1:]
+
+    assert len(lines) == len(plugins.PLUGINS)
+    assert {line.index(" off ") for line in lines} == {len("add_calendar_event") + 1}
+
+
+def test_a_google_plugin_names_the_sign_in_when_given_a_setting_it_lacks(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "check_calendar", "--set", "token=x"])
+
+    assert result.exit_code == 1
+    assert "check_calendar has no setting 'token'" in result.output
+    assert "its sign-in is `keryx auth login google`" in result.output
+    assert not plugins.tool_path(settings_stub, "check_calendar").exists()
+
+
+def test_a_google_plugin_installed_without_a_sign_in_says_it_is_refused(settings_stub):
+    result = runner.invoke(app, ["plugins", "install", "check_calendar",
+                                 "--set", "calendars=primary"])
+
+    assert result.exit_code == 1
+    assert ("check_calendar is installed but refused: not signed in to Google: "
+            "`keryx auth login google`") in result.output
+    assert plugins.read_config(settings_stub, "check_calendar")["calendars"] == "primary"
 
 
 def test_plugins_install_with_values_turns_one_on(settings_stub):
@@ -1248,7 +1317,7 @@ def test_plugins_install_with_values_turns_one_on(settings_stub):
     assert "check_billing is on, from the next call" in result.output
     assert plugins.read_config(settings_stub, "check_billing")["monthly_budget"] == 40
     listed = runner.invoke(app, ["plugins"]).output
-    assert "check_billing    on" in listed and "monthly_budget=40" in listed
+    assert re.search(r"^check_billing +on ", listed, re.M) and "monthly_budget=40" in listed
 
 
 def test_plugins_install_never_takes_a_secret(settings_stub):

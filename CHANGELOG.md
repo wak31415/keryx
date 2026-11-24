@@ -7,6 +7,94 @@ the version starts with 0.
 
 ## [Unreleased]
 
+### Added
+
+- **One Google sign-in for everything: `keryx auth login google`.** It connects Gmail,
+  Calendar, Drive, Docs, Sheets and Slides at once, for the coding agents and for email
+  answers on a call, and `--services gmail,calendar` chooses fewer. With a browser on the
+  same machine it is one command and no pasting: Keryx opens Google's screen and takes the
+  answer itself. With `--headless`, or over ssh, it prints a link for any device and asks
+  for the address the browser lands on. What you leave unticked on Google's screen is
+  simply not connected, and the command says which services are.
+- **`keryx auth logout google`** revokes Keryx's access at Google and deletes the sign-in
+  from this machine.
+- **Your calendar on the call: the `check_calendar` plugin.** "What's on tomorrow", "what's
+  my next meeting", "when is the dentist" are answered in a second or two from Google
+  Calendar itself, with no task dispatched. It reads every calendar you have ticked in
+  Google Calendar, in your calendar's time zone, and needs the PIN.
+  `keryx plugins install check_calendar`, or `keryx setup`, which ticks it the first time
+  through once Calendar is connected.
+- **`add_calendar_event`, a plugin of its own**, so reading your calendar can be on without
+  anything on the phone being able to write to it. One event on your own calendar, timed or
+  all day, with nobody invited; the assistant says back what it created. Anything more
+  (guests, repeats, changes) is still a task for a coding agent.
+- **Your documents on the call: the `find_document` plugin.** "Find the doc about the
+  offsite" searches Google Drive by name and by text. "What does my planning doc say about
+  hiring" also reads the best match and answers from it in a few seconds, with one model
+  call, the way `check_email` does for mail. Docs, Sheets, Slides and text files can be
+  read; a PDF is found and said to need a task. It needs the PIN, Drive in your Google
+  sign-in and the `claude` extra.
+- Agents get Drive, Docs, Sheets and Slides as well as Gmail and Calendar, and both Claude
+  and Codex get them the same way.
+- When a release ships Keryx's own Google app, signing in needs no Google Cloud project.
+  Until then you make a client of your own once, and the guide in `keryx setup` now starts
+  with Google's shorter Personal mode.
+
+### Changed
+
+- `keryx auth login gmail` and `keryx auth login google-workspace` run the one Google
+  sign-in. Both names are accepted for one more release, and `keryx auth status --json`
+  still lists them beside the new `google`.
+- An install that already signed in keeps working and needs nothing done. Signing in again
+  with `keryx auth login google` replaces the two older sign-ins with one.
+- If you made your own Google Cloud client with the earlier guide, its project has only the
+  Gmail and Calendar APIs enabled. After signing in again, enable Drive, Docs, Sheets and
+  Slides there too (the links are in the guide `keryx setup` shows, and the sign-in names
+  it), or those tools answer "API not enabled".
+- The assistant answers a quick question about your mail, your calendar or a document
+  itself when the plugin that reads it is on, and no longer hands it to a coding agent
+  first. Replying, changing an event and editing a file are still tasks.
+- A sign-in turns the agents' Google tools on the first time only. If you have set
+  `GOOGLE_WORKSPACE_MCP` to false, signing in again leaves it off.
+- A coding agent finishing a Google sign-in gives the address on standard input
+  (`--callback-url -`), not in the command, where its one-time code could be read.
+- Signing in again adds to what is connected. `keryx auth login google --services
+  calendar` keeps Gmail and the rest and adds Calendar, and says so.
+- Signing in as a different Google account from the one you signed in as before is
+  refused unless you say you mean it: `keryx setup` asks, and the command line takes
+  `--account ADDRESS`.
+- The agents' Google tools are attached only once you have signed in, and they can no
+  longer open a sign-in of their own in the middle of a task.
+- Turning `check_email` off no longer offers to delete the Google sign-in, because the
+  agents use it too.
+- `keryx doctor` has one **Google** check in place of "Google for agents": who is signed
+  in, with whose client, and which services are connected.
+
+### Fixed
+
+- `keryx.log` no longer records the address of every Google request. The HTTP client
+  logged each one in full at the default log level, which for `check_email` meant message
+  and thread ids and the search that was run. Requests are still counted in Keryx's own
+  lines.
+- With `LOG_LEVEL=DEBUG`, `keryx.log` recorded the OpenAI API key each time a call opened,
+  and parts of every message to and from the voice model, which can include a PIN. The
+  websocket library wrote both, and it is now held to warnings at every log level. If you
+  have run at `DEBUG`, delete those logs and replace the key.
+- With `LOG_LEVEL=DEBUG`, the service's own output (`keryx.err.log` beside `keryx.log`, or
+  the terminal) recorded each keypad digit as it was pressed, which is the PIN, and the
+  number of whoever called. The phone server is no longer run below `INFO`, whatever
+  `LOG_LEVEL` says. If you have run at `DEBUG`, delete that log too; `keryx setup` sets a
+  new PIN.
+- The request log no longer records the token of a report link. Each time a
+  `/reports/…` link was opened, its whole address went into `keryx.out.log`, token
+  included, at the default log level. The line is still written, without what follows
+  the `?`.
+- An email written for the purpose could stall the whole service while `check_email` read
+  its body: a body of nothing but `<`, or of script tags that never close, took time that
+  grew with the square of its length. Reading a body now takes time in proportion to it.
+- `keryx auth status` reported Gmail as missing however it was signed in.
+- `--headless` was ignored by both Google sign-ins.
+
 ## [0.2.0] - 2026-11-09
 
 Keryx installs with one line and no clone, and every command starts with `keryx`. An

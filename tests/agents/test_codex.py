@@ -23,6 +23,7 @@ from openai_codex import InternalRpcError, InvalidRequestError
 from openai_codex.generated.notification_registry import NOTIFICATION_MODELS
 from openai_codex.models import Notification
 
+from agents.fakes import sign_in_to_google
 from keryx import plugins
 from keryx.agents import codex as codex_module
 from keryx.agents.base import AgentOpenError, SteerUnavailable, TokenUsage
@@ -461,19 +462,29 @@ async def test_warnings_that_reach_no_turn_are_logged_redacted(settings, caplog)
 # ---------------------------------------------------------------------------------- MCP
 
 
-async def test_google_is_handed_over_with_its_secrets_by_name(settings):
-    settings.google_workspace_mcp = True
-    settings.google_oauth_client_id = "client-id"
-    settings.google_oauth_client_secret = "client-secret-value"
+async def test_google_is_handed_over_from_the_sign_in_with_no_credential_in_sight(settings):
+    token = sign_in_to_google(settings)
     codex = FakeCodex()
 
     await open_session(settings, codex)
 
     google = codex.started[0]["config"]["mcp_servers"]["google"]
-    assert google["command"] == "uvx"
-    assert "GOOGLE_OAUTH_CLIENT_SECRET" in google["env_vars"]
-    assert codex.env["GOOGLE_OAUTH_CLIENT_SECRET"] == "client-secret-value"
-    assert "client-secret-value" not in json.dumps(codex.started[0])
+    assert google["command"] == "env" and "workspace-mcp==2.6.0" in google["args"]
+    assert google["args"][:2] == ["-u", "GOOGLE_OAUTH_CLIENT_ID"]
+    assert google["env_vars"] == ["USER_GOOGLE_EMAIL", "WORKSPACE_MCP_CREDENTIALS_DIR"]
+    assert codex.env["WORKSPACE_MCP_CREDENTIALS_DIR"] == str(settings.data_dir / "google")
+    # The credential is in a file the server reads: not the config, and not the environment.
+    handed = json.dumps(codex.started[0]) + json.dumps(codex.env)
+    assert token.refresh_token not in handed and token.client_secret not in handed
+
+
+async def test_codex_gets_no_google_server_before_anyone_signs_in(settings):
+    settings.google_workspace_mcp = True
+    codex = FakeCodex()
+
+    await open_session(settings, codex)
+
+    assert not codex.started[0].get("config")
 
 
 async def test_the_slack_server_is_translated_from_the_claude_config(settings, monkeypatch):
