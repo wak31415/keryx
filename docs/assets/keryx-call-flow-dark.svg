@@ -69,11 +69,11 @@
 <text class="msg-detail" x="400" y="604" text-anchor="middle">microscopy images · call with questions and results</text>
 <line class="message" x1="680" y1="685" x2="954" y2="685"/>
 <polygon class="arrowhead" points="965,685 953,678 953,692"/>
-<text class="msg-label" x="822" y="645" text-anchor="middle">Dispatch task 12</text>
+<text class="msg-label" x="822" y="645" text-anchor="middle">Dispatch the task</text>
 <text class="msg-detail" x="822" y="666" text-anchor="middle">coding agent works on your machine</text>
 <line class="response" x1="680" y1="747" x2="131" y2="747"/>
 <polygon class="arrowhead" points="120,747 132,740 132,754"/>
-<text class="msg-label" x="400" y="707" text-anchor="middle">Task 12 started</text>
+<text class="msg-label" x="400" y="707" text-anchor="middle">Work started</text>
 <line class="message" x1="120" y1="809" x2="384" y2="809"/>
 <polygon class="arrowhead" points="395,809 383,802 383,816"/>
 <text class="msg-label" x="257" y="769" text-anchor="middle">Hang up</text>
@@ -96,7 +96,7 @@
 <text class="msg-label" x="400" y="1066" text-anchor="middle">Use the patient split</text>
 <line class="message" x1="680" y1="1168" x2="954" y2="1168"/>
 <polygon class="arrowhead" points="965,1168 953,1161 953,1175"/>
-<text class="msg-label" x="822" y="1128" text-anchor="middle">Send follow-up to task 12</text>
+<text class="msg-label" x="822" y="1128" text-anchor="middle">Send the follow-up</text>
 <text class="msg-detail" x="822" y="1149" text-anchor="middle">same coding-agent session</text>
 <line class="message" x1="120" y1="1230" x2="384" y2="1230"/>
 <polygon class="arrowhead" points="395,1230 383,1223 383,1237"/>

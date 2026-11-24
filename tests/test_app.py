@@ -9,7 +9,7 @@ from keryx.continuity.briefing import Briefer
 from keryx.continuity.memory import MemoryWriter, memory_path
 from keryx.continuity.transcripts import transcript_path
 from keryx.events import PinLockedOut, SessionEnded, TaskCompleted
-from keryx.notify.notifier import Notifier
+from keryx.notify.notifier import DONE_NOTE, Notifier
 from keryx.notify.pin_alert import PinLockoutAlerter
 from keryx.notify.twilio_out import TwilioOut
 from keryx.pin_guard import STATE_NAME, PinGuard
@@ -125,7 +125,7 @@ async def test_a_finished_task_is_spoken_into_every_live_session(state):
 
     await state.bus.publish(TaskCompleted(task.id, "all done"))
 
-    assert session.announced == [f"Task {task.id} finished: all done"]
+    assert session.announced == [DONE_NOTE.format(request="dig", detail="all done")]
     assert (await state.store.get(task.id)).announced is True
 
 

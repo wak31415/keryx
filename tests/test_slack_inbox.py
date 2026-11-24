@@ -263,6 +263,14 @@ def test_no_sentence_the_app_posts_in_its_own_conversation_calls_itself_keryx():
               slack_inbox.TEXT_ONLY, slack_inbox.NOTHING_ASKED]
 
     assert not any("Keryx" in sentence for sentence in posted)
+    # Nor a task by its number, which is internal: the thread says which task it is.
+    assert not any("{" in sentence.replace("{cap}", "") for sentence in posted)
+    assert slack_inbox.CANCELLED == (
+        "The task in this thread was cancelled, so there is nothing here to resume.")
+    assert slack_inbox.STARTING == (
+        "The task in this thread is only just starting, so send that again in a moment.")
+    assert slack_inbox.NOT_PASSED_ON == (
+        "That could not be confirmed to have reached the task in this thread.")
     assert slack_inbox.NOTHING_ASKED == (
         "There was nothing to do in that: say what you want in words of your own.")
 
@@ -880,7 +888,7 @@ async def test_a_reply_under_a_cancelled_task_has_nothing_to_resume(make_world, 
 
     await world.inbox.handle("default", reply())
 
-    assert world.slack.posts == [("xoxb-first", DM, TS, CANCELLED.format(task_id=task.id))]
+    assert world.slack.posts == [("xoxb-first", DM, TS, CANCELLED)]
     assert len(world.runner.opened) <= 1
 
 
@@ -928,7 +936,7 @@ async def test_a_follow_up_that_was_not_taken_is_said_and_not_acknowledged(
     monkeypatch.setattr(world.manager, "followup", refuse)
     await world.inbox.handle("default", reply())
 
-    assert world.slack.posts == [("xoxb-first", DM, TS, sentence.format(task_id=task.id))]
+    assert world.slack.posts == [("xoxb-first", DM, TS, sentence)]
     assert world.slack.reactions == [("xoxb-first", DM, TS)]
     # Not recorded as heard, nor counted: the same reply sent again is tried again.
     stored = await world.store.get(task.id)
@@ -947,7 +955,7 @@ async def test_a_task_cancelled_that_instant_is_not_said_to_be_starting(world, m
     monkeypatch.setattr(world.manager, "followup", cancelled_meanwhile)
     await world.inbox.handle("default", reply())
 
-    assert world.slack.posts == [("xoxb-first", DM, TS, CANCELLED.format(task_id=task.id))]
+    assert world.slack.posts == [("xoxb-first", DM, TS, CANCELLED)]
 
 
 # --- asked in a shared conversation, answered in that thread --------------------------------

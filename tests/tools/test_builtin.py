@@ -7,6 +7,7 @@ real `VoiceSession` PIN machinery has its own module (`tests/test_session_pin.py
 """
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 
 import pytest
@@ -22,13 +23,14 @@ from keryx.tasks.agent_runner import FakeAgentRunner, RunResult
 from keryx.tasks.manager import TaskManager
 from keryx.tasks.models import TaskStatus
 from keryx.tasks.store import TaskStore
-from keryx.tools import ToolContext, ToolRegistry
+from keryx.tools import ToolContext, ToolRegistry, builtin_common
 from keryx.tools.builtin import register_builtin_tools
 from keryx.tools.builtin_common import (
     CALLBACK_SET_MESSAGE,
     CONFIG_SET_MESSAGE,
     CONTINUE_REPORTING_MESSAGE,
     KEYPRESS_REQUIRED_MESSAGE,
+    NO_SUCH_TASK_MESSAGE,
     PIN_ENROL_MESSAGE,
     PIN_INCOMPLETE_MESSAGE,
     PIN_INVALID_MESSAGE,
@@ -960,7 +962,11 @@ async def test_list_tasks_rejects_a_status_it_does_not_know(tools):
     ],
 )
 async def test_a_task_id_that_names_nothing_is_an_error(tools, tool, extra):
-    assert await tools.call(tool, {"task_id": 99, **extra}) == {"error": "no task 99"}
+    result = await tools.call(tool, {"task_id": 99, **extra})
+
+    # A sentence the model may say, so it names no number (which is internal).
+    assert result == {"error": NO_SUCH_TASK_MESSAGE}
+    assert "99" not in result["error"] and "list_tasks" in result["error"]
 
 
 async def test_a_task_id_that_is_not_a_number_is_an_error(tools):
@@ -983,7 +989,7 @@ async def test_get_task_status_describes_one_task(tools):
     assert result["description"] == "how tall is Everest"
     assert result["summary"] == "I finished the task."
     assert result["error"] is None
-    assert result["line"].startswith("task 1 (done)")
+    assert result["line"] == "done: how tall is Everest"
 
 
 async def test_get_task_result_carries_the_report(tools):
@@ -1285,6 +1291,58 @@ async def test_a_running_task_promises_nothing_about_what_the_answer_will_say(ma
 
     assert result["message"] == STILL_RUNNING_MESSAGE
     assert "you do not know yet" in STILL_RUNNING_MESSAGE
+
+
+# --- a task's number is internal (the owner's ruling of 2026-11-23) -------------------------
+
+
+def _sentences(text: str) -> list[str]:
+    return re.split(r"(?<=[.!?:;])\s+", " ".join(text.split()))
+
+
+def test_no_wording_the_model_is_handed_tells_it_to_say_a_task_number(make_tools):
+    """Calls led with the number after every dispatch because the result told them to.
+
+    Wherever a tool's description, a parameter's, or a message names the number, the
+    same sentence forbids saying it.
+    """
+    tools = make_tools(searcher=FakeSearcher())
+    wording = [
+        value for name, value in vars(builtin_common).items()
+        if name.endswith("_MESSAGE") and isinstance(value, str)
+    ]
+    for schema in tools.registry.schemas():
+        wording.append(schema["description"])
+        wording += [
+            spec.get("description", "") for spec in schema["parameters"]["properties"].values()
+        ]
+
+    named = [
+        sentence for text in wording for sentence in _sentences(text)
+        if re.search(r"task (number|id)", sentence, re.IGNORECASE)
+    ]
+    assert named  # the rule is stated, not merely absent
+    for sentence in named:
+        assert re.search(r"\b(never|not)\b", sentence, re.IGNORECASE), sentence
+
+
+def test_a_task_id_is_described_as_a_handle_for_tools_and_never_something_to_say(tools):
+    schemas = {schema["name"]: schema for schema in tools.registry.schemas()}
+
+    for name in ("get_task_status", "get_task_result", "send_followup", "cancel_task",
+                 "request_callback"):
+        described = schemas[name]["parameters"]["properties"]["task_id"]["description"]
+        assert "never say it out loud" in described, name
+    ids = schemas["mark_reported"]["parameters"]["properties"]["task_ids"]["description"]
+    assert "never said out loud" in ids
+    assert "task_id" in schemas["dispatch_task"]["description"]
+    assert "task number" not in schemas["dispatch_task"]["description"]
+
+
+def test_a_running_task_is_acknowledged_without_its_number():
+    assert "Never say the task number" in STILL_RUNNING_MESSAGE
+    assert "that it is under way" in STILL_RUNNING_MESSAGE
+    assert "Never the task number" in CALLBACK_SET_MESSAGE
 
 
 # --- submit_pin / end_session ---------------------------------------------

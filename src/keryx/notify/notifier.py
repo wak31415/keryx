@@ -11,6 +11,8 @@ Four stages, in order, on every `TaskCompleted` / `TaskFailed`:
 3. **Post** the subagent's report to their Slack DM, while the `slack_report` plugin is
    on — whatever else reached them, because a call carries a sentence and they want the
    rest in writing. The call-back then says it is there, and follow-ups are answered from it.
+   A report that starts a thread is headed by what was asked, cut to a line; a reply in
+   the task's own thread is headed by one word, because the thread says which task it is.
    Where the first report landed becomes the task's thread (`Task.slack_thread_ts`), and
    every later report of that task is a reply there, so a reply the owner types under it
    finds the task (`keryx.slack_inbox`). A task asked for on Slack already has its
@@ -32,12 +34,18 @@ restart's own confirmation, which then carries both — what the work came to, a
 is actually running (`keryx.restart`). The announcement and the text still go out first:
 they cost nothing and they survive a restart that does not come back.
 
+**A task's number is never in any of it** (the owner's ruling of 2026-11-23): it is an
+internal handle. What the owner reads names a task by what they asked for
+(`request_label`). What the voice model is handed does the same, and carries the id only
+as an argument for its tools, with the rule beside it that it is never said.
+
 Every stage is independently guarded: a Twilio outage during the text must not cost the
 call-back, and nothing here may ever raise into the event bus.
 """
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -71,14 +79,39 @@ log = logging.getLogger("keryx.notify.notifier")
 
 SMS_BODY_LIMIT = 1200  # characters of summary; the report link is appended after it
 
-DONE_TEXT = "Task {task_id} finished: {detail}"
-FAILED_TEXT = "Task {task_id} failed: {detail}"
+#: How much of a request names its task where the owner reads about it: one short line.
+MAX_LABEL_CHARS = 80
+#: What a request may not carry into that line: a mention or a link as Slack writes one,
+#: and the emphasis that would close the bold it sits in.
+_LABEL_MARKUP = re.compile(r"[<>*`]")
+UNNAMED_REQUEST = "what you asked for"
+
+#: The line that names a finished task to the owner: the head of a report that starts a
+#: thread on Slack, the notification of any report, and the first line of a text.
+DONE_HEADER = "Finished: {request}"
+FAILED_HEADER = "Failed: {request}"
+#: The head of a report that is a reply in its task's own thread, which says which task.
+DONE_IN_THREAD = "Finished"
+FAILED_IN_THREAD = "Failed"
+#: The text message.
+DONE_TEXT = DONE_HEADER + "\n{detail}"
+FAILED_TEXT = FAILED_HEADER + "\n{detail}"
+#: The same news as a note to the voice model on a live call. No id: the session adds it
+#: as a tool argument where the call may stamp the task (`VoiceSession.announce`).
+DONE_NOTE = (
+    "Work they asked for earlier has finished. What they asked for: {request}. "
+    "Result: {detail}"
+)
+FAILED_NOTE = (
+    "Work they asked for earlier has failed. What they asked for: {request}. "
+    "Error: {detail}"
+)
 #: The call-back opens a fresh session — a phone call cannot resume the one that asked for
 #: it — so the context has to carry what they asked for as well as what came of it, or they
 #: answer the phone to an answer with no question attached.
 DONE_CONTEXT = (
-    "You are calling the user back about task {task_id}, which they asked you for earlier "
-    "on the phone and which has now finished. What they asked for: {request}. "
+    "You are calling the user back about work they asked you for earlier "
+    "on the phone, which has now finished. What they asked for: {request}. "
     "Result: {detail}.{history}{report} In your first turn, greet them, say in a sentence or two "
     "what this is about and what came of it, then ask if they need anything else — do not stop "
     "after the greeting to wait for them: the result is why you rang. Say it once: no second "
@@ -86,8 +119,8 @@ DONE_CONTEXT = (
     "may have to give the PIN again before you can start more work."
 )
 FAILED_CONTEXT = (
-    "You are calling the user back about task {task_id}, which they asked you for earlier "
-    "on the phone and which has failed. What they asked for: {request}. "
+    "You are calling the user back about work they asked you for earlier "
+    "on the phone, which has failed. What they asked for: {request}. "
     "Error: {detail}.{history}{report} In your first turn, greet them, say in a sentence or two "
     "what this is about and what went wrong, then ask if they need anything else — do not stop "
     "after the greeting to wait for them: the failure is why you rang. Say it once: no second "
@@ -95,21 +128,35 @@ FAILED_CONTEXT = (
     "they may have to give the PIN again before you can start more work."
 )
 #: Where the details are, so "where is the report?" has an answer and a follow-up is not
-#: dispatched as new work.
+#: dispatched as new work. The one place the context carries the id, as a tool argument.
 REPORT_PREAMBLE = (
-    " For any question about it, call get_task_result for task {task_id} and answer from its "
-    "report; never dispatch new work to find out what this task already found."
+    " For any question about it, call get_task_result with task_id {task_id} and answer "
+    "from its report; never dispatch new work to find out what this task already found. "
+    "That id is for your tool calls only: never say a task number out loud, and call the "
+    "work by what they asked for."
 )
 #: Added to it once the report has been posted, for them to hear where it went.
 SLACK_PREAMBLE = " Its whole report is on their Slack already: say so in a few words."
 #: The note the earlier session left for this call, if it left one.
 NOTE_PREAMBLE = " Where you left off: {note}."
 #: Why the restart a finished task asks for is happening, read back on the confirmation.
-RESTART_REASON = "to load what task {task_id} changed"
+RESTART_REASON = "to load what a finished task changed"
 #: The `request()` outcomes that mean a restart really is coming, and that its confirmation
 #: is therefore going to ring them. Anything else (`unsupported`, `failed`) is not a
 #: call-back, so the ordinary one still has to go out.
 RESTART_ARMED = frozenset({"restarting", "deferred", "already_pending"})
+
+
+def request_label(description: str) -> str:
+    """What a task is called where the owner reads about it: what they asked, on one line.
+
+    Never its number, which is internal. Cut to `MAX_LABEL_CHARS`, and without the few
+    characters that would make part of a request a mention, a link or emphasis there.
+    """
+    line = " ".join(_LABEL_MARKUP.sub("", description).split())
+    if len(line) > MAX_LABEL_CHARS:
+        line = line[: MAX_LABEL_CHARS - 1].rstrip() + "…"
+    return line or UNNAMED_REQUEST
 
 
 class Notifier:
@@ -195,11 +242,13 @@ class Notifier:
             log.debug("task %s is internal; nothing to notify about", task.id)
             return
 
-        text = (FAILED_TEXT if failed else DONE_TEXT).format(
-            task_id=task.id, detail=detail
+        label = request_label(task.description)
+        note = (FAILED_NOTE if failed else DONE_NOTE).format(
+            request=no_trailing_stop(label), detail=detail
         )
-        announced = await self._announce(task, text)
+        announced = await self._announce(task, note)
         delivered = announced.delivered
+        text = (FAILED_TEXT if failed else DONE_TEXT).format(request=label, detail=detail)
         await self._send_sms(task, text, delivered=delivered)
         posted = await self._post_report(task, detail, failed=failed)
         if not failed and await self._arm_restart(task):
@@ -292,10 +341,17 @@ class Notifier:
         """Post the subagent's report to Slack under a line naming the task; True once there.
 
         Not skipped when the result was delivered by voice: a call carries a sentence of it.
-        Only the report goes: not the request above it, which they know and which can be an
-        instruction to Keryx, and not the spoken summary, which is the report again for the
-        ear — unless there is no report to read, when the summary is all there is. A failure's
-        line carries its error, since what a failed run last wrote is rarely the reason.
+        Only the report goes under that line: not the whole request, which they know and
+        which can be an instruction to Keryx, and not the spoken summary, which is the
+        report again for the ear — unless there is no report to read, when the summary is
+        all there is. A failure leads with its error, since what a failed run last wrote is
+        rarely the reason.
+
+        The line above it names the task by what was asked, never by its number: a report
+        that starts a thread is headed by the request cut to one line (`request_label`),
+        which is what tells two tasks apart in the owner's messages. A reply in the task's
+        own thread is headed by one word, because the thread already says which task it
+        is. The notification carries the named line either way: it is read out of place.
         """
         try:
             route = self._reports(task) if self._reports is not None else None
@@ -310,13 +366,17 @@ class Notifier:
                     report = written_report(text.removeprefix(report_header(task)))
                 except OSError:
                     log.warning("could not read the report of task %s for Slack", task.id)
-            if failed:
-                header, body = FAILED_TEXT.format(task_id=task.id, detail=detail), report
-            else:
-                header, body = f"Task {task.id} finished", report or detail
-            text = f"**{header}**\n\n{body}".strip()
+            named = (FAILED_HEADER if failed else DONE_HEADER).format(
+                request=request_label(task.description)
+            )
+            body = "\n\n".join(filter(None, (detail, report))) if failed else report or detail
+            alone = f"**{named}**\n\n{body}".strip()
+            text = alone
+            if route.thread_ts is not None:
+                header = FAILED_IN_THREAD if failed else DONE_IN_THREAD
+                text = f"**{header}**\n\n{body}".strip()
             posted = await route.poster.post(
-                text, fallback=header, thread_ts=route.thread_ts, broadcast=route.broadcast
+                text, fallback=named, thread_ts=route.thread_ts, broadcast=route.broadcast
             )
             moved = False
             if posted.gone and route.thread_ts is not None and route.usual is not None:
@@ -325,7 +385,7 @@ class Notifier:
                 # that is where the task lives from now on. Anything Slack may get over
                 # (a timeout, a rate limit) leaves the thread where it is: this report is
                 # then not on Slack, and is still in the task for a call to read out.
-                posted = await route.usual.post(text, fallback=header)
+                posted = await route.usual.post(alone, fallback=named)
                 moved = True
             # A long report whose first piece landed has started a thread, whatever became
             # of the rest: that is still where the task lives.
@@ -359,7 +419,7 @@ class Notifier:
             return False
         try:
             answer = await self._restart.request(
-                reason=RESTART_REASON.format(task_id=task.id),
+                reason=RESTART_REASON,
                 number=task.callback_number or self._sms_recipient(task),
                 origin_channel=task.origin_channel,
                 origin_session_id=task.origin_session_id,
@@ -457,7 +517,6 @@ class Notifier:
             if len(request) > MAX_REQUEST_CHARS:
                 request = request[: MAX_REQUEST_CHARS - 1].rstrip() + "…"
             context = (FAILED_CONTEXT if failed else DONE_CONTEXT).format(
-                task_id=task.id,
                 request=request,
                 detail=no_trailing_stop(detail),
                 history=self._previous_call(task),

@@ -11,7 +11,7 @@ job, not theirs.
 
 - Project: {project}
 - What they asked for: {description}
-- Task number: {task_id}
+- Task number: {task_id} (internal: for the commit trailer below, never for them)
 
 ## How to work
 
@@ -80,6 +80,10 @@ the way you would say it. Plain spoken sentences, no markdown, no bullets, no he
 no code, no URLs, no file paths, no hashes or ids spelled out character by character.
 Say what happened and what it means for them, not how you did it. If something failed,
 say so in the first sentence.
+
+The task number is internal. It goes in the commit trailer and nowhere they read or hear:
+never in your SPOKEN_SUMMARY, your report or anything you send them. They know this work
+by what they asked for, so call it that.
 
 Example endings:
 

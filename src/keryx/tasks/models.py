@@ -245,11 +245,15 @@ class Task:
         )
 
     def short_status_line(self) -> str:
-        """A speakable one-liner, e.g. 'task 3 (running): add README to ...'."""
+        """A speakable one-liner, e.g. 'running: add README to ...'.
+
+        Without the task's number: that is internal, and nothing written to be spoken
+        carries it.
+        """
         description = self.description
         if len(description) > 80:
             description = description[:80] + "…"
-        return f"task {self.id} ({self.status}): {description}"
+        return f"{self.status}: {description}"
 
 
 #: How many acted-on Slack messages a task remembers (`Task.slack_seen`).

@@ -35,7 +35,7 @@ CALLER = "+15550001111"
 
 
 MEMORY = "They are waiting on the letter from the lawyer."
-DIGEST = "- task 41 (finished) — they asked for: their bank balance\n  Result: 1,234 pounds"
+DIGEST = "- They asked for: their bank balance (finished; task_id 41)\n  Result: 1,234 pounds"
 
 
 class FakeBriefer:
@@ -456,8 +456,8 @@ async def test_news_is_announced_into_a_call_before_the_pin(make_session, phone,
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
-        assert await session.announce("Task 41 finished: 1,234 pounds", needs=NONE) is True
-        assert "Task 41 finished" in provider.injected[-1][0]
+        assert await session.announce("The check finished: 1,234 pounds", needs=NONE) is True
+        assert "The check finished" in provider.injected[-1][0]
 
 
 async def test_news_before_the_pin_is_not_asked_to_be_stamped(make_session, phone, provider):
@@ -468,7 +468,7 @@ async def test_news_before_the_pin_is_not_asked_to_be_stamped(make_session, phon
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
-        assert await session.announce("Task 41 finished.", needs=NONE, task_id=41) is True
+        assert await session.announce("The check finished.", needs=NONE, task_id=41) is True
         assert "mark_reported" not in provider.injected[-1][0]
 
 
@@ -479,7 +479,7 @@ async def test_a_call_keryx_placed_is_asked_to_stamp_news(make_session, phone, p
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
-        assert await session.announce("Task 41 finished.", needs=NONE, task_id=41) is True
+        assert await session.announce("The check finished.", needs=NONE, task_id=41) is True
         assert "mark_reported with task_ids [41]" in provider.injected[-1][0]
 
 
@@ -492,12 +492,13 @@ async def test_a_result_heard_before_the_pin_is_not_news_after_it(make_session, 
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
-        assert await session.announce("Task 41 finished.", needs=NONE, task_id=41) is True
+        assert await session.announce("The check finished.", needs=NONE, task_id=41) is True
         briefer.briefing = Briefing(pending=DIGEST, pending_count=1, task_ids=(41,))
         await session.submit_pin(PIN)
 
     notes = [value for kind, value in provider.order if kind == "message"][2:]
-    assert notes == [(HEARD_BEFORE_PIN_MESSAGE.format(tasks="task 41", ids="41"), False)]
+    assert notes == [(HEARD_BEFORE_PIN_MESSAGE.format(ids="41"), False)]
+    assert "task 41" not in notes[0][0]  # the id is a tool argument, not a name for it
     assert "mark_reported with task_ids [41]" in notes[0][0]
 
 
@@ -508,14 +509,14 @@ async def test_the_pin_still_nudges_with_what_the_call_has_not_heard(make_sessio
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
-        await session.announce("Task 41 finished.", needs=NONE, task_id=41)
-        await session.announce("Task 43 finished.", needs=NONE, task_id=43)
+        await session.announce("The check finished.", needs=NONE, task_id=41)
+        await session.announce("The sweep finished.", needs=NONE, task_id=43)
         briefer.briefing = Briefing(pending=DIGEST, pending_count=3, task_ids=(41, 42, 43))
         await session.submit_pin(PIN)
 
     nudge, heard = (value[0] for kind, value in provider.order[3:] if kind == "message")
     assert nudge.startswith("[system] 1 task finished")
-    assert "task_ids [41, 43]" in heard and "tasks 41, 43" in heard
+    assert "task_ids [41, 43]" in heard and "tasks 41" not in heard
 
 
 async def test_the_pin_asks_for_the_stamp_beside_a_digest_already_given(make_session, phone):
@@ -526,12 +527,12 @@ async def test_the_pin_asks_for_the_stamp_beside_a_digest_already_given(make_ses
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
-        await session.announce("Task 41 finished.", needs=NONE, task_id=41)
+        await session.announce("The check finished.", needs=NONE, task_id=41)
         briefer.briefing = Briefing(pending=DIGEST, pending_count=2, task_ids=(40, 41))
         await session.submit_pin(PIN)
 
     notes = [value[0] for kind, value in provider.order[2:] if kind == "message"]
-    assert notes == [HEARD_BEFORE_PIN_MESSAGE.format(tasks="task 41", ids="41")]
+    assert notes == [HEARD_BEFORE_PIN_MESSAGE.format(ids="41")]
 
 
 async def test_a_call_asked_for_the_stamp_already_is_not_asked_again(make_session, phone):
@@ -540,7 +541,7 @@ async def test_a_call_asked_for_the_stamp_already_is_not_asked_again(make_sessio
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
-        await session.announce("Task 41 finished.", needs=NONE, task_id=41)
+        await session.announce("The check finished.", needs=NONE, task_id=41)
         await session.announce("Approve the push?", needs=NONE)  # not a task's result
         await session.submit_pin(PIN)
 
@@ -556,11 +557,11 @@ async def test_with_the_briefing_off_nothing_is_announced_before_the_pin(
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
-        assert await session.announce("Task 41 finished: 1,234 pounds", needs=NONE) is False
+        assert await session.announce("The check finished: 1,234 pounds", needs=NONE) is False
         assert [text for text, *_ in provider.injected] == [OPENING_MESSAGE]
 
         await session.submit_pin(PIN)
-        assert await session.announce("Task 41 finished: 1,234 pounds", needs=NONE) is True
+        assert await session.announce("The check finished: 1,234 pounds", needs=NONE) is True
 
 
 async def test_an_approval_is_never_announced_into_a_call_that_could_not_answer_it(
@@ -589,7 +590,7 @@ async def test_a_local_session_is_announced_to_as_before(make_session, local, pr
     session = make_session(local, provider, authorized=True)
 
     async with running(session):
-        assert await session.announce("Task 41 finished.") is True
+        assert await session.announce("The check finished.") is True
 
 
 # --- a call Keryx placed itself --------------------------------------------

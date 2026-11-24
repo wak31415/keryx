@@ -80,10 +80,10 @@ def test_render_includes_the_opening_context(settings):
         caller=None,
         trust=TrustLevel.FULL,
         projects=[],
-        opening_context="Task 7 finished: the report is ready.",
+        opening_context="The sweep finished: the report is ready.",
     )
 
-    assert "Task 7 finished: the report is ready." in rendered
+    assert "The sweep finished: the report is ready." in rendered
 
 
 def test_render_defaults_projects_to_everything_the_manager_can_resolve(settings, tmp_path):
@@ -180,7 +180,7 @@ def test_below_full_the_prompt_still_carries_the_map_of_their_world(owners_world
         channel="phone",
         caller="+15550001111",
         trust=trust,
-        pending="- task 41 (finished) — their bank balance",
+        pending="- They asked for: their bank balance (finished; task_id 41)",
         memory="They are waiting on the letter from the lawyer.",
     )
 
@@ -200,7 +200,7 @@ def test_with_the_briefing_held_back_the_prompt_carries_none_of_it(owners_world,
         channel="phone",
         caller="+15550001111",
         trust=trust,
-        pending="- task 41 (finished) — their bank balance",
+        pending="- They asked for: their bank balance (finished; task_id 41)",
         memory="They are waiting on the letter from the lawyer.",
     )
 
@@ -226,7 +226,7 @@ def test_with_no_pin_on_the_machine_nothing_of_theirs_is_rendered(owners_world, 
         channel="phone",
         caller="+15550001111",
         trust=trust,
-        pending="- task 41 (finished) — their bank balance",
+        pending="- They asked for: their bank balance (finished; task_id 41)",
         memory="They are waiting on the letter from the lawyer.",
     )
 
@@ -297,11 +297,11 @@ def test_the_digest_is_not_part_of_what_is_held_back(owners_world, trust):
         channel="phone",
         caller="+15550001111",
         trust=trust,
-        pending="- task 41 (finished) — their bank balance",
+        pending="- They asked for: their bank balance (finished; task_id 41)",
     )
 
     assert "## What the owner has not heard yet" in rendered
-    assert "task 41" in rendered
+    assert "task_id 41" in rendered
 
 
 # --- Slack is opt-in -------------------------------------------------------
@@ -392,11 +392,11 @@ def test_an_empty_memory_is_only_admitted_to_a_trusted_session(settings):
 
 def test_the_unreported_digest_reaches_the_prompt_under_its_own_heading(settings):
     rendered = _rendered(
-        settings, pending="- task 41 (finished) — they asked for: the ingest script"
+        settings, pending="- They asked for: the ingest script (finished; task_id 41)"
     )
 
     assert "## What the owner has not heard yet" in rendered
-    assert "task 41" in rendered
+    assert "task_id 41" in rendered
 
 
 def test_the_memory_reaches_the_prompt_as_background_not_as_news(settings, unwrapped):
@@ -481,10 +481,30 @@ def test_the_prompt_never_predicts_the_pin(unwrapped):
 
 
 def test_the_prompt_treats_an_accepted_pin_as_nothing_to_say(unwrapped):
-    """The task number is the proof it worked; "you're authorized now" is a spare turn."""
+    """The answer is the proof it worked; "you're authorized now" is a spare turn."""
     text = unwrapped(load_prompt("voice_system.md"))
 
     assert "When it is accepted, say nothing about it" in text
+    assert "the answer, or that the work is under way" in text
+
+
+def test_the_prompt_keeps_task_numbers_out_of_the_assistants_mouth(unwrapped):
+    """The owner's ruling of 2026-11-23: a task's number is internal.
+
+    The prompt used to list task ids among the numbers to say plainly, and after every
+    dispatch the call led with one; the owner never used a number back.
+    """
+    text = unwrapped(load_prompt("voice_system.md"))
+
+    assert "Never say a task's number" in text
+    assert "call a task by what they asked for" in text
+    assert "(task ids, times, counts)" not in text
+    assert "gives you a task number" not in text
+    assert "or the task number" not in text
+    # Wherever the number is named at all, the same sentence forbids saying it.
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if re.search(r"task('s)? (number|id)", sentence, re.IGNORECASE):
+            assert re.search(r"\b(never|not)\b", sentence, re.IGNORECASE), sentence
 
 
 def test_the_prompt_asks_for_the_callback_to_be_confirmed_once(unwrapped):

@@ -203,7 +203,8 @@ def _body(record: RestartRecord, errors: LogErrors, *, up: bool) -> str:
     return template.format(
         reason=f" ({record.reason})" if record.reason else "",
         age=format_duration(record.age_seconds()),
-        task=f" It was loading the work from task {record.task_id}." if record.task_id else "",
+        # Not which task by number: that is internal, and `keryx restart --status` has it.
+        task=" It was loading work you had asked for." if record.task_id else "",
         errors=f" Last error: {last}." if last else "",
         version=record.version or "an unknown version",
     )[:MAX_SMS_CHARS]

@@ -41,6 +41,8 @@ from keryx.transports.base import AudioIn, Dtmf, Hangup
 
 # audio/pcmu is 8 kHz 8-bit -> 8 bytes per millisecond.
 PCMU_BYTES_PER_MS = 8
+#: One line of the digest, as `continuity.briefing` writes it.
+SWEEP_DIGEST = "- They asked for: the sweep (finished; task_id 41)"
 
 
 def make_settings(tmp_path, **overrides) -> Settings:
@@ -220,13 +222,13 @@ async def test_session_opens_with_a_greeting_request(make_session, phone, provid
 
 
 async def test_opening_context_replaces_the_greeting(make_session, phone, provider):
-    session = make_session(phone, provider, opening_context="[callback] Task 3 is done.")
+    session = make_session(phone, provider, opening_context="[callback] The sweep is done.")
 
     async with running(session):
         await eventually(lambda: provider.injected)
 
-    assert provider.injected[0] == ("[callback] Task 3 is done.", True)
-    assert "Task 3 is done." in provider.config.instructions
+    assert provider.injected[0] == ("[callback] The sweep is done.", True)
+    assert "The sweep is done." in provider.config.instructions
 
 
 async def test_session_publishes_session_started_and_registers(
@@ -749,10 +751,10 @@ async def test_announce_injects_a_system_message(make_session, phone, provider):
     session = make_session(phone, provider)
 
     async with running(session):
-        assert await session.announce("Task 3 finished.") is True
+        assert await session.announce("The sweep finished.") is True
 
     text, respond = provider.injected[-1]
-    assert text == f"[system] Task 3 finished.\n{ANNOUNCE_INSTRUCTIONS}"
+    assert text == f"[system] The sweep finished.\n{ANNOUNCE_INSTRUCTIONS}"
     assert respond is True
     assert "mark_reported" not in text  # not a task's result: nothing to stamp
 
@@ -763,12 +765,14 @@ async def test_a_task_announced_into_a_call_asks_for_its_stamp(make_session, pho
     session = make_session(phone, provider)
 
     async with running(session):
-        assert await session.announce("Task 3 finished: done.", task_id=3) is True
+        assert await session.announce("The sweep finished: done.", task_id=3) is True
 
     text, _ = provider.injected[-1]
-    assert text.startswith("[system] Task 3 finished: done.\n")
+    assert text.startswith("[system] The sweep finished: done.\n")
     assert ANNOUNCE_REPORT_INSTRUCTIONS.format(task_id=3) in text
     assert "task_ids [3]" in text
+    # The id is there for that call, and the note says it is for nothing else.
+    assert "never say a task number" in text
 
 
 async def test_announce_is_false_before_and_after_the_session(make_session, phone, provider):
@@ -787,7 +791,7 @@ async def test_announce_is_false_when_the_provider_send_fails(make_session, phon
 
     async with running(session):
         provider.send_error = RuntimeError("socket gone")
-        assert await session.announce("Task 3 finished.") is False
+        assert await session.announce("The sweep finished.") is False
         provider.send_error = None
 
 
@@ -984,7 +988,7 @@ async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provi
     briefer = FakeBriefer(
         Briefing(
             memory="They are mid-way through the orchard sync.",
-            pending="- task 41 (finished) — they asked for: the ingest script",
+            pending="- They asked for: the ingest script (finished; task_id 41)",
             pending_count=1,
         )
     )
@@ -995,7 +999,7 @@ async def test_the_briefing_reaches_the_system_prompt(make_session, phone, provi
 
     instructions = provider.config.instructions
     assert "orchard sync" in instructions
-    assert "task 41" in instructions
+    assert "task_id 41" in instructions
     assert briefer.builds == 1  # once per session, before the provider is connected
 
 
@@ -1023,7 +1027,7 @@ async def test_unreported_work_is_pushed_at_the_opening_message_too(
     make_session, phone, provider
 ):
     """A realtime model leads with what it was just handed far more reliably."""
-    briefer = FakeBriefer(Briefing(pending="- task 41 (finished)", pending_count=1))
+    briefer = FakeBriefer(Briefing(pending=SWEEP_DIGEST, pending_count=1))
     session = make_session(phone, provider, briefer=briefer)
 
     async with running(session):
@@ -1059,16 +1063,16 @@ async def test_a_briefer_that_raises_does_not_cost_the_call(make_session, phone,
 async def test_a_call_back_keeps_its_own_opening_context_and_gains_the_nudge(
     make_session, phone, provider
 ):
-    briefer = FakeBriefer(Briefing(pending="- task 41 (finished)", pending_count=2))
+    briefer = FakeBriefer(Briefing(pending=SWEEP_DIGEST, pending_count=2))
     session = make_session(
-        phone, provider, briefer=briefer, opening_context="You are calling them back about task 41."
+        phone, provider, briefer=briefer, opening_context="You are calling back about the sweep."
     )
 
     async with running(session):
         await eventually(lambda: provider.injected != [])
 
     opening = provider.injected[0][0]
-    assert opening.startswith("You are calling them back about task 41.")
+    assert opening.startswith("You are calling back about the sweep.")
     assert "2 tasks finished" in opening
 
 
@@ -1077,8 +1081,8 @@ async def test_a_call_back_about_the_only_news_opens_with_its_context_alone(
 ):
     """The task it rang about is still unreported, so it is in the digest too — and a nudge
     about it, "after your greeting", made the model greet, tease and wait (#63)."""
-    context = "You are calling them back about task 41."
-    briefer = FakeBriefer(Briefing(pending="- task 41", pending_count=1, task_ids=(41,)))
+    context = "You are calling back about the sweep."
+    briefer = FakeBriefer(Briefing(pending=SWEEP_DIGEST, pending_count=1, task_ids=(41,)))
     session = make_session(
         phone, provider, briefer=briefer, opening_context=context, opening_task_id=41
     )
@@ -1090,8 +1094,9 @@ async def test_a_call_back_about_the_only_news_opens_with_its_context_alone(
 
 
 async def test_a_call_back_hears_of_the_other_news_after_its_own(make_session, phone, provider):
-    context = "You are calling them back about task 41."
-    briefing = Briefing(pending="- task 40\n- task 41", pending_count=2, task_ids=(40, 41))
+    context = "You are calling back about the sweep."
+    pending = f"{SWEEP_DIGEST}\n{SWEEP_DIGEST}"
+    briefing = Briefing(pending=pending, pending_count=2, task_ids=(40, 41))
     session = make_session(
         phone,
         provider,

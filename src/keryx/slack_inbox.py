@@ -85,8 +85,9 @@ On Slack Keryx is brief: a reaction on the message it acted on (a reaction notif
 nobody), then the report when the work is done. A refusal is one sentence, and it names
 nobody: the app carries the assistant's name there (`integrations.slack.app_name`), so
 what it posts in its own conversation is the assistant speaking, and a sentence that
-began "Keryx …" under that name would read as somebody else's. What a message says is
-never logged.
+began "Keryx …" under that name would read as somebody else's. Nor does it name a task
+by its number, which is internal: it is posted in the task's thread, and says so. What a
+message says is never logged.
 """
 
 import asyncio
@@ -113,9 +114,11 @@ log = logging.getLogger("keryx.slack.inbox")
 MAX_SEEN = 512
 
 NOTHING_TO_RESUME = "There is no task in this thread to resume; ask again to start one."
-CANCELLED = "Task {task_id} was cancelled, so there is nothing here to resume."
-STARTING = "Task {task_id} is only just starting, so send that again in a moment."
-NOT_PASSED_ON = "That could not be confirmed to have reached task {task_id}."
+#: Said in the task's own thread, which is what says which task: never its number, which
+#: is internal (the owner's ruling of 2026-11-23).
+CANCELLED = "The task in this thread was cancelled, so there is nothing here to resume."
+STARTING = "The task in this thread is only just starting, so send that again in a moment."
+NOT_PASSED_ON = "That could not be confirmed to have reached the task in this thread."
 CAP_REACHED = "Today's task limit ({cap}) is reached, so this was not started."
 NOT_STARTED = "That could not be started."
 TEXT_ONLY = "Only text is read here: send that again as a message without the file."
@@ -474,7 +477,7 @@ class SlackInbox:
     async def _resume(self, workspace: SlackWorkspace, request: Request, task: Task) -> None:
         """Hand the request to the task its thread belongs to, as a follow-up."""
         if task.status is TaskStatus.CANCELLED:
-            await self._say(workspace, request, CANCELLED.format(task_id=task.id))
+            await self._say(workspace, request, CANCELLED)
             return
         try:
             await self._manager.followup_from_slack(task.id, request.text, request.ts)
@@ -488,13 +491,12 @@ class SlackInbox:
             # Not taken: its subagent is not open yet, or it was cancelled this instant.
             now = await self._manager.get(task.id)
             gone = now is not None and now.status is TaskStatus.CANCELLED
-            sentence = CANCELLED if gone else STARTING
-            await self._say(workspace, request, sentence.format(task_id=task.id))
+            await self._say(workspace, request, CANCELLED if gone else STARTING)
             return
         except Exception:
             # A steer that failed for real may have landed, so it is not sent a second way.
             log.exception("a follow-up from Slack to task %s failed", task.id)
-            await self._say(workspace, request, NOT_PASSED_ON.format(task_id=task.id))
+            await self._say(workspace, request, NOT_PASSED_ON)
             return
         log.info("Slack: a reply in %s went to task %s as a follow-up", workspace.name, task.id)
         await self._acknowledge(workspace, request)

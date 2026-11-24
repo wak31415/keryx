@@ -136,6 +136,12 @@ the version starts with 0.
 
 ### Changed
 
+- **Task numbers are no longer said or posted.** On a call the assistant calls a task by
+  what you asked for, and no longer opens with its number after handing work over. A
+  report posted to Slack is headed "Finished:" or "Failed:" and your request cut to a
+  line, or just "Finished" as a reply in the task's own thread, and a text, the restart
+  confirmation and the restart alert name no number either. The numbers are still what
+  `keryx tasks` lists and what a report link and the `Keryx-Task:` commit trailer carry.
 - `keryx auth login gmail` and `keryx auth login google-workspace` run the one Google
   sign-in. Both names are accepted for one more release, and `keryx auth status --json`
   still lists them beside the new `google`.

@@ -269,6 +269,16 @@ def test_the_subagent_suffix_carries_the_task_number_for_the_commit_trailer(sett
     assert "Task number: 31" in suffix
 
 
+def test_the_subagent_is_told_its_number_is_not_for_the_owner(settings, unwrapped):
+    """Its summary is read out and its report is posted: neither names the task's number."""
+    suffix = unwrapped(render_subagent_suffix(
+        Task(id=31, kind=TaskKind.AGENT, description="add a recall tool")
+    ))
+
+    assert "The task number is internal" in suffix
+    assert "never in your SPOKEN_SUMMARY, your report or anything you send them" in suffix
+
+
 def test_a_task_with_no_number_yet_still_renders():
     """The suffix is built at open(), after the row exists — but never crash if it is not."""
     suffix = render_subagent_suffix(Task(id=None, kind=TaskKind.AGENT, description="x"))

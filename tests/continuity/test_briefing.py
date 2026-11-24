@@ -85,8 +85,11 @@ def test_nothing_unreported_is_no_digest_at_all():
 def test_the_digest_carries_the_id_the_request_and_the_result():
     digest = format_digest([_finished(id=41)], 1)
 
-    assert "task 41" in digest
-    assert "rewrite the ingest script" in digest
+    # The id is a tool argument, spelled as one, and the rule is beside it: a line that
+    # opened "task 41" was read out as one.
+    assert "task_id 41" in digest and "task 41" not in digest
+    assert "never say a task number out loud" in digest
+    assert "They asked for: rewrite the ingest script" in digest
     assert "rewrote it and the tests pass" in digest
     assert "mark_reported" in digest  # the model is told how to close the loop
 
@@ -191,7 +194,7 @@ async def test_the_briefer_finds_the_memory_and_the_unreported_work(settings, ta
     briefing = await Briefer(settings, tasks.manager).build()
 
     assert "orchard sync" in briefing.memory
-    assert f"task {task.id}" in briefing.pending
+    assert f"task_id {task.id}" in briefing.pending
     assert briefing.pending_count == 1
 
 

@@ -7,7 +7,7 @@ if you want them, and anything else is [a tool of your own](#your-own-tools).
 <!-- tools:start -->
 | Core tool | What it does |
 |---|---|
-| `dispatch_task` | hand the work to a coding agent and get back a task number; `agent` names Claude or Codex when both are ready ([agents](agents.md)) |
+| `dispatch_task` | hand the work to a coding agent and get back its task id, a handle for the other tools that is never said out loud; `agent` names Claude or Codex when both are ready ([agents](agents.md)) |
 | `list_tasks` | what is queued, running and recently finished |
 | `get_task_status` | how one task is getting on |
 | `get_task_result` | what a finished task found: its summary and its whole report, which follow-up questions are answered from |

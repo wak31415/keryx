@@ -1363,6 +1363,17 @@ inside functions, not imported at module scope, so the suite runs without them.
   `~/.local/share/keryx/calls/`; read a few before editing any of it. They may contain a
   spoken PIN and other personal details, so nothing from them is ever copied into code,
   tests, docs or commit messages — describe the pattern, never quote the call.
+- **A task's number is internal** (the owner's ruling, 2026-11-23). Nothing the owner
+  reads on Slack or in a text, or hears on a call, carries it: a task is called by what
+  was asked for (`notify.notifier.request_label`, one line of the request), or by nothing
+  at all where the place already says which one, as a reply in the task's own Slack
+  thread does. The voice model keeps `task_id` in its tools' arguments and results and in
+  the digest, because it needs it to call them, and every piece of wording that hands it
+  one says in the same breath that it is for tool calls only and never said aloud. Told
+  to say the number once, calls led with it after every dispatch, and the owner never
+  used one back. The command line, the logs, `/reports/{id}`, `KERYX_TASK_ID` and the
+  `Keryx-Task:` trailer keep it; a subagent is told its number is for the trailer and
+  never for its spoken summary or its report.
 - The interface names `tasks/agent_runner.py` re-exports, and the `list` methods on the
   task store and manager, keep their names and signatures (extra optional keyword
   arguments are fine). The rulings in this file bind: follow them, and amend this file in

@@ -299,7 +299,10 @@ async def test_the_update_is_told_what_the_call_dispatched(settings, writer):
     await end(writer)
 
     description = (await internal_tasks(store))[0].description
-    assert f"task {task.id}" in description
+    # By what was asked and how it stands, never by its number: the memory is read to
+    # the voice model on every call, and a number written there is one it says.
+    assert "fix the poller (" in description
+    assert f"task {task.id}" not in description
 
 
 def test_a_call_that_dispatched_nothing_says_so():

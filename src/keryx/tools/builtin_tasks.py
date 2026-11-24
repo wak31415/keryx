@@ -45,6 +45,7 @@ from keryx.tools.builtin_common import (
     DEFAULT_TASK_LIMIT,
     MAX_TASK_LIMIT,
     MODEL_AGENT_CONFLICT_MESSAGE,
+    NO_SUCH_TASK_MESSAGE,
     RECALL_EMPTY_MESSAGE,
     REPORTED_MESSAGE,
     STILL_RUNNING_MESSAGE,
@@ -193,11 +194,13 @@ def register_task_tools(
         }
     registry.register(
         "dispatch_task",
-        f"Hand a piece of work to {worker} and get back a task number. Use it for anything you "
+        f"Hand a piece of work to {worker} and get back its task_id. Use it for anything you "
         "cannot answer yourself in a sentence or two, and for anything to do with code the "
         "moment you recognise it — do not ask the caller to confirm the request first, and "
         f"do not interview them about details {worker} can work out for itself. On the phone, "
-        "every dispatch comes back as pin_required until the caller has given the PIN.",
+        "every dispatch comes back as pin_required until the caller has given the PIN. The "
+        "task_id is your handle for later tool calls and is never said out loud: to them, "
+        "the work is what they asked for.",
         {"type": "object", "properties": dispatch_properties, "required": ["description"]},
         dispatch_task,
     )
@@ -226,7 +229,9 @@ def register_task_tools(
     registry.register(
         "list_tasks",
         "The tasks the subagents are working on or have finished, newest first. Use it when "
-        "the user asks what is running or what has come back.",
+        "the user asks what is running or what has come back, and to find the id of a task "
+        "they describe. Say what each one is about; an id is for your tool calls and is "
+        "never read out.",
         {
             "type": "object",
             "properties": {
@@ -270,7 +275,7 @@ def register_task_tools(
 
     registry.register(
         "get_task_status",
-        "How one task is doing, by its task number. Use it when the user asks about a "
+        "How one task is doing, by its task_id. Use it when the user asks about a "
         "specific task rather than about everything at once.",
         _TASK_ID_SCHEMA,
         get_task_status,
@@ -322,7 +327,7 @@ def register_task_tools(
             if not ids:
                 return refusal
         if not ids:
-            return {"error": "task_ids must be a list of task numbers, for example [3, 4]"}
+            return {"error": "task_ids must be a list of the tasks' ids, for example [3, 4]"}
         reported = await manager.mark_reported(ids)
         # Ids that were already reported (or never existed) come back missing rather than
         # as an error: the model is working from a spoken conversation, and there is
@@ -347,7 +352,8 @@ def register_task_tools(
                 "task_ids": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "The task numbers you are telling them about.",
+                    "description": "The ids of the tasks you are telling them about. "
+                    "For this call only, and never said out loud.",
                 },
                 "still_to_say": {
                     "type": "boolean",
@@ -432,7 +438,7 @@ def register_task_tools(
         try:
             updated = await manager.followup(task.id, message)
         except KeyError:
-            return {"error": f"no task {task.id}"}
+            return {"error": NO_SUCH_TASK_MESSAGE}
         except ValueError as exc:
             return {"error": str(exc)}
         return {"task_id": updated.id, "status": updated.status.value}
@@ -465,7 +471,7 @@ def register_task_tools(
         try:
             cancelled = await manager.cancel(task.id)
         except KeyError:
-            return {"error": f"no task {task.id}"}
+            return {"error": NO_SUCH_TASK_MESSAGE}
         return {"task_id": cancelled.id, "status": cancelled.status.value}
 
     registry.register(

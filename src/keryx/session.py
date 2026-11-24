@@ -94,15 +94,16 @@ ANNOUNCE_INSTRUCTIONS = "Tell them about this briefly, in one or two sentences."
 #: each again at the top of the next call.
 ANNOUNCE_REPORT_INSTRUCTIONS = (
     "In the same turn, call mark_reported with task_ids [{task_id}]; that call is what "
-    "records they heard it, and saying so does not, so never tell them you have."
+    "records they heard it, and saying so does not, so never tell them you have. The id is "
+    "for that call only: never say a task number, and call the work by what they asked for."
 )
 #: Handed over with the PIN when this call heard a result before it and so could not stamp
 #: it then. Without it the result was in the digest the PIN let in, as news, and they were
 #: told it a second time straight after giving the PIN.
 HEARD_BEFORE_PIN_MESSAGE = (
-    "[system] They already heard {tasks} on this call, before the PIN: do not tell them "
-    "again. Call mark_reported with task_ids [{ids}] in your next turn, along with whatever "
-    "else you do, and say nothing about it."
+    "[system] They already heard what finished earlier on this call, before the PIN: do "
+    "not tell them again. Call mark_reported with task_ids [{ids}] in your next turn, along "
+    "with whatever else you do, and say nothing about it."
 )
 
 # What the model is told about a PIN typed on the keypad. Never the digits themselves.
@@ -633,9 +634,7 @@ class VoiceSession:
         if nudge:
             await self._safe_call(self._provider.inject_message, nudge, respond=False)
         if heard:
-            ids = ", ".join(map(str, heard))
-            tasks = f"{'task' if len(heard) == 1 else 'tasks'} {ids}"
-            note = HEARD_BEFORE_PIN_MESSAGE.format(tasks=tasks, ids=ids)
+            note = HEARD_BEFORE_PIN_MESSAGE.format(ids=", ".join(map(str, heard)))
             await self._safe_call(self._provider.inject_message, note, respond=False)
 
     def _opening_message(self) -> str:

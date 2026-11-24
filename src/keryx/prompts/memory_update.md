@@ -46,6 +46,9 @@ Keep this exact structure:
   by a model that speaks out loud, and it must not be tempted to read punctuation.
 - Record what they said and what happened. Never record a PIN, a token, a password, or the
   contents of the env file, even if one appears in the transcript.
+- Never write a task's number, even where the transcript or the memory you were handed
+  says one: the numbers are internal, and {assistant} would read one out. Call a task by
+  what was asked for, and take out any number already in the file as you rewrite it.
 - Do not invent. A call that was two seconds of silence gets no entry, and a call whose
   transcript you cannot read means you leave the memory exactly as you found it.
 - Never delete the file, and never leave it empty or half-written. If you cannot improve
