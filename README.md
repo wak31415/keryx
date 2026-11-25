@@ -58,8 +58,8 @@ Google needs one extra minute the first time. Google's API Terms say "Developer
 credentials may not be embedded in open source projects"
 ([section 4(b)](https://developers.google.com/terms)), so Keryx cannot ship a shared
 Google sign-in key, and you make your own. `keryx auth login google` (or `keryx setup`)
-opens Google's Personal mode page, which makes it in a few clicks, then asks where the file
-it downloads went. A Personal mode key works only for your own account, so there is no
+opens Google's Personal mode page, which makes it in a few clicks, then asks for the file
+it downloads or the Client ID and secret it shows. A Personal mode key works only for your own account, so there is no
 "unverified app" warning and no expiry. Many work and school accounts cannot create one:
 type `other` at that question for the way round it, an app made with a personal Google
 account that you then sign in to with the work one.

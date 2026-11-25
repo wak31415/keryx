@@ -40,14 +40,19 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   file, at a terminal, it makes one first, in the same command** (the owner's ruling of
   2026-11-24): it says why in a sentence (Google's terms forbid a shared client in an
   open-source app), opens Google's Personal mode page (or prints it for another device),
-  shows the three clicks, and **always asks for the path of the downloaded file**, never
-  assuming where it went: Enter takes the newest `client_secret_*.json` in `~/Downloads`
-  (else the folder), a folder takes its newest, `paste` takes its contents hidden, and a
-  wrong answer is said and asked again, three times at most. `other` there is never a
-  wrong answer: it prints the second way, for an account that cannot create a project
-  (the owner's ruling of 2026-11-25), and asks the same question again. Without a
-  terminal the refusal names that page, `--client-file` and the guide that has the second
-  way. The wizard's Google section asks the same questions, from the same constants.
+  shows the three clicks, and **always asks for the downloaded file or the Client ID**,
+  never assuming where it went (Google's own steps for that page end with copying the ID
+  and secret, and may offer no file): Enter takes the newest Desktop `client_secret_*.json`
+  in `~/Downloads` (else the folder), a folder takes its newest, a Client ID asks for its
+  secret hidden and is kept as the same client JSON a download is, `paste` takes the
+  file's contents hidden on one line, and nothing typed that may hold a secret is ever
+  said back. `other` is never a wrong answer: it prints the second way, for an account
+  that cannot create a project (the owner's ruling of 2026-11-25), and asks again.
+  `skip` stops. **The command takes three wrong answers at most; the wizard asks until
+  the owner stops**, and keeps the steps on screen above each refusal. Without a
+  terminal the refusal is short, names nothing as failed, and gives the page,
+  `--client-file` and the guide that has the second way. The wizard's Google section asks
+  the same questions, from the same constants, with nothing put in the answer box.
   `slack [--workspace NAME]
   [--no-test]` **at a terminal is one command with no option, which waits** (the owner's
   rulings of 2026-11-23, no second command, and 2026-11-24, boxes to tick): it shows a
@@ -634,7 +639,9 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   (`setup.google.OTHER_STEPS`): an External app in a project of a personal account,
   **published, never left in Testing** (where every sign-in ends after seven days), and
   signed in to with the work account past one "unverified" warning. Its links are the
-  console's documented pages, and the six API ids are `API_IDS`, one per service; the
+  console's pages as Google's Workspace MCP guide links them
+  (developers.google.com/workspace/guides/configure-mcp-servers: `flows/enableapi` with
+  comma-separated ids, `auth/clients/create`), and the six API ids are `API_IDS`; the
   guide carries the same links, and a test holds them together. An organization that
   blocks unapproved apps shows `admin_policy_enforced` on Google's own page and never
   redirects, so the wait says what that means (`BLOCKED_NOTE`), and the sentence for it

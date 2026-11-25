@@ -139,6 +139,9 @@ def test_skipping_touches_nothing_and_says_how_to_come_back(make_ctx, world):
 
 # --- which client: one of the owner's own, made now ----------------------------------------
 
+#: The path question, as the wizard asks it.
+Q = "The file you downloaded, or the Client ID"
+
 
 def downloaded(name="client_secret_1.apps.googleusercontent.com.json", body=CLIENT, age=0.0):
     """A file Google's console downloaded into `~/Downloads`, `age` seconds ago."""
@@ -154,11 +157,12 @@ def installed(ctx):
     return ctx.settings.config_dir / "google_client_secret.json"
 
 
-def test_with_no_client_it_opens_googles_page_and_takes_the_newest_download(make_ctx, world):
+def test_with_no_client_it_opens_googles_page_and_enter_takes_the_newest_download(
+    make_ctx, world
+):
     downloaded("client_secret_old.json", {"installed": {"client_id": "old"}}, age=600)
     newest = downloaded()
-    ctx = make_ctx([("Sign in to Google?", "signin"),
-                    ("Path to the file you downloaded", DEFAULT)])
+    ctx = make_ctx([("Sign in to Google?", "signin"), (Q, "")])  # Enter: nothing typed
 
     google.run_section(ctx)
 
@@ -168,13 +172,54 @@ def test_with_no_client_it_opens_googles_page_and_takes_the_newest_download(make
     assert "open-source" in why and "Personal mode" in why
     assert world.calls == [("open", google.PERSONAL_MODE_URL), ("google_browser", ALL)]
     panel = ctx.ui.lines("panel")[0]
-    assert "Your browser is opening Google's page" in panel and "Download JSON" in panel
+    assert "Your browser is opening Google's page" in panel
+    assert "Download JSON if it is offered, or copy the Client ID" in panel
     assert ctx.ui.lines("link")[0] == google.PERSONAL_MODE_URL
+    assert f"Enter takes {newest}" in ctx.ui.lines("note")
+    assert "skip leaves it for later" in ctx.ui.asked[-1][1]
     assert json.loads(installed(ctx).read_text()) == json.loads(newest.read_text())
     assert stat.S_IMODE(installed(ctx).stat().st_mode) == 0o600
     assert ConfigStore().stored()["GOOGLE_CLIENT_SECRETS_FILE"] == str(installed(ctx))
     [consent] = ctx.ui.lines("markdown")
     assert "Select all" in consent
+
+
+def test_nothing_is_put_in_the_answer_box_beforehand(make_ctx, world, monkeypatch):
+    """A path in the box would have to be deleted before typing `other` or a Client ID."""
+    downloaded()
+    defaults = []
+    ctx = make_ctx([("Sign in to Google?", "signin")])
+    text = ctx.ui.text
+
+    def spy(message, *, default="", validate=None, multiline=False):
+        defaults.append(default)
+        return text(message, default=default, validate=validate, multiline=multiline)
+
+    ctx.ui.text = spy
+    ctx.ui.answers.append((Q, "skip"))
+
+    google.run_section(ctx)
+
+    assert defaults == [""]
+
+
+def test_a_client_id_is_asked_for_its_secret_hidden_and_kept_as_a_file_would_be(
+    make_ctx, world
+):
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "123-abc.apps.googleusercontent.com"),
+        ("Client Secret", "GOCSPX-secret"),
+    ])
+
+    google.run_section(ctx)
+
+    assert ctx.ui.asked[-1] == ("secret", "Client Secret (hidden)")
+    saved = json.loads(installed(ctx).read_text())["installed"]
+    assert (saved["client_id"], saved["client_secret"]) == (
+        "123-abc.apps.googleusercontent.com", "GOCSPX-secret")
+    assert account.resolve_client(ctx.settings).client_id == "123-abc.apps.googleusercontent.com"
+    assert world.calls[-1] == ("google_browser", ALL)
 
 
 def test_where_it_was_downloaded_is_always_asked_and_a_folder_takes_its_newest(
@@ -186,40 +231,63 @@ def test_where_it_was_downloaded_is_always_asked_and_a_folder_takes_its_newest(
     (Path.home() / "Downloads").mkdir(parents=True)
     ctx = make_ctx([
         ("Sign in to Google?", "signin"),
-        ("Path to the file you downloaded", DEFAULT),     # ~/Downloads/, which is empty
-        ("Path to the file you downloaded", str(elsewhere)),
+        (Q, ""),     # Enter: ~/Downloads/, which is empty
+        (Q, str(elsewhere)),
     ])
 
     google.run_section(ctx)
 
     assert ctx.ui.lines("error") == [
-        f"there is no client_secret_*.json file in {Path.home() / 'Downloads'}"
+        f"There is no client_secret_*.json file in {Path.home() / 'Downloads'}."
     ]
     taken = f"Took {elsewhere / 'client_secret_9.json'}, the newest one there."
     assert taken in ctx.ui.lines("note")
     assert json.loads(installed(ctx).read_text()) == CLIENT
 
 
-def test_a_wrong_client_file_is_refused_and_asked_again(make_ctx, world, tmp_path):
+def test_a_wrong_answer_is_said_with_the_steps_still_on_screen(make_ctx, world, tmp_path):
     bad = downloaded(body={"nope": 1})
     web = downloaded("client_secret_web.json", {"web": {"client_id": "w", "client_secret": "s"}})
     ctx = make_ctx([
         ("Sign in to Google?", "signin"),
-        ("Path to the file you downloaded", str(bad)),
-        ("Path to the file you downloaded", f"'{web}'"),
-        ("Path to the file you downloaded", str(tmp_path / "nothing.json")),
-        ("Path to the file you downloaded", ""),           # blank stops
+        (Q, str(bad)),
+        (Q, f"'{web}'"),
+        (Q, str(tmp_path / "nothing.json")),
+        (Q, "skip"),
     ])
 
     google.run_section(ctx)
 
     errors = ctx.ui.lines("error")
     assert "not a Google OAuth client file" in errors[0]
-    assert "is not a Desktop app client" in errors[1]
-    assert errors[2] == f"there is no file at {tmp_path / 'nothing.json'}"
+    assert "Keryx needs a Desktop app client" in errors[1]
+    assert errors[2] == f"There is no file at {tmp_path / 'nothing.json'}."
+    # Each refusal is said below the link and the `other` hint, said again.
+    said = ctx.ui.said
+    for error in errors:
+        at = said.index(("error", error))
+        assert said[at - 2] == ("link", google.PERSONAL_MODE_URL)
+        assert said[at - 1] == ("note", google.NO_PROJECT_NOTE)
+    assert google.LATER_NOTE in ctx.ui.lines("note")  # skip: left for later, as Skip says
     assert not installed(ctx).exists()
     assert "GOOGLE_CLIENT_SECRETS_FILE" not in ConfigStore().stored()
     assert world.calls == [("open", google.PERSONAL_MODE_URL)]
+
+
+def test_after_other_a_wrong_answer_keeps_the_other_steps_on_screen(make_ctx, world, tmp_path):
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "other"),
+        (Q, str(tmp_path / "nothing.json")),
+        (Q, "skip"),
+    ])
+
+    google.run_section(ctx)
+
+    said = ctx.ui.said
+    at = said.index(("error", f"There is no file at {tmp_path / 'nothing.json'}."))
+    assert said[at - 1] == ("note", f"6. {google.OTHER_STEPS[5][0]}")
+    assert said[at - 2] == ("link", "https://console.cloud.google.com/auth/clients/create")
 
 
 def test_with_the_browser_elsewhere_the_link_is_for_any_device_and_the_file_can_be_pasted(
@@ -228,7 +296,7 @@ def test_with_the_browser_elsewhere_the_link_is_for_any_device_and_the_file_can_
     world.headless = True
     ctx = make_ctx([
         ("Sign in to Google?", "signin"),
-        ("Path to the file you downloaded", "paste"),
+        (Q, "paste"),
         ("Paste what is in the file", json.dumps(CLIENT)),
     ])
     ctx.ui.answers.append(("address you landed on", landed(ctx)))
@@ -247,20 +315,20 @@ def test_nothing_pasted_is_said_and_asked_again(make_ctx, world):
     world.headless = True
     ctx = make_ctx([
         ("Sign in to Google?", "signin"),
-        ("Path to the file you downloaded", "paste"),
+        (Q, "paste"),
         ("Paste what is in the file", ""),
-        ("Path to the file you downloaded", ""),
+        (Q, "skip"),
     ])
 
     google.run_section(ctx)
 
-    assert ctx.ui.lines("error") == ["nothing was pasted"] and not installed(ctx).exists()
+    assert ctx.ui.lines("error") == ["Nothing was pasted."] and not installed(ctx).exists()
 
 
 def test_a_page_that_does_not_open_says_to_open_the_link(make_ctx, world):
     world.browser_opens = False
     downloaded()
-    ctx = make_ctx([("Sign in to Google?", "signin"), ("Path to the file", DEFAULT)])
+    ctx = make_ctx([("Sign in to Google?", "signin"), (Q, "")])
 
     google.run_section(ctx)
 
@@ -272,9 +340,10 @@ def test_with_no_client_to_hand_skipping_is_the_default_unless_codex_needs_it(ma
     ctx = make_ctx([("Sign in to Google?", DEFAULT)])
     google.run_section(ctx)
     assert ctx.ui.done() and world.calls == []
+    assert ctx.ui.lines("note")[-1] == google.LATER_NOTE
 
     ConfigStore().set({"AGENT_BACKEND": "codex", "AGENTS_ENABLED": "codex"})
-    codex = make_ctx([("Sign in to Google?", DEFAULT), ("Path to the file", "")])
+    codex = make_ctx([("Sign in to Google?", DEFAULT), (Q, "skip")])
     google.run_section(codex)
     assert codex.ui.done() and world.calls == [("open", google.PERSONAL_MODE_URL)]
 
@@ -282,8 +351,8 @@ def test_with_no_client_to_hand_skipping_is_the_default_unless_codex_needs_it(ma
 def test_other_shows_the_way_for_an_account_that_cannot_create_a_project(make_ctx, world):
     ctx = make_ctx([
         ("Sign in to Google?", "signin"),
-        ("Path to the file you downloaded", "other"),
-        ("Path to the file you downloaded", str(downloaded())),
+        (Q, "other"),
+        (Q, str(downloaded())),
     ])
 
     google.run_section(ctx)
@@ -320,17 +389,54 @@ def test_the_paste_back_says_it_too(make_ctx, world):
 
 
 def test_going_back_from_the_path_question_does_not_open_the_page_again(make_ctx, world):
-    """The page is opened by a probe: going back replays it from the record, and only
-    choosing to sign in again opens it again."""
+    """`other`, then Esc at the second path question: the section runs again from its
+    record, up to the first path question, and the page opened by the probe is not
+    opened a second time."""
     ctx = make_ctx([
         ("Sign in to Google?", "signin"),
-        ("Path to the file you downloaded", Back()),
-        ("Sign in to Google?", "skip"),
+        (Q, "other"),
+        (Q, Back()),
+        (Q, "skip"),
     ])
 
     assert run_walk(ctx, [SECTION], {}) is True
 
+    assert ctx.ui.done()
     assert world.calls == [("open", google.PERSONAL_MODE_URL)]
+
+
+def test_going_back_and_then_forward_does_not_open_the_page_again(make_ctx, world):
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "other"),
+        (Q, Back()),
+        (Q, Forward()),     # Tab: replays `other`, to the question not answered yet
+        (Q, "skip"),
+    ])
+
+    assert run_walk(ctx, [SECTION], {}) is True
+
+    assert ctx.ui.done()
+    assert world.calls == [("open", google.PERSONAL_MODE_URL)]
+
+
+def test_a_replay_says_why_before_the_steps(make_ctx, world):
+    """Esc then Tab: the replay ends at the recorded browser probe, and the note held
+    before it is shown ahead of the panel, not below the link."""
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, Back()),
+        ("Sign in to Google?", Forward()),
+        (Q, "skip"),
+    ])
+
+    assert run_walk(ctx, [SECTION], {}) is True
+
+    said = ctx.ui.said
+    # The last run: everything from the second "why" on.
+    last = len(said) - 1 - [kind for kind, _ in reversed(said)].index("panel")
+    why = max(at for at, (kind, text) in enumerate(said) if "terms" in text)
+    assert why < last
 
 
 # --- a browser somewhere else -------------------------------------------------------------

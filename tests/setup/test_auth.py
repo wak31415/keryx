@@ -362,9 +362,9 @@ def test_with_no_client_the_login_makes_one_and_goes_on_to_sign_in(settings, bro
     assert "terms" in lines[0] and "open-source" in lines[0] and "Personal mode" in lines[0]
     assert page == [google.PERSONAL_MODE_URL] and google.PERSONAL_MODE_URL in lines
     assert "Your browser is opening Google's page for it" in text
-    assert "3. Choose Download JSON straight away" in text
+    assert "3. Choose Download JSON if it is offered, or copy the Client ID" in text
     assert google.ELSEWHERE_NOTE not in lines  # the browser is on this machine
-    assert asked == [("\nPath to the file you downloaded", str(newest))]
+    assert asked == [("\nThe file you downloaded, or the Client ID", str(newest))]
     assert saved_client(settings) == CLIENT_JSON
     assert ConfigStore().stored()["GOOGLE_CLIENT_SECRETS_FILE"].endswith(
         "google_client_secret.json")
@@ -433,7 +433,7 @@ def test_with_the_browser_elsewhere_the_file_can_be_pasted_hidden(settings, page
     assert page == []  # nothing to open here
     assert "Open the link below in a browser, on any device." in lines
     assert google.ELSEWHERE_NOTE in lines
-    assert asked[1] == ("Paste what is in the file (hidden)", "hidden")
+    assert asked[1] == ("Paste what is in the file, on one line (hidden)", "hidden")
     assert saved_client(settings) == CLIENT_JSON and finished
 
 
@@ -490,7 +490,7 @@ def test_the_paste_back_says_it_too(client, monkeypatch):
 def test_with_nothing_to_paste_into_a_path_is_asked_again(settings, browser, page):
     lines, _ = at_a_terminal(settings, ["paste", str(downloaded())], secrets=None)
 
-    assert "There is nothing to paste into here." in lines
+    assert "There is nowhere to type that hidden here." in lines
 
 
 def test_what_is_asked_for_again_unasked_is_said_before_the_link(client, browser):
@@ -505,6 +505,140 @@ def test_what_is_asked_for_again_unasked_is_said_before_the_link(client, browser
 
     assert lines[0].startswith("Gmail is connected now and is asked for again")
     assert browser[0].services == ("gmail", "calendar")
+
+
+def test_a_client_id_and_its_secret_are_kept_as_a_file_would_be(settings, browser, page):
+    lines, asked = at_a_terminal(
+        settings, ["123-abc.apps.googleusercontent.com"], secrets=["GOCSPX-secret"])
+
+    assert asked[1] == ("Client Secret (hidden)", "hidden")
+    saved = saved_client(settings)["installed"]
+    assert (saved["client_id"], saved["client_secret"]) == (
+        "123-abc.apps.googleusercontent.com", "GOCSPX-secret")
+    assert saved["redirect_uris"] == ["http://localhost"]
+    assert [chosen.client.client_id for chosen in browser] == [
+        "123-abc.apps.googleusercontent.com"]
+    assert "GOCSPX-secret" not in "\n".join(lines)
+
+
+def test_a_client_id_with_no_secret_is_asked_again(settings, browser, page):
+    lines, _ = at_a_terminal(
+        settings, ["123-abc.apps.googleusercontent.com", str(downloaded())], secrets=[""])
+
+    assert "No Client Secret was given." in lines and saved_client(settings) == CLIENT_JSON
+
+
+def test_a_secret_typed_where_it_shows_is_never_said_back(settings, browser, page):
+    secret = "GOCSPX-typed-where-it-shows"
+    typed = '{"installed": {"client_secret": "' + secret + '"'
+
+    lines, _ = at_a_terminal(settings, [secret, typed, str(downloaded())])
+
+    text = "\n".join(lines)
+    assert secret not in text
+    assert "That looks like the Client Secret: give the Client ID here" in text
+    assert "What was typed is not a Google OAuth client file: that is not JSON." in text
+
+
+def test_the_first_line_of_a_file_pasted_over_several_asks_for_one_line(settings, browser, page):
+    lines, _ = at_a_terminal(settings, ["paste", str(downloaded())], secrets=["{"])
+
+    assert ("What was pasted is not a whole client file: paste it on one line, as Google's "
+            "download is, or give its path.") in lines
+
+
+def test_whole_json_typed_at_the_question_is_taken(settings, browser, page):
+    at_a_terminal(settings, [json.dumps(CLIENT_JSON)])
+
+    assert saved_client(settings) == CLIENT_JSON
+
+
+@pytest.mark.parametrize("answer", ["~nosuchuser-keryx/x.json", "x" * 5000])
+def test_a_path_that_cannot_be_looked_at_is_a_wrong_answer(settings, browser, page, answer):
+    lines, _ = at_a_terminal(settings, [answer, str(downloaded())])
+
+    assert any(line.startswith("Could not look at ") for line in lines)
+    assert saved_client(settings) == CLIENT_JSON
+
+
+def test_a_folder_without_permission_is_a_wrong_answer(
+    settings, browser, page, tmp_path, monkeypatch
+):
+    real = Path.is_dir
+
+    def refuse(self):
+        if self.name == "locked":
+            raise PermissionError(13, "Permission denied")
+        return real(self)
+
+    monkeypatch.setattr(Path, "is_dir", refuse)
+
+    lines, _ = at_a_terminal(settings, [str(tmp_path / "locked"), str(downloaded())])
+
+    assert f"Could not look at {tmp_path / 'locked'}: Permission denied." in lines
+
+
+def test_a_relative_path_is_said_back_from_the_root(settings, browser, page):
+    lines, _ = at_a_terminal(settings, ["nowhere.json", str(downloaded())])
+
+    assert f"There is no file at {Path.cwd() / 'nowhere.json'}." in lines
+
+
+def test_the_newest_desktop_client_is_suggested_before_a_newer_web_one(settings, browser, page):
+    desktop = downloaded("client_secret_desktop.json", age=60)
+    downloaded("client_secret_web.json", {"web": {"client_id": "w", "client_secret": "s"}})
+
+    _, asked = at_a_terminal(settings, [None])
+
+    assert asked[0][1] == str(desktop)
+
+
+@pytest.mark.parametrize("leave", [EOFError(), KeyboardInterrupt()])
+def test_leaving_the_path_question_says_what_was_not_saved(settings, page, leave):
+    def ask(question, default=None):
+        raise leave
+
+    with pytest.raises(auth.AuthStopped, match="no Google client was saved"):
+        auth.login("google", settings, ConfigStore(), options=LoginOptions(),
+                   echo=lambda line: None, run_login=None, ask=ask)
+
+
+def test_skip_at_the_path_question_stops_and_saves_nothing(settings, page):
+    with pytest.raises(auth.AuthStopped, match="no Google client was saved"):
+        at_a_terminal(settings, ["skip"])
+
+    assert ConfigStore().stored() == {}
+
+
+def test_leaving_the_pasted_back_address_says_nothing_was_saved(client):
+    def ask(question, default=None):
+        raise EOFError
+
+    with pytest.raises(auth.AuthStopped, match="nothing was saved"):
+        auth.login("google", client, ConfigStore(), options=LoginOptions(headless=True),
+                   echo=lambda line: None, run_login=None, ask=ask)
+
+    assert not (client.data_dir / "google_signin.json").exists()
+
+
+def test_what_is_left_of_a_paste_is_dropped_from_the_terminal(monkeypatch):
+    import sys
+    import termios
+
+    class Terminal:
+        def isatty(self):
+            return True
+
+        def fileno(self):
+            return 0
+
+    flushed = []
+    monkeypatch.setattr(sys, "stdin", Terminal())
+    monkeypatch.setattr(termios, "tcflush", lambda fd, how: flushed.append((fd, how)))
+
+    auth._drop_typed_ahead()
+
+    assert flushed == [(0, termios.TCIFLUSH)]
 
 
 def test_with_a_client_on_file_nothing_is_asked_about_one(client, browser, page):
@@ -529,12 +663,13 @@ def test_no_client_and_no_terminal_is_an_auth_error_that_names_the_page(settings
     Personal mode page and `--client-file`, and opens nothing."""
     monkeypatch.setattr(google, "open_browser", lambda url: pytest.fail("nothing opened"))
 
-    with pytest.raises(AuthError, match="no Google OAuth client.*--client-file") as raised:
+    with pytest.raises(auth.AuthStopped) as raised:  # nothing was tried, nothing failed
         login("google", settings)
 
-    assert google.PERSONAL_MODE_URL in str(raised.value)
-    assert "Download JSON" in str(raised.value)
-    assert "the way for an account that cannot create projects, are in" in str(raised.value)
+    said = str(raised.value)
+    assert said.startswith(f"no Google client of yours yet: make one at {google.PERSONAL_MODE_URL}")
+    assert "--client-file FILE" in said and "failed" not in said
+    assert f"An account that cannot create projects: {google.guide_path()}" in said
 
 
 def test_a_google_sign_in_that_fails_is_an_auth_error(client, monkeypatch):

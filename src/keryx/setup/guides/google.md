@@ -26,20 +26,25 @@ that creates it can sign in with it (any other account is refused with
 
 1. **Open Google's setup page**, signed in as the account Keryx should act as:
    <https://console.cloud.google.com/auth/overview/personal?apis=ws,wsmcp,tasksmcp&clientType=desktop&isAgent=true>
-2. **Pick the project.** Take the Personal mode project it offers, or create a new one.
-3. **Check the client.** The application type is **Desktop app**, and **Use this client
-   for an AI-powered agent** is ticked. The link sets both.
+2. **Pick the project.** Select a Personal mode project, or create a new one.
+3. **Check the client.** Give it any name. The application type is **Desktop app**, and
+   **Use this client for an AI-powered agent** is ticked. The link sets both.
 4. **Agree and continue.** Tick the box to agree to the Google API Services User Data
    Policy, then choose **Continue**. Google turns on the Google Workspace APIs in the
    project and creates the client.
-5. **Download it now.** In the **OAuth client created** dialog, choose **Download JSON**.
-   Once you close that dialog, Google does not show the client secret again.
-6. **Hand it to Keryx.** Give the path of that file when Keryx asks. Enter takes the newest
+5. **Keep it now.** Choose **Download JSON** if it is offered, or copy the **Client ID**
+   and the **Client Secret**. Once you leave that page, Google does not show the secret
+   again.
+6. **Hand it to Keryx.** When Keryx asks, give the path of the file, or the Client ID, and
+   then the Client Secret, which is asked for hidden. Enter takes the newest
    `client_secret_*.json` in your Downloads folder, and a folder takes the newest one in
-   it. If you downloaded it on another machine, copy it to this one first, or type `paste`
-   and paste what is in it, hidden. Keryx checks it, copies it to
-   `~/.config/keryx/google_client_secret.json` readable by you alone, and uses it from then
-   on; you may delete the download.
+   it. If you downloaded the file on another machine, copy it to this one first, or type
+   `paste` and paste what is in it, on one line, hidden. Keryx checks it, saves it as
+   `~/.config/keryx/google_client_secret.json` readable by you alone, and uses it from
+   then on; you may delete the download. `skip` leaves it for later.
+
+These steps follow Google's own:
+<https://developers.google.com/workspace/guides/configure-mcp-servers>.
 
 If Google says it could not turn an API on, or an agent later reports that one is not
 enabled, turn them on yourself with the link in step 2 below.
@@ -58,16 +63,16 @@ accounts, which one owner never reaches.
    recognise.
 2. **Turn on the six APIs** Keryx uses, in one click, with that project selected at the
    top of the page:
-   <https://console.cloud.google.com/apis/enableflow?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com,docs.googleapis.com,sheets.googleapis.com,slides.googleapis.com>
+   <https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com,docs.googleapis.com,sheets.googleapis.com,slides.googleapis.com>
 3. **Set up the app.** Open Google Auth Platform (<https://console.cloud.google.com/auth/overview>)
    and choose **Get started**: any app name, your email for support, Audience
    **External**, a contact email, then agree to the Google API Services User Data Policy
    and choose **Create**.
 4. **Publish it.** Under **Audience** (<https://console.cloud.google.com/auth/audience>),
    choose **Publish app**, so that it is **In production**. No test users are needed.
-5. **Make the client.** Under **Clients** (<https://console.cloud.google.com/auth/clients>),
-   choose **Create client**, then **Desktop app**, any name, **Create**, and **Download
-   JSON** straight away: Google shows the secret only once.
+5. **Make the client** (<https://console.cloud.google.com/auth/clients/create>):
+   **Desktop app**, any name, **Create**, then **Download JSON**, or copy the Client ID and
+   the Client Secret: Google shows the secret only once.
 6. **Hand it to Keryx**, as in step 6 above, then sign in with the account Keryx should act
    as. Google says it hasn't verified the app: choose **Advanced**, then **Go to** your
    app's name.

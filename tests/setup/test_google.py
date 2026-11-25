@@ -94,7 +94,7 @@ def redirect(url: str, **overrides) -> str:
 
 
 def test_no_client_at_all_says_how_to_make_one(settings):
-    with pytest.raises(GoogleSetupError, match="no Google OAuth client") as raised:
+    with pytest.raises(GoogleSetupError, match="no Google client of yours yet") as raised:
         offer(settings)
 
     assert "--client-file" in str(raised.value) and "google.md" in str(raised.value)
@@ -988,7 +988,7 @@ def test_a_path_can_start_with_a_tilde(settings):
     (Path.home()).mkdir(parents=True, exist_ok=True)
     (Path.home() / "c.json").write_text('{"installed": {"client_id": "i"}}')
 
-    path, picked = google.take_client(settings, "~/c.json", paste=lambda: "")
+    path, picked = google.take_client(settings, "~/c.json", paste=lambda: "", secret=lambda: "")
 
     assert picked is None and json.loads(path.read_text())["installed"]["client_id"] == "i"
 
@@ -1000,7 +1000,7 @@ def test_the_other_way_turns_on_one_api_for_each_service_in_one_link():
     url = urlparse(google.ENABLE_APIS_URL)
     ids = parse_qs(url.query)["apiid"][0].split(",")
 
-    assert (url.netloc, url.path) == ("console.cloud.google.com", "/apis/enableflow")
+    assert (url.netloc, url.path) == ("console.cloud.google.com", "/flows/enableapi")
     assert [one.split(".")[0].removesuffix("-json") for one in ids] == list(ALL)
     assert all(one.endswith(".googleapis.com") for one in ids)
 
@@ -1015,7 +1015,7 @@ def test_the_other_way_publishes_the_app_and_never_asks_for_test_users():
         google.ENABLE_APIS_URL,
         "https://console.cloud.google.com/auth/overview",
         "https://console.cloud.google.com/auth/audience",
-        "https://console.cloud.google.com/auth/clients",
+        "https://console.cloud.google.com/auth/clients/create",
         None,
     ]
 

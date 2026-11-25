@@ -12,11 +12,12 @@ the version starts with 0.
 - **`keryx auth login google` makes your Google client with you, in the same command.**
   With none on file, it says in a sentence why you need one, opens Google's Personal mode
   page (or prints it for a browser on another machine), shows the three clicks, and asks
-  where the file it downloads went: Enter takes the newest `client_secret_*.json` in
-  `~/Downloads`, a folder takes the newest one in it, and `paste` takes what is in the file,
-  hidden, for a browser on another machine. Then it signs in as before. `keryx setup` asks
-  the same. Without a terminal, `--client-file FILE` is still how the file is given, and
-  the refusal names the page.
+  for the file it downloads or the Client ID: Enter takes the newest Desktop
+  `client_secret_*.json` in `~/Downloads`, a folder takes the newest one in it, a Client ID
+  is followed by its secret, asked for hidden, `paste` takes what is in the file, hidden,
+  for a browser on another machine, and `skip` leaves it for later. Then it signs in as
+  before. `keryx setup` asks the same. Without a terminal, `--client-file FILE` is still how
+  the file is given, and the refusal names the page.
 - **A second way for an account that cannot create a Google Cloud project**, as many work
   and school accounts cannot. Type `other` at that question for the steps, each with its
   link: make the app with a personal Google account, turn on the six APIs in one click,

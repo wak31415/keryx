@@ -101,15 +101,16 @@ the agents Calendar, Drive, Docs, Sheets and Slides, and the address they paste 
 in on standard input, never into the command). That sign-in first needs a Google OAuth
 client of their own, because Google's terms do not let an open-source app ship one. The
 best way is theirs to run at a terminal: `keryx auth login google` with no client on file
-opens Google's Personal mode page, shows the clicks and asks them for the downloaded file.
-If their account cannot create a Google Cloud project (many work and school accounts
-cannot), `other` at that question shows the second way: an app made with a personal
-Google account, published, and signed in to with the work one. Without a terminal, relay
-the page (the refusal names it, and the guide it names has the second way), and once they
-give you the path
-of the file Google downloaded, pass it with `--client-file`. A plugin installed before its
-service is connected is refused with the
-reason, and loads by itself once the sign-in includes it.
+opens Google's Personal mode page, shows the clicks and asks them for the downloaded file
+or the Client ID. If their account cannot create a Google Cloud project (many work and
+school accounts cannot), `other` at that question shows the second way: an app made with
+a personal Google account, published, and signed in to with the work one. Without a
+terminal, relay the page (the refusal names it, and the guide it names has the second
+way). Once they give you the path of the file Google downloaded, pass it with
+`--client-file`; if they copied a Client ID and secret instead, `keryx config set
+GOOGLE_OAUTH_CLIENT_ID ID`, and the secret is theirs to type with `keryx config set
+GOOGLE_OAUTH_CLIENT_SECRET --stdin`. A plugin installed before its service is connected is
+refused with the reason, and loads by itself once the sign-in includes it.
 
 Slack is a sign-in too, and it turns `slack_report` on by itself (it was called
 `send_to_slack`; a machine that installed it under that name needs nothing done):

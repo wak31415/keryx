@@ -128,6 +128,28 @@ def test_plugins_install_help_shows_the_clusters_table_by_its_name():
     assert "the whole [clusters] table" in words
 
 
+def test_a_question_at_the_terminal_hands_back_its_default_and_leaving_it_is_eof(monkeypatch):
+    import typer
+
+    from keryx import cli
+
+    asked = []
+
+    def prompt(question, **kwargs):
+        asked.append((question, kwargs))
+        if question == "leave":
+            raise typer.Abort
+        return kwargs.get("default", "typed")
+
+    monkeypatch.setattr(typer, "prompt", prompt)
+
+    assert cli._ask_line("path", default="/d") == "/d"
+    assert cli._ask_line("address") == "typed"
+    assert asked == [("path", {"default": "/d"}), ("address", {})]
+    with pytest.raises(EOFError):
+        cli._ask_line("leave")
+
+
 def test_auth_login_help_says_google_needs_a_client_of_your_own_and_makes_one():
     result = runner.invoke(app, ["auth", "login", "--help"], terminal_width=200)
 

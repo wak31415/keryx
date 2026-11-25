@@ -38,6 +38,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import threading
@@ -155,19 +156,31 @@ WHY_OWN_CLIENT = (
     "you make your own, once. Google's Personal mode makes it in about a minute, and it "
     "works only for your account: no \"unverified app\" warning, and no expiry."
 )
-#: The clicks on that page, in order.
+#: The clicks on that page, in order, as Google's own steps for it have them
+#: (developers.google.com/workspace/guides/configure-mcp-servers): those end with copying
+#: the Client ID and Client Secret, and the console may offer the file as well.
 CLIENT_STEPS = (
-    "Sign in as the account Keryx should act as, and take the project it offers.",
-    "Tick the box to agree, then choose Continue.",
-    "Choose Download JSON straight away: Google shows the secret only once.",
+    "Sign in as the account Keryx should act as, and pick or create the project it offers.",
+    "Give the client any name, tick the box to agree, then choose Continue.",
+    "Choose Download JSON if it is offered, or copy the Client ID and the Client Secret: "
+    "Google shows the secret only once.",
 )
 #: Said when the browser is on another machine, so the download is not on this one.
 ELSEWHERE_NOTE = (
-    f"Downloaded it on another machine? Copy it to this one first (scp works), or type "
-    f"{PASTE} at the question below to paste what is in it, hidden."
+    f"Downloaded it on another machine? Copy it to this one first (scp works), type {PASTE} "
+    "at the question below to paste what is in it, hidden, or give the Client ID."
 )
-PATH_QUESTION = "Path to the file you downloaded"
-PASTE_QUESTION = "Paste what is in the file (hidden)"
+PATH_QUESTION = "The file you downloaded, or the Client ID"
+PASTE_QUESTION = "Paste what is in the file, on one line (hidden)"
+SECRET_QUESTION = "Client Secret (hidden)"
+#: Typed at the path question to stop there, in the wizard and the command alike.
+SKIP_WORD = "skip"
+#: What a Client ID looks like: never a path, so an answer that is one is taken as one.
+CLIENT_ID = re.compile(r"[\w.-]+\.apps\.googleusercontent\.com")
+#: What a Client Secret starts with, so one typed at the visible question is never echoed.
+SECRET_PREFIX = "GOCSPX-"
+#: Said when Google is left for later, by Skip or at the path question.
+LATER_NOTE = "Left for later: `keryx setup` comes back to it, or `keryx auth login google`."
 
 # The other way, for an account that cannot create a Cloud project (many work and school
 # accounts cannot), which Personal mode cannot serve: it admits only the account that made
@@ -192,8 +205,9 @@ API_IDS = (
     "sheets.googleapis.com",
     "slides.googleapis.com",
 )
-#: The console's page that turns on every API it is given, in one click.
-ENABLE_APIS_URL = "https://console.cloud.google.com/apis/enableflow?apiid=" + ",".join(API_IDS)
+#: The console's page that turns on every API it is given, in one click, in the form
+#: Google's Workspace MCP guide links it (several ids, comma-separated).
+ENABLE_APIS_URL = "https://console.cloud.google.com/flows/enableapi?apiid=" + ",".join(API_IDS)
 OTHER_INTRO = (
     "The way round it: make the app with a personal Google account, then sign in to it with "
     "this one."
@@ -210,11 +224,11 @@ OTHER_STEPS: tuple[tuple[str, str | None], ...] = (
     ("Publish it: under Audience, choose Publish app, so it is In production. In Testing "
      "every sign-in ends after 7 days. No test users are needed.",
      "https://console.cloud.google.com/auth/audience"),
-    ("Make the client: Create client, Desktop app, any name, Create, then Download JSON "
-     "straight away.", "https://console.cloud.google.com/auth/clients"),
-    ("Give that file at the question below, then sign in with the account Keryx should act "
-     "as. Google says it hasn't verified the app: choose Advanced, then Go to the app's "
-     "name.", None),
+    ("Make the client: Desktop app, any name, Create, then Download JSON, or copy the "
+     "Client ID and the Client Secret.", "https://console.cloud.google.com/auth/clients/create"),
+    ("Give the file or the Client ID at the question below, then sign in with the account "
+     "Keryx should act as. Google says it hasn't verified the app: choose Advanced, then Go "
+     "to the app's name.", None),
 )
 #: Said while the browser is out: an organization that blocks unapproved apps shows its
 #: refusal on Google's own page and never sends the browser back.
@@ -237,24 +251,39 @@ def steps_text() -> str:
 def own_client_hint() -> str:
     """How to make a client without a terminal to ask at: the page, then `--client-file`."""
     return (
-        f"make one at {PERSONAL_MODE_URL} and choose Download JSON, then run `keryx auth "
-        f"login google --client-file FILE`; the steps, and the way for an account that "
-        f"cannot create projects, are in {guide_path()}"
+        f"make one at {PERSONAL_MODE_URL}, then run `keryx auth login google --client-file "
+        f"FILE`, or run `keryx auth login google` at a terminal. An account that cannot "
+        f"create projects: {guide_path()}"
     )
+
+
+def sentence(exc: BaseException) -> str:
+    """A refusal as the owner reads it at the path question: capitalised, with a stop."""
+    text = str(exc)
+    return text[:1].upper() + text[1:] + ("" if text.endswith(".") else ".")
 
 
 def downloads() -> Path:
     return Path.home() / "Downloads"
 
 
+def _is_desktop(path: Path) -> bool:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("installed"), dict)
+
+
 def newest_client_file(directory: Path) -> Path | None:
-    """The newest file Google's console could have downloaded in `directory`; None when
-    there is none."""
+    """The newest file Google's console could have downloaded in `directory`, a Desktop
+    client before any other; None when there is none."""
     try:
         found = [path for path in directory.glob(CLIENT_GLOB) if path.is_file()]
-        return max(found, key=lambda path: path.stat().st_mtime, default=None)
+        found.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     except OSError:
         return None
+    return next((path for path in found if _is_desktop(path)), found[0] if found else None)
 
 
 def suggested_client_file() -> str:
@@ -266,30 +295,86 @@ def suggested_client_file() -> str:
 
 def client_file_from(answer: str) -> tuple[Path, bool]:
     """The file an answer to the path question names, and whether it was picked as the
-    newest client file in a folder that was named instead."""
-    path = Path(answer.strip().strip("'\"")).expanduser()
-    if path.is_dir():
-        found = newest_client_file(path)
-        if found is None:
-            raise GoogleSetupError(f"there is no {CLIENT_GLOB} file in {path}")
-        return found, True
-    if not path.is_file():
-        what = "folder" if answer.strip().strip("'\"").endswith(os.sep) else "file"
-        raise GoogleSetupError(f"there is no {what} at {path}")
+    newest client file in a folder that was named instead. A path is said back whole,
+    from the root, so a relative one reads as where it was looked for."""
+    said = answer.strip().strip("'\"")
+    try:
+        path = Path(said).expanduser().absolute()
+        if path.is_dir():
+            found = newest_client_file(path)
+            if found is None:
+                raise GoogleSetupError(f"there is no {CLIENT_GLOB} file in {path}")
+            return found, True
+        if not path.is_file():
+            what = "folder" if said.endswith(os.sep) else "file"
+            raise GoogleSetupError(f"there is no {what} at {path}")
+    except GoogleSetupError:
+        raise
+    except (OSError, RuntimeError) as exc:  # no permission, a name too long, `~nobody`
+        why = exc.strerror if isinstance(exc, OSError) and exc.strerror else "it cannot be read"
+        raise GoogleSetupError(f"could not look at {said}: {why}") from None
     return path, False
 
 
+def _parses(text: str) -> bool:
+    try:
+        json.loads(text)
+    except ValueError:
+        return False
+    return True
+
+
+def client_json(client_id: str, client_secret: str) -> str:
+    """A Client ID and Secret as the Desktop client file the console downloads, so a client
+    copied by hand is kept exactly as a downloaded one is."""
+    return json.dumps({"installed": {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": google.TOKEN_URL,
+        "redirect_uris": ["http://localhost"],
+    }})
+
+
 def take_client(
-    settings: Settings, answer: str, *, paste: Callable[[], str]
+    settings: Settings,
+    answer: str,
+    *,
+    paste: Callable[[], str],
+    secret: Callable[[], str],
 ) -> tuple[Path, Path | None]:
-    """Install the Desktop client an answer to the path question names: a file, a folder
-    holding one, or `paste` and then what is in it (`paste()` asks for that, hidden).
-    Returns where it was saved, and the file taken from a folder when it was one."""
-    if answer.strip().lower() == PASTE:
+    """Install the Desktop client an answer to the path question gives: a file, a folder
+    holding one, a Client ID (`secret()` then asks for its secret, hidden), what is in the
+    file typed at the question, or `paste` and then what is in it (`paste()`, hidden).
+    Returns where it was saved, and the file taken from a folder when it was one.
+
+    Nothing typed that may hold a secret is ever said back: a refusal names what it was,
+    never what it said."""
+    said = answer.strip()
+    if said.lower() == PASTE:
         text = paste().strip()
         if not text:
             raise GoogleSetupError("nothing was pasted")
+        if text.startswith("{") and not _parses(text):
+            # The first line of a file spread over several: the rest has been dropped.
+            raise GoogleSetupError(
+                "what was pasted is not a whole client file: paste it on one line, as Google's "
+                "download is, or give its path"
+            )
         return install_client_text(settings, text, "what was pasted", desktop=True), None
+    if said.startswith("{"):
+        return install_client_text(settings, said, "what was typed", desktop=True), None
+    if said.startswith(SECRET_PREFIX):
+        raise GoogleSetupError(
+            "that looks like the Client Secret: give the Client ID here, and the secret when "
+            "it is asked for, hidden"
+        )
+    if CLIENT_ID.fullmatch(said):
+        given = secret().strip()
+        if not given:
+            raise GoogleSetupError("no Client Secret was given")
+        text = client_json(said, given)
+        return install_client_text(settings, text, "that Client ID", desktop=True), None
     source, picked = client_file_from(answer)
     return install_client_file(settings, source, desktop=True), source if picked else None
 
@@ -323,8 +408,8 @@ def install_client_text(
         raise GoogleSetupError(f"{what} is not a Google OAuth client file: {exc}") from None
     if desktop and "installed" not in json.loads(text):
         raise GoogleSetupError(
-            f"{what} is not a Desktop app client: make one on the page above, whose link "
-            "sets Desktop app"
+            f"{what} is a client for another kind of application, and Keryx needs a Desktop "
+            "app client: make one with Desktop app as its application type"
         )
     return write_private(settings.config_dir / GOOGLE_CLIENT_FILE, text)
 
@@ -363,8 +448,7 @@ def offer(settings: Settings, wanted: Sequence[str] | None = None) -> Offer:
     client = google.resolve_client(settings)
     if client is None:
         raise GoogleSetupError(
-            "there is no Google OAuth client to sign in with: make one of your own and "
-            f"pass it ({own_client_hint()})"
+            f"no Google client of yours yet: {own_client_hint()}"
         )
     if wanted is None:
         return Offer(client, tuple(SERVICES))
@@ -1083,7 +1167,7 @@ def connect(ctx: "SetupContext") -> None:
              Choice(SIGN_IN_NOW, "Sign in", hint="one consent screen")],
             default=SIGN_IN_NOW if wanted else SKIP,
         ) == SKIP:
-            ui.note(f"Left for later: `keryx setup` comes back to it, or {SIGN_IN}.")
+            ui.note(LATER_NOTE)
             return
     if client is None and not _own_client(ctx):
         return
@@ -1132,35 +1216,54 @@ def _show(
 
 def _own_client(ctx: "SetupContext") -> bool:
     """The owner's own Google client, made now: the Personal mode page opened (a probe, so
-    going back does not open it again), the clicks shown, and the downloaded file asked for.
-    Where it was downloaded is never assumed: the newest one in `~/Downloads` is only the
-    default. Blank stops, and saves nothing."""
+    going back does not open it again), the clicks shown, and the downloaded file or the
+    Client ID asked for, until it is given or the owner stops.
+
+    Where the file went is never assumed: the newest one in `~/Downloads` is only what
+    Enter takes. Nothing is put in the answer box beforehand, so `other`, `paste`, a Client
+    ID or `skip` is typed as it is. After a wrong answer the screen keeps the steps the
+    owner was following: the wizard shows only what was said since the last question."""
     ui = ctx.ui
     ui.note(WHY_OWN_CLIENT)
     headless = ctx.probes.headless()
     opened = not headless and ctx.probes.open_browser(PERSONAL_MODE_URL)
-    ui.panel("Make your Google sign-in app", f"{opening(opened)}\n\n{steps_text()}")
-    ui.link(PERSONAL_MODE_URL)
-    for line in [NO_PROJECT_NOTE, *([ELSEWHERE_NOTE] if headless else [])]:
-        ui.note(line)
-    default = suggested_client_file()
+
+    def personal(first: bool = False) -> None:
+        body = f"{opening(opened)}\n\n{steps_text()}" if first else steps_text()
+        ui.panel("Make your Google sign-in app", body)
+        ui.link(PERSONAL_MODE_URL)
+        for line in [NO_PROJECT_NOTE, *([ELSEWHERE_NOTE] if headless else [])]:
+            ui.note(line)
+
+    def other() -> None:
+        ui.note(OTHER_INTRO)
+        for number, (step, url) in enumerate(OTHER_STEPS, 1):
+            ui.note(f"{number}. {step}")
+            if url:
+                ui.link(url)
+
+    personal(first=True)
+    showing = personal
+    suggested = suggested_client_file()
     while True:
-        raw = ui.text(f"{PATH_QUESTION} (blank to stop here)", default=default)
-        if not raw:
+        ui.note(f"Enter takes {suggested}")
+        raw = ui.text(f"{PATH_QUESTION} ({SKIP_WORD} leaves it for later)").strip()
+        if raw.lower() == SKIP_WORD:
+            ui.note(LATER_NOTE)
             return False
-        if raw.strip().lower() == OTHER:
-            ui.note(OTHER_INTRO)
-            for number, (step, url) in enumerate(OTHER_STEPS, 1):
-                ui.note(f"{number}. {step}")
-                if url:
-                    ui.link(url)
+        if raw.lower() == OTHER:
+            showing = other
+            other()
             continue
         try:
             path, picked = take_client(
-                ctx.settings, raw, paste=lambda: ui.secret(PASTE_QUESTION)
+                ctx.settings, raw or suggested,
+                paste=lambda: ui.secret(PASTE_QUESTION),
+                secret=lambda: ui.secret(SECRET_QUESTION),
             )
         except GoogleSetupError as exc:
-            ui.error(str(exc))
+            showing()
+            ui.error(sentence(exc))
             continue
         if picked is not None:
             ui.note(f"Took {picked}, the newest one there.")

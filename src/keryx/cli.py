@@ -1613,6 +1613,18 @@ def _ask_hidden(question: str) -> str:
         raise EOFError from None
 
 
+def _ask_line(question: str, default: str | None = None) -> str:
+    """One question at the terminal, shown as typed; `default` is what Enter takes. Ctrl-C
+    and the end of input are `EOFError`, for the flow that asked, which says what was and
+    was not saved rather than click's bare "Aborted"."""
+    try:
+        if default is None:
+            return typer.prompt(question)
+        return typer.prompt(question, default=default)
+    except typer.Abort:
+        raise EOFError from None
+
+
 def _ask_boxes(question: str, choices) -> list[str]:
     """One list of boxes to tick at the terminal; the values ticked. Ctrl-C and the end
     of input are `EOFError`, for the flow that asked."""
@@ -1780,7 +1792,7 @@ def auth_login(
             options=options,
             echo=typer.echo,
             run_login=run_command,
-            ask=typer.prompt if sys.stdin.isatty() else None,
+            ask=_ask_line if sys.stdin.isatty() else None,
             ask_secret=_ask_hidden if sys.stdin.isatty() else None,
             choose=_ask_boxes if sys.stdin.isatty() else None,
         )

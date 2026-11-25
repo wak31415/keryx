@@ -354,8 +354,10 @@ def _google(
     if options.client_file is not None:
         path = google.install_client_file(settings, options.client_file)
         settings = _use_client(settings, store, path, echo)
-    elif (options.callback_url is None and ask is not None
-          and resolve_client(settings) is None):
+    elif options.callback_url is None and resolve_client(settings) is None:
+        if ask is None:
+            # Nothing was tried, so nothing "failed": what to do, short.
+            raise google.GoogleStopped(f"no Google client of yours yet: {google.own_client_hint()}")
         path = _make_client(settings, options=options, echo=echo, ask=ask,
                             ask_secret=ask_secret)
         settings = _use_client(settings, store, path, echo)
@@ -384,12 +386,14 @@ def _google(
                     "it is never on a command line."
                 )
                 return
-            result = google.finish_signin(
-                settings,
-                ask(f"{landed}Paste its whole address here"),
-                account=account,
-                post=post,
-            )
+            try:
+                address = ask(f"{landed}Paste its whole address here")
+            except (EOFError, KeyboardInterrupt):
+                google.discard_pending(settings)
+                raise google.GoogleStopped(
+                    "nothing was saved: run `keryx auth login google --headless` again to "
+                    "sign in") from None
+            result = google.finish_signin(settings, address, account=account, post=post)
     # What the sign-in implies is saved before anything is said about it.
     notes = _keep(settings, store, result)
     for line in [*google.summary(result), *notes]:
@@ -434,19 +438,28 @@ def _make_client(
     if options.headless:
         echo(google.ELSEWHERE_NOTE)
 
-    def paste() -> str:
+    def hidden(question: str) -> str:
         if ask_secret is None:
-            raise google.GoogleSetupError("there is nothing to paste into here")
+            raise google.GoogleSetupError("there is nowhere to type that hidden here")
         try:
-            return ask_secret(google.PASTE_QUESTION)
+            return ask_secret(question)
         except (EOFError, KeyboardInterrupt):
             raise google.GoogleStopped(_CLIENT_STOPPED) from None
+        finally:
+            # A paste of several lines leaves the rest waiting in the terminal: dropped, so
+            # none of it lands in the visible question that comes next.
+            _drop_typed_ahead()
 
     default = google.suggested_client_file()
     wrong = 0
     while wrong < google.MAX_WRONG:
-        answer = ask("\n" + google.PATH_QUESTION, default=default)
-        if answer.strip().lower() == google.OTHER:
+        try:
+            answer = ask("\n" + google.PATH_QUESTION, default=default).strip()
+        except (EOFError, KeyboardInterrupt):
+            raise google.GoogleStopped(_CLIENT_STOPPED) from None
+        if answer.lower() == google.SKIP_WORD:
+            raise google.GoogleStopped(_CLIENT_STOPPED)
+        if answer.lower() == google.OTHER:
             # The way for an account that cannot create a project: steps, never a wrong
             # answer, and the same question again after them.
             echo("\n" + google.OTHER_INTRO + "\n")
@@ -455,17 +468,35 @@ def _make_client(
             continue
         wrong += 1
         try:
-            path, picked = google.take_client(settings, answer, paste=paste)
+            path, picked = google.take_client(
+                settings, answer or default,
+                paste=lambda: hidden(google.PASTE_QUESTION),
+                secret=lambda: hidden(google.SECRET_QUESTION),
+            )
         except google.GoogleStopped:
             raise
         except google.GoogleSetupError as exc:
-            message = str(exc)
-            echo(message[0].upper() + message[1:] + ".")
+            _drop_typed_ahead()
+            echo(google.sentence(exc))
             continue
         if picked is not None:
             echo(f"Took {picked}, the newest one there.")
         return path
     raise google.GoogleStopped(_CLIENT_STOPPED)
+
+
+def _drop_typed_ahead() -> None:
+    """Throw away whatever is waiting to be read at the terminal: the rest of something
+    pasted over several lines, which must not be read as answers. Nothing without one."""
+    import sys
+
+    try:
+        import termios
+
+        if sys.stdin.isatty():
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except (ImportError, OSError, ValueError):  # pragma: no cover - no terminal to flush
+        pass
 
 
 _CLIENT_STOPPED = (
