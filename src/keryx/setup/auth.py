@@ -195,6 +195,7 @@ def login(
     ask_secret: Callable[[str], str] | None = None,
     choose: Callable[[str, Sequence[Any]], Sequence[str]] | None = None,
     ask_paste: Callable[[str], str] | None = None,
+    confirm: Callable[[str, bool], bool] | None = None,
 ) -> None:
     """Do the one sign-in `name` names; raises `AuthError` with what went wrong.
 
@@ -216,7 +217,7 @@ def login(
     if name == "google" or name in GOOGLE_ALIASES:
         try:
             _google(settings, store, options=options, echo=echo, post=post, ask=ask,
-                    ask_secret=ask_secret, ask_paste=ask_paste)
+                    ask_secret=ask_secret, ask_paste=ask_paste, confirm=confirm)
         except google.GoogleStopped as exc:
             raise AuthStopped(str(exc)) from None
         except google.GoogleSetupError as exc:
@@ -353,6 +354,7 @@ def _google(
     ask: Callable[..., str] | None,
     ask_secret: Callable[[str], str] | None = None,
     ask_paste: Callable[[str], str] | None = None,
+    confirm: Callable[[str, bool], bool] | None = None,
 ) -> None:
     """Google's sign-in, with the owner's client.
 
@@ -381,6 +383,8 @@ def _google(
         given = _make_client(settings, options=options, echo=echo, ask=ask,
                              ask_secret=ask_secret, ask_paste=ask_paste)
         echo("\n" + google.plain(google.guide(google.CONSENT_GUIDE)) + "\n")
+    elif options.callback_url is None and (staged_client := google.staged_client(settings)):
+        given = _staged_or_on_file(settings, staged_client, echo=echo, confirm=confirm)
     pending = google.read_pending(settings) if options.callback_url is not None else None
     staged = given is not None or bool(pending and pending.staged_client)
     signing = google.stage_client(settings, given) if given is not None else settings
@@ -395,12 +399,40 @@ def _google(
         return
     if staged:
         _use_client(settings, store, google.adopt_client(settings), echo)
+    else:
+        google.drop_staged_client(settings)  # a sign-in with another client was kept
     # What the sign-in implies is saved before anything is said about it.
     notes = _keep(settings, store, result)
     for line in [*google.summary(result), *notes]:
         echo(line)
     if hint := google.api_hint(result):
         echo(hint)
+
+
+def _staged_or_on_file(
+    settings: Settings,
+    staged: tuple[str, str],
+    *,
+    echo: Echo,
+    confirm: Callable[[str, bool], bool] | None,
+) -> str | None:
+    """A client given last time waits beside the one on file, not signed in yet: never
+    passed over in silence. At a terminal the owner says which, yes by default, and no
+    throws the given one away; without one it is used, since it was given on purpose."""
+    text, client_id = staged
+    if confirm is None:
+        echo(f"Signing in with the client you gave last time (Client ID {client_id}), which "
+             "has not signed in yet.")
+        return text
+    try:
+        if confirm(google.staged_question(client_id), True):
+            return text
+    except (EOFError, KeyboardInterrupt):
+        raise google.GoogleStopped(
+            "nothing was saved, and the client you gave last time is still kept: run "
+            "`keryx auth login google` again") from None
+    google.drop_staged_client(settings)
+    return None
 
 
 def _sign_in(
@@ -428,7 +460,7 @@ def _sign_in(
     echo("Open this link on any device and approve it:\n")
     echo(google.start_signin(settings, chosen))
     echo("\n" + google.BLOCKED_NOTE)
-    echo(google.client_not_found_note(given=given, on_file=on_file))
+    echo(google.client_not_found_note(given=given, on_file=on_file, waiting=ask is not None))
     landed = "\nYou will land on a page that does not load. "
     if ask is None:
         echo(
@@ -505,14 +537,19 @@ def _make_client(
             drop_typed_ahead()
 
     default, enter = google.enter_takes(settings)
+    shown = default
     if google.staged_offer(settings):
+        # Enter takes the file it waits in, which is never shown: it is not one to type.
         echo("\n" + enter)
+        shown = google.STAGED_DEFAULT
     wrong = 0
     while wrong < google.MAX_WRONG:
         try:
-            answer = ask("\n" + google.PATH_QUESTION, default=default).strip()
+            answer = ask("\n" + google.PATH_QUESTION, default=shown).strip()
         except (EOFError, KeyboardInterrupt):
             raise google.GoogleStopped(_CLIENT_STOPPED) from None
+        if answer == google.STAGED_DEFAULT:
+            answer = default
         if answer.lower() == google.SKIP_WORD:
             raise google.GoogleStopped(_CLIENT_STOPPED)
         if answer.lower() == google.OTHER:

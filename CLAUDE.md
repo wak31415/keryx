@@ -262,7 +262,7 @@ remember:
   for a command that is not the wizard), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record
   of its answers and probe results, so no probe runs twice; what a replay says is held
-  until a question or a probe is live, so a section Tab passes over says nothing and one
+  until a question or a probe is live, so a section Tab passes over says nothing but its errors and warnings, and one
   that stops says it all, in order; a section that saves before
   its last answer has to be safe to run again, which the Slack step's untick is: see
   "Slack runs both ways"), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
@@ -663,7 +663,12 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   client file after the sign-in is kept. Any other ending (Ctrl-C at the wait, nothing
   granted, a network error, a no to an unexpected account, leaving the wizard) keeps it
   staged, and the next client question, in the command or the wizard, offers it first
-  (`staged_offer`: "Enter takes the client you gave last time"). A client already on file
+  (`staged_offer`: "Enter takes the client you gave last time"; the command shows that as
+  its default, never the staged file's path). A staged client beside one on file is never
+  passed over in silence: the next sign-in asks one yes or no first (`staged_question`,
+  yes by default; no throws the staged one away), and without a terminal it is used and
+  said in one line. A sign-in kept with another client, and `keryx auth logout google`,
+  throw a staged client away. A client already on file
   is never touched by a failed attempt, and a refusal or the wait's note says what to do
   by the situation (`refused_advice`, `client_not_found_note`); the wizard's retry always
   offers to give the client again, or another one. The two commands of a pasted-back

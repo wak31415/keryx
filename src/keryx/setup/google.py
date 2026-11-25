@@ -284,21 +284,25 @@ def sentence(exc: BaseException) -> str:
 CLIENT_FILE_AGAIN = "`keryx auth login google --client-file FILE`"
 
 
-def client_not_found_note(*, given: bool, on_file: bool, wizard: bool = False) -> str:
+def client_not_found_note(
+    *, given: bool, on_file: bool, wizard: bool = False, waiting: bool = True
+) -> str:
     """Said while the browser is out. A wrong Client ID never comes back to Keryx: Google
     shows `invalid_client` on its own page, so the owner stops the wait and gives another.
     Worded by the situation: a client given in this run (`given`), whether one is on file,
-    and the wizard, which gives another by a choice rather than a command."""
+    the wizard, which gives another by a choice rather than a command, and whether anything
+    is `waiting` to be stopped: the first of two commands has already ended."""
     which = "the Client ID you gave" if given else "the Client ID on file"
     if wizard:
         then = "choose to give the client again" if given else "choose to give another client"
-    elif given and not on_file:
+    elif given and not on_file and waiting:
         then = f"run {SIGN_IN} again and give the right one"
     else:
         then = f"run {CLIENT_FILE_AGAIN} with the right one"
+    stop = "press Ctrl-C, then" if waiting else "there is no address to copy, so"
     return (
         f"If Google's page says the OAuth client was not found (invalid_client), {which} is "
-        f"wrong: press Ctrl-C, then {then}."
+        f"wrong: {stop} {then}."
     )
 
 
@@ -557,6 +561,25 @@ def staged_settings(settings: Settings, path: Path) -> Settings:
         "google_oauth_client_id": None,
         "google_oauth_client_secret": None,
     })
+
+
+def staged_client(settings: Settings) -> tuple[str, str] | None:
+    """The client given last time and kept staged, as `(json, client_id)`, of any shape a
+    `--client-file` takes; None when there is none."""
+    try:
+        text = read_client_file(staged_client_path(settings))
+        client_id, _ = parse_google_client(text)
+    except (GoogleSetupError, ValueError):
+        return None
+    return text, client_id
+
+
+def staged_question(client_id: str) -> str:
+    """Asked before a sign-in when a client given last time waits beside the one on file."""
+    return (
+        f"You gave another client last time that has not signed in yet (Client ID "
+        f"{client_id}). Sign in with it? No keeps the one on file."
+    )
 
 
 def staged_offer(settings: Settings) -> tuple[Path, str] | None:
@@ -1098,6 +1121,7 @@ def sign_out(settings: Settings, *, post: Callable[..., Any] | None = None) -> S
         _pending_path(settings),
         legacy_token_path(settings),
         *google.credential_files(settings),
+        staged_client_path(settings),
     ]
     found = tuple(path for path in files if path.is_file())
     tokens = [google.token_from(path) for path in found]
@@ -1168,6 +1192,7 @@ def exchange(
         raise GoogleSetupError(
             f"Google refused the code ({_plain(body.get('error', response.status_code))}); "
             f"start again with {SIGN_IN}"
+            + (", which offers the client you gave first" if is_staged(settings) else "")
         )
     discard_pending(settings)
     # Only what the token endpoint says it granted is believed. Granular consent can make
@@ -1373,6 +1398,13 @@ def connect(ctx: "SetupContext") -> None:
         given = _own_client(ctx)
         if given is None:
             return
+    elif staged := staged_client(settings):
+        # A client given last time that has not signed in waits beside the one on file:
+        # asked about, never passed over in silence.
+        if ui.confirm(staged_question(staged[1]), default=True):
+            given = staged[0]
+        else:
+            drop_staged_client(settings)
     on_file = client is not None
     while True:
         # A client given here signs in from a file of its own, replaces the one on file
@@ -1391,7 +1423,9 @@ def connect(ctx: "SetupContext") -> None:
     except GoogleSetupError as exc:
         ui.error(str(exc))
         return
-    if given is not None:
+    if given is None:
+        drop_staged_client(ctx.settings)  # a sign-in with another client is what was kept
+    else:
         path = adopt_client(ctx.settings)
         ui.success(f"client saved to {path}")
         ctx.save({"GOOGLE_CLIENT_SECRETS_FILE": str(path)})
@@ -1517,13 +1551,18 @@ def _own_client(ctx: "SetupContext", *, again: bool = False) -> str | None:
         return text
 
 
+#: What the command shows as the client question's default for a client given last time:
+#: never the path of the file it waits in.
+STAGED_DEFAULT = "the client you gave last time"
+
+
 def enter_takes(settings: Settings) -> tuple[str, str]:
     """What Enter takes at the client question, and the line that says so: the client
     given last time, kept staged because no sign-in with it worked yet, else the newest
     download, else the Downloads folder."""
     if staged := staged_offer(settings):
         path, client_id = staged
-        return str(path), f"Enter takes the client you gave last time (Client ID {client_id})."
+        return str(path), f"Enter takes {STAGED_DEFAULT} (Client ID {client_id})."
     suggested = suggested_client_file()
     return suggested, f"Enter takes {suggested}"
 

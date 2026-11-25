@@ -65,6 +65,20 @@ def test_a_section_tab_passes_over_says_nothing_even_after_its_record_runs_out()
     assert ui.said == []
 
 
+def test_a_section_passed_over_still_shows_its_errors_and_warnings():
+    ui = ScriptedPrompter()
+    recorder = Recorder(ui, [one("Name", "Ada")])
+
+    recorder.text("Name")
+    recorder.success("client saved")
+    recorder.warn("an API is not enabled")
+    recorder.error("could not save the sign-in")
+    recorder.finish()
+
+    assert ui.said == [("warn", "an API is not enabled"),
+                       ("error", "could not save the sign-in")]
+
+
 def test_a_probe_run_live_shows_what_was_held_first():
     ui = ScriptedPrompter()
     recorder = Recorder(ui, [one("Name", "Ada")])

@@ -654,9 +654,134 @@ def test_the_client_given_last_time_is_what_enter_takes(settings, browser, page)
     lines, asked = at_a_terminal(settings, [None])
 
     assert f"\nEnter takes the client you gave last time (Client ID {ID})." in lines
-    assert asked[0][1] == str(google.staged_client_path(settings))
+    # The default is said in words: the file it waits in is not one to type.
+    assert asked[0][1] == "the client you gave last time"
     assert saved_client(settings)["installed"]["client_id"] == ID
     assert not google.staged_client_path(settings).exists()  # adopted
+
+
+# --- a client given last time, beside the one on file ---------------------------------------
+
+
+def on_file_and_staged(settings, browser_seen):
+    """A client on file, and another given last time that has not signed in yet."""
+    old = google.install_client_text(settings, json.dumps(CLIENT_JSON))
+    ConfigStore().set({"GOOGLE_CLIENT_SECRETS_FILE": str(old)})
+    google.stage_client(settings, google.client_json(ID, SECRET))
+    return settings.model_copy(update={"google_client_secrets_file": old}), old
+
+
+def login_with(settings, *, confirm=None, **options):
+    lines = []
+    auth.login("google", settings, ConfigStore(), options=LoginOptions(**options),
+               echo=lines.append, run_login=None, confirm=confirm)
+    return lines
+
+
+def test_a_client_given_last_time_is_asked_about_and_yes_signs_in_with_it(settings, browser):
+    settings, old = on_file_and_staged(settings, browser)
+    asked = []
+
+    lines = login_with(settings, confirm=lambda question, default: asked.append(
+        (question, default)) or True)
+
+    assert asked == [(
+        f"You gave another client last time that has not signed in yet (Client ID {ID}). "
+        "Sign in with it? No keeps the one on file.", True)]
+    assert browser[0].client.client_id == ID
+    assert json.loads(old.read_text())["installed"]["client_id"] == ID  # replaced, it worked
+    assert not google.staged_client_path(settings).exists()
+    assert any("Google client saved to" in line for line in lines)
+
+
+def test_no_keeps_the_client_on_file_and_throws_the_given_one_away(settings, browser):
+    settings, old = on_file_and_staged(settings, browser)
+
+    login_with(settings, confirm=lambda question, default: False)
+
+    assert browser[0].client.client_id == "made"
+    assert json.loads(old.read_text()) == CLIENT_JSON
+    assert not google.staged_client_path(settings).exists()
+
+
+def test_without_a_terminal_the_client_given_last_time_is_used_and_said(settings, browser):
+    settings, old = on_file_and_staged(settings, browser)
+
+    lines = login_with(settings)
+
+    assert (f"Signing in with the client you gave last time (Client ID {ID}), which has not "
+            "signed in yet.") in lines
+    assert browser[0].client.client_id == ID
+
+
+@pytest.mark.parametrize("leave", [EOFError(), KeyboardInterrupt()])
+def test_leaving_that_question_keeps_both(settings, browser, leave):
+    settings, old = on_file_and_staged(settings, browser)
+
+    def confirm(question, default):
+        raise leave
+
+    with pytest.raises(auth.AuthStopped, match="the client you gave last time is still kept"):
+        login_with(settings, confirm=confirm)
+
+    assert google.staged_client_path(settings).exists() and old.exists()
+
+
+def test_a_sign_in_with_another_client_kept_throws_a_stale_given_one_away(
+    client, monkeypatch
+):
+    """A pasted-back sign-in finished with the client on file, while a given one waits
+    from some other attempt: the sign-in kept is with another client, so it goes."""
+    google.stage_client(client, google.client_json(ID, SECRET))
+    monkeypatch.setattr(google, "finish_signin",
+                        lambda settings, address, *, account=None, post=None: result(("gmail",)))
+
+    login_with(client, callback_url="http://localhost:1/?state=s&code=c")
+
+    assert not google.staged_client_path(client).exists()
+
+
+def test_a_code_refused_while_signing_in_with_a_given_client_says_it_is_offered_again(
+    settings, monkeypatch
+):
+    class Refused:
+        status_code = 400
+
+        def json(self):
+            return {"error": "invalid_grant"}
+
+    def signin(settings_, chosen, *, announce, account=None, post=None):
+        pending = google.Pending("s", "v", "r", chosen.client.client_id, chosen.services)
+        return google.exchange(settings_, pending, {"state": "s", "code": "c"},
+                               post=lambda *a, **k: Refused())
+
+    monkeypatch.setattr(google, "browser_signin", signin)
+
+    with pytest.raises(AuthError, match="start again with `keryx auth login google`, which "
+                                        "offers the client you gave first"):
+        at_a_terminal(settings, [ID], secrets=[SECRET])
+
+    assert google.staged_offer(settings) is not None
+
+
+def test_signing_out_removes_a_client_given_and_not_yet_signed_in(settings):
+    google.stage_client(settings, google.client_json(ID, SECRET))
+
+    out = google.sign_out(settings)
+
+    assert google.staged_client_path(settings) in out.removed
+    assert not google.staged_client_path(settings).exists()
+
+
+def test_the_first_of_two_commands_says_a_wrong_id_has_no_address_to_copy(settings, tmp_path):
+    source = tmp_path / "c.json"
+    source.write_text(json.dumps(CLIENT_JSON))
+
+    lines = login("google", settings, headless=True, client_file=source)
+
+    assert ("If Google's page says the OAuth client was not found (invalid_client), the Client "
+            "ID you gave is wrong: there is no address to copy, so run `keryx auth login google "
+            "--client-file FILE` with the right one.") in lines
 
 
 @pytest.mark.parametrize("failure", [

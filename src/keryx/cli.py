@@ -1626,6 +1626,15 @@ def _ask_line(question: str, default: str | None = None) -> str:
         raise EOFError from None
 
 
+def _confirm(question: str, default: bool) -> bool:
+    """One yes or no at the terminal. Ctrl-C and the end of input are `EOFError`, for the
+    flow that asked."""
+    try:
+        return typer.confirm(question, default=default)
+    except typer.Abort:
+        raise EOFError from None
+
+
 def _ask_boxes(question: str, choices) -> list[str]:
     """One list of boxes to tick at the terminal; the values ticked. Ctrl-C and the end
     of input are `EOFError`, for the flow that asked."""
@@ -1797,6 +1806,7 @@ def auth_login(
             ask_secret=_ask_hidden if sys.stdin.isatty() else None,
             choose=_ask_boxes if sys.stdin.isatty() else None,
             ask_paste=read_hidden_paste if sys.stdin.isatty() else None,
+            confirm=_confirm if sys.stdin.isatty() else None,
         )
     except auth_flow.AuthStopped as error:
         message = str(error)

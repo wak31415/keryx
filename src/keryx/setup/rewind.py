@@ -97,8 +97,12 @@ class Recorder:
 
     def finish(self) -> None:
         """The section has ended. What a replay held was never followed by anything live (a
-        section Tab passed over whole), so it is let go unseen; anything said live has been
-        shown already."""
+        section Tab passed over whole), so ordinary output is let go unseen; an error or a
+        warning is still shown, since something went wrong on the way past. Anything said
+        live has been shown already."""
+        for say, args, kwargs in self._held:
+            if getattr(say, "__name__", "") in ("error", "warn"):
+                say(*args, **kwargs)
         self.script.clear()
         self._held.clear()
         self._holding = False

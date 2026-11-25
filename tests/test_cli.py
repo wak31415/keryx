@@ -150,6 +150,23 @@ def test_a_question_at_the_terminal_hands_back_its_default_and_leaving_it_is_eof
         cli._ask_line("leave")
 
 
+def test_a_yes_or_no_at_the_terminal_and_leaving_it_is_eof(monkeypatch):
+    import typer
+
+    from keryx import cli
+
+    def confirm(question, default):
+        if question == "leave":
+            raise typer.Abort
+        return default
+
+    monkeypatch.setattr(typer, "confirm", confirm)
+
+    assert cli._confirm("Sign in with it?", True) is True
+    with pytest.raises(EOFError):
+        cli._confirm("leave", True)
+
+
 def test_auth_login_help_says_google_needs_a_client_of_your_own_and_makes_one():
     result = runner.invoke(app, ["auth", "login", "--help"], terminal_width=200)
 

@@ -943,3 +943,39 @@ def test_another_client_beside_a_configured_pair_says_the_pair_comes_first(make_
 
     assert seen == ["cid", ID]  # the pair, then the client given, not the pair again
     assert google.PAIR_FIRST in ctx.ui.lines("note")
+
+
+def staged_beside_one_on_file(ctx):
+    old_file = google.install_client_text(ctx.settings, json.dumps(CLIENT))
+    ConfigStore().set({"GOOGLE_CLIENT_SECRETS_FILE": str(old_file)})
+    google.stage_client(ctx.settings, google.client_json(ID, SECRET))
+    return old_file
+
+
+def test_a_client_given_last_time_beside_one_on_file_is_asked_about(make_ctx, world):
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("has not signed in yet", DEFAULT)])
+    old_file = staged_beside_one_on_file(ctx)
+    seen = []
+    browser = ctx.probes.google_browser_signin
+
+    def signin(settings, chosen, announce):
+        seen.append(chosen.client.client_id)
+        return browser(settings, chosen, announce)
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert ctx.ui.asked[-1] == ("confirm", google.staged_question(ID))
+    assert seen == [ID]  # yes by default: the client given
+    assert json.loads(old_file.read_text())["installed"]["client_id"] == ID
+    assert not google.staged_client_path(ctx.settings).exists()
+
+
+def test_no_to_the_client_given_last_time_keeps_the_one_on_file(make_ctx, world):
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("has not signed in yet", False)])
+    old_file = staged_beside_one_on_file(ctx)
+
+    google.run_section(ctx)
+
+    assert json.loads(old_file.read_text()) == CLIENT
+    assert not google.staged_client_path(ctx.settings).exists()
