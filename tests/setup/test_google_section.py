@@ -247,8 +247,7 @@ def test_the_client_is_saved_only_after_the_sign_in_with_it(make_ctx, world):
 
 
 def test_a_client_google_refuses_is_asked_for_again_and_never_saved(make_ctx, world):
-    refusals = [google.ClientRefused("Google refused the client (invalid_client): its "
-                                     "Client ID or Client Secret is wrong")]
+    refusals = [google.ClientRefused("invalid_client", staged=True)]
     browser = None
     ctx = make_ctx([
         ("Sign in to Google?", "signin"),
@@ -295,10 +294,16 @@ def test_a_failed_sign_in_with_a_client_given_here_saves_no_client(make_ctx, wor
 
     google.run_section(ctx)
 
-    assert not installed(ctx).exists() and not google.staged_client_path(ctx.settings).exists()
+    # Kept staged, for the next walk to offer first: nothing has refused it.
+    assert not installed(ctx).exists() and google.staged_client_path(ctx.settings).exists()
     assert "GOOGLE_CLIENT_SECRETS_FILE" not in ConfigStore().stored()
+    again = make_ctx([("Sign in to Google?", "signin"), (Q, "skip")])
+    google.run_section(again)
+    assert f"Enter takes the client you gave last time (Client ID {ID})." in (
+        again.ui.lines("note"))
     panel = [line for line in ctx.ui.lines("panel") if line.startswith("Sign in to Google")][0]
-    assert "the Client ID is wrong: press Ctrl-C, then choose to give the client again" in panel
+    assert ("the Client ID you gave is wrong: press Ctrl-C, then choose to give the client "
+            "again") in panel
 
 
 def test_a_refused_answer_is_never_offered_back_after_esc(make_ctx, world, monkeypatch):
@@ -499,11 +504,15 @@ def test_the_wait_says_what_an_organization_that_blocks_the_app_means(make_ctx, 
 def test_the_paste_back_says_it_too(make_ctx, world):
     own_client()
     world.headless = True
-    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", "")])
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", ""),
+                    ("Try the sign-in again?", "skip")])
 
     google.run_section(ctx)
 
-    assert google.BLOCKED_NOTE in ctx.ui.lines("panel")[0]
+    panel = ctx.ui.lines("panel")[0]
+    assert google.BLOCKED_NOTE in panel
+    assert ("the Client ID on file is wrong: leave the address blank, then choose to give "
+            "another client.") in panel
 
 
 def test_going_back_from_the_path_question_does_not_open_the_page_again(make_ctx, world):
@@ -578,13 +587,17 @@ def test_with_no_display_the_address_is_pasted_back(make_ctx, world):
     assert ctx.settings.user_google_email == "sam@example.com"
 
 
-def test_a_blank_address_skips_the_sign_in_and_leaves_no_verifier_behind(make_ctx, world):
+def test_a_blank_address_offers_another_way_and_leaves_no_verifier_behind(make_ctx, world):
+    """A wrong Client ID never comes back from Google's page, so a blank address is a
+    failure like any other: tried again, another client, or skipped."""
     own_client()
     world.headless = True
-    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", "")])
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", ""),
+                    ("Try the sign-in again?", "skip")])
 
     google.run_section(ctx)
 
+    assert ctx.ui.done() and not ctx.ui.lines("error")
     assert world.calls == [] and account.read_token(ctx.settings) is None
     assert not (ctx.settings.data_dir / "google_signin.json").exists()
 
@@ -856,3 +869,77 @@ def test_a_failure_the_probe_hands_back_is_said(make_ctx, world):
     google.run_section(ctx)
 
     assert ctx.ui.lines("error") == ["could not listen on 127.0.0.1"]
+
+
+def test_a_client_on_file_google_refuses_can_be_replaced_from_the_retry(make_ctx, world):
+    """The client on file is wrong: the retry offers another client, by default, and the
+    new one replaces the old only once the sign-in with it works."""
+    ctx = make_ctx([
+        ("Sign in to Google?", DEFAULT),
+        ("Try the sign-in again?", DEFAULT),       # the default: another client
+        (Q, ID), ("Client Secret", SECRET),
+    ])
+    old_file = google.install_client_text(ctx.settings, json.dumps(CLIENT))
+    ConfigStore().set({"GOOGLE_CLIENT_SECRETS_FILE": str(old_file)})
+    refusals = [google.ClientRefused("invalid_client", staged=False)]
+    browser = ctx.probes.google_browser_signin
+
+    def signin(settings, chosen, announce):
+        return refusals.pop() if refusals else browser(settings, chosen, announce)
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert ctx.ui.done()
+    [error] = ctx.ui.lines("error")
+    assert error.endswith("It is the client on file, and it stays: give another client below.")
+    choices = ctx.ui.choices["Try the sign-in again?"]
+    assert ("client", "Give another client") in [(c.value, c.label) for c in choices]
+    assert json.loads(old_file.read_text())["installed"]["client_id"] == ID  # now it worked
+
+
+def test_the_retry_after_a_refusal_never_touches_the_client_on_file(make_ctx, world):
+    ctx = make_ctx([
+        ("Sign in to Google?", DEFAULT),
+        ("Try the sign-in again?", "client"),
+        (Q, ID), ("Client Secret", SECRET),
+        ("Try the sign-in again?", "skip"),
+    ])
+    old_file = google.install_client_text(ctx.settings, json.dumps(CLIENT))
+    ConfigStore().set({"GOOGLE_CLIENT_SECRETS_FILE": str(old_file)})
+    refusals = [google.ClientRefused("invalid_client", staged=True),
+                google.ClientRefused("invalid_client", staged=False)]
+
+    def signin(settings, chosen, announce):
+        if google.is_staged(settings):
+            google.drop_staged_client(settings)  # as the exchange does
+        return refusals.pop()
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert json.loads(old_file.read_text()) == CLIENT
+    assert ctx.ui.lines("error")[-1].endswith("It was not saved: give the client again.")
+    assert not google.staged_client_path(ctx.settings).exists()
+
+
+def test_another_client_beside_a_configured_pair_says_the_pair_comes_first(make_ctx, world):
+    own_client()
+    ctx = make_ctx([
+        ("Sign in to Google?", DEFAULT),
+        ("Try the sign-in again?", DEFAULT),
+        (Q, ID), ("Client Secret", SECRET),
+    ])
+    refusals = [google.ClientRefused("invalid_client", staged=False)]
+    browser = ctx.probes.google_browser_signin
+    seen = []
+
+    def signin(settings, chosen, announce):
+        seen.append(chosen.client.client_id)
+        return refusals.pop() if refusals else browser(settings, chosen, announce)
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert seen == ["cid", ID]  # the pair, then the client given, not the pair again
+    assert google.PAIR_FIRST in ctx.ui.lines("note")

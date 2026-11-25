@@ -323,7 +323,9 @@ def test_auth_login_google_without_a_terminal_prints_a_link_then_finishes_with_t
 
     assert first.exit_code == 0, first.output
     assert "keryx auth login google --callback-url - < FILE" in first.output
-    assert home.stored()["GOOGLE_CLIENT_SECRETS_FILE"].endswith("google_client_secret.json")
+    # Not on file yet: staged, for the second command to sign in with and adopt.
+    assert "GOOGLE_CLIENT_SECRETS_FILE" not in home.stored()
+    assert (home.home / "google_client_secret.new.json").is_file()
 
     [link] = [line for line in first.output.splitlines() if line.startswith("https://accounts.")]
     query = parse_qs(urlparse(link).query)
@@ -343,6 +345,9 @@ def test_auth_login_google_without_a_terminal_prints_a_link_then_finishes_with_t
     stored = home.stored()
     assert stored["USER_GOOGLE_EMAIL"] == "ada@example.com"
     assert stored["GOOGLE_WORKSPACE_MCP"] is True
+    assert "Google client saved to" in second.output
+    assert stored["GOOGLE_CLIENT_SECRETS_FILE"].endswith("google_client_secret.json")
+    assert not (home.home / "google_client_secret.new.json").exists()
 
 
 def test_auth_login_google_refuses_an_account_nobody_expected_until_it_is_named(
@@ -661,7 +666,7 @@ def test_auth_login_slack_with_a_refused_token_says_slacks_code_and_saves_nothin
                  input="xoxb-very-secret\nxoxp-user-secret\n")
 
     assert result.exit_code == 1
-    assert "slack sign-in failed: Slack does not recognise that token (invalid_auth)" in (
+    assert "Slack sign-in failed: Slack does not recognise that token (invalid_auth)" in (
         result.output
     )
     assert "xoxb-very-secret" not in result.output

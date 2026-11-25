@@ -107,7 +107,15 @@ class GoogleSetupError(RuntimeError):
 
 
 class ClientRefused(GoogleSetupError):
-    """Google does not take the OAuth client: its Client ID or Client Secret is wrong."""
+    """Google does not take the OAuth client: its Client ID or Client Secret is wrong.
+    `staged` says it was a client given in this run, which is thrown away now; what to do
+    next depends on what is on file, so the caller says it (`refused_advice`)."""
+
+    def __init__(self, error: str, *, staged: bool) -> None:
+        super().__init__(
+            f"Google refused the client ({error}): its Client ID or Client Secret is wrong"
+        )
+        self.staged = staged
 
 
 class GoogleStopped(GoogleSetupError):
@@ -272,21 +280,49 @@ def sentence(exc: BaseException) -> str:
     return text[:1].upper() + text[1:] + ("" if text.endswith(".") else ".")
 
 
-def client_not_found_note(
-    *, given: bool, how: str = f"press Ctrl-C, and {SIGN_IN} asks for the client again"
-) -> str:
+#: How a client is given again from the command line, when one is on file.
+CLIENT_FILE_AGAIN = "`keryx auth login google --client-file FILE`"
+
+
+def client_not_found_note(*, given: bool, on_file: bool, wizard: bool = False) -> str:
     """Said while the browser is out. A wrong Client ID never comes back to Keryx: Google
-    shows `invalid_client` on its own page. `given` is a client given in this run, which is
-    kept only once a sign-in with it works, so `how` it is given again is said."""
-    if given:
-        return (
-            "If Google's page says the OAuth client was not found (invalid_client), the Client "
-            f"ID is wrong: {how}."
-        )
+    shows `invalid_client` on its own page, so the owner stops the wait and gives another.
+    Worded by the situation: a client given in this run (`given`), whether one is on file,
+    and the wizard, which gives another by a choice rather than a command."""
+    which = "the Client ID you gave" if given else "the Client ID on file"
+    if wizard:
+        then = "choose to give the client again" if given else "choose to give another client"
+    elif given and not on_file:
+        then = f"run {SIGN_IN} again and give the right one"
+    else:
+        then = f"run {CLIENT_FILE_AGAIN} with the right one"
     return (
-        "If Google's page says the OAuth client was not found (invalid_client), the client "
-        "on file is wrong: `keryx auth login google --client-file FILE` replaces it."
+        f"If Google's page says the OAuth client was not found (invalid_client), {which} is "
+        f"wrong: press Ctrl-C, then {then}."
     )
+
+
+def refused_advice(
+    exc: "ClientRefused", *, on_file: bool, pair: bool = False, wizard: bool = False
+) -> str:
+    """What Google refusing a client means, by the situation. One given in this run was
+    thrown away and nothing on file was touched; one on file stays, and the sentence says
+    how to give another."""
+    said = str(exc)
+    if exc.staged:
+        if wizard:
+            return f"{said}. It was not saved: give the client again"
+        if on_file:
+            return (f"{said}. It was not saved, and the client on file is unchanged: "
+                    f"{CLIENT_FILE_AGAIN} gives another")
+        return f"{said}. It was not saved: run {SIGN_IN} again and give the right one"
+    if wizard:
+        return f"{said}. It is the client on file, and it stays: give another client below"
+    if pair:
+        return (f"{said}. It is GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET: "
+                "`keryx config unset GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET`, "
+                f"then run {SIGN_IN} again")
+    return f"{said}. It is the client on file: {CLIENT_FILE_AGAIN} replaces it"
 
 
 def downloads() -> Path:
@@ -491,11 +527,13 @@ def install_client_text(settings: Settings, text: str) -> Path:
     return write_private(settings.config_dir / GOOGLE_CLIENT_FILE, text)
 
 
-# A client given in this run is kept only once a sign-in with it works. Until then it is
-# a file of its own beside the store (`stage_client`), and the sign-in is made with
-# settings that point at it; `adopt_client` makes it the client file after the sign-in is
-# kept, and `drop_staged_client` forgets it otherwise. So a mistyped Client ID or a cut
-# secret is never on file, and the next login asks for the client again.
+# A client given in this run replaces the one on file only once a sign-in with it works,
+# and is thrown away only when Google refuses it. Until then it is a file of its own
+# beside the store (`stage_client`), and the sign-in is made with settings that point at
+# it; `adopt_client` makes it the client file after the sign-in is kept. Any other ending
+# (Ctrl-C at the wait, nothing granted, a network error) keeps it staged, and the next
+# question offers it first (`staged_offer`): Personal mode shows a secret only once. A
+# client already on file is never touched by a failed attempt.
 
 #: A client being tried, beside the client file it becomes.
 STAGED_CLIENT_FILE = "google_client_secret.new.json"
@@ -507,9 +545,29 @@ def staged_client_path(settings: Settings) -> Path:
 
 def stage_client(settings: Settings, text: str) -> Settings:
     """Settings that sign in with `text`, written beside the store (0600) and nowhere
-    else. The client file and the stored settings are not touched."""
+    else. The client file and the stored settings are not touched. A configured
+    `GOOGLE_OAUTH_CLIENT_ID`/`SECRET` pair would come first, so the copy leaves it out."""
     path = write_private(staged_client_path(settings), text)
-    return settings.model_copy(update={"google_client_secrets_file": path})
+    return staged_settings(settings, path)
+
+
+def staged_settings(settings: Settings, path: Path) -> Settings:
+    return settings.model_copy(update={
+        "google_client_secrets_file": path,
+        "google_oauth_client_id": None,
+        "google_oauth_client_secret": None,
+    })
+
+
+def staged_offer(settings: Settings) -> tuple[Path, str] | None:
+    """The client given last time and kept staged, with its Client ID, to offer first;
+    None when there is none, or it is not a Desktop client the question would take."""
+    path = staged_client_path(settings)
+    try:
+        client_id, _ = parse_google_client(read_client_file(path, desktop=True))
+    except (GoogleSetupError, ValueError):
+        return None
+    return path, client_id
 
 
 def is_staged(settings: Settings) -> bool:
@@ -582,9 +640,10 @@ class Pending:
     redirect_uri: str
     client_id: str
     services: tuple[str, ...]
-    #: The client was put on file by this sign-in (`--client-file` with no terminal, so the
-    #: second command can read it): forgotten again if Google refuses it.
-    installed_client: bool = False
+    #: The sign-in is made with the staged client (`--client-file` with no terminal): the
+    #: second command signs in with it, adopts it once that works, and drops it when Google
+    #: refuses it.
+    staged_client: bool = False
 
 
 def _begin(settings: Settings, chosen: Offer, redirect_uri: str) -> tuple[Pending, str]:
@@ -618,14 +677,12 @@ def _pending_path(settings: Settings) -> Path:
     return settings.data_dir / PENDING_FILE
 
 
-def start_signin(
-    settings: Settings, chosen: Offer | None = None, *, installed_client: bool = False
-) -> str:
+def start_signin(settings: Settings, chosen: Offer | None = None) -> str:
     """The consent link for a browser somewhere else; its verifier and state wait in
-    `DATA_DIR/google_signin.json` (0600) for `finish_signin`. `installed_client` says the
-    client on file was put there for this sign-in, and is forgotten if Google refuses it."""
+    `DATA_DIR/google_signin.json` (0600) for `finish_signin`. Made with a staged client,
+    it says so, so the command that finishes it uses that client too."""
     pending, url = _begin(settings, chosen or offer(settings), PASTE_REDIRECT_URI)
-    pending = dataclasses.replace(pending, installed_client=installed_client)
+    pending = dataclasses.replace(pending, staged_client=is_staged(settings))
     write_private(_pending_path(settings), json.dumps(asdict(pending)))
     return url
 
@@ -653,17 +710,31 @@ def finish_grant(
     get: Callable[..., Any] | None = None,
 ) -> "Grant":
     """Exchange the code in the address the browser landed on. Nothing is saved yet."""
-    try:
-        saved = json.loads(_pending_path(settings).read_text(encoding="utf-8"))
-        pending = Pending(**{**saved, "services": tuple(saved["services"])})
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise GoogleSetupError(f"no sign-in in progress: run {SIGN_IN} first") from exc
+    pending = read_pending(settings)
+    if pending is None:
+        raise GoogleSetupError(f"no sign-in in progress: run {SIGN_IN} first")
     try:
         query = parse_qs(urlparse(redirected_to.strip().strip("'\"")).query)
     except ValueError:
         raise GoogleSetupError("that is not an address; copy the whole address bar") from None
     answer = {key: values[0] for key, values in query.items()}
+    if pending.staged_client and not is_staged(settings):
+        settings = staged_settings(settings, staged_client_path(settings))
     return exchange(settings, pending, answer, post=post, get=get)
+
+
+def read_pending(settings: Settings) -> Pending | None:
+    """The sign-in whose link is out; None when there is none. A key an older build wrote
+    and this one does not know is passed over."""
+    try:
+        saved = json.loads(_pending_path(settings).read_text(encoding="utf-8"))
+        known = {field.name for field in dataclasses.fields(Pending)}
+        return Pending(**{
+            **{key: value for key, value in saved.items() if key in known},
+            "services": tuple(saved["services"]),
+        })
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
 
 
 def discard_pending(settings: Settings) -> None:
@@ -1088,7 +1159,11 @@ def exchange(
         raise GoogleSetupError(f"could not reach Google ({type(exc).__name__})") from None
     body = _json(response)
     if body.get("error") in CLIENT_ERRORS:
-        raise ClientRefused(_client_refused(settings, pending, str(body["error"])))
+        # Thrown away only now that Google has said no: nothing on file is touched.
+        staged = is_staged(settings)
+        if staged:
+            drop_staged_client(settings)
+        raise ClientRefused(_plain(body["error"]), staged=staged)
     if response.status_code != 200 or not body.get("refresh_token"):
         raise GoogleSetupError(
             f"Google refused the code ({_plain(body.get('error', response.status_code))}); "
@@ -1120,26 +1195,6 @@ def exchange(
 
 #: The token endpoint's answers for a client it does not take.
 CLIENT_ERRORS = ("invalid_client", "unauthorized_client")
-
-
-def _client_refused(settings: Settings, pending: Pending, error: str) -> str:
-    """What to say when Google refuses the client, by where that client came from. One
-    given in this run is not on file (`stage_client`); one put on file for this sign-in
-    is forgotten now; one that was on file before is never removed unasked, and the
-    sentence names the command that replaces it."""
-    said = f"Google refused the client ({error}): its Client ID or Client Secret is wrong"
-    if is_staged(settings):
-        return f"{said}. It was not saved, so {SIGN_IN} asks for it again"
-    if pending.installed_client:
-        (settings.config_dir / GOOGLE_CLIENT_FILE).unlink(missing_ok=True)
-        return (f"{said}, so it was forgotten: give the right one with `keryx auth login "
-                "google --client-file FILE`")
-    if settings.google_oauth_client_id and settings.google_oauth_client_secret:
-        return (f"{said}. It is GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET: "
-                "`keryx config unset GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET`, "
-                f"then {SIGN_IN} asks for a client again")
-    return (f"{said}. It is the client on file: `keryx auth login google --client-file "
-            "FILE` replaces it")
 
 
 def unexpected_account(settings: Settings, grant: Grant, account: str | None = None) -> str | None:
@@ -1318,31 +1373,30 @@ def connect(ctx: "SetupContext") -> None:
         given = _own_client(ctx)
         if given is None:
             return
-    result = None
+    on_file = client is not None
+    while True:
+        # A client given here signs in from a file of its own, replaces the one on file
+        # only once the sign-in works, and is thrown away only when Google refuses it.
+        signing = stage_client(ctx.settings, given) if given is not None else ctx.settings
+        grant = _sign_in(ctx, signing, given=given is not None, on_file=on_file)
+        if grant != CLIENT_AGAIN:
+            break
+        given = _own_client(ctx, again=True)
+        if given is None:
+            return
+    if not isinstance(grant, Grant) or not _admitted(ctx, grant):
+        return
     try:
-        while True:
-            # A client given here signs in from a file of its own and is kept only once
-            # the sign-in works: a wrong one is never on file, and is asked for again.
-            signing = stage_client(ctx.settings, given) if given is not None else ctx.settings
-            grant = _sign_in(ctx, signing, given=given is not None)
-            if grant != CLIENT_AGAIN:
-                break
-            given = _own_client(ctx, again=True)
-            if given is None:
-                return
-        if not isinstance(grant, Grant) or not _admitted(ctx, grant):
-            return
-        try:
-            result = keep(signing, grant)
-        except GoogleSetupError as exc:
-            ui.error(str(exc))
-            return
-        if given is not None:
-            path = adopt_client(ctx.settings)
-            ui.success(f"client saved to {path}")
-            ctx.save({"GOOGLE_CLIENT_SECRETS_FILE": str(path)})
-    finally:
-        drop_staged_client(ctx.settings)
+        result = keep(signing, grant)
+    except GoogleSetupError as exc:
+        ui.error(str(exc))
+        return
+    if given is not None:
+        path = adopt_client(ctx.settings)
+        ui.success(f"client saved to {path}")
+        ctx.save({"GOOGLE_CLIENT_SECRETS_FILE": str(path)})
+        if ctx.settings.google_oauth_client_id and ctx.settings.google_oauth_client_secret:
+            ui.note(PAIR_FIRST)
     _keep(ctx, result)
     ui.success(f"Google: signed in as {result.email}")
     _show(ctx, result.connected, [*result.connected, *result.missing])
@@ -1430,10 +1484,10 @@ def _own_client(ctx: "SetupContext", *, again: bool = False) -> str | None:
 
     personal(first=not again)
     showing = personal
-    suggested = suggested_client_file()
+    suggested, enter = enter_takes(ctx.settings)
     while True:
         asked = 1
-        ui.note(f"Enter takes {suggested}")
+        ui.note(enter)
         raw = ui.text(f"{PATH_QUESTION} ({SKIP_WORD} leaves it for later)").strip()
         if raw.lower() == SKIP_WORD:
             ui.note(LATER_NOTE)
@@ -1463,6 +1517,25 @@ def _own_client(ctx: "SetupContext", *, again: bool = False) -> str | None:
         return text
 
 
+def enter_takes(settings: Settings) -> tuple[str, str]:
+    """What Enter takes at the client question, and the line that says so: the client
+    given last time, kept staged because no sign-in with it worked yet, else the newest
+    download, else the Downloads folder."""
+    if staged := staged_offer(settings):
+        path, client_id = staged
+        return str(path), f"Enter takes the client you gave last time (Client ID {client_id})."
+    suggested = suggested_client_file()
+    return suggested, f"Enter takes {suggested}"
+
+
+#: Said when a client is adopted while a configured pair comes before it.
+PAIR_FIRST = (
+    "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are set and come first, so later "
+    "sign-ins use them, not that file: `keryx config unset GOOGLE_OAUTH_CLIENT_ID "
+    "GOOGLE_OAUTH_CLIENT_SECRET` to use the file."
+)
+
+
 def opening(opened: bool) -> str:
     """The line above the Personal mode page's link."""
     if opened:
@@ -1474,11 +1547,15 @@ def opening(opened: bool) -> str:
 CLIENT_AGAIN = "client"
 
 
-def _sign_in(ctx: "SetupContext", settings: Settings, *, given: bool) -> Grant | str | None:
+def _sign_in(
+    ctx: "SetupContext", settings: Settings, *, given: bool, on_file: bool
+) -> Grant | str | None:
     """Run the sign-in the way that fits this machine; another way, or none, if it fails.
     What comes back is a grant in memory: nothing is saved until it is admitted and kept.
-    With a client given in this walk (`given`), a failure may also go back to the client
-    question (`CLIENT_AGAIN`), and does by default when Google refused the client."""
+    A failure may also go back to the client question (`CLIENT_AGAIN`): to give the client
+    again (`given`, one given in this walk) or another one (the client on file), and does
+    by default when Google refused the client. A blank address is a failure too, so a
+    wrong Client ID, which never comes back from Google's page, can be given again."""
     from keryx.setup.ui import Choice
 
     ui = ctx.ui
@@ -1495,15 +1572,15 @@ def _sign_in(ctx: "SetupContext", settings: Settings, *, given: bool) -> Grant |
             # sign-in a second time.
             if way == HERE:
                 result = ctx.probes.google_browser_signin(
-                    settings, chosen, _announcer(ctx, given=given)
+                    settings, chosen, _announcer(ctx, given=given, on_file=on_file)
                 )
             else:
                 url = start_signin(settings, chosen)
                 # The link goes under the panel, bare (`Prompter.link`): inside it, a link
                 # this long is cut by the border and cannot be copied in one piece.
                 wrong_id = client_not_found_note(
-                    given=given, how="leave the address blank, and the next `keryx setup` "
-                    "asks for the client again")
+                    given=given, on_file=on_file, wizard=True
+                ).replace("press Ctrl-C", "leave the address blank")
                 ui.panel(
                     "Sign in to Google — open this on any device",
                     "Open the link below and approve it. The page you land on will not "
@@ -1515,24 +1592,26 @@ def _sign_in(ctx: "SetupContext", settings: Settings, *, given: bool) -> Grant |
                     "The address you landed on (blank to skip)",
                     validate=_from_this_link(settings),
                 )
-                if not address:
-                    return None
-                result = ctx.probes.google_finish(settings, address)
+                result = (ctx.probes.google_finish(settings, address) if address
+                          else None)
             if isinstance(result, Grant):
                 return result
-            ui.error(str(result))
-            choices = [
-                Choice(HERE, "In a browser on this machine"),
-                Choice(ELSEWHERE, "In a browser somewhere else", hint="paste the address back"),
-            ]
-            if given:
-                choices.append(Choice(CLIENT_AGAIN, "Give the client again",
-                                      hint="the Client ID or the file"))
+            if isinstance(result, ClientRefused):
+                ui.error(sentence(refused_advice(result, on_file=on_file, wizard=True)))
+            elif result is not None:
+                ui.error(str(result))
             way = ui.select(
                 "Try the sign-in again?",
-                [*choices, Choice(SKIP, "Skip for now")],
-                default=CLIENT_AGAIN if given and isinstance(result, ClientRefused)
-                else ELSEWHERE,
+                [
+                    Choice(HERE, "In a browser on this machine"),
+                    Choice(ELSEWHERE, "In a browser somewhere else",
+                           hint="paste the address back"),
+                    Choice(CLIENT_AGAIN,
+                           "Give the client again" if given else "Give another client",
+                           hint="the Client ID or the file"),
+                    Choice(SKIP, "Skip for now"),
+                ],
+                default=CLIENT_AGAIN if isinstance(result, ClientRefused) else ELSEWHERE,
             )
             if way in (SKIP, CLIENT_AGAIN):
                 return None if way == SKIP else CLIENT_AGAIN
@@ -1560,9 +1639,8 @@ def _from_this_link(settings: Settings) -> Callable[[str], str | None]:
     return problem
 
 
-def _announcer(ctx: "SetupContext", *, given: bool) -> Announce:
-    wrong_id = client_not_found_note(
-        given=given, how="press Ctrl-C, then choose to give the client again")
+def _announcer(ctx: "SetupContext", *, given: bool, on_file: bool) -> Announce:
+    wrong_id = client_not_found_note(given=given, on_file=on_file, wizard=True)
 
     def announce(url: str, opened: bool) -> None:
         ctx.ui.panel(

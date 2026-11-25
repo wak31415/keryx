@@ -652,19 +652,24 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   guide carries the same links, and a test holds them together. An organization that
   blocks unapproved apps shows `admin_policy_enforced` on Google's own page and never
   redirects, so the wait says what that means (`BLOCKED_NOTE`), and the sentence for it
-  is there should the error ever reach the redirect. **A client given in this run is
-  kept only once a sign-in with it works**, because a wrong client typed in must not get
-  stuck on file, where no later login would ask for it again: until then
-  it is `KERYX_HOME/google_client_secret.new.json` (0600, `stage_client`), the sign-in is
-  made with settings pointing at it, `adopt_client` makes it the client file after the
-  sign-in is kept, and anything else drops it, in the command and the wizard alike. So a
-  mistyped Client ID or a cut secret is never on file, and the next login asks again; a
-  wrong ID shows `invalid_client` on Google's own page, and the wait says what that means.
-  The one exception is the first of the two commands of a pasted-back sign-in without a
-  terminal, whose second reads the client from file: it is put there at once
-  (`Pending.installed_client`), and an `invalid_client`/`unauthorized_client` exchange
-  forgets it (`ClientRefused`). A client that was on file before is never removed unasked:
-  the refusal names the command that replaces it. PKCE, `state` and a loopback-only
+  is there should the error ever reach the redirect. **A client given in this run
+  replaces the one on file only once a sign-in with it works, and is thrown away only
+  when Google refuses it** (`ClientRefused`, an `invalid_client`/`unauthorized_client`
+  exchange): a wrong client typed in must not get stuck on file, where no later login
+  would ask for it again, and a right one must not be lost to an unrelated failure, since
+  Personal mode shows its secret once. Until then it is
+  `KERYX_HOME/google_client_secret.new.json` (0600, `stage_client`, which also leaves a
+  configured pair out of the copy it signs in with), and `adopt_client` makes it the
+  client file after the sign-in is kept. Any other ending (Ctrl-C at the wait, nothing
+  granted, a network error, a no to an unexpected account, leaving the wizard) keeps it
+  staged, and the next client question, in the command or the wizard, offers it first
+  (`staged_offer`: "Enter takes the client you gave last time"). A client already on file
+  is never touched by a failed attempt, and a refusal or the wait's note says what to do
+  by the situation (`refused_advice`, `client_not_found_note`); the wizard's retry always
+  offers to give the client again, or another one. The two commands of a pasted-back
+  sign-in without a terminal stage the same way: the pending sign-in records it
+  (`Pending.staged_client`), and the second command signs in with the staged client and
+  adopts it. PKCE, `state` and a loopback-only
   redirect are what protect the exchange. A client with no secret sends none, never an
   empty one.
 - **Two ways to finish, chosen before the link is made.** With a browser on this machine, a

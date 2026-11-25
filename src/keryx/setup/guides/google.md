@@ -42,8 +42,9 @@ that creates it can sign in with it (any other account is refused with
    `paste` and paste what is in it, hidden (in `keryx setup`, on one line). Keryx checks it, signs in with
    it, and only once that works saves it as `~/.config/keryx/google_client_secret.json`,
    readable by you alone; you may then delete the download. A Client ID or secret Google
-   does not take is not saved, so running the command again asks for the client again.
-   `skip` leaves it for later.
+   does not take is thrown away, so running the command again asks for the client again.
+   If the sign-in stops for any other reason, the client is kept, and the next time Enter
+   takes it. `skip` leaves it for later.
 
 These steps follow Google's own:
 <https://developers.google.com/workspace/guides/configure-mcp-servers>.

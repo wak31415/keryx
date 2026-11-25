@@ -286,6 +286,31 @@ def test_tab_replays_every_answer_and_lands_on_the_first_one_not_given(make_ctx)
     ]
 
 
+def test_tab_over_a_finished_section_shows_nothing_of_it(make_ctx):
+    """A section that asked, opened a page and said its results is passed over by Tab
+    in silence: what its replay held is let go when it ends, not shown then."""
+
+    def finished(ctx) -> None:
+        ctx.ui.text("G1", default="")
+        ctx.probes.headless()
+        ctx.ui.success("client saved")
+        ctx.ui.markdown("the consent guide")
+
+    walk = [Section("a", "A", asking("A1")), Section("g", "G", finished),
+            Section("b", "B", asking("B1"))]
+    ctx = make_ctx([
+        ("A1", "one"), ("G1", "file"), ("B1", Back()),    # back into G, at G1
+        ("G1", Back()),                                     # and into A
+        ("A1", Forward()),                                  # Tab: over A and G, to B1
+        ("B1", "done"),
+    ])
+
+    assert run_walk(ctx, walk, {}) is True
+
+    assert ctx.ui.done()
+    assert ctx.ui.lines("success").count("client saved") == 1  # the first, live run only
+
+
 def test_esc_at_the_first_question_leaves_the_walk(make_ctx):
     ctx = make_ctx([("A1", Back())])
 

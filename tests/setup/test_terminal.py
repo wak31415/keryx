@@ -134,3 +134,40 @@ def test_a_terminal_whose_mode_cannot_be_read_is_read_as_it_is(monkeypatch):
     monkeypatch.setattr(terminal, "drop_typed_ahead", lambda: None)
 
     assert terminal.read_hidden_paste("Paste it") == '{"a": 1}'
+
+
+def at_a_terminal(monkeypatch, text, *, arriving):
+    """A terminal with `text` waiting, where `arriving()` says whether the next line comes
+    within the moment a paste is given between two of its lines."""
+    monkeypatch.setattr(sys, "stdin", Typed(text, tty=True))
+    monkeypatch.setattr(termios, "tcgetattr", lambda fd: [0, 0, 0, 0, 0, 0, []])
+    monkeypatch.setattr(termios, "tcsetattr", lambda fd, when, mode: None)
+    monkeypatch.setattr(terminal, "drop_typed_ahead", lambda: None)
+    monkeypatch.setattr(terminal.select, "select",
+                        lambda r, w, x, timeout: (r if arriving() else [], [], []))
+
+
+def test_a_paste_that_stops_arriving_is_over(monkeypatch):
+    """Braces that never close do not swallow what is typed later."""
+    at_a_terminal(monkeypatch, '{\n  "a": 1,\ntyped later\n', arriving=iter([True, False]).__next__)
+
+    assert terminal.read_hidden_paste("Paste it") == '{\n  "a": 1,'
+    assert sys.stdin.lines == ["typed later\n"]
+
+
+def test_a_blank_line_ends_a_paste(monkeypatch):
+    at_a_terminal(monkeypatch, '{\n\ntyped later\n', arriving=lambda: True)
+
+    assert terminal.read_hidden_paste("Paste it") == "{"
+    assert sys.stdin.lines == ["typed later\n"]
+
+
+def test_a_terminal_that_cannot_be_waited_on_ends_the_paste(monkeypatch):
+    at_a_terminal(monkeypatch, '{\n"a": 1}\n', arriving=lambda: True)
+
+    def refuse(r, w, x, timeout):
+        raise OSError("gone")
+
+    monkeypatch.setattr(terminal.select, "select", refuse)
+
+    assert terminal.read_hidden_paste("Paste it") == "{"

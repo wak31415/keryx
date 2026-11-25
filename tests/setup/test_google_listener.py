@@ -130,3 +130,18 @@ def test_a_browser_that_never_comes_back_is_given_up_on(waiting):
     result = sign_in.finished()
 
     assert "did not come back" in result["error"] and result["took"] < 2.0
+
+
+def test_closing_never_waits_on_a_connection_still_open(waiting):
+    """Ctrl-C at the wait closes the listener while a browser may hold connections open:
+    the close must not wait for each one's cutoff, which took seconds per connection."""
+    sign_in = waiting(timeout_s=0.3)
+    held = [sign_in.hold() for _ in range(3)]
+    held[0].sendall(b"GET /favicon.ico HTTP/1.1\r\nHost: x\r\n")  # a request left unfinished
+    time.sleep(0.2)  # so their threads are waiting on them
+
+    sign_in._thread.join(5)
+    began = time.monotonic()
+    sign_in.listener.close()
+
+    assert time.monotonic() - began < 0.5

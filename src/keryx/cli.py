@@ -1805,7 +1805,9 @@ def auth_login(
         typer.echo(message[0].upper() + message[1:] + stop, err=True)
         raise typer.Exit(1) from None
     except auth_flow.AuthError as error:
-        typer.echo(f"{name} sign-in failed: {error}", err=True)
+        said = str(error)
+        stop = "" if said.endswith(".") or "\n" in said else "."
+        typer.echo(f"{name[0].upper()}{name[1:]} sign-in failed: {said}{stop}", err=True)
         raise typer.Exit(1) from None
 
 

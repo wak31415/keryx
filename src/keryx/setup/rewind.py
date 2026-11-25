@@ -95,6 +95,14 @@ class Recorder:
         offered = [self._offered] if self._offered is not None else []
         return [*self.log, *offered, *self.future]
 
+    def finish(self) -> None:
+        """The section has ended. What a replay held was never followed by anything live (a
+        section Tab passed over whole), so it is let go unseen; anything said live has been
+        shown already."""
+        self.script.clear()
+        self._held.clear()
+        self._holding = False
+
     def stop_replaying(self) -> None:
         """Show what was held, and ask everything from here on the terminal."""
         self.script.clear()
