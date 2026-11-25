@@ -716,7 +716,7 @@ def _google_check(settings: Settings) -> Check:
             f"{SIGN_IN_TO_GOOGLE} connects everything with one sign-in",
         )
     if google.resolve_client(settings) is None:
-        how = "no OAuth client yet: `keryx setup` walks you through making one"
+        how = f"no OAuth client of yours yet: {SIGN_IN_TO_GOOGLE} makes one with you"
     else:
         how = f"{SIGN_IN_TO_GOOGLE} signs in with your own Google client"
     codex = "Codex tasks have no Gmail or Calendar; " if "codex" in settings.enabled_agents else ""

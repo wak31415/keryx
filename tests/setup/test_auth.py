@@ -2,6 +2,9 @@
 
 import dataclasses
 import json
+import os
+import time
+from pathlib import Path
 
 import pytest
 from slack_sets import READS
@@ -297,6 +300,184 @@ def test_a_headless_sign_in_never_binds_a_listener(client, monkeypatch):
     login("google", client, headless=True)
 
 
+# --- google, with no client of the owner's yet: one is made now --------------------------
+
+CLIENT_JSON = {"installed": {"client_id": "made", "client_secret": "s"}}
+
+
+def downloaded(name="client_secret_1.apps.googleusercontent.com.json", body=CLIENT_JSON,
+               age=0.0):
+    """A file Google's console downloaded into `~/Downloads`, `age` seconds ago."""
+    path = Path.home() / "Downloads" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body))
+    os.utime(path, (time.time() - age, time.time() - age))
+    return path
+
+
+@pytest.fixture
+def page(monkeypatch):
+    """The browser, for Google's Personal mode page: what it was asked to open."""
+    opened = []
+    monkeypatch.setattr(google, "open_browser", lambda url: opened.append(url) or True)
+    return opened
+
+
+def at_a_terminal(settings, answers, *, headless=False, secrets=()):
+    """A Google login at a terminal; each question answered from `answers` in turn, Enter
+    (None) taking its default. What was asked, and with what default, is kept."""
+    lines, asked, hidden = [], [], list(secrets or ())
+    answers = list(answers)
+
+    def ask(question, default=None):
+        asked.append((question, default))
+        answer = answers.pop(0)
+        return default if answer is None else answer
+
+    def ask_secret(question):
+        asked.append((question, "hidden"))
+        answer = hidden.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    auth.login("google", settings, ConfigStore(), options=LoginOptions(headless=headless),
+               echo=lines.append, run_login=None, ask=ask,
+               ask_secret=None if secrets is None else ask_secret)
+    return lines, asked
+
+
+def saved_client(settings):
+    return json.loads((settings.config_dir / "google_client_secret.json").read_text())
+
+
+def test_with_no_client_the_login_makes_one_and_goes_on_to_sign_in(settings, browser, page):
+    downloaded("client_secret_old.json", {"installed": {"client_id": "old"}}, age=600)
+    newest = downloaded()
+
+    lines, asked = at_a_terminal(settings, [None])
+
+    text = "\n".join(lines)
+    # Why, first: Google's terms, and that Personal mode is quick and only theirs.
+    assert "terms" in lines[0] and "open-source" in lines[0] and "Personal mode" in lines[0]
+    assert page == [google.PERSONAL_MODE_URL] and google.PERSONAL_MODE_URL in lines
+    assert "Your browser is opening Google's page for it" in text
+    assert "3. Choose Download JSON straight away" in text
+    assert google.ELSEWHERE_NOTE not in lines  # the browser is on this machine
+    assert asked == [("\nPath to the file you downloaded", str(newest))]
+    assert saved_client(settings) == CLIENT_JSON
+    assert ConfigStore().stored()["GOOGLE_CLIENT_SECRETS_FILE"].endswith(
+        "google_client_secret.json")
+    assert "Select all" in text and "**" not in text  # the consent steps, as plain text
+    assert [chosen.client.client_id for chosen in browser] == ["made"]
+    assert "Signed in as ada@example.com. Connected: " in text
+
+
+def test_nothing_downloaded_offers_the_downloads_folder_and_a_folder_takes_its_newest(
+    settings, browser, page, tmp_path
+):
+    (Path.home() / "Downloads").mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "client_secret_2.json").write_text(json.dumps(CLIENT_JSON))
+
+    lines, asked = at_a_terminal(settings, [None, str(elsewhere)])
+
+    downloads = str(Path.home() / "Downloads") + os.sep
+    assert [default for _, default in asked] == [downloads, downloads]
+    assert f"There is no client_secret_*.json file in {downloads.rstrip(os.sep)}." in lines
+    assert f"Took {elsewhere / 'client_secret_2.json'}, the newest one there." in lines
+    assert saved_client(settings) == CLIENT_JSON
+
+
+def test_a_downloads_folder_that_is_not_there_is_said(settings, browser, page, tmp_path):
+    elsewhere = tmp_path / "client_secret_3.json"
+    elsewhere.write_text(json.dumps(CLIENT_JSON))
+
+    lines, _ = at_a_terminal(settings, [None, str(elsewhere)])
+
+    assert f"There is no folder at {Path.home() / 'Downloads'}." in lines
+
+
+def test_three_wrong_answers_stop_and_save_nothing(settings, page, tmp_path):
+    web = downloaded("client_secret_web.json", {"web": {"client_id": "w", "client_secret": "s"}})
+    not_json = downloaded("client_secret_bad.json")
+    not_json.write_text("nope")
+
+    with pytest.raises(auth.AuthStopped, match="run `keryx auth login google` again") as raised:
+        at_a_terminal(settings, [str(web), str(not_json), str(tmp_path / "gone.json")])
+
+    assert "--client-file" in str(raised.value)
+    assert not (settings.config_dir / "google_client_secret.json").exists()
+    assert ConfigStore().stored() == {}
+
+
+def test_a_wrong_answer_is_said_in_a_sentence_and_asked_again(settings, browser, page):
+    web = downloaded("client_secret_web.json", {"web": {"client_id": "w", "client_secret": "s"}})
+
+    lines, asked = at_a_terminal(settings, [str(web), str(downloaded())])
+
+    [refused] = [line for line in lines if "Desktop app client" in line]
+    assert refused.startswith(str(web)) and refused.endswith(".")
+    assert len(asked) == 2 and saved_client(settings) == CLIENT_JSON
+
+
+def test_with_the_browser_elsewhere_the_file_can_be_pasted_hidden(settings, page, monkeypatch):
+    finished = paste_back(monkeypatch)
+
+    lines, asked = at_a_terminal(
+        settings, ["paste", "http://localhost:1/?state=s&code=c"], headless=True,
+        secrets=[json.dumps(CLIENT_JSON)],
+    )
+
+    assert page == []  # nothing to open here
+    assert "Open the link below in a browser, on any device." in lines
+    assert google.ELSEWHERE_NOTE in lines
+    assert asked[1] == ("Paste what is in the file (hidden)", "hidden")
+    assert saved_client(settings) == CLIENT_JSON and finished
+
+
+def test_leaving_the_pasted_file_stops_and_saves_nothing(settings, page):
+    with pytest.raises(auth.AuthStopped, match="no Google client was saved"):
+        at_a_terminal(settings, ["paste"], headless=True, secrets=[EOFError()])
+
+    assert not (settings.config_dir / "google_client_secret.json").exists()
+
+
+def test_a_page_that_does_not_open_says_to_open_the_link(settings, browser, monkeypatch):
+    monkeypatch.setattr(google, "open_browser", lambda url: False)
+
+    lines, _ = at_a_terminal(settings, [str(downloaded())])
+
+    assert "Open the link below in a browser, on any device." in lines
+
+
+def test_with_nothing_to_paste_into_a_path_is_asked_again(settings, browser, page):
+    lines, _ = at_a_terminal(settings, ["paste", str(downloaded())], secrets=None)
+
+    assert "There is nothing to paste into here." in lines
+
+
+def test_what_is_asked_for_again_unasked_is_said_before_the_link(client, browser):
+    from keryx.integrations import google as account
+
+    account.write_token(
+        client, account.GoogleToken("rt", "cid", "cs", account.requested_scopes(["gmail"]),
+                                    "ada@example.com"),
+    )
+
+    lines = login("google", client, services=("calendar",))
+
+    assert lines[0].startswith("Gmail is connected now and is asked for again")
+    assert browser[0].services == ("gmail", "calendar")
+
+
+def test_with_a_client_on_file_nothing_is_asked_about_one(client, browser, page):
+    lines, asked = at_a_terminal(client, [])
+
+    assert page == [] and asked == [] and not any("terms" in line for line in lines)
+
+
 # --- google, refused ----------------------------------------------------------------------
 
 
@@ -308,9 +489,16 @@ def test_a_bad_client_file_is_an_auth_error(settings, tmp_path):
         login("google", settings, client_file=bad)
 
 
-def test_no_client_at_all_is_an_auth_error_that_says_what_to_do(settings):
-    with pytest.raises(AuthError, match="no Google OAuth client.*--client-file"):
+def test_no_client_and_no_terminal_is_an_auth_error_that_names_the_page(settings, monkeypatch):
+    """Without a terminal there is nobody to ask for the file: the refusal names Google's
+    Personal mode page and `--client-file`, and opens nothing."""
+    monkeypatch.setattr(google, "open_browser", lambda url: pytest.fail("nothing opened"))
+
+    with pytest.raises(AuthError, match="no Google OAuth client.*--client-file") as raised:
         login("google", settings)
+
+    assert google.PERSONAL_MODE_URL in str(raised.value)
+    assert "Download JSON" in str(raised.value)
 
 
 def test_a_google_sign_in_that_fails_is_an_auth_error(client, monkeypatch):
@@ -747,7 +935,7 @@ def test_google_is_missing_until_somebody_signs_in(settings):
     report = auth.status(settings, ConfigStore())
 
     assert report["google"]["state"] == "missing" and report["google"]["services"] == []
-    assert "keryx setup" in report["google"]["detail"]
+    assert "`keryx auth login google` makes one" in report["google"]["detail"]
 
 
 def test_a_google_sign_in_shows_under_all_three_names(settings):

@@ -1644,7 +1644,11 @@ def auth_login(
     ] = None,
     client_file: Annotated[
         Path | None,
-        typer.Option("--client-file", help="google: an OAuth client JSON of your own."),
+        typer.Option(
+            "--client-file",
+            help="google: the OAuth client JSON Google downloaded for you. At a terminal "
+            "with no client on file the login asks for it instead.",
+        ),
     ] = None,
     callback_url: Annotated[
         str | None,
@@ -1709,8 +1713,10 @@ def auth_login(
     google is one sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides. With a
     browser on this machine it opens the consent screen and finishes by itself; with
     --headless it prints a link for any device and asks for the address the browser lands on.
-    Keryx ships no Google client of its own, so it needs an OAuth client of yours, given
-    once with --client-file: `keryx setup` shows how to make one.
+    It needs a Google OAuth client of your own, since Google's terms do not let an
+    open-source app ship one: with none on file, it opens Google's Personal mode page, which
+    makes one in a minute, and asks for the path of the file that page downloads. Without a
+    terminal, give that file once with --client-file.
 
     slack at a terminal is one command with no options: it shows a box to tick for each
     thing Keryx may do there, prints the link that creates your Slack app for exactly

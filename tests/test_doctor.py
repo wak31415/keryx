@@ -553,7 +553,8 @@ def test_google_with_no_client_at_all_points_at_setup(healthy):
 
     check = by_name(run_doctor_checks(settings))["Google"]
 
-    assert check.state == "missing" and "no OAuth client yet: `keryx setup`" in check.detail
+    assert check.state == "missing"
+    assert "no OAuth client of yours yet: `keryx auth login google` makes one" in check.detail
 
 
 def test_an_install_that_signed_its_agents_in_the_older_way_is_fine_and_told_so(healthy):

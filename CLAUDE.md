@@ -36,7 +36,16 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   takes back the address the browser landed on, and with no terminal that is two commands,
   the second reading the address from standard input so its code is never on a command
   line; `--account` says which account is meant when it is not the saved one; `gmail` and
-  `google-workspace` still mean it, for one release. `slack [--workspace NAME]
+  `google-workspace` still mean it, for one release. **With no client of the owner's on
+  file, at a terminal, it makes one first, in the same command** (the owner's ruling of
+  2026-11-24): it says why in a sentence (Google's terms forbid a shared client in an
+  open-source app), opens Google's Personal mode page (or prints it for another device),
+  shows the three clicks, and **always asks for the path of the downloaded file**, never
+  assuming where it went: Enter takes the newest `client_secret_*.json` in `~/Downloads`
+  (else the folder), a folder takes its newest, `paste` takes its contents hidden, and a
+  wrong answer is said and asked again, three times at most. Without a terminal the
+  refusal names that page and `--client-file`. The wizard's Google section asks the same
+  questions. `slack [--workspace NAME]
   [--no-test]` **at a terminal is one command with no option, which waits** (the owner's
   rulings of 2026-11-23, no second command, and 2026-11-24, boxes to tick): it shows a
   box for each thing Keryx may do there beyond sending reports and files (ticked as the
@@ -235,7 +244,7 @@ remember:
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
   `issues`, `plugins`, `profile`, `project_context`) and `sections` for the small ones,
   `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
-  the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
+  the network, a login, a browser or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
   rich/questionary one, one question to a screen; `ask_checkbox` is its list of boxes
   for a command that is not the wizard), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record

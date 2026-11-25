@@ -936,6 +936,63 @@ def test_install_client_file_keeps_a_private_copy(settings, tmp_path):
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_a_file_that_is_not_text_is_said_not_raised(settings, tmp_path):
+    source = tmp_path / "client_secret_1.json"
+    source.write_bytes(b"\xff\xfe\x00")
+
+    with pytest.raises(GoogleSetupError, match="could not read .*: it is not text"):
+        google.install_client_file(settings, source)
+
+
+def test_the_newest_client_file_is_the_one_google_named_and_last_wrote(tmp_path):
+    import os
+
+    for name, age in (("client_secret_a.json", 60), ("client_secret_b.json", 0),
+                      ("notes.json", -60)):
+        (tmp_path / name).write_text("{}")
+        os.utime(tmp_path / name, (1_000_000 - age, 1_000_000 - age))
+    (tmp_path / "client_secret_dir.json").mkdir()
+
+    assert google.newest_client_file(tmp_path) == tmp_path / "client_secret_b.json"
+    assert google.newest_client_file(tmp_path / "missing") is None
+
+
+def test_the_newest_client_file_is_none_when_the_folder_cannot_be_read(tmp_path, monkeypatch):
+    def refuse(self, pattern):
+        raise PermissionError("no")
+
+    monkeypatch.setattr(type(tmp_path), "glob", refuse)
+
+    assert google.newest_client_file(tmp_path) is None
+
+
+def test_the_path_question_offers_the_newest_download_else_the_folder(tmp_path):
+    from pathlib import Path
+
+    downloads = Path.home() / "Downloads"
+    assert google.suggested_client_file() == str(downloads) + "/"
+
+    downloads.mkdir(parents=True)
+    (downloads / "client_secret_x.json").write_text("{}")
+
+    assert google.suggested_client_file() == str(downloads / "client_secret_x.json")
+
+
+def test_a_path_can_start_with_a_tilde(settings):
+    from pathlib import Path
+
+    (Path.home()).mkdir(parents=True, exist_ok=True)
+    (Path.home() / "c.json").write_text('{"installed": {"client_id": "i"}}')
+
+    path, picked = google.take_client(settings, "~/c.json", paste=lambda: "")
+
+    assert picked is None and json.loads(path.read_text())["installed"]["client_id"] == "i"
+
+
+def test_a_guide_reads_as_plain_text_on_a_terminal():
+    assert google.plain("# Title\n\nSay **this**.\n") == "Say this."
+
+
 def test_each_service_gets_a_line_saying_whether_it_is_connected():
     lines = google.service_lines(["gmail"], ["gmail", "calendar"])
 

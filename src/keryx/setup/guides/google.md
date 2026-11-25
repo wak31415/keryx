@@ -1,8 +1,15 @@
 # Connect Google with a client of your own
 
-Keryx signs in to Google through an OAuth client. This is how to make one of your own, in a
-Google Cloud project that is yours. You do it once, and every Google sign-in after that
-uses it.
+Keryx signs in to Google through an OAuth client, and that client is always your own.
+Google's API Terms say "Developer credentials may not be embedded in open source projects"
+(<https://developers.google.com/terms>, section 4(b)), so an open-source app like Keryx
+cannot ship a shared one. You make yours once, in a Google Cloud project that is yours, and
+every Google sign-in after that uses it.
+
+`keryx auth login google` (and `keryx setup`) does this with you: it opens the page below,
+shows the clicks, and asks for the path of the file Google downloads. What follows is the
+same thing written out, and the longer way for an account that does not offer Personal
+mode.
 
 If you made a client with an earlier version of this guide, it still works, but its
 project has only the Gmail and Calendar APIs turned on. Turn on the other four from the
@@ -27,8 +34,10 @@ that creates it can sign in with it (any other account is refused with
    project and creates the client.
 5. **Download it now.** In the **OAuth client created** dialog, choose **Download JSON**.
    Once you close that dialog, Google does not show the client secret again.
-6. **Hand it to Keryx.** Give the path of that downloaded file below (dragging it into
-   the terminal types the path). Keryx checks it, copies it to
+6. **Hand it to Keryx.** Give the path of that file when Keryx asks. Enter takes the newest
+   `client_secret_*.json` in your Downloads folder, and a folder takes the newest one in
+   it. If you downloaded it on another machine, copy it to this one first, or type `paste`
+   and paste what is in it, hidden. Keryx checks it, copies it to
    `~/.config/keryx/google_client_secret.json` readable by you alone, and uses it from then
    on; you may delete the download.
 
@@ -62,4 +71,5 @@ account has to sign in with the same client.
    **Download JSON**.
 6. **Hand it to Keryx**, as in step 6 above.
 
-From the command line instead: `keryx auth login google --client-file <that file>`.
+Without a terminal to answer at (a coding agent setting Keryx up, say), give the file on
+the command line instead: `keryx auth login google --client-file <that file>`.

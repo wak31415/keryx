@@ -37,6 +37,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import secrets
 import socket
 import threading
@@ -102,6 +103,11 @@ class GoogleSetupError(RuntimeError):
     """A sign-in that cannot go on, in one sentence to print."""
 
 
+class GoogleStopped(GoogleSetupError):
+    """The questions for the client file ended without one: the owner left, or an answer
+    was wrong too many times. Nothing was saved, and the sentence says how to pick it up."""
+
+
 # --- the guides ---------------------------------------------------------------------------
 
 GUIDE = "google.md"
@@ -117,29 +123,152 @@ def guide(name: str = GUIDE) -> str:
     return guide_path(name).read_text(encoding="utf-8")
 
 
+def plain(text: str) -> str:
+    """A guide as plain lines for a terminal that shows no Markdown: no heading, no bold."""
+    lines = [line for line in text.replace("**", "").splitlines() if not line.startswith("#")]
+    return "\n".join(lines).strip()
+
+
+# --- making the owner's own client --------------------------------------------------------
+#
+# Google's API Terms forbid shipping a client in an open source project, so every owner
+# makes one. Google's Personal mode page does it in one go: a project, the Workspace APIs
+# and a Desktop client that only the account that made it can use. `keryx auth login
+# google` and the wizard both open it, show the clicks, and ask for the file it downloads.
+
+#: Google's page that makes a Personal mode project and a Desktop client at once.
+PERSONAL_MODE_URL = (
+    "https://console.cloud.google.com/auth/overview/personal"
+    "?apis=ws,wsmcp,tasksmcp&clientType=desktop&isAgent=true"
+)
+#: Google's API Terms, whose section 4(b) is why there is no shared client.
+TERMS_URL = "https://developers.google.com/terms"
+#: What Google names the file it downloads.
+CLIENT_GLOB = "client_secret_*.json"
+#: Typed at the path question instead of a path, to paste what is in the file, hidden.
+PASTE = "paste"
+#: How many wrong answers the path question takes before it stops.
+MAX_WRONG = 3
+
+WHY_OWN_CLIENT = (
+    "Google's terms do not let open-source apps like Keryx ship a shared sign-in key, so "
+    "you make your own, once. Google's Personal mode makes it in about a minute, and it "
+    "works only for your account: no \"unverified app\" warning, and no expiry."
+)
+#: The clicks on that page, in order.
+CLIENT_STEPS = (
+    "Sign in as the account Keryx should act as, and take the project it offers.",
+    "Tick the box to agree, then choose Continue.",
+    "Choose Download JSON straight away: Google shows the secret only once.",
+)
+#: Said when the browser is on another machine, so the download is not on this one.
+ELSEWHERE_NOTE = (
+    f"Downloaded it on another machine? Copy it to this one first (scp works), or type "
+    f"{PASTE} at the question below to paste what is in it, hidden."
+)
+PATH_QUESTION = "Path to the file you downloaded"
+PASTE_QUESTION = "Paste what is in the file (hidden)"
+
+
+def fallback_note() -> str:
+    return f"If that page is not offered to your account, the longer way is in {guide_path()}."
+
+
+def steps_text() -> str:
+    return "\n".join(f"{number}. {step}" for number, step in enumerate(CLIENT_STEPS, 1))
+
+
 def own_client_hint() -> str:
-    return f"`keryx auth login google --client-file FILE`; the steps are in {guide_path()}"
+    """How to make a client without a terminal to ask at: the page, then `--client-file`."""
+    return (
+        f"make one at {PERSONAL_MODE_URL} and choose Download JSON, then run `keryx auth "
+        f"login google --client-file FILE`; the steps are in {guide_path()}"
+    )
+
+
+def downloads() -> Path:
+    return Path.home() / "Downloads"
+
+
+def newest_client_file(directory: Path) -> Path | None:
+    """The newest file Google's console could have downloaded in `directory`; None when
+    there is none."""
+    try:
+        found = [path for path in directory.glob(CLIENT_GLOB) if path.is_file()]
+        return max(found, key=lambda path: path.stat().st_mtime, default=None)
+    except OSError:
+        return None
+
+
+def suggested_client_file() -> str:
+    """The path question's default: the newest downloaded client file in `~/Downloads`,
+    else the folder itself. Only a default: where it was downloaded is always asked."""
+    found = newest_client_file(downloads())
+    return str(found) if found is not None else str(downloads()) + os.sep
+
+
+def client_file_from(answer: str) -> tuple[Path, bool]:
+    """The file an answer to the path question names, and whether it was picked as the
+    newest client file in a folder that was named instead."""
+    path = Path(answer.strip().strip("'\"")).expanduser()
+    if path.is_dir():
+        found = newest_client_file(path)
+        if found is None:
+            raise GoogleSetupError(f"there is no {CLIENT_GLOB} file in {path}")
+        return found, True
+    if not path.is_file():
+        what = "folder" if answer.strip().strip("'\"").endswith(os.sep) else "file"
+        raise GoogleSetupError(f"there is no {what} at {path}")
+    return path, False
+
+
+def take_client(
+    settings: Settings, answer: str, *, paste: Callable[[], str]
+) -> tuple[Path, Path | None]:
+    """Install the Desktop client an answer to the path question names: a file, a folder
+    holding one, or `paste` and then what is in it (`paste()` asks for that, hidden).
+    Returns where it was saved, and the file taken from a folder when it was one."""
+    if answer.strip().lower() == PASTE:
+        text = paste().strip()
+        if not text:
+            raise GoogleSetupError("nothing was pasted")
+        return install_client_text(settings, text, "what was pasted", desktop=True), None
+    source, picked = client_file_from(answer)
+    return install_client_file(settings, source, desktop=True), source if picked else None
 
 
 # --- the OAuth client ---------------------------------------------------------------------
 
 
-def install_client_file(settings: Settings, source: Path) -> Path:
+def install_client_file(settings: Settings, source: Path, *, desktop: bool = False) -> Path:
     """Copy a downloaded OAuth client JSON to `KERYX_HOME/google_client_secret.json` (0600).
 
-    Validated first — the `installed` (desktop) or `web` shape — so a wrong file is refused
-    here rather than at the first sign-in. Returns where it now is; the caller points
-    `GOOGLE_CLIENT_SECRETS_FILE` at it.
+    Validated first — the `installed` (desktop) or `web` shape, or only the first with
+    `desktop` — so a wrong file is refused here rather than at the first sign-in. Returns
+    where it now is; the caller points `GOOGLE_CLIENT_SECRETS_FILE` at it.
     """
     path = source.expanduser()
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise GoogleSetupError(f"could not read {path}: {exc.strerror or exc}") from None
+    except (OSError, UnicodeDecodeError) as exc:
+        why = exc.strerror if isinstance(exc, OSError) else "it is not text"
+        raise GoogleSetupError(f"could not read {path}: {why or exc}") from None
+    return install_client_text(settings, text, str(path), desktop=desktop)
+
+
+def install_client_text(
+    settings: Settings, text: str, what: str, *, desktop: bool = False
+) -> Path:
+    """`install_client_file` for a client's JSON in hand; `what` names it in a refusal."""
     try:
         parse_google_client(text)
     except ValueError as exc:
-        raise GoogleSetupError(f"{path} is not a Google OAuth client file: {exc}") from None
+        raise GoogleSetupError(f"{what} is not a Google OAuth client file: {exc}") from None
+    if desktop and "installed" not in json.loads(text):
+        raise GoogleSetupError(
+            f"{what} is not a Desktop app client: make one on the page above, whose link "
+            "sets Desktop app"
+        )
     return write_private(settings.config_dir / GOOGLE_CLIENT_FILE, text)
 
 
@@ -943,20 +1072,42 @@ def _show(
 
 
 def _own_client(ctx: "SetupContext") -> bool:
-    """The owner's own Google Cloud client, asked for only when Keryx has none to offer."""
+    """The owner's own Google client, made now: the Personal mode page opened (a probe, so
+    going back does not open it again), the clicks shown, and the downloaded file asked for.
+    Where it was downloaded is never assumed: the newest one in `~/Downloads` is only the
+    default. Blank stops, and saves nothing."""
     ui = ctx.ui
-    ui.markdown(guide())
+    ui.note(WHY_OWN_CLIENT)
+    headless = ctx.probes.headless()
+    opened = not headless and ctx.probes.open_browser(PERSONAL_MODE_URL)
+    ui.panel("Make your Google sign-in app", f"{opening(opened)}\n\n{steps_text()}")
+    ui.link(PERSONAL_MODE_URL)
+    for line in ([ELSEWHERE_NOTE] if headless else []) + [fallback_note()]:
+        ui.note(line)
+    default = suggested_client_file()
     while True:
-        raw = ui.text("Path to the downloaded client JSON (blank to stop here)")
+        raw = ui.text(f"{PATH_QUESTION} (blank to stop here)", default=default)
         if not raw:
             return False
         try:
-            path = install_client_file(ctx.settings, Path(raw.strip().strip("'\"")))
+            path, picked = take_client(
+                ctx.settings, raw, paste=lambda: ui.secret(PASTE_QUESTION)
+            )
         except GoogleSetupError as exc:
             ui.error(str(exc))
             continue
+        if picked is not None:
+            ui.note(f"Took {picked}, the newest one there.")
         ui.success(f"client saved to {path}")
+        ui.markdown(guide(CONSENT_GUIDE))
         return ctx.save({"GOOGLE_CLIENT_SECRETS_FILE": str(path)})
+
+
+def opening(opened: bool) -> str:
+    """The line above the Personal mode page's link."""
+    if opened:
+        return "Your browser is opening Google's page for it. If it does not, open the link below."
+    return "Open the link below in a browser, on any device."
 
 
 def _sign_in(ctx: "SetupContext") -> Grant | None:
@@ -970,8 +1121,6 @@ def _sign_in(ctx: "SetupContext") -> Grant | None:
     except GoogleSetupError as exc:
         ui.error(str(exc))
         return None
-    for line in chosen.notes:
-        ui.note(line)
     way = ELSEWHERE if ctx.probes.headless() else HERE
     try:
         while True:

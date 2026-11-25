@@ -128,12 +128,14 @@ def test_plugins_install_help_shows_the_clusters_table_by_its_name():
     assert "the whole [clusters] table" in words
 
 
-def test_auth_login_help_says_google_needs_a_client_of_your_own_for_now():
+def test_auth_login_help_says_google_needs_a_client_of_your_own_and_makes_one():
     result = runner.invoke(app, ["auth", "login", "--help"], terminal_width=200)
 
     assert result.exit_code == 0
     words = " ".join(result.output.replace("│", " ").split())
-    assert "it needs an OAuth client of yours, given once with --client-file" in words
+    assert "Google's terms do not let an open-source app ship one" in words
+    assert "it opens Google's Personal mode page" in words
+    assert "give that file once with --client-file" in words
 
 
 # --- serve -----------------------------------------------------------------
