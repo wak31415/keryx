@@ -16,11 +16,17 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    `optional` there, since Keryx runs without them, and never make it exit 1. Each
    `keryx auth login` takes its own options and refuses another's. For a coding agent,
    `keryx auth login claude|codex` runs its own login on the terminal. Google is one
-   sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides. Until a release ships
-   Keryx's own Google app it needs an OAuth client of the person's own: they make it once
-   in Google Cloud (the steps: `{google_guide}`; Personal mode is the short way) and give
-   you the path of the file Google downloads, which you pass once with
-   `--client-file PATH` on the first command below.
+   sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides. It needs an OAuth client
+   of the person's own, since Google's terms do not let an open-source app ship one. The
+   easiest way is theirs: run at a terminal with no client on file,
+   `keryx auth login google` opens Google's Personal mode page, shows the clicks and asks
+   for the downloaded file or the Client ID, so offer that first; an account that cannot
+   create a Google Cloud project (many work and school accounts cannot) types `other`
+   there for a second way. Without a terminal it refuses and names that page: relay it
+   (the steps, both ways: `{google_guide}`). When they give you the path of the file Google
+   downloads, pass it once with `--client-file PATH` on the first command below; if they
+   copied a Client ID and secret instead, `keryx config set GOOGLE_OAUTH_CLIENT_ID ID`,
+   and the secret is theirs to type: `keryx config set GOOGLE_OAUTH_CLIENT_SECRET --stdin`.
    `keryx auth login google --headless` prints a link: relay it; the person approves it
    on any device and gives you the address their browser lands on
    (`http://localhost:1/?…`). That address holds a one-time code, so never put it in a

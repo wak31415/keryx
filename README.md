@@ -51,9 +51,18 @@ To use the package in a project of your own, install it there with `pip install 
 - A Twilio phone number
 - A tunnel so Twilio can reach your machine: Cloudflare Tunnel on Linux, ngrok on macOS
 
-Optional: for your mail, calendar and documents, a Google OAuth client of your own, made
-once in Google Cloud (`keryx setup` shows you how); for Slack, a workspace where you can
-create and install an app.
+Optional: for your mail, calendar and documents, a Google account; for Slack, a workspace
+where you can create and install an app.
+
+Google needs one extra minute the first time. Google's API Terms say "Developer
+credentials may not be embedded in open source projects"
+([section 4(b)](https://developers.google.com/terms)), so Keryx cannot ship a shared
+Google sign-in key, and you make your own. `keryx auth login google` (or `keryx setup`)
+opens Google's Personal mode page, which makes it in a few clicks, then asks for the file
+it downloads or the Client ID and secret it shows. A Personal mode key works only for your own account, so there is no
+"unverified app" warning and no expiry. Many work and school accounts cannot create one:
+type `other` at that question for the way round it, an app made with a personal Google
+account that you then sign in to with the work one.
 
 ## What it does
 

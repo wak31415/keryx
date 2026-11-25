@@ -37,12 +37,6 @@ def client(settings):
     return settings
 
 
-def published(tmp_path, monkeypatch, **extra):
-    path = tmp_path / "google_client.json"
-    path.write_text(json.dumps({"installed": {"client_id": "pub", "client_secret": "ps"}, **extra}))
-    monkeypatch.setattr(account, "PUBLISHED_CLIENT_FILE", path)
-
-
 class Response:
     def __init__(self, status, body):
         self.status_code, self.body = status, body
@@ -96,11 +90,11 @@ def redirect(url: str, **overrides) -> str:
     )
 
 
-# --- what a sign-in asks for, and with whose client ---------------------------------------
+# --- what a sign-in asks for -------------------------------------------------------------
 
 
 def test_no_client_at_all_says_how_to_make_one(settings):
-    with pytest.raises(GoogleSetupError, match="no Google OAuth client") as raised:
+    with pytest.raises(GoogleSetupError, match="no Google client of yours yet") as raised:
         offer(settings)
 
     assert "--client-file" in str(raised.value) and "google.md" in str(raised.value)
@@ -109,50 +103,11 @@ def test_no_client_at_all_says_how_to_make_one(settings):
 def test_the_owners_own_client_offers_everything(client):
     chosen = offer(client)
 
-    assert chosen.services == ALL and chosen.note is None and not chosen.client.published
+    assert chosen.services == ALL and chosen.notes == []
 
 
 def test_chosen_services_come_back_in_the_tables_order(client):
     assert offer(client, ["slides", "gmail"]).services == ("gmail", "slides")
-
-
-def test_the_published_client_is_limited_to_what_it_offers_and_says_so(
-    settings, tmp_path, monkeypatch
-):
-    published(tmp_path, monkeypatch, keryx_services=["calendar", "drive", "docs"])
-
-    chosen = offer(settings)
-
-    assert chosen.client.published and chosen.services == ("calendar", "drive", "docs")
-    assert chosen.note.startswith(
-        "Gmail, Sheets and Slides are not offered by Keryx's Google app yet: they need your "
-        "own Google client (`keryx auth login google --client-file FILE`"
-    )
-
-
-def test_one_withheld_service_is_said_in_the_singular(settings, tmp_path, monkeypatch):
-    published(tmp_path, monkeypatch, keryx_services=[n for n in ALL if n != "gmail"])
-
-    note = offer(settings).note
-
-    assert note.startswith("Gmail is not offered by Keryx's Google app yet: it needs")
-
-
-def test_asking_the_published_client_for_what_it_does_not_offer_is_refused(
-    settings, tmp_path, monkeypatch
-):
-    published(tmp_path, monkeypatch, keryx_services=["calendar"])
-
-    with pytest.raises(GoogleSetupError, match="does not offer Gmail yet.*--client-file"):
-        offer(settings, ["gmail", "calendar"])
-    assert offer(settings, ["calendar"]).note is None  # asked for by name: nothing left out
-
-
-def test_a_published_client_that_offers_nothing_is_refused(settings, tmp_path, monkeypatch):
-    published(tmp_path, monkeypatch, keryx_services=[])
-
-    with pytest.raises(GoogleSetupError, match="does not offer any service yet"):
-        offer(settings)
 
 
 # --- signing in again adds, and never takes away -------------------------------------------
@@ -183,21 +138,6 @@ def test_asking_for_what_is_connected_already_says_nothing(client):
 
     assert offer(client, ["calendar"]).notes == []
     assert offer(client).notes == []  # everything is asked for anyway
-
-
-def test_what_the_client_does_not_offer_cannot_be_kept_and_that_is_said(
-    settings, tmp_path, monkeypatch
-):
-    published(tmp_path, monkeypatch, keryx_services=["calendar"])
-    connected(settings, ["gmail", "calendar"])
-
-    chosen = offer(settings)
-
-    assert chosen.services == ("calendar",)
-    assert any(
-        line.startswith("Gmail is connected now and will not be after this sign-in")
-        for line in chosen.notes
-    )
 
 
 # --- the link -----------------------------------------------------------------------------
@@ -264,7 +204,6 @@ def test_finishing_exchanges_the_code_once_and_keeps_one_private_token(client):
         "email": "ada@example.com",
     }
     assert (result.email, result.connected, result.missing) == ("ada@example.com", ALL, ())
-    assert result.whose == "your own Google client"
     assert not (client.data_dir / PENDING_FILE).exists()  # the verifier is used up
 
 
@@ -608,6 +547,10 @@ def test_no_access_token_and_no_id_token_asks_nobody(client):
         ({"state": None}, "different sign-in"),
         ({"code": None}, "no code"),
         ({"error": "access_denied"}, "Google said: access_denied"),
+        # Google shows this on its own page, by its documentation; should it ever come
+        # back, it is said as what it is, and not as something to try again.
+        ({"error": "admin_policy_enforced"},
+         "organization blocks apps it has not approved: only its administrators"),
     ],
 )
 def test_a_redirect_that_does_not_fit_is_refused(client, change, says):
@@ -995,6 +938,118 @@ def test_install_client_file_keeps_a_private_copy(settings, tmp_path):
 
     assert path == settings.config_dir / "google_client_secret.json"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_a_file_that_is_not_text_is_said_not_raised(settings, tmp_path):
+    source = tmp_path / "client_secret_1.json"
+    source.write_bytes(b"\xff\xfe\x00")
+
+    with pytest.raises(GoogleSetupError, match="could not read .*: it is not text"):
+        google.install_client_file(settings, source)
+
+
+def test_the_newest_client_file_is_the_one_google_named_and_last_wrote(tmp_path):
+    import os
+
+    for name, age in (("client_secret_a.json", 60), ("client_secret_b.json", 0),
+                      ("notes.json", -60)):
+        (tmp_path / name).write_text("{}")
+        os.utime(tmp_path / name, (1_000_000 - age, 1_000_000 - age))
+    (tmp_path / "client_secret_dir.json").mkdir()
+
+    assert google.newest_client_file(tmp_path) == tmp_path / "client_secret_b.json"
+    assert google.newest_client_file(tmp_path / "missing") is None
+
+
+def test_the_newest_client_file_is_none_when_the_folder_cannot_be_read(tmp_path, monkeypatch):
+    def refuse(self, pattern):
+        raise PermissionError("no")
+
+    monkeypatch.setattr(type(tmp_path), "glob", refuse)
+
+    assert google.newest_client_file(tmp_path) is None
+
+
+def test_the_path_question_offers_the_newest_download_else_the_folder(tmp_path):
+    from pathlib import Path
+
+    downloads = Path.home() / "Downloads"
+    assert google.suggested_client_file() == str(downloads) + "/"
+
+    downloads.mkdir(parents=True)
+    (downloads / "client_secret_x.json").write_text("{}")
+
+    assert google.suggested_client_file() == str(downloads / "client_secret_x.json")
+
+
+def test_a_path_can_start_with_a_tilde(settings):
+    from pathlib import Path
+
+    (Path.home()).mkdir(parents=True, exist_ok=True)
+    (Path.home() / "c.json").write_text('{"installed": {"client_id": "i"}}')
+
+    text, picked = google.client_from("~/c.json", paste=lambda: "", secret=lambda cid: "")
+
+    assert picked is None and json.loads(text)["installed"]["client_id"] == "i"
+    assert not (settings.config_dir / "google_client_secret.json").exists()  # nothing saved
+
+
+def test_a_staged_client_signs_in_and_is_adopted_or_dropped(settings):
+    from keryx.integrations import google as account
+
+    text = google.client_json("1-a.apps.googleusercontent.com", "s" * 24)
+    signing = google.stage_client(settings, text)
+
+    assert google.is_staged(signing) and not google.is_staged(settings)
+    assert account.resolve_client(signing).client_id == "1-a.apps.googleusercontent.com"
+    assert account.resolve_client(settings) is None
+    assert stat.S_IMODE(google.staged_client_path(settings).stat().st_mode) == 0o600
+
+    path = google.adopt_client(settings)
+    assert json.loads(path.read_text()) == json.loads(text)
+    assert not google.staged_client_path(settings).exists()
+
+    google.stage_client(settings, text)
+    google.drop_staged_client(settings)
+    assert not google.staged_client_path(settings).exists()
+
+
+def test_the_other_way_turns_on_one_api_for_each_service_in_one_link():
+    """Calendar's API id is `calendar-json`; the rest are the service's own name."""
+    from urllib.parse import parse_qs, urlparse
+
+    url = urlparse(google.ENABLE_APIS_URL)
+    ids = parse_qs(url.query)["apiid"][0].split(",")
+
+    assert (url.netloc, url.path) == ("console.cloud.google.com", "/flows/enableapi")
+    assert [one.split(".")[0].removesuffix("-json") for one in ids] == list(ALL)
+    assert all(one.endswith(".googleapis.com") for one in ids)
+
+
+def test_the_other_way_publishes_the_app_and_never_asks_for_test_users():
+    steps = " ".join(step for step, _ in google.OTHER_STEPS)
+
+    assert "External" in steps and "Publish app" in steps and "7 days" in steps
+    assert "No test users" in steps and "Desktop app" in steps and "Advanced" in steps
+    assert [link for _, link in google.OTHER_STEPS] == [
+        "https://console.cloud.google.com/projectcreate",
+        google.ENABLE_APIS_URL,
+        "https://console.cloud.google.com/auth/overview",
+        "https://console.cloud.google.com/auth/audience",
+        "https://console.cloud.google.com/auth/clients/create",
+        None,
+    ]
+
+
+def test_the_guide_has_the_links_the_terminal_shows():
+    text = google.guide()
+
+    assert google.PERSONAL_MODE_URL in text
+    assert all(link in text for _, link in google.OTHER_STEPS if link)
+
+
+def test_a_guide_reads_as_plain_text_on_a_terminal():
+    assert google.plain("# Title\n\nSay **this**.\n") == "Say this."
 
 
 def test_each_service_gets_a_line_saying_whether_it_is_connected():

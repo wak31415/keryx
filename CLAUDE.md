@@ -36,7 +36,29 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   takes back the address the browser landed on, and with no terminal that is two commands,
   the second reading the address from standard input so its code is never on a command
   line; `--account` says which account is meant when it is not the saved one; `gmail` and
-  `google-workspace` still mean it, for one release. `slack [--workspace NAME]
+  `google-workspace` still mean it, for one release. **With no client of the owner's on
+  file, at a terminal, it makes one first, in the same command** (the owner's ruling of
+  2026-11-24): it says why in a sentence (Google's terms forbid a shared client in an
+  open-source app), opens Google's Personal mode page (or prints it for another device),
+  shows the three clicks, and **always asks for the downloaded file or the Client ID**,
+  never assuming where it went (Google's own steps for that page end with copying the ID
+  and secret, and may offer no file): Enter takes the newest Desktop `client_secret_*.json`
+  in `~/Downloads` (else the folder), a folder takes its newest, a Client ID asks for its
+  secret hidden and is kept as the same client JSON a download is, `paste` takes the
+  file's contents hidden (the command reads every line of it with the echo off, `setup.terminal.read_hidden_paste`; the wizard takes one line), and nothing typed that may hold a secret is ever
+  said back. `other` is never a wrong answer: it prints the second way, for an account
+  that cannot create a project (the owner's ruling of 2026-11-25), and asks again.
+  `skip` stops. **The command takes three wrong answers at most; the wizard asks until
+  the owner stops**, and keeps the steps on screen above each refusal. A Client Secret
+  is checked for shape (not a Client ID, no spaces, not too short; `GOCSPX-` is not
+  required, older secrets lack it), and an answer is quoted back only when it looks like a
+  path and holds nothing of a client file. After every hidden question and every refused
+  answer, what is left of a paste is drained and dropped (`setup.terminal`), and the
+  wizard never offers a refused answer back on Esc (`Recorder.withhold_last`). Without a
+  terminal the refusal is short, names nothing as failed, and gives the page,
+  `--client-file` and the guide that has the second way. The wizard's Google section asks
+  the same questions, from the same constants, with nothing put in the answer box.
+  `slack [--workspace NAME]
   [--no-test]` **at a terminal is one command with no option, which waits** (the owner's
   rulings of 2026-11-23, no second command, and 2026-11-24, boxes to tick): it shows a
   box for each thing Keryx may do there beyond sending reports and files (ticked as the
@@ -235,11 +257,13 @@ remember:
   left, the closing summary), one module per large section (`agents`, `phone`, `google`,
   `issues`, `plugins`, `profile`, `project_context`) and `sections` for the small ones,
   `context` (the `SetupContext` every section gets, and `Probes` — everything that reaches
-  the network, a login or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
+  the network, a login, a browser or a subagent, replaced wholesale in tests), `ui` (the `Prompter` protocol and the
   rich/questionary one, one question to a screen; `ask_checkbox` is its list of boxes
   for a command that is not the wizard), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record
-  of its answers and probe results, so no probe runs twice; a section that saves before
+  of its answers and probe results, so no probe runs twice; what a replay says is held
+  until a question or a probe is live, so a section Tab passes over says nothing but its errors and warnings, and one
+  that stops says it all, in order; a section that saves before
   its last answer has to be safe to run again, which the Slack step's untick is: see
   "Slack runs both ways"), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
   each set of instructions is written once.
@@ -608,17 +632,51 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   request — was read from that release's decorators. A tool is switched off unless the
   token holds its scope, so an agent never meets one whose only answer is "authorize again".
   Bump the pin only with that list re-read from the new source.
-- **Two clients, and whose it is gets said.** `resolve_client`: the owner's own
-  (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`, or the client file) wins; else the one Keryx
-  publishes, which is a packaged data file (`keryx/data/google_client.json`, the console's
-  JSON plus an optional `keryx_services` list of what Google has approved it for) and may
-  not be there. No release has shipped one yet (0.3.0 did not: it waits on Google's
-  verification), so today every sign-in is on the owner's own client, and the docs and
-  the setup guide say so; change them in the release that adds the file. A published
-  client is limited to its list; the owner's own offers
-  everything. Its secret ships in the wheel and is not a secret (SECURITY.md): PKCE,
-  `state` and a loopback-only redirect are what protect the exchange. A client with no
-  secret sends none, never an empty one.
+- **One client, the owner's, and Keryx never ships one.** Google's API Terms, §4(b):
+  "Developer credentials may not be embedded in open source projects"
+  (<https://developers.google.com/terms>). So `resolve_client` is the owner's own
+  (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`, or the client file) or None, and there is no
+  packaged client, no list of what one was approved for, and no sentence about a service
+  "Keryx's app" does not offer: a client the owner made offers everything. Do not add a
+  published client back, in the wheel or anywhere else in the repository. The way an
+  owner gets one is Google's Personal mode (a Desktop client only the account that made it
+  can use: no unverified warning, no user cap, no seven-day expiry), made from one console
+  page that `keryx auth login google` opens for them. An account that cannot create a
+  project (many work and school accounts) cannot have one, so there is a second way
+  (`setup.google.OTHER_STEPS`): an External app in a project of a personal account,
+  **published, never left in Testing** (where every sign-in ends after seven days), and
+  signed in to with the work account past one "unverified" warning. Its links are the
+  console's pages as Google's Workspace MCP guide links them
+  (developers.google.com/workspace/guides/configure-mcp-servers: `flows/enableapi` with
+  comma-separated ids, `auth/clients/create`), and the six API ids are `API_IDS`; the
+  guide carries the same links, and a test holds them together. An organization that
+  blocks unapproved apps shows `admin_policy_enforced` on Google's own page and never
+  redirects, so the wait says what that means (`BLOCKED_NOTE`), and the sentence for it
+  is there should the error ever reach the redirect. **A client given in this run
+  replaces the one on file only once a sign-in with it works, and is thrown away only
+  when Google refuses it** (`ClientRefused`, an `invalid_client`/`unauthorized_client`
+  exchange): a wrong client typed in must not get stuck on file, where no later login
+  would ask for it again, and a right one must not be lost to an unrelated failure, since
+  Personal mode shows its secret once. Until then it is
+  `KERYX_HOME/google_client_secret.new.json` (0600, `stage_client`, which also leaves a
+  configured pair out of the copy it signs in with), and `adopt_client` makes it the
+  client file after the sign-in is kept. Any other ending (Ctrl-C at the wait, nothing
+  granted, a network error, a no to an unexpected account, leaving the wizard) keeps it
+  staged, and the next client question, in the command or the wizard, offers it first
+  (`staged_offer`: "Enter takes the client you gave last time"; the command shows that as
+  its default, never the staged file's path). A staged client beside one on file is never
+  passed over in silence: the next sign-in asks one yes or no first (`staged_question`,
+  yes by default; no throws the staged one away), and without a terminal it is used and
+  said in one line. A sign-in kept with another client, and `keryx auth logout google`,
+  throw a staged client away. A client already on file
+  is never touched by a failed attempt, and a refusal or the wait's note says what to do
+  by the situation (`refused_advice`, `client_not_found_note`); the wizard's retry always
+  offers to give the client again, or another one. The two commands of a pasted-back
+  sign-in without a terminal stage the same way: the pending sign-in records it
+  (`Pending.staged_client`), and the second command signs in with the staged client and
+  adopts it. PKCE, `state` and a loopback-only
+  redirect are what protect the exchange. A client with no secret sends none, never an
+  empty one.
 - **Two ways to finish, chosen before the link is made.** With a browser on this machine, a
   listener on `127.0.0.1` on a port the OS picks takes the redirect: one request that
   carries this sign-in's `state`, nothing logged (the request line holds the code), every
@@ -687,9 +745,7 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
 - **A failure is a code and a sentence that names the fix.** `GoogleApiError`:
   `not_signed_in`, `not_connected` and `signed_out` name `keryx auth login google`;
   `api_disabled` says that signing in again will not help, because the API is off in the
-  Cloud project. So does `not_connected` when Keryx's own Google app does not offer the
-  service (`failure(..., offered=False)`, asked of the client on this machine when the
-  tool loads): the sentence names a client of the owner's own and no sign-in. Never an exception to the model, and never a response body anywhere: a
+  Cloud project. Never an exception to the model, and never a response body anywhere: a
   log line carries the status, one of a short list of Google's own reasons, and the kind of
   thing asked for, never which calendar or file (an id is somebody's address).
 - **What Google returns is somebody else's text.** An invitation puts a title on the

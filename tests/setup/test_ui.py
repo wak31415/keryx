@@ -106,6 +106,23 @@ def test_ctrl_c_is_aborted(prompter, questionary):
         prompter.confirm("sure?")
 
 
+def test_ctrl_d_is_aborted_as_ctrl_c_is(prompter, monkeypatch):
+    """questionary catches Ctrl-C and leaves Ctrl-D to the caller as an EOFError, which
+    click would print as a bare "Aborted"."""
+    import questionary as real
+
+    class EndOfInput:
+        application = SimpleNamespace(key_bindings=None, ttimeoutlen=0.5)
+
+        def ask(self):
+            raise EOFError
+
+    monkeypatch.setattr(real, "password", lambda *args, **kwargs: EndOfInput())
+
+    with pytest.raises(Aborted):
+        prompter.secret("Client Secret (hidden)")
+
+
 def test_no_validator_is_none():
     assert ui._validator(None) is None
 

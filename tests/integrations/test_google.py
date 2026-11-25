@@ -1,4 +1,4 @@
-"""The Google account: the scope table, whose client, the one token, and its copy for the
+"""The Google account: the scope table, the client, the one token, and its copy for the
 agents' MCP server. No network: nothing here calls Google."""
 
 import json
@@ -24,8 +24,6 @@ from keryx.integrations.google import (
 
 ALL = tuple(SERVICES)
 AUTH = "https://www.googleapis.com/auth/"
-#: Read at import, before the suite's fixture points every test away from it.
-PACKAGED_CLIENT = google.PUBLISHED_CLIENT_FILE
 
 
 def token(services=ALL, **changes) -> GoogleToken:
@@ -118,80 +116,26 @@ def test_services_on_the_command_line_are_checked_and_put_in_order():
         google.parse_services(" , ")
 
 
-# --- which client, and whose --------------------------------------------------------------
+# --- the client --------------------------------------------------------------------------
 
 
-def published_file(tmp_path, body) -> object:
-    path = tmp_path / "google_client.json"
-    path.write_text(json.dumps(body))
-    return path
-
-
-INSTALLED = {"installed": {"client_id": "keryx.apps", "client_secret": "GOCSPX-published"}}
-
-
-def test_the_published_client_is_a_data_file_inside_the_package():
-    """The wheel is built from `src/keryx`, so a file here ships with no build change."""
-    import keryx
-
-    assert PACKAGED_CLIENT == Path(keryx.__file__).resolve().parent / "data" / "google_client.json"
-
-
-def test_with_no_client_anywhere_there_is_none(settings):
+def test_with_no_client_of_the_owners_there_is_none(settings):
+    """Keryx ships no client: Google's API Terms forbid one in an open source project."""
     assert google.resolve_client(settings) is None
 
 
-def test_the_published_client_is_used_when_the_owner_has_none(settings, tmp_path):
-    client = google.resolve_client(settings, published=published_file(tmp_path, INSTALLED))
-
-    assert (client.client_id, client.client_secret) == ("keryx.apps", "GOCSPX-published")
-    assert client.published and client.whose == "Keryx's Google app"
-    assert client.services == ALL and client.withheld == ()
-
-
-def test_the_owners_own_client_wins_and_offers_everything(settings, tmp_path):
+def test_the_owners_own_client_is_the_one(settings):
     settings.google_oauth_client_id = "mine"
     settings.google_oauth_client_secret = "my-secret"
-    limited = {**INSTALLED, "keryx_services": ["calendar"]}
 
-    client = google.resolve_client(settings, published=published_file(tmp_path, limited))
-
-    assert (client.client_id, client.published) == ("mine", False)
-    assert client.whose == "your own Google client" and client.services == ALL
+    assert google.resolve_client(settings) == google.OAuthClient("mine", "my-secret")
 
 
-def test_the_packaged_file_is_where_the_published_client_is_looked_for(
-    settings, tmp_path, monkeypatch
-):
-    monkeypatch.setattr(google, "PUBLISHED_CLIENT_FILE", published_file(tmp_path, INSTALLED))
+def test_nothing_is_packaged_as_a_client_of_keryxs_own():
+    import keryx
 
-    assert google.resolve_client(settings).published
-
-
-def test_a_published_client_offers_only_the_services_it_lists(tmp_path):
-    body = {**INSTALLED, "keryx_services": ["calendar", "drive", "docs", "tasks"]}
-
-    client = google.published_client(published_file(tmp_path, body))
-
-    assert client.services == ("calendar", "drive", "docs")
-    assert client.withheld == ("gmail", "sheets", "slides")
-
-
-def test_a_published_client_without_drive_cannot_offer_what_builds_on_it(tmp_path):
-    body = {**INSTALLED, "keryx_services": ["calendar", "docs", "sheets"]}
-
-    assert google.published_client(published_file(tmp_path, body)).services == ("calendar",)
-
-
-def test_a_client_file_with_no_secret_is_a_client_with_an_empty_one(tmp_path):
-    client = google.published_client(published_file(tmp_path, {"installed": {"client_id": "pub"}}))
-
-    assert (client.client_id, client.client_secret) == ("pub", "")
-
-
-def test_a_packaged_file_that_is_not_a_client_is_no_client(tmp_path, caplog):
-    assert google.published_client(published_file(tmp_path, {"installed": {}})) is None
-    assert "unusable" in caplog.text
+    assert not (Path(keryx.__file__).resolve().parent / "data" / "google_client.json").exists()
+    assert not hasattr(google, "PUBLISHED_CLIENT_FILE")
 
 
 # --- the token ----------------------------------------------------------------------------

@@ -85,6 +85,12 @@ def _google_finish(settings: Settings, redirected_to: str) -> Any:
         return error
 
 
+def _open_browser(url: str) -> bool:
+    from keryx.setup.google import open_browser
+
+    return open_browser(url)
+
+
 def _google_discard(settings: Settings, grant: Any) -> bool:
     from keryx.setup.google import discard
 
@@ -133,6 +139,9 @@ class Probes:
     #: `keryx service install`; raises `ServiceError` with what to fix.
     install_service: Callable[[Settings, Callable[[str], None]], None] = _install_service
     headless: Callable[[], bool] = _headless
+    #: Open a page in this machine's browser; False when there is none. A probe, so going
+    #: back through the wizard does not open Google's console a second time.
+    open_browser: Callable[[str], bool] = _open_browser
     #: The Google sign-in with a browser on this machine (`setup.google.browser_grant`:
     #: listener, browser, exchange), and the exchange that ends a pasted-back one. Each
     #: returns a `Grant` that nothing has saved yet, or the `GoogleSetupError` it ended in

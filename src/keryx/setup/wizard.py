@@ -236,7 +236,7 @@ def run_walk(ctx: SetupContext, walk: list[Section], records: dict[str, list[Ent
             continue
         finally:
             ctx.ui, ctx.probes, ctx.review = ui, probes, review
-        recorder.stop_replaying()
+        recorder.finish()
         # A run that asked nothing (all of it set already) keeps the record it had, so Esc
         # from the next section still has its answers to go back to.
         if any(entry.what == ASK for entry in recorder.log) or section.key not in records:

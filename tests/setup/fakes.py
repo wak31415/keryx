@@ -137,6 +137,11 @@ class ScriptedPrompter:
 #: Take whatever the question offers by default.
 DEFAULT = object()
 
+#: A Client ID and Secret of the shapes Google issues, put together from parts so that no
+#: secret scanner takes the source for a real pair.
+FAKE_ID = "123-abc" + ".apps." + "googleusercontent.com"
+FAKE_SECRET = "GOCSPX" + "-" + "x" * 28
+
 
 class Lazy:
     """An answer worked out when its question is asked, from what the wizard has done by
@@ -179,6 +184,8 @@ class FakeWorld:
     login_code: int = 0
     service_error: str | None = None
     headless: bool = False
+    #: Whether a page opens in this machine's browser when asked (`open_browser`).
+    browser_opens: bool = True
     #: What a Google sign-in grants (`google_services`), as whom, and the error it ends in
     #: instead when `google_error` is set. The fake writes the token a real one would.
     gmail: str = "sam@example.com"
@@ -252,7 +259,7 @@ class FakeWorld:
                 email=self.gmail,
             )
             # A grant is in memory only: the wizard keeps it, or does not.
-            return Grant(token=token, asked=tuple(asked), whose="your own Google client")
+            return Grant(token=token, asked=tuple(asked))
 
         def google_browser(settings, chosen, announce):
             self.calls.append(("google_browser", chosen.services))
@@ -297,6 +304,7 @@ class FakeWorld:
             run_login=record("login", self.login_code),
             install_service=install_service,
             headless=lambda: self.headless,
+            open_browser=lambda url: self.calls.append(("open", url)) or self.browser_opens,
             google_browser_signin=google_browser,
             google_finish=google_finish,
             google_discard=google_discard,

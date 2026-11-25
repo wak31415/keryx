@@ -92,7 +92,7 @@ issues in public, spending caps, deletion, the network, the debug switches). Not
 
 | Setting | Default | Service may change | What it is |
 |---|---|---|---|
-| `GOOGLE_OAUTH_CLIENT_ID` |  | no | The id of a Google OAuth client of your own. Blank: read from `GOOGLE_CLIENT_SECRETS_FILE`, else the client Keryx publishes, when it has one. |
+| `GOOGLE_OAUTH_CLIENT_ID` |  | no | The id of a Google OAuth client of your own. Blank: read from `GOOGLE_CLIENT_SECRETS_FILE`. Keryx ships no client of its own. |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | (secret) | never | The Google OAuth client secret, with the id above. |
 | `GOOGLE_CLIENT_SECRETS_FILE` |  | no | The OAuth client JSON the Google Cloud console downloads, for a client of your own (desktop or web shape). Blank: `KERYX_HOME/google_client_secret.json`, where `keryx setup` and `keryx auth login google --client-file` put it. |
 | `USER_GOOGLE_EMAIL` |  | no | The Google account agents act as; `keryx auth login google` fills it in from the sign-in. |

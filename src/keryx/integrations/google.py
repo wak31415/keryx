@@ -6,9 +6,9 @@ Everything Google in Keryx hangs off one sign-in (`keryx auth login google`, the
 - **`SERVICES`** is the only place a scope is written down: each service, the scopes it
   requests, and what granting them enables. A service is *connected* when every scope it
   needs was granted, because Google lets the owner untick any of them on the consent screen.
-- **`resolve_client`** says which OAuth client a sign-in uses and whose it is: the owner's
-  own (`Settings.google_oauth_client`), else the one Keryx publishes, a data file packaged
-  at `keryx/data/google_client.json` that may not be there at all.
+- **`resolve_client`** is the OAuth client a sign-in uses, which is always the owner's own
+  (`Settings.google_oauth_client`). Keryx ships none: Google's API Terms say "Developer
+  credentials may not be embedded in open source projects".
 - **`GoogleToken`** is `DATA_DIR/google_token.json` (0600): the refresh token, the client
   that minted it, the scopes Google literally granted, and the account's address. It is the
   one token Keryx owns. The Google voice tools read it, through the one request in
@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
 
-from keryx.config import Settings, parse_google_client, write_private
+from keryx.config import Settings, write_private
 
 log = logging.getLogger("keryx.integrations.google")
 
@@ -139,11 +139,6 @@ TOKEN_FILE = "google_token.json"
 PENDING_FILE = "google_signin.json"
 #: The directory `workspace-mcp` reads its credentials from, under `DATA_DIR`.
 MCP_CREDENTIALS_DIR = "google"
-#: Keryx's published OAuth client, inside the package. Absent until Keryx has one.
-PUBLISHED_CLIENT_FILE = Path(__file__).resolve().parent.parent / "data" / "google_client.json"
-#: An optional key beside the standard client JSON in that file: the services the published
-#: client has been approved for. Absent means all of them.
-PUBLISHED_SERVICES_KEY = "keryx_services"
 
 
 # ------------------------------------------------------------------------------ scopes
@@ -214,55 +209,21 @@ def parse_services(text: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class OAuthClient:
-    """The OAuth client a sign-in uses."""
+    """The OAuth client a sign-in uses: the owner's own, made in their Google Cloud project."""
 
     client_id: str
     #: Empty for a client file that carries none; then it is left out of every request.
     client_secret: str
-    #: Keryx's own published client, rather than one the owner made.
-    published: bool
-    #: The services it may ask for. The owner's own client offers all of them.
-    services: tuple[str, ...]
-
-    @property
-    def whose(self) -> str:
-        return "Keryx's Google app" if self.published else "your own Google client"
-
-    @property
-    def withheld(self) -> tuple[str, ...]:
-        """The services this client does not offer."""
-        return tuple(name for name in SERVICES if name not in self.services)
 
 
-def published_client(path: Path | None = None) -> OAuthClient | None:
-    """Keryx's published client, from the packaged file; None when there is none.
+def resolve_client(settings: Settings) -> OAuthClient | None:
+    """The owner's own OAuth client; None when they have not made one yet.
 
-    The file is the JSON the Google Cloud console downloads, plus an optional
-    `keryx_services` list naming the services Google has approved that client for so far.
+    There is no other: Keryx never ships a client of its own, because Google's API Terms
+    forbid embedding developer credentials in an open source project.
     """
-    path = path or PUBLISHED_CLIENT_FILE
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    try:
-        client_id, client_secret = parse_google_client(text)
-    except ValueError as exc:
-        log.warning("the packaged Google client at %s is unusable: %s", path, exc)
-        return None
-    listed = json.loads(text).get(PUBLISHED_SERVICES_KEY)
-    offered = [name for name in SERVICES if not isinstance(listed, list) or name in listed]
-    # A service is only on offer with the ones it builds on.
-    services = tuple(n for n in offered if all(need in offered for need in SERVICES[n].needs))
-    return OAuthClient(client_id, client_secret, published=True, services=services)
-
-
-def resolve_client(settings: Settings, *, published: Path | None = None) -> OAuthClient | None:
-    """Which OAuth client a sign-in uses, and whose it is: the owner's own, else Keryx's."""
     own = settings.google_oauth_client()
-    if own is not None:
-        return OAuthClient(own[0], own[1], published=False, services=tuple(SERVICES))
-    return published_client(published)
+    return OAuthClient(*own) if own is not None else None
 
 
 # ------------------------------------------------------------------------------- token

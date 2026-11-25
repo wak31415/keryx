@@ -8,8 +8,12 @@ Google is one sign-in for everything (`keryx.setup.google`), finished one of two
 a browser on this machine it is one command: a listener on `127.0.0.1` takes Google's
 answer. With the browser somewhere else (`--headless`, or no display) the owner pastes back
 the address they land on: at a terminal that is still one command, and without one — a
-coding agent relaying the link — it is two, the second with `--callback-url`. `gmail` and
-`google-workspace` are the names the two older sign-ins had, and run this one.
+coding agent relaying the link — it is two, the second with `--callback-url`. It needs an
+OAuth client of the owner's own, since Google's terms forbid shipping one: at a terminal
+with none on file, the same command first opens Google's Personal mode page, shows the
+clicks and asks for the path of the file it downloads (`_make_client`); without one, the
+refusal names that page and `--client-file`. `gmail` and `google-workspace` are the names
+the two older sign-ins had, and run this one.
 
 Slack is the same shape (`setup/slack.py`). At a terminal it is one command with no
 flags: a box to tick for each thing Keryx may do there beyond sending reports, then the
@@ -35,8 +39,9 @@ from keryx.config.permissions import OWNER
 from keryx.config.store import ConfigStore
 from keryx.doctor import GOOGLE_CHECK, Check, run_doctor_checks
 from keryx.integrations.gmail import signed_in as gmail_signed_in
-from keryx.integrations.google import mcp_server, read_token
+from keryx.integrations.google import mcp_server, read_token, resolve_client
 from keryx.setup import agents, google, slack
+from keryx.setup.terminal import drop_typed_ahead
 
 Echo = Callable[[str], None]
 
@@ -186,15 +191,20 @@ def login(
     echo: Echo,
     run_login: Callable[[Sequence[str]], int],
     post: Callable[..., Any] | None = None,
-    ask: Callable[[str], str] | None = None,
+    ask: Callable[..., str] | None = None,
     ask_secret: Callable[[str], str] | None = None,
     choose: Callable[[str, Sequence[Any]], Sequence[str]] | None = None,
+    ask_paste: Callable[[str], str] | None = None,
+    confirm: Callable[[str, bool], bool] | None = None,
 ) -> None:
     """Do the one sign-in `name` names; raises `AuthError` with what went wrong.
 
-    `ask` puts one question to the person at the terminal and is None when there is no
-    terminal, which is what makes a pasted-back Google sign-in two commands instead of one.
-    `ask_secret` is the same with the typing hidden, for Slack's tokens: it raises
+    `ask` puts one question to the person at the terminal (a `default=` is what Enter
+    takes) and is None when there is no terminal, which is what makes a pasted-back Google
+    sign-in two commands instead of one, and what makes a Google sign-in with no client of
+    the owner's a refusal that names the page and `--client-file` rather than the questions
+    that make one. `ask_secret` is the same with the typing hidden, for Slack's tokens and
+    a pasted Google client file: it raises
     `EOFError` or `KeyboardInterrupt` when the person leaves the question. `choose` shows
     a list of boxes to tick and answers with the ones ticked, for what Slack may do.
     """
@@ -206,7 +216,10 @@ def login(
         return
     if name == "google" or name in GOOGLE_ALIASES:
         try:
-            _google(settings, store, options=options, echo=echo, post=post, ask=ask)
+            _google(settings, store, options=options, echo=echo, post=post, ask=ask,
+                    ask_secret=ask_secret, ask_paste=ask_paste, confirm=confirm)
+        except google.GoogleStopped as exc:
+            raise AuthStopped(str(exc)) from None
         except google.GoogleSetupError as exc:
             raise AuthError(str(exc)) from None
         return
@@ -338,57 +351,241 @@ def _google(
     options: LoginOptions,
     echo: Echo,
     post: Callable[..., Any] | None,
-    ask: Callable[[str], str] | None,
+    ask: Callable[..., str] | None,
+    ask_secret: Callable[[str], str] | None = None,
+    ask_paste: Callable[[str], str] | None = None,
+    confirm: Callable[[str, bool], bool] | None = None,
 ) -> None:
+    """Google's sign-in, with the owner's client.
+
+    A client given in this run (`--client-file`, or made at the terminal) replaces the one
+    on file only once a sign-in with it works, and is thrown away only when Google refuses
+    it: until then it is a file of its own beside the store (`google.stage_client`). Any
+    other ending keeps it staged, for the next question to offer first, and leaves the
+    client on file as it was. A pasted-back sign-in without a terminal is two commands:
+    the first records that it was made with the staged client, and the second signs in
+    with it and adopts it.
+    """
+    given: str | None = None
+    on_file = resolve_client(settings) is not None
+    pair = bool(settings.google_oauth_client_id and settings.google_oauth_client_secret)
     if options.client_file is not None:
-        path = google.install_client_file(settings, options.client_file)
-        store.set({"GOOGLE_CLIENT_SECRETS_FILE": str(path)}, actor=OWNER)
-        settings = settings.model_copy(update={"google_client_secrets_file": path})
-        echo(f"Google client saved to {path}")
-        if settings.google_oauth_client_id and settings.google_oauth_client_secret:
-            echo(
-                "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are set and come "
-                "first, so this sign-in uses them, not that file: `keryx config unset "
-                "GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET` to use the file."
-            )
-    account = options.account
-    if options.callback_url is not None:
-        result = google.finish_signin(settings, options.callback_url, account=account, post=post)
+        given = google.read_client_file(options.client_file)
+        if pair:
+            # The pair comes first whatever the file says: the file is kept as it was.
+            settings = _use_client(settings, store, google.install_client_text(settings, given),
+                                   echo)
+            given = None
+    elif options.callback_url is None and not on_file:
+        if ask is None:
+            # Nothing was tried, so nothing "failed": what to do, short.
+            raise google.GoogleStopped(f"no Google client of yours yet. {google.own_client_hint()}")
+        given = _make_client(settings, options=options, echo=echo, ask=ask,
+                             ask_secret=ask_secret, ask_paste=ask_paste)
+        echo("\n" + google.plain(google.guide(google.CONSENT_GUIDE)) + "\n")
+    elif options.callback_url is None and (staged_client := google.staged_client(settings)):
+        given = _staged_or_on_file(settings, staged_client, echo=echo, confirm=confirm)
+    pending = google.read_pending(settings) if options.callback_url is not None else None
+    staged = given is not None or bool(pending and pending.staged_client)
+    signing = google.stage_client(settings, given) if given is not None else settings
+    if given is not None:
+        echo(google.KEPT_ONCE_IT_WORKS)
+    try:
+        result = _sign_in(signing, options=options, echo=echo, post=post, ask=ask,
+                          given=given is not None, on_file=on_file)
+    except google.ClientRefused as exc:
+        raise AuthError(google.refused_advice(exc, on_file=on_file, pair=pair)) from None
+    if result is None:
+        return
+    if staged:
+        _use_client(settings, store, google.adopt_client(settings), echo)
     else:
-        chosen = google.offer(settings, options.services)
-        for line in chosen.notes:
-            echo(line)
-        if not options.headless:
-            result = google.browser_signin(
-                settings, chosen, announce=_announcer(echo), account=account, post=post
-            )
-        else:
-            echo("Open this link on any device and approve it:\n")
-            echo(google.start_signin(settings, chosen))
-            landed = "\nYou will land on a page that does not load. "
-            if ask is None:
-                echo(
-                    f"{landed}Copy its whole address into a file, then run"
-                    "\n  keryx auth login google --callback-url - < FILE"
-                    "\nThe address holds a one-time code: handed over on standard input, "
-                    "it is never on a command line."
-                )
-                return
-            result = google.finish_signin(
-                settings,
-                ask(f"{landed}Paste its whole address here"),
-                account=account,
-                post=post,
-            )
+        google.drop_staged_client(settings)  # a sign-in with another client was kept
     # What the sign-in implies is saved before anything is said about it.
     notes = _keep(settings, store, result)
     for line in [*google.summary(result), *notes]:
         echo(line)
-    if hint := google.api_hint(result, published=result.whose != google.OWN_CLIENT):
+    if hint := google.api_hint(result):
         echo(hint)
 
 
-def _announcer(echo: Echo) -> Callable[[str, bool], None]:
+def _staged_or_on_file(
+    settings: Settings,
+    staged: tuple[str, str],
+    *,
+    echo: Echo,
+    confirm: Callable[[str, bool], bool] | None,
+) -> str | None:
+    """A client given last time waits beside the one on file, not signed in yet: never
+    passed over in silence. At a terminal the owner says which, yes by default, and no
+    throws the given one away; without one it is used, since it was given on purpose."""
+    text, client_id = staged
+    if confirm is None:
+        echo(f"Signing in with the client you gave last time (Client ID {client_id}), which "
+             "has not signed in yet.")
+        return text
+    try:
+        if confirm(google.staged_question(client_id), True):
+            return text
+    except (EOFError, KeyboardInterrupt):
+        raise google.GoogleStopped(
+            "nothing was saved, and the client you gave last time is still kept: run "
+            "`keryx auth login google` again") from None
+    google.drop_staged_client(settings)
+    return None
+
+
+def _sign_in(
+    settings: Settings,
+    *,
+    options: LoginOptions,
+    echo: Echo,
+    post: Callable[..., Any] | None,
+    ask: Callable[..., str] | None,
+    given: bool,
+    on_file: bool,
+) -> google.SignInResult | None:
+    """The sign-in itself, kept; None when it waits on a second command."""
+    account = options.account
+    if options.callback_url is not None:
+        return google.finish_signin(settings, options.callback_url, account=account, post=post)
+    chosen = google.offer(settings, options.services)
+    for line in chosen.notes:
+        echo(line)
+    if not options.headless:
+        return google.browser_signin(
+            settings, chosen, announce=_announcer(echo, given=given, on_file=on_file),
+            account=account, post=post,
+        )
+    echo("Open this link on any device and approve it:\n")
+    echo(google.start_signin(settings, chosen))
+    echo("\n" + google.BLOCKED_NOTE)
+    echo(google.client_not_found_note(given=given, on_file=on_file, waiting=ask is not None))
+    landed = "\nYou will land on a page that does not load. "
+    if ask is None:
+        echo(
+            f"{landed}Copy its whole address into a file, then run"
+            "\n  keryx auth login google --callback-url - < FILE"
+            "\nThe address holds a one-time code: handed over on standard input, "
+            "it is never on a command line."
+        )
+        return None
+    try:
+        address = ask(f"{landed}Paste its whole address here")
+    except (EOFError, KeyboardInterrupt):
+        google.discard_pending(settings)
+        kept = ("the client you gave is kept for next time, and the one on file is unchanged"
+                if given and on_file else
+                "the client you gave is kept for next time" if given else
+                "the Google client on file is unchanged")
+        raise google.GoogleStopped(
+            f"the sign-in was not saved, and {kept}: run `keryx auth login google --headless` "
+            "again") from None
+    return google.finish_signin(settings, address, account=account, post=post)
+
+
+def _use_client(settings: Settings, store: ConfigStore, path: Path, echo: Echo) -> Settings:
+    """Point the setting at a client file just saved, and say so."""
+    store.set({"GOOGLE_CLIENT_SECRETS_FILE": str(path)}, actor=OWNER)
+    settings = settings.model_copy(update={"google_client_secrets_file": path})
+    echo(f"Google client saved to {path}")
+    if settings.google_oauth_client_id and settings.google_oauth_client_secret:
+        echo(
+            "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are set and come "
+            "first, so this sign-in uses them, not that file: `keryx config unset "
+            "GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET` to use the file."
+        )
+    return settings
+
+
+def _make_client(
+    settings: Settings,
+    *,
+    options: LoginOptions,
+    echo: Echo,
+    ask: Callable[..., str],
+    ask_secret: Callable[[str], str] | None,
+    ask_paste: Callable[[str], str] | None = None,
+) -> str:
+    """The owner's own Google client, made now at the terminal: Google's Personal mode
+    page opened (or its link printed for another device), the clicks, and then the file it
+    downloads or the Client ID, always asked. Enter takes the client given last time when
+    one is kept staged, else the newest file in `~/Downloads`. Returns the client's JSON,
+    which nothing has saved. A wrong answer is said and asked again, a bounded number of
+    times, and whatever is left of a paste is dropped."""
+    echo(google.WHY_OWN_CLIENT + "\n")
+    url = google.PERSONAL_MODE_URL
+    opened = not options.headless and google.open_browser(url)
+    echo(google.opening(opened))
+    echo(url)
+    echo("\n" + google.steps_text() + "\n")
+    echo(google.NO_PROJECT_NOTE)
+    if options.headless:
+        echo(google.ELSEWHERE_NOTE)
+
+    def hidden(question: str, read: Callable[[str], str] | None = None) -> str:
+        read = read or ask_secret
+        if read is None:
+            raise google.GoogleSetupError("there is nowhere to type that hidden here")
+        try:
+            return read(question)
+        except (EOFError, KeyboardInterrupt):
+            raise google.GoogleStopped(_CLIENT_STOPPED) from None
+        finally:
+            # A paste of several lines leaves the rest waiting in the terminal: dropped, so
+            # none of it lands in the visible question that comes next.
+            drop_typed_ahead()
+
+    default, enter = google.enter_takes(settings)
+    shown = default
+    if google.staged_offer(settings):
+        # Enter takes the file it waits in, which is never shown: it is not one to type.
+        echo("\n" + enter)
+        shown = google.STAGED_DEFAULT
+    wrong = 0
+    while wrong < google.MAX_WRONG:
+        try:
+            answer = ask("\n" + google.PATH_QUESTION, default=shown).strip()
+        except (EOFError, KeyboardInterrupt):
+            raise google.GoogleStopped(_CLIENT_STOPPED) from None
+        if answer == google.STAGED_DEFAULT:
+            answer = default
+        if answer.lower() == google.SKIP_WORD:
+            raise google.GoogleStopped(_CLIENT_STOPPED)
+        if answer.lower() == google.OTHER:
+            # The way for an account that cannot create a project: steps, never a wrong
+            # answer, and the same question again after them.
+            echo("\n" + google.OTHER_INTRO + "\n")
+            for number, (step, link) in enumerate(google.OTHER_STEPS, 1):
+                echo(f"{number}. {step}" + (f"\n   {link}" if link else ""))
+            continue
+        wrong += 1
+        try:
+            text, picked = google.client_from(
+                answer or default,
+                paste=lambda: hidden(google.PASTE_WHOLE_QUESTION if ask_paste
+                                     else google.PASTE_QUESTION, ask_paste),
+                secret=lambda client_id: hidden(google.SECRET_QUESTION),
+            )
+        except google.GoogleStopped:
+            raise
+        except google.GoogleSetupError as exc:
+            drop_typed_ahead()
+            echo(google.sentence(exc))
+            continue
+        if picked is not None:
+            echo(f"Took {picked}, the newest one there.")
+        return text
+    raise google.GoogleStopped(_CLIENT_STOPPED)
+
+
+_CLIENT_STOPPED = (
+    "no Google client was saved: run `keryx auth login google` again to pick this up, or "
+    "give the file with --client-file FILE"
+)
+
+
+def _announcer(echo: Echo, *, given: bool, on_file: bool) -> Callable[[str, bool], None]:
     def announce(url: str, opened: bool) -> None:
         echo(
             "Your browser is opening Google's sign-in. If it does not, open this link on "
@@ -399,6 +596,8 @@ def _announcer(echo: Echo) -> Callable[[str, bool], None]:
         echo(url)
         echo("\nWaiting for you to finish there (Ctrl-C stops; --headless is for a browser "
              "on another machine).")
+        echo(google.BLOCKED_NOTE)
+        echo(google.client_not_found_note(given=given, on_file=on_file))
 
     return announce
 

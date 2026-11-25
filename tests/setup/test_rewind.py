@@ -36,6 +36,75 @@ def test_a_replay_answers_from_the_record_and_offers_the_next_answer():
     assert recorder.log == [one("Name", "Ada"), one("Surname", "Lovelace")]
 
 
+def test_a_replay_that_ends_on_a_probe_shows_everything_in_order_at_the_next_question():
+    """A section that says something, replays a probe as the last thing on record, then
+    says more and asks: all of it is shown, the first first, ahead of the question."""
+    ui = ScriptedPrompter([("Path", "x")])
+    recorder = Recorder(ui, [Entry(PROBE, "open_browser", value=True)])
+    probes = recorder.probes(Probes(open_browser=lambda url: pytest.fail("not run again")))
+
+    recorder.note("why")
+    assert probes.open_browser("https://example.com") is True
+    recorder.panel("steps", "1. 2. 3.")
+    assert ui.said == []  # nothing yet: this may be a section Tab passes over
+    recorder.text("Path")
+
+    assert ui.said == [("note", "why"), ("panel", "steps\n1. 2. 3.")]
+
+
+def test_a_section_tab_passes_over_says_nothing_even_after_its_record_runs_out():
+    ui = ScriptedPrompter()
+    recorder = Recorder(ui, [one("Name", "Ada"), Entry(PROBE, "open_browser", value=True)])
+    probes = recorder.probes(Probes(open_browser=lambda url: pytest.fail("not run again")))
+
+    recorder.text("Name")
+    probes.open_browser("https://example.com")
+    recorder.success("client saved")
+    recorder.markdown("the consent guide")
+
+    assert ui.said == []
+
+
+def test_a_section_passed_over_still_shows_its_errors_and_warnings():
+    ui = ScriptedPrompter()
+    recorder = Recorder(ui, [one("Name", "Ada")])
+
+    recorder.text("Name")
+    recorder.success("client saved")
+    recorder.warn("an API is not enabled")
+    recorder.error("could not save the sign-in")
+    recorder.finish()
+
+    assert ui.said == [("warn", "an API is not enabled"),
+                       ("error", "could not save the sign-in")]
+
+
+def test_a_probe_run_live_shows_what_was_held_first():
+    ui = ScriptedPrompter()
+    recorder = Recorder(ui, [one("Name", "Ada")])
+    probes = recorder.probes(Probes(open_browser=lambda url: ui.note("opened") or True))
+
+    recorder.text("Name")
+    recorder.note("why")
+    probes.open_browser("https://example.com")
+
+    assert ui.said == [("note", "why"), ("note", "opened")]
+
+
+def test_an_answer_withheld_is_replayed_but_never_offered_back():
+    ui = ScriptedPrompter([("Path", "x"), ("Path", DEFAULT)])
+    first = Recorder(ui)
+    first.text("Path")
+    first.withhold_last()
+    first.withhold_last(0)  # nothing more
+
+    again = Recorder(ui, [], first.record())
+    assert again.text("Path", default="") == ""  # Enter: nothing offered
+
+    replay = Recorder(ScriptedPrompter(), first.record())
+    assert replay.text("Path") == "x"  # a replay still gives it
+
+
 def test_a_replay_passes_over_what_the_section_no_longer_asks():
     ui = ScriptedPrompter()
     recorder = Recorder(ui, [one("Name", "Ada"), one("Numbers", "+1"), one("PIN", "yes")])
@@ -229,6 +298,31 @@ def test_tab_replays_every_answer_and_lands_on_the_first_one_not_given(make_ctx)
     assert [entry.value for entry in records["a"] + records["b"]] == [
         "one", "two", "b", "c", "done"
     ]
+
+
+def test_tab_over_a_finished_section_shows_nothing_of_it(make_ctx):
+    """A section that asked, opened a page and said its results is passed over by Tab
+    in silence: what its replay held is let go when it ends, not shown then."""
+
+    def finished(ctx) -> None:
+        ctx.ui.text("G1", default="")
+        ctx.probes.headless()
+        ctx.ui.success("client saved")
+        ctx.ui.markdown("the consent guide")
+
+    walk = [Section("a", "A", asking("A1")), Section("g", "G", finished),
+            Section("b", "B", asking("B1"))]
+    ctx = make_ctx([
+        ("A1", "one"), ("G1", "file"), ("B1", Back()),    # back into G, at G1
+        ("G1", Back()),                                     # and into A
+        ("A1", Forward()),                                  # Tab: over A and G, to B1
+        ("B1", "done"),
+    ])
+
+    assert run_walk(ctx, walk, {}) is True
+
+    assert ctx.ui.done()
+    assert ctx.ui.lines("success").count("client saved") == 1  # the first, live run only
 
 
 def test_esc_at_the_first_question_leaves_the_walk(make_ctx):

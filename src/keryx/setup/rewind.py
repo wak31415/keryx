@@ -43,6 +43,9 @@ class Entry:
     value: Any = None
     #: A probe that returned an awaitable: its replay must return one too.
     awaited: bool = False
+    #: An answer the section refused, which may have held a secret: replayed, never
+    #: offered back on the terminal (`Recorder.withhold_last`).
+    withheld: bool = False
 
 
 def _take(entries: list[Entry], what: str, name: str, message: str = "") -> Entry | None:
@@ -78,6 +81,10 @@ class Recorder:
         self._offered: Entry | None = None
         #: What was said since the last replayed answer, shown if the replay stops here.
         self._held: list[tuple[Callable[..., None], tuple, dict]] = []
+        #: Whether what is said is held: from the start of a replay until something is
+        #: asked or run on the terminal, even once the script has run out, so a section
+        #: Tab passes over says nothing and one that stops says it all, in order.
+        self._holding = bool(self.script)
 
     @property
     def replaying(self) -> bool:
@@ -88,9 +95,22 @@ class Recorder:
         offered = [self._offered] if self._offered is not None else []
         return [*self.log, *offered, *self.future]
 
+    def finish(self) -> None:
+        """The section has ended. What a replay held was never followed by anything live (a
+        section Tab passed over whole), so ordinary output is let go unseen; an error or a
+        warning is still shown, since something went wrong on the way past. Anything said
+        live has been shown already."""
+        for say, args, kwargs in self._held:
+            if getattr(say, "__name__", "") in ("error", "warn"):
+                say(*args, **kwargs)
+        self.script.clear()
+        self._held.clear()
+        self._holding = False
+
     def stop_replaying(self) -> None:
         """Show what was held, and ask everything from here on the terminal."""
         self.script.clear()
+        self._holding = False
         for say, args, kwargs in self._held:
             say(*args, **kwargs)
         self._held.clear()
@@ -99,7 +119,7 @@ class Recorder:
 
     def _say(self, name: str, *args: Any, **kwargs: Any) -> None:
         say = getattr(self.ui, name)
-        if self.script:
+        if self._holding:
             self._held.append((say, args, kwargs))
         else:
             say(*args, **kwargs)
@@ -156,9 +176,10 @@ class Recorder:
             if self.on_live is not None:
                 self.on_live()
             self._offered = _take(self.future, ASK, kind, message)
+            offered = None if self._offered and self._offered.withheld else self._offered
             while True:
                 try:
-                    answer = ask(self._offered)
+                    answer = ask(offered)
                     break
                 except Forward:
                     if self._offered is not None:
@@ -208,6 +229,13 @@ class Recorder:
         return self._ask("confirm", message, lambda offered: self.ui.confirm(
             message, default=default if offered is None else offered.value
         ))
+
+    def withhold_last(self, count: int = 1) -> None:
+        """Never offer the last `count` answers back: the section refused them, and they
+        may have held a secret typed where it shows. A replay still gives them."""
+        asked = [index for index, entry in enumerate(self.log) if entry.what == ASK]
+        for index in asked[-count:] if count > 0 else []:
+            self.log[index] = dataclasses.replace(self.log[index], withheld=True)
 
     # --- the outside world: recorded, and replayed without running -----------------------
 

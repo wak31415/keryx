@@ -2,7 +2,10 @@
 
 import dataclasses
 import json
+import os
 import stat
+import time
+from pathlib import Path
 
 import pytest
 
@@ -15,7 +18,7 @@ from keryx.setup.rewind import Recorder
 from keryx.setup.ui import Back, Forward
 from keryx.setup.wizard import Section, run_walk
 
-from .fakes import DEFAULT, Lazy
+from .fakes import DEFAULT, FAKE_ID, FAKE_SECRET, Lazy
 
 ALL = tuple(SERVICES)
 CLIENT = {"installed": {"client_id": "cid", "client_secret": "csecret"}}
@@ -24,20 +27,6 @@ SECTION = Section("google", "Google", google.run_section)
 
 def own_client():
     ConfigStore().set({"GOOGLE_OAUTH_CLIENT_ID": "cid", "GOOGLE_OAUTH_CLIENT_SECRET": "cs"})
-
-
-def client_file(tmp_path, body=CLIENT):
-    path = tmp_path / "Downloads" / "client_secret_123.json"
-    path.parent.mkdir(exist_ok=True)
-    path.write_text(json.dumps(body))
-    return path
-
-
-def published(tmp_path, monkeypatch, **extra):
-    path = tmp_path / "google_client.json"
-    path.write_text(json.dumps({"installed": {"client_id": "cid", "client_secret": "csecret"},
-                                **extra}))
-    monkeypatch.setattr(account, "PUBLISHED_CLIENT_FILE", path)
 
 
 def landed(ctx, code="c"):
@@ -86,7 +75,7 @@ def test_every_service_gets_a_line(make_ctx, world):
 
     google.run_section(ctx)
 
-    assert "Google: signed in as sam@example.com with your own Google client" in (
+    assert "Google: signed in as sam@example.com" in (
         ctx.ui.lines("success")
     )
     assert [line for line in ctx.ui.lines("success") if line.endswith("a call")] == [
@@ -148,78 +137,433 @@ def test_skipping_touches_nothing_and_says_how_to_come_back(make_ctx, world):
     assert any("keryx auth login google" in line for line in ctx.ui.lines("note"))
 
 
-# --- which client -------------------------------------------------------------------------
+# --- which client: one of the owner's own, made now ----------------------------------------
+
+#: The path question, as the wizard asks it.
+Q = "The file you downloaded, or the Client ID"
 
 
-def test_the_own_client_guide_is_shown_only_when_there_is_no_client(make_ctx, world, tmp_path):
-    source = client_file(tmp_path)
-    ctx = make_ctx([("Sign in to Google?", "signin"), ("Path to the downloaded", f"'{source}'")])
+def downloaded(name="client_secret_1.json", body=CLIENT, age=0.0):
+    """A file Google's console downloaded into `~/Downloads`, `age` seconds ago."""
+    path = Path.home() / "Downloads" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(body))
+    stamp = time.time() - age
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def installed(ctx):
+    return ctx.settings.config_dir / "google_client_secret.json"
+
+
+def test_with_no_client_it_opens_googles_page_and_enter_takes_the_newest_download(
+    make_ctx, world
+):
+    downloaded("client_secret_old.json", {"installed": {"client_id": "old"}}, age=600)
+    newest = downloaded()
+    ctx = make_ctx([("Sign in to Google?", "signin"), (Q, "")])  # Enter: nothing typed
 
     google.run_section(ctx)
 
-    [guide] = ctx.ui.lines("markdown")
-    assert "console.cloud.google.com" in guide and "Desktop" in guide
-    installed = ctx.settings.config_dir / "google_client_secret.json"
-    assert json.loads(installed.read_text()) == CLIENT
-    assert stat.S_IMODE(installed.stat().st_mode) == 0o600
-    assert ConfigStore().stored()["GOOGLE_CLIENT_SECRETS_FILE"] == str(installed)
-    assert world.calls == [("google_browser", ALL)]
+    assert ctx.ui.done()
+    # Why there is a step at all, said first: Google's terms, and what Personal mode is.
+    [why] = [line for line in ctx.ui.lines("note") if "terms" in line]
+    assert "open-source" in why and "Personal mode" in why
+    assert world.calls == [("open", google.PERSONAL_MODE_URL), ("google_browser", ALL)]
+    panel = ctx.ui.lines("panel")[0]
+    assert "Your browser is opening Google's page" in panel
+    assert "Download JSON if it is offered, or copy the Client ID" in panel
+    assert ctx.ui.lines("link")[0] == google.PERSONAL_MODE_URL
+    assert f"Enter takes {newest}" in ctx.ui.lines("note")
+    assert "skip leaves it for later" in ctx.ui.asked[-1][1]
+    assert json.loads(installed(ctx).read_text()) == json.loads(newest.read_text())
+    assert stat.S_IMODE(installed(ctx).stat().st_mode) == 0o600
+    assert ConfigStore().stored()["GOOGLE_CLIENT_SECRETS_FILE"] == str(installed(ctx))
+    [consent] = ctx.ui.lines("markdown")
+    assert "Select all" in consent
+
+
+def test_nothing_is_put_in_the_answer_box_beforehand(make_ctx, world, monkeypatch):
+    """A path in the box would have to be deleted before typing `other` or a Client ID."""
+    downloaded()
+    defaults = []
+    ctx = make_ctx([("Sign in to Google?", "signin")])
+    text = ctx.ui.text
+
+    def spy(message, *, default="", validate=None, multiline=False):
+        defaults.append(default)
+        return text(message, default=default, validate=validate, multiline=multiline)
+
+    ctx.ui.text = spy
+    ctx.ui.answers.append((Q, "skip"))
+
+    google.run_section(ctx)
+
+    assert defaults == [""]
+
+
+def test_a_client_id_is_asked_for_its_secret_hidden_and_kept_as_a_file_would_be(
+    make_ctx, world
+):
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, FAKE_ID),
+        ("Client Secret", FAKE_SECRET),
+    ])
+
+    google.run_section(ctx)
+
+    assert ctx.ui.asked[-1] == ("secret", "Client Secret (hidden)")
+    saved = json.loads(installed(ctx).read_text())["installed"]
+    assert (saved["client_id"], saved["client_secret"]) == (
+        FAKE_ID, FAKE_SECRET)
+    assert account.resolve_client(ctx.settings).client_id == FAKE_ID
+    assert world.calls[-1] == ("google_browser", ALL)
+    # The secret question says which Client ID it belongs to, on a screen of its own.
+    notes = ctx.ui.lines("note")
+    assert f"Client ID: {FAKE_ID}" in notes
+    assert google.KEPT_ONCE_IT_WORKS in notes
+
+
+ID, SECRET = FAKE_ID, FAKE_SECRET
+
+
+def test_the_client_is_saved_only_after_the_sign_in_with_it(make_ctx, world):
+    seen = []
+    ctx = make_ctx([("Sign in to Google?", "signin"), (Q, ID), ("Client Secret", SECRET)])
+    browser = ctx.probes.google_browser_signin
+
+    def signin(settings, chosen, announce):
+        seen.append((installed(ctx).exists(), google.is_staged(settings)))
+        return browser(settings, chosen, announce)
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert seen == [(False, True)]
+    assert installed(ctx).exists() and not google.staged_client_path(ctx.settings).exists()
+    assert ConfigStore().stored()["GOOGLE_CLIENT_SECRETS_FILE"] == str(installed(ctx))
+
+
+def test_a_client_google_refuses_is_asked_for_again_and_never_saved(make_ctx, world):
+    refusals = [google.ClientRefused("invalid_client", staged=True)]
+    browser = None
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, ID), ("Client Secret", "GOCSPX" + "-" + "w" * 28),
+        ("Try the sign-in again?", DEFAULT),        # the default: give the client again
+        (Q, ID), ("Client Secret", SECRET),
+    ])
+    browser = ctx.probes.google_browser_signin
+
+    def signin(settings, chosen, announce):
+        return refusals.pop() if refusals else browser(settings, chosen, announce)
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert ctx.ui.done()
+    [(question, choices)] = [(q, c) for q, c in ctx.ui.choices.items() if "again" in q]
+    assert "client" in [choice.value for choice in choices]
+    assert json.loads(installed(ctx).read_text())["installed"]["client_secret"] == SECRET
+    # The page is not opened a second time for the second client.
+    assert world.calls.count(("open", google.PERSONAL_MODE_URL)) == 1
+
+
+def test_skipping_when_the_client_is_asked_for_again_saves_nothing(make_ctx, world):
+    world.google_error = "Google refused the client (invalid_client)"
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"), (Q, ID), ("Client Secret", SECRET),
+        ("Try the sign-in again?", "client"),
+        (Q, "skip"),
+    ])
+
+    google.run_section(ctx)
+
+    assert ctx.ui.done() and not installed(ctx).exists()
+    assert ctx.ui.lines("note")[-1] == google.LATER_NOTE
+
+
+def test_a_failed_sign_in_with_a_client_given_here_saves_no_client(make_ctx, world):
+    world.google_error = "the browser did not come back within 5 minutes"
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"), (Q, ID), ("Client Secret", SECRET),
+        ("Try the sign-in again?", "skip"),
+    ])
+
+    google.run_section(ctx)
+
+    # Kept staged, for the next walk to offer first: nothing has refused it.
+    assert not installed(ctx).exists() and google.staged_client_path(ctx.settings).exists()
+    assert "GOOGLE_CLIENT_SECRETS_FILE" not in ConfigStore().stored()
+    again = make_ctx([("Sign in to Google?", "signin"), (Q, "skip")])
+    google.run_section(again)
+    assert f"Enter takes the client you gave last time (Client ID {ID})." in (
+        again.ui.lines("note"))
+    panel = [line for line in ctx.ui.lines("panel") if line.startswith("Sign in to Google")][0]
+    assert ("the Client ID you gave is wrong: press Ctrl-C, then choose to give the client "
+            "again") in panel
+
+
+def test_a_refused_answer_is_never_offered_back_after_esc(make_ctx, world, monkeypatch):
+    """A secret typed where it shows is refused; Esc at the next question goes back to
+    it, and the box is empty, not holding the secret."""
+    defaults = []
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, SECRET),            # refused: it is the secret, typed at the visible question
+        (Q, Back()),
+        (Q, "skip"),
+    ])
+    text = ctx.ui.text
+
+    def spy(message, *, default="", validate=None, multiline=False):
+        defaults.append(default)
+        return text(message, default=default, validate=validate, multiline=multiline)
+
+    ctx.ui.text = spy
+
+    assert run_walk(ctx, [SECTION], {}) is True
+
+    assert SECRET not in defaults and defaults == ["", "", ""]
+
+
+def test_what_is_left_of_a_paste_is_dropped_after_a_hidden_question_and_a_refusal(
+    make_ctx, world, monkeypatch
+):
+    dropped = []
+    monkeypatch.setattr(google, "drop_typed_ahead", lambda: dropped.append(True))
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "paste"), ("Paste what is in the file", "{"),
+        (Q, "skip"),
+    ])
+
+    google.run_section(ctx)
+
+    assert len(dropped) == 2  # after the hidden question, and after the refusal
+
+
+def test_where_it_was_downloaded_is_always_asked_and_a_folder_takes_its_newest(
+    make_ctx, world, tmp_path
+):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "client_secret_9.json").write_text(json.dumps(CLIENT))
+    (Path.home() / "Downloads").mkdir(parents=True)
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, ""),     # Enter: ~/Downloads/, which is empty
+        (Q, str(elsewhere)),
+    ])
+
+    google.run_section(ctx)
+
+    assert ctx.ui.lines("error") == [
+        f"There is no client_secret_*.json file in {Path.home() / 'Downloads'}."
+    ]
+    taken = f"Took {elsewhere / 'client_secret_9.json'}, the newest one there."
+    assert taken in ctx.ui.lines("note")
+    assert json.loads(installed(ctx).read_text()) == CLIENT
+
+
+def test_a_wrong_answer_is_said_with_the_steps_still_on_screen(make_ctx, world, tmp_path):
+    bad = downloaded(body={"nope": 1})
+    web = downloaded("client_secret_web.json", {"web": {"client_id": "w", "client_secret": "s"}})
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, str(bad)),
+        (Q, f"'{web}'"),
+        (Q, str(tmp_path / "nothing.json")),
+        (Q, "skip"),
+    ])
+
+    google.run_section(ctx)
+
+    errors = ctx.ui.lines("error")
+    assert "not a Google OAuth client file" in errors[0]
+    assert "Keryx needs a Desktop app client" in errors[1]
+    assert errors[2] == f"There is no file at {tmp_path / 'nothing.json'}."
+    # Each refusal is said below the link and the `other` hint, said again.
+    said = ctx.ui.said
+    for error in errors:
+        at = said.index(("error", error))
+        assert said[at - 2] == ("link", google.PERSONAL_MODE_URL)
+        assert said[at - 1] == ("note", google.NO_PROJECT_NOTE)
+    assert google.LATER_NOTE in ctx.ui.lines("note")  # skip: left for later, as Skip says
+    assert not installed(ctx).exists()
+    assert "GOOGLE_CLIENT_SECRETS_FILE" not in ConfigStore().stored()
+    assert world.calls == [("open", google.PERSONAL_MODE_URL)]
+
+
+def test_after_other_a_wrong_answer_keeps_the_other_steps_on_screen(make_ctx, world, tmp_path):
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "other"),
+        (Q, str(tmp_path / "nothing.json")),
+        (Q, "skip"),
+    ])
+
+    google.run_section(ctx)
+
+    said = ctx.ui.said
+    at = said.index(("error", f"There is no file at {tmp_path / 'nothing.json'}."))
+    assert said[at - 1] == ("note", f"6. {google.OTHER_STEPS[5][0]}")
+    assert said[at - 2] == ("link", "https://console.cloud.google.com/auth/clients/create")
+
+
+def test_with_the_browser_elsewhere_the_link_is_for_any_device_and_the_file_can_be_pasted(
+    make_ctx, world
+):
+    world.headless = True
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "paste"),
+        ("Paste what is in the file", json.dumps(CLIENT)),
+    ])
+    ctx.ui.answers.append(("address you landed on", landed(ctx)))
+
+    google.run_section(ctx)
+
+    assert ctx.ui.done()
+    assert ("open", google.PERSONAL_MODE_URL) not in world.calls  # no browser here to open
+    assert "Open the link below in a browser, on any device." in ctx.ui.lines("panel")[0]
+    assert google.ELSEWHERE_NOTE in ctx.ui.lines("note")
+    assert json.loads(installed(ctx).read_text()) == CLIENT
+    assert account.read_token(ctx.settings) is not None
+
+
+def test_nothing_pasted_is_said_and_asked_again(make_ctx, world):
+    world.headless = True
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "paste"),
+        ("Paste what is in the file", ""),
+        (Q, "skip"),
+    ])
+
+    google.run_section(ctx)
+
+    assert ctx.ui.lines("error") == ["Nothing was pasted."] and not installed(ctx).exists()
+
+
+def test_a_page_that_does_not_open_says_to_open_the_link(make_ctx, world):
+    world.browser_opens = False
+    downloaded()
+    ctx = make_ctx([("Sign in to Google?", "signin"), (Q, "")])
+
+    google.run_section(ctx)
+
+    assert ctx.ui.lines("panel")[0].splitlines()[1] == (
+        "Open the link below in a browser, on any device.")
 
 
 def test_with_no_client_to_hand_skipping_is_the_default_unless_codex_needs_it(make_ctx, world):
     ctx = make_ctx([("Sign in to Google?", DEFAULT)])
     google.run_section(ctx)
-    assert ctx.ui.done() and not ctx.ui.lines("markdown")
+    assert ctx.ui.done() and world.calls == []
+    assert ctx.ui.lines("note")[-1] == google.LATER_NOTE
 
     ConfigStore().set({"AGENT_BACKEND": "codex", "AGENTS_ENABLED": "codex"})
-    codex = make_ctx([("Sign in to Google?", DEFAULT), ("Path to the downloaded", "")])
+    codex = make_ctx([("Sign in to Google?", DEFAULT), (Q, "skip")])
     google.run_section(codex)
-    assert codex.ui.done() and len(codex.ui.lines("markdown")) == 1
+    assert codex.ui.done() and world.calls == [("open", google.PERSONAL_MODE_URL)]
 
 
-def test_a_wrong_client_file_is_refused_and_asked_again(make_ctx, world, tmp_path):
-    bad = client_file(tmp_path, {"nope": 1})
-    ctx = make_ctx(
-        [("Sign in to Google?", "signin"), ("Path to the downloaded", str(bad)),
-         ("Path to the downloaded", "")]
-    )
+def test_other_shows_the_way_for_an_account_that_cannot_create_a_project(make_ctx, world):
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "other"),
+        (Q, str(downloaded())),
+    ])
 
     google.run_section(ctx)
 
-    assert any("not a Google OAuth client file" in line for line in ctx.ui.lines("error"))
-    assert not (ctx.settings.config_dir / "google_client_secret.json").exists()
-    assert world.calls == []
+    assert ctx.ui.done() and not ctx.ui.lines("error")
+    notes = ctx.ui.lines("note")
+    assert google.NO_PROJECT_NOTE in notes and google.OTHER_INTRO in notes
+    assert [line for line in notes if line[:2] in {f"{n}." for n in range(1, 7)}] == [
+        f"{number}. {step}" for number, (step, _) in enumerate(google.OTHER_STEPS, 1)
+    ]
+    # Each link on a line of its own, whole: inside a note it would be wrapped.
+    assert ctx.ui.lines("link")[1:6] == [link for _, link in google.OTHER_STEPS if link]
+    assert json.loads(installed(ctx).read_text()) == CLIENT
+    assert world.calls == [("open", google.PERSONAL_MODE_URL), ("google_browser", ALL)]
 
 
-def test_keryxs_own_client_needs_no_google_cloud_steps(make_ctx, world, tmp_path, monkeypatch):
-    published(tmp_path, monkeypatch)
+def test_the_wait_says_what_an_organization_that_blocks_the_app_means(make_ctx, world):
+    own_client()
     ctx = make_ctx([("Sign in to Google?", DEFAULT)])
 
     google.run_section(ctx)
 
-    [consent] = ctx.ui.lines("markdown")
-    assert "Google hasn't verified this app" in consent and "Advanced" in consent
-    assert "console.cloud.google.com" not in consent
-    assert world.calls == [("google_browser", ALL)]
+    assert google.BLOCKED_NOTE in ctx.ui.lines("panel")[0]
+
+
+def test_the_paste_back_says_it_too(make_ctx, world):
+    own_client()
+    world.headless = True
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", ""),
+                    ("Try the sign-in again?", "skip")])
+
+    google.run_section(ctx)
+
+    panel = ctx.ui.lines("panel")[0]
+    assert google.BLOCKED_NOTE in panel
+    assert ("the Client ID on file is wrong: leave the address blank, then choose to give "
+            "another client.") in panel
+
+
+def test_going_back_from_the_path_question_does_not_open_the_page_again(make_ctx, world):
+    """`other`, then Esc at the second path question: the section runs again from its
+    record, up to the first path question, and the page opened by the probe is not
+    opened a second time."""
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "other"),
+        (Q, Back()),
+        (Q, "skip"),
+    ])
+
+    assert run_walk(ctx, [SECTION], {}) is True
+
     assert ctx.ui.done()
+    assert world.calls == [("open", google.PERSONAL_MODE_URL)]
 
 
-def test_what_keryxs_client_does_not_offer_is_said_once_and_not_asked_for(
-    make_ctx, world, tmp_path, monkeypatch
-):
-    published(tmp_path, monkeypatch, keryx_services=["calendar", "drive"])
-    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
+def test_going_back_and_then_forward_does_not_open_the_page_again(make_ctx, world):
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, "other"),
+        (Q, Back()),
+        (Q, Forward()),     # Tab: replays `other`, to the question not answered yet
+        (Q, "skip"),
+    ])
 
-    google.run_section(ctx)
+    assert run_walk(ctx, [SECTION], {}) is True
 
-    assert world.calls == [("google_browser", ("calendar", "drive"))]
-    [note] = [line for line in ctx.ui.lines("note") if "not offered" in line]
-    assert note.startswith("Gmail, Docs, Sheets and Slides are not offered by Keryx's Google app")
-    assert not any("Gmail" in line for line in ctx.ui.lines("warn"))
+    assert ctx.ui.done()
+    assert world.calls == [("open", google.PERSONAL_MODE_URL)]
 
-    again = make_ctx([])  # everything on offer is connected: nothing left to ask
-    google.run_section(again)
-    assert again.ui.asked == []
+
+def test_a_replay_says_why_before_the_steps(make_ctx, world):
+    """Esc then Tab: the replay ends at the recorded browser probe, and the note held
+    before it is shown ahead of the panel, not below the link."""
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        (Q, Back()),
+        ("Sign in to Google?", Forward()),
+        (Q, "skip"),
+    ])
+
+    assert run_walk(ctx, [SECTION], {}) is True
+
+    said = ctx.ui.said
+    # The last run: everything from the second "why" on.
+    last = len(said) - 1 - [kind for kind, _ in reversed(said)].index("panel")
+    why = max(at for at, (kind, text) in enumerate(said) if "terms" in text)
+    assert why < last
 
 
 # --- a browser somewhere else -------------------------------------------------------------
@@ -243,13 +587,17 @@ def test_with_no_display_the_address_is_pasted_back(make_ctx, world):
     assert ctx.settings.user_google_email == "sam@example.com"
 
 
-def test_a_blank_address_skips_the_sign_in_and_leaves_no_verifier_behind(make_ctx, world):
+def test_a_blank_address_offers_another_way_and_leaves_no_verifier_behind(make_ctx, world):
+    """A wrong Client ID never comes back from Google's page, so a blank address is a
+    failure like any other: tried again, another client, or skipped."""
     own_client()
     world.headless = True
-    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", "")])
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", ""),
+                    ("Try the sign-in again?", "skip")])
 
     google.run_section(ctx)
 
+    assert ctx.ui.done() and not ctx.ui.lines("error")
     assert world.calls == [] and account.read_token(ctx.settings) is None
     assert not (ctx.settings.data_dir / "google_signin.json").exists()
 
@@ -521,3 +869,113 @@ def test_a_failure_the_probe_hands_back_is_said(make_ctx, world):
     google.run_section(ctx)
 
     assert ctx.ui.lines("error") == ["could not listen on 127.0.0.1"]
+
+
+def test_a_client_on_file_google_refuses_can_be_replaced_from_the_retry(make_ctx, world):
+    """The client on file is wrong: the retry offers another client, by default, and the
+    new one replaces the old only once the sign-in with it works."""
+    ctx = make_ctx([
+        ("Sign in to Google?", DEFAULT),
+        ("Try the sign-in again?", DEFAULT),       # the default: another client
+        (Q, ID), ("Client Secret", SECRET),
+    ])
+    old_file = google.install_client_text(ctx.settings, json.dumps(CLIENT))
+    ConfigStore().set({"GOOGLE_CLIENT_SECRETS_FILE": str(old_file)})
+    refusals = [google.ClientRefused("invalid_client", staged=False)]
+    browser = ctx.probes.google_browser_signin
+
+    def signin(settings, chosen, announce):
+        return refusals.pop() if refusals else browser(settings, chosen, announce)
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert ctx.ui.done()
+    [error] = ctx.ui.lines("error")
+    assert error.endswith("It is the client on file, and it stays: give another client below.")
+    choices = ctx.ui.choices["Try the sign-in again?"]
+    assert ("client", "Give another client") in [(c.value, c.label) for c in choices]
+    assert json.loads(old_file.read_text())["installed"]["client_id"] == ID  # now it worked
+
+
+def test_the_retry_after_a_refusal_never_touches_the_client_on_file(make_ctx, world):
+    ctx = make_ctx([
+        ("Sign in to Google?", DEFAULT),
+        ("Try the sign-in again?", "client"),
+        (Q, ID), ("Client Secret", SECRET),
+        ("Try the sign-in again?", "skip"),
+    ])
+    old_file = google.install_client_text(ctx.settings, json.dumps(CLIENT))
+    ConfigStore().set({"GOOGLE_CLIENT_SECRETS_FILE": str(old_file)})
+    refusals = [google.ClientRefused("invalid_client", staged=True),
+                google.ClientRefused("invalid_client", staged=False)]
+
+    def signin(settings, chosen, announce):
+        if google.is_staged(settings):
+            google.drop_staged_client(settings)  # as the exchange does
+        return refusals.pop()
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert json.loads(old_file.read_text()) == CLIENT
+    assert ctx.ui.lines("error")[-1].endswith("It was not saved: give the client again.")
+    assert not google.staged_client_path(ctx.settings).exists()
+
+
+def test_another_client_beside_a_configured_pair_says_the_pair_comes_first(make_ctx, world):
+    own_client()
+    ctx = make_ctx([
+        ("Sign in to Google?", DEFAULT),
+        ("Try the sign-in again?", DEFAULT),
+        (Q, ID), ("Client Secret", SECRET),
+    ])
+    refusals = [google.ClientRefused("invalid_client", staged=False)]
+    browser = ctx.probes.google_browser_signin
+    seen = []
+
+    def signin(settings, chosen, announce):
+        seen.append(chosen.client.client_id)
+        return refusals.pop() if refusals else browser(settings, chosen, announce)
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert seen == ["cid", ID]  # the pair, then the client given, not the pair again
+    assert google.PAIR_FIRST in ctx.ui.lines("note")
+
+
+def staged_beside_one_on_file(ctx):
+    old_file = google.install_client_text(ctx.settings, json.dumps(CLIENT))
+    ConfigStore().set({"GOOGLE_CLIENT_SECRETS_FILE": str(old_file)})
+    google.stage_client(ctx.settings, google.client_json(ID, SECRET))
+    return old_file
+
+
+def test_a_client_given_last_time_beside_one_on_file_is_asked_about(make_ctx, world):
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("has not signed in yet", DEFAULT)])
+    old_file = staged_beside_one_on_file(ctx)
+    seen = []
+    browser = ctx.probes.google_browser_signin
+
+    def signin(settings, chosen, announce):
+        seen.append(chosen.client.client_id)
+        return browser(settings, chosen, announce)
+
+    ctx.probes = dataclasses.replace(ctx.probes, google_browser_signin=signin)
+    google.run_section(ctx)
+
+    assert ctx.ui.asked[-1] == ("confirm", google.staged_question(ID))
+    assert seen == [ID]  # yes by default: the client given
+    assert json.loads(old_file.read_text())["installed"]["client_id"] == ID
+    assert not google.staged_client_path(ctx.settings).exists()
+
+
+def test_no_to_the_client_given_last_time_keeps_the_one_on_file(make_ctx, world):
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("has not signed in yet", False)])
+    old_file = staged_beside_one_on_file(ctx)
+
+    google.run_section(ctx)
+
+    assert json.loads(old_file.read_text()) == CLIENT
+    assert not google.staged_client_path(ctx.settings).exists()

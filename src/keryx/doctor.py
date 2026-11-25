@@ -677,7 +677,7 @@ SIGN_IN_TO_GOOGLE = "`keryx auth login google`"
 
 
 def _google_check(settings: Settings) -> Check:
-    """Optional: the one Google sign-in, with whose client, and what it connected.
+    """Optional: the one Google sign-in, and what it connected.
 
     Not signed in is `missing`, never a failure. Two older installs are fine as they are and
     said to be: one that signed its agents in through `workspace-mcp` itself, and one with
@@ -687,15 +687,10 @@ def _google_check(settings: Settings) -> Check:
     def check(ok: bool, detail: str, *, unset: bool = False) -> Check:
         return Check(GOOGLE_CHECK, ok, detail, severity="soft", section="google", unset=unset)
 
-    client = google.resolve_client(settings)
     token = google.read_token(settings)
     if token is not None:
-        published = google.published_client()
-        ours = published is not None and published.client_id == token.client_id
-        whose = "Keryx's Google app" if ours else "your own Google client"
-        offered = client.services if client is not None else tuple(google.SERVICES)
-        missing = [name for name in offered if name not in token.connected]
-        detail = f"signed in as {token.email or 'an unnamed account'} with {whose}"
+        missing = [name for name in google.SERVICES if name not in token.connected]
+        detail = f"signed in as {token.email or 'an unnamed account'}"
         detail += f"; connected: {google.labels(token.connected)}" if token.connected else ""
         if missing:
             detail += f"; not connected: {google.labels(missing)} — {SIGN_IN_TO_GOOGLE} adds them"
@@ -720,10 +715,10 @@ def _google_check(settings: Settings) -> Check:
             "an older Gmail-only sign-in, for email answers on a call; "
             f"{SIGN_IN_TO_GOOGLE} connects everything with one sign-in",
         )
-    if client is None:
-        how = "no OAuth client yet: `keryx setup` walks you through making one"
+    if google.resolve_client(settings) is None:
+        how = f"no OAuth client of yours yet: {SIGN_IN_TO_GOOGLE} makes one with you"
     else:
-        how = f"{SIGN_IN_TO_GOOGLE} signs in with {client.whose}"
+        how = f"{SIGN_IN_TO_GOOGLE} signs in with your own Google client"
     codex = "Codex tasks have no Gmail or Calendar; " if "codex" in settings.enabled_agents else ""
     return check(False, f"not signed in (optional) — {codex}{how}", unset=True)
 

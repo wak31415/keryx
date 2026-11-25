@@ -87,6 +87,7 @@ from keryx.setup import slack as slack_setup
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
+from keryx.setup.terminal import read_hidden_paste
 from keryx.setup.ui import Aborted
 from keryx.setup.wizard import agent_instructions, run_wizard
 from keryx.tasks.manager import install_default_executor
@@ -1613,6 +1614,27 @@ def _ask_hidden(question: str) -> str:
         raise EOFError from None
 
 
+def _ask_line(question: str, default: str | None = None) -> str:
+    """One question at the terminal, shown as typed; `default` is what Enter takes. Ctrl-C
+    and the end of input are `EOFError`, for the flow that asked, which says what was and
+    was not saved rather than click's bare "Aborted"."""
+    try:
+        if default is None:
+            return typer.prompt(question)
+        return typer.prompt(question, default=default)
+    except typer.Abort:
+        raise EOFError from None
+
+
+def _confirm(question: str, default: bool) -> bool:
+    """One yes or no at the terminal. Ctrl-C and the end of input are `EOFError`, for the
+    flow that asked."""
+    try:
+        return typer.confirm(question, default=default)
+    except typer.Abort:
+        raise EOFError from None
+
+
 def _ask_boxes(question: str, choices) -> list[str]:
     """One list of boxes to tick at the terminal; the values ticked. Ctrl-C and the end
     of input are `EOFError`, for the flow that asked."""
@@ -1644,7 +1666,11 @@ def auth_login(
     ] = None,
     client_file: Annotated[
         Path | None,
-        typer.Option("--client-file", help="google: an OAuth client JSON of your own."),
+        typer.Option(
+            "--client-file",
+            help="google: the OAuth client JSON Google downloaded for you. At a terminal "
+            "with no client on file the login asks for it instead.",
+        ),
     ] = None,
     callback_url: Annotated[
         str | None,
@@ -1709,8 +1735,10 @@ def auth_login(
     google is one sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides. With a
     browser on this machine it opens the consent screen and finishes by itself; with
     --headless it prints a link for any device and asks for the address the browser lands on.
-    Until a release ships Keryx's own Google app, it needs an OAuth client of yours, given
-    once with --client-file: `keryx setup` shows how to make one.
+    It needs a Google OAuth client of your own, since Google's terms do not let an
+    open-source app ship one: with none on file, it opens Google's Personal mode page, which
+    makes one in a minute, and asks for the path of the file that page downloads. Without a
+    terminal, give that file once with --client-file.
 
     slack at a terminal is one command with no options: it shows a box to tick for each
     thing Keryx may do there, prints the link that creates your Slack app for exactly
@@ -1774,16 +1802,22 @@ def auth_login(
             options=options,
             echo=typer.echo,
             run_login=run_command,
-            ask=typer.prompt if sys.stdin.isatty() else None,
+            ask=_ask_line if sys.stdin.isatty() else None,
             ask_secret=_ask_hidden if sys.stdin.isatty() else None,
             choose=_ask_boxes if sys.stdin.isatty() else None,
+            ask_paste=read_hidden_paste if sys.stdin.isatty() else None,
+            confirm=_confirm if sys.stdin.isatty() else None,
         )
     except auth_flow.AuthStopped as error:
         message = str(error)
-        typer.echo(message[0].upper() + message[1:] + ".", err=True)
+        # A sentence gets its stop; one that ends on a path on a line of its own does not.
+        stop = "" if message.endswith(".") or "\n" in message else "."
+        typer.echo(message[0].upper() + message[1:] + stop, err=True)
         raise typer.Exit(1) from None
     except auth_flow.AuthError as error:
-        typer.echo(f"{name} sign-in failed: {error}", err=True)
+        said = str(error)
+        stop = "" if said.endswith(".") or "\n" in said else "."
+        typer.echo(f"{name[0].upper()}{name[1:]} sign-in failed: {said}{stop}", err=True)
         raise typer.Exit(1) from None
 
 

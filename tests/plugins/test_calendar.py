@@ -290,21 +290,7 @@ async def test_a_start_that_has_passed_comes_back_as_it_was_refused(settings):
     assert result["status"] == "in_the_past" and result["day"] == "Saturday 21 November"
 
 
-def keryx_app_offers(tmp_path, monkeypatch, services):
-    import json
-
-    client = tmp_path / "published_client.json"
-    client.write_text(json.dumps({
-        "installed": {"client_id": "keryx.apps", "client_secret": "GOCSPX-published"},
-        "keryx_services": list(services),
-    }))
-    monkeypatch.setattr(google, "PUBLISHED_CLIENT_FILE", client)
-
-
-async def test_a_missing_scope_mid_call_names_a_fix_that_can_work(settings, tmp_path, monkeypatch):
-    """Found out once it is asked, with Keryx's own app not offering Calendar: signing in
-    again would ask for the same things, so the sentence does not send them there."""
-    keryx_app_offers(tmp_path, monkeypatch, ["gmail"])
+async def test_a_missing_scope_mid_call_names_the_sign_in(settings):
     lacking = GoogleApiError("not_connected", "calendars: HTTP 403", status=403)
 
     read = await call(reading(settings, FakeReader(fail=lacking)), READ, {})
@@ -312,17 +298,4 @@ async def test_a_missing_scope_mid_call_names_a_fix_that_can_work(settings, tmp_
                        {"title": "x", "day": "today"})
 
     for result in (read, wrote):
-        assert result["status"] == "not_connected"
-        assert "keryx auth login" not in result["message"]
-        assert "a Google client of their own" in result["message"]
-
-
-async def test_a_missing_scope_the_app_does_offer_still_names_the_sign_in(
-    settings, tmp_path, monkeypatch
-):
-    keryx_app_offers(tmp_path, monkeypatch, ["gmail", "calendar"])
-    lacking = GoogleApiError("not_connected", "calendars: HTTP 403", status=403)
-
-    result = await call(reading(settings, FakeReader(fail=lacking)), READ, {})
-
-    assert result["message"] == MESSAGES["not_connected"].format(service="Calendar")
+        assert result["message"] == MESSAGES["not_connected"].format(service="Calendar")

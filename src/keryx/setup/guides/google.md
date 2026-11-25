@@ -1,13 +1,20 @@
 # Connect Google with a client of your own
 
-Keryx signs in to Google through an OAuth client. This is how to make one of your own, in a
-Google Cloud project that is yours. You do it once, and every Google sign-in after that
-uses it.
+Keryx signs in to Google through an OAuth client, and that client is always your own.
+Google's API Terms say "Developer credentials may not be embedded in open source projects"
+(<https://developers.google.com/terms>, section 4(b)), so an open-source app like Keryx
+cannot ship a shared one. You make yours once, in a Google Cloud project that is yours, and
+every Google sign-in after that uses it.
+
+`keryx auth login google` (and `keryx setup`) does this with you: it opens the page below,
+shows the clicks, and asks for the path of the file Google downloads. Typing `other` at
+that question shows the second way, for an account that cannot create a project. What
+follows is both written out.
 
 If you made a client with an earlier version of this guide, it still works, but its
-project has only the Gmail and Calendar APIs turned on. Turn on the other four from the
-list under "an External app" below, or the Drive, Docs, Sheets and Slides tools will
-answer that their API is not enabled.
+project may have only the Gmail and Calendar APIs turned on. Turn on the rest in one
+click (step 2 of the second way), or the Drive, Docs, Sheets and Slides tools will answer
+that their API is not enabled.
 
 ## The short way: Personal mode
 
@@ -19,47 +26,68 @@ that creates it can sign in with it (any other account is refused with
 
 1. **Open Google's setup page**, signed in as the account Keryx should act as:
    <https://console.cloud.google.com/auth/overview/personal?apis=ws,wsmcp,tasksmcp&clientType=desktop&isAgent=true>
-2. **Pick the project.** Take the Personal mode project it offers, or create a new one.
-3. **Check the client.** The application type is **Desktop app**, and **Use this client
-   for an AI-powered agent** is ticked. The link sets both.
+2. **Pick the project.** Select a Personal mode project, or create a new one.
+3. **Check the client.** Give it any name. The application type is **Desktop app**, and
+   **Use this client for an AI-powered agent** is ticked. The link sets both.
 4. **Agree and continue.** Tick the box to agree to the Google API Services User Data
    Policy, then choose **Continue**. Google turns on the Google Workspace APIs in the
    project and creates the client.
-5. **Download it now.** In the **OAuth client created** dialog, choose **Download JSON**.
-   Once you close that dialog, Google does not show the client secret again.
-6. **Hand it to Keryx.** Give the path of that downloaded file below (dragging it into
-   the terminal types the path). Keryx checks it, copies it to
-   `~/.config/keryx/google_client_secret.json` readable by you alone, and uses it from then
-   on; you may delete the download.
+5. **Keep it now.** Choose **Download JSON** if it is offered, or copy the **Client ID**
+   and the **Client Secret**. Once you leave that page, Google does not show the secret
+   again.
+6. **Hand it to Keryx.** When Keryx asks, give the path of the file, or the Client ID, and
+   then the Client Secret, which is asked for hidden. Enter takes the newest
+   `client_secret_*.json` in your Downloads folder, and a folder takes the newest one in
+   it. If you downloaded the file on another machine, copy it to this one first, or type
+   `paste` and paste what is in it, hidden (in `keryx setup`, on one line). Keryx checks it, signs in with
+   it, and only once that works saves it as `~/.config/keryx/google_client_secret.json`,
+   readable by you alone; you may then delete the download. A Client ID or secret Google
+   does not take is thrown away, so running the command again asks for the client again.
+   If the sign-in stops for any other reason, the client is kept, and the next time Enter
+   takes it. `skip` leaves it for later.
+
+These steps follow Google's own:
+<https://developers.google.com/workspace/guides/configure-mcp-servers>.
 
 If Google says it could not turn an API on, or an agent later reports that one is not
-enabled, enable it yourself from the list in step 2 below. If your account belongs to a
-Google Workspace organization, its administrator may still have to allow the restricted
-scopes, which here are Gmail and reading Drive.
+enabled, turn them on yourself with the link in step 2 below.
 
-## If Personal mode is not offered: an External app
+## The second way: an account that cannot create a project
 
-Use this when the page above is not available to your account, or when a second Google
-account has to sign in with the same client.
+Many work and school accounts cannot create a Google Cloud project, and Personal mode
+admits only the account that made the app. So make the app with a personal Google account,
+any account that can create projects, and sign in to it with the account Keryx should act
+as. The app is **published**: left in Testing, every sign-in ends after seven days.
+Published and unverified, Google shows one warning when you sign in, and allows up to 100
+accounts, which one owner never reaches.
 
-1. **Create a project** at <https://console.cloud.google.com/projectcreate>. Call it
-   "Keryx", or anything you will recognise.
-2. **Enable the APIs** it will use, in that project:
-   - Gmail: <https://console.cloud.google.com/apis/library/gmail.googleapis.com>
-   - Google Calendar: <https://console.cloud.google.com/apis/library/calendar-json.googleapis.com>
-   - Google Drive: <https://console.cloud.google.com/apis/library/drive.googleapis.com>
-   - Google Docs: <https://console.cloud.google.com/apis/library/docs.googleapis.com>
-   - Google Sheets: <https://console.cloud.google.com/apis/library/sheets.googleapis.com>
-   - Google Slides: <https://console.cloud.google.com/apis/library/slides.googleapis.com>
-3. **Branding and audience.** Open Google Auth Platform
-   (<https://console.cloud.google.com/auth/overview>) and get started: choose
-   **External**, and give your own email address as the support contact. Under
-   **Audience**, add your own address as a test user.
-4. **Publish it.** Still under **Audience**, choose **Publish app → In production**. Left
-   in Testing, the sign-in stops working after seven days. An unverified app is fine for
-   your own account: Google shows one warning, and you choose **Advanced** and go on.
-5. **Create the client.** Under **Clients**, choose **Create client → Desktop app**, then
-   **Download JSON**.
-6. **Hand it to Keryx**, as in step 6 above.
+1. **Create a project**, in a browser signed in to the personal account:
+   <https://console.cloud.google.com/projectcreate>. Call it "Keryx", or anything you will
+   recognise.
+2. **Turn on the six APIs** Keryx uses, in one click, with that project selected at the
+   top of the page:
+   <https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com,docs.googleapis.com,sheets.googleapis.com,slides.googleapis.com>
+3. **Set up the app.** Open Google Auth Platform (<https://console.cloud.google.com/auth/overview>)
+   and choose **Get started**: any app name, your email for support, Audience
+   **External**, a contact email, then agree to the Google API Services User Data Policy
+   and choose **Create**.
+4. **Publish it.** Under **Audience** (<https://console.cloud.google.com/auth/audience>),
+   choose **Publish app**, so that it is **In production**. No test users are needed.
+5. **Make the client** (<https://console.cloud.google.com/auth/clients/create>):
+   **Desktop app**, any name, **Create**, then **Download JSON**, or copy the Client ID and
+   the Client Secret: Google shows the secret only once.
+6. **Hand it to Keryx**, as in step 6 above, then sign in with the account Keryx should act
+   as. Google says it hasn't verified the app: choose **Advanced**, then **Go to** your
+   app's name.
 
-From the command line instead: `keryx auth login google --client-file <that file>`.
+## If your organization blocks the app
+
+A work or school account's administrators can block apps they have not approved. Google
+then shows its own page (an error such as `admin_policy_enforced`, or "Access blocked")
+and never sends your browser back to Keryx, so the sign-in waits until you stop it. Only
+those administrators can allow the app, through their admin console's settings for
+third-party apps, and nothing on this machine can get past it. Gmail and reading Drive are
+restricted scopes, which organizations often hold back first.
+
+Without a terminal to answer at (a coding agent setting Keryx up, say), give the file on
+the command line instead: `keryx auth login google --client-file <that file>`.
