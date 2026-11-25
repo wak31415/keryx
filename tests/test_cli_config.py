@@ -394,7 +394,7 @@ def test_auth_login_google_with_a_browser_here_is_one_command(home, monkeypatch)
         asked.append(chosen.services)
         announce("https://accounts.google.com/x", True)
         return google.SignInResult(
-            "ada@example.com", chosen.services, (), None, chosen.client.whose
+            "ada@example.com", chosen.services, (), None
         )
 
     monkeypatch.setattr(google, "browser_signin", signin)

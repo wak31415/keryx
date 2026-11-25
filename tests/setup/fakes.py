@@ -252,7 +252,7 @@ class FakeWorld:
                 email=self.gmail,
             )
             # A grant is in memory only: the wizard keeps it, or does not.
-            return Grant(token=token, asked=tuple(asked), whose="your own Google client")
+            return Grant(token=token, asked=tuple(asked))
 
         def google_browser(settings, chosen, announce):
             self.calls.append(("google_browser", chosen.services))

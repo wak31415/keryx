@@ -37,12 +37,6 @@ def client(settings):
     return settings
 
 
-def published(tmp_path, monkeypatch, **extra):
-    path = tmp_path / "google_client.json"
-    path.write_text(json.dumps({"installed": {"client_id": "pub", "client_secret": "ps"}, **extra}))
-    monkeypatch.setattr(account, "PUBLISHED_CLIENT_FILE", path)
-
-
 class Response:
     def __init__(self, status, body):
         self.status_code, self.body = status, body
@@ -96,7 +90,7 @@ def redirect(url: str, **overrides) -> str:
     )
 
 
-# --- what a sign-in asks for, and with whose client ---------------------------------------
+# --- what a sign-in asks for -------------------------------------------------------------
 
 
 def test_no_client_at_all_says_how_to_make_one(settings):
@@ -109,50 +103,11 @@ def test_no_client_at_all_says_how_to_make_one(settings):
 def test_the_owners_own_client_offers_everything(client):
     chosen = offer(client)
 
-    assert chosen.services == ALL and chosen.note is None and not chosen.client.published
+    assert chosen.services == ALL and chosen.notes == []
 
 
 def test_chosen_services_come_back_in_the_tables_order(client):
     assert offer(client, ["slides", "gmail"]).services == ("gmail", "slides")
-
-
-def test_the_published_client_is_limited_to_what_it_offers_and_says_so(
-    settings, tmp_path, monkeypatch
-):
-    published(tmp_path, monkeypatch, keryx_services=["calendar", "drive", "docs"])
-
-    chosen = offer(settings)
-
-    assert chosen.client.published and chosen.services == ("calendar", "drive", "docs")
-    assert chosen.note.startswith(
-        "Gmail, Sheets and Slides are not offered by Keryx's Google app yet: they need your "
-        "own Google client (`keryx auth login google --client-file FILE`"
-    )
-
-
-def test_one_withheld_service_is_said_in_the_singular(settings, tmp_path, monkeypatch):
-    published(tmp_path, monkeypatch, keryx_services=[n for n in ALL if n != "gmail"])
-
-    note = offer(settings).note
-
-    assert note.startswith("Gmail is not offered by Keryx's Google app yet: it needs")
-
-
-def test_asking_the_published_client_for_what_it_does_not_offer_is_refused(
-    settings, tmp_path, monkeypatch
-):
-    published(tmp_path, monkeypatch, keryx_services=["calendar"])
-
-    with pytest.raises(GoogleSetupError, match="does not offer Gmail yet.*--client-file"):
-        offer(settings, ["gmail", "calendar"])
-    assert offer(settings, ["calendar"]).note is None  # asked for by name: nothing left out
-
-
-def test_a_published_client_that_offers_nothing_is_refused(settings, tmp_path, monkeypatch):
-    published(tmp_path, monkeypatch, keryx_services=[])
-
-    with pytest.raises(GoogleSetupError, match="does not offer any service yet"):
-        offer(settings)
 
 
 # --- signing in again adds, and never takes away -------------------------------------------
@@ -183,21 +138,6 @@ def test_asking_for_what_is_connected_already_says_nothing(client):
 
     assert offer(client, ["calendar"]).notes == []
     assert offer(client).notes == []  # everything is asked for anyway
-
-
-def test_what_the_client_does_not_offer_cannot_be_kept_and_that_is_said(
-    settings, tmp_path, monkeypatch
-):
-    published(tmp_path, monkeypatch, keryx_services=["calendar"])
-    connected(settings, ["gmail", "calendar"])
-
-    chosen = offer(settings)
-
-    assert chosen.services == ("calendar",)
-    assert any(
-        line.startswith("Gmail is connected now and will not be after this sign-in")
-        for line in chosen.notes
-    )
 
 
 # --- the link -----------------------------------------------------------------------------
@@ -264,7 +204,6 @@ def test_finishing_exchanges_the_code_once_and_keeps_one_private_token(client):
         "email": "ada@example.com",
     }
     assert (result.email, result.connected, result.missing) == ("ada@example.com", ALL, ())
-    assert result.whose == "your own Google client"
     assert not (client.data_dir / PENDING_FILE).exists()  # the verifier is used up
 
 

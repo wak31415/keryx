@@ -30,10 +30,7 @@ The plugins that use the Google sign-in (`Plugin.google`: email, the calendar pa
 documents) share one step, `run_google`. One whose service is connected is turned on and
 asked nothing. One whose service is not offers the sign-in (`setup.google.connect`), at
 most once in a walk however many of them were ticked, and is left off, with the two
-commands that finish it, when the service is still not connected afterwards. A service
-that Keryx's own Google app does not offer is not something a sign-in can add, so that
-one is neither offered a sign-in nor told to try one: it is told what would, a Google
-client of the owner's own.
+commands that finish it, when the service is still not connected afterwards.
 
 `cluster_stats` is the one with a step of its own: it reads `~/.ssh/config`, shows the hosts
 with a ControlMaster (a host without one is never offered: Keryx rides a login the owner
@@ -51,7 +48,7 @@ from typing import Any
 from keryx import plugins
 from keryx.agents import registry
 from keryx.config import Settings
-from keryx.integrations import calendar, drive, gmail, google_api
+from keryx.integrations import calendar, drive, gmail
 from keryx.integrations import google as account
 from keryx.integrations.slack import (
     APP,
@@ -677,12 +674,6 @@ def run_google(ctx: SetupContext, name: str, *, offer: bool = True) -> bool:
     offered = False
     if ready(ctx.settings):
         ui.success(f"{label}: connected")
-    elif not google_api.offered(ctx.settings, spec.google):
-        # Signing in again asks for what the client offers, and this is not among it.
-        ui.note(f"{label} is not offered by Keryx's Google app yet, so {name} is left off: "
-                f"it needs your own Google client ({google.own_client_hint()}), and then "
-                f"`keryx plugins install {name}`.")
-        return offered
     elif offer:
         ui.note(f"{spec.title} uses {label} through your Google sign-in.")
         google.connect(ctx)

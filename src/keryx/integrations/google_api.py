@@ -168,24 +168,8 @@ class GoogleApiError(Exception):
         return MESSAGES[self.code].format(service=service)
 
 
-#: `not_connected`, when signing in again could not connect it either: Keryx's own Google
-#: app does not offer the service, and only a client of the owner's does.
-NOT_OFFERED = (
-    "{service} isn't part of the Google sign-in on this machine, and Keryx's own Google "
-    "app doesn't offer it yet. Say that in one sentence; it needs a Google client of "
-    "their own, set up at the keyboard, and signing in again as things are won't add it."
-)
-
-
-def failure(exc: GoogleApiError, service: str, *, offered: bool = True) -> dict[str, str]:
-    """What a tool returns for `exc`: a status and one sentence written to be spoken.
-
-    `offered` is whether a sign-in on this machine could connect the service at all
-    (`google_api.offered`, asked when the tool was built). When it could not, the
-    sentence for a missing scope does not send the owner to sign in again.
-    """
-    if exc.code == "not_connected" and not offered:
-        return {"status": exc.code, "message": NOT_OFFERED.format(service=service)}
+def failure(exc: GoogleApiError, service: str) -> dict[str, str]:
+    """What a tool returns for `exc`: a status and one sentence written to be spoken."""
     return {"status": exc.code, "message": exc.spoken(service)}
 
 
@@ -476,28 +460,13 @@ def _unreachable(what: str, exc: httpx.HTTPError, *, sent: bool = False) -> Goog
 
 def access_problem(settings: Settings, service: str, needs: Sequence[str]) -> str | None:
     """Why the sign-in cannot serve a tool that needs `needs`, in a sentence; None when it
-    can. `service` is the name of the Google service those scopes belong to.
-
-    The sentence names what fixes it, which is not always signing in again: Keryx's own
-    Google app may not offer the service yet, and then only a client of the owner's does.
+    can. `service` is the name of the Google service those scopes belong to, and the
+    sentence names the sign-in that fixes it.
     """
     token = google.read_token(settings)
     if token is None:
         return "not signed in to Google: `keryx auth login google`"
     if not google.holds(token.scopes, needs):
         label = google.SERVICES[service].label
-        if not offered(settings, service):
-            return (
-                f"{label} is not part of your Google sign-in, and Keryx's Google app does "
-                "not offer it yet: `keryx auth login google --client-file FILE` with a "
-                "Google client of your own"
-            )
         return f"{label} is not part of your Google sign-in: `keryx auth login google`"
     return None
-
-
-def offered(settings: Settings, service: str) -> bool:
-    """Whether a sign-in on this machine could connect `service` at all: the client it
-    would use offers it. True with no client to ask, since making one offers everything."""
-    client = google.resolve_client(settings)
-    return client is None or service in client.services

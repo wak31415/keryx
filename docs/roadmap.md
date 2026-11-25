@@ -4,8 +4,6 @@
 
 v0.3.0 brought Google and Slack. These parts of it are not finished:
 
-- [ ] Google's verification of Keryx's own Google app, so that signing in needs no OAuth
-      client of your own
 - [ ] Reading Slack and sending messages as you, confirmed on more real workspaces
 - [ ] Reading Slack further back than 30 days
 - [ ] A result counts as told only once it has been heard: today, a result spoken into a

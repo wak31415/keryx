@@ -384,7 +384,7 @@ def _google(
     notes = _keep(settings, store, result)
     for line in [*google.summary(result), *notes]:
         echo(line)
-    if hint := google.api_hint(result, published=result.whose != google.OWN_CLIENT):
+    if hint := google.api_hint(result):
         echo(hint)
 
 

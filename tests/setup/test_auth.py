@@ -102,7 +102,6 @@ ALL = tuple(SERVICES)
 def result(connected=ALL, missing=(), email="ada@example.com"):
     return google.SignInResult(
         email=email, connected=connected, missing=missing, path=None,
-        whose="your own Google client",
     )  # fmt: skip
 
 
@@ -238,24 +237,10 @@ def test_a_client_file_is_installed_and_used(settings, browser, tmp_path):
 
     lines = login("google", settings, client_file=source)
 
-    assert browser[0].client.client_id == "i" and not browser[0].client.published
+    assert browser[0].client.client_id == "i"
     assert ConfigStore().stored()["GOOGLE_CLIENT_SECRETS_FILE"].endswith(
         "google_client_secret.json")
     assert any("Google client saved" in line for line in lines)
-
-
-def test_what_the_published_client_does_not_offer_is_said_first(
-    settings, browser, tmp_path, monkeypatch
-):
-    path = tmp_path / "google_client.json"
-    path.write_text('{"installed": {"client_id": "p", "client_secret": "s"},'
-                    ' "keryx_services": ["calendar"]}')
-    monkeypatch.setattr("keryx.integrations.google.PUBLISHED_CLIENT_FILE", path)
-
-    lines = login("google", settings)
-
-    assert "are not offered by Keryx's Google app yet" in lines[0] and "--client-file" in lines[0]
-    assert browser[0].services == ("calendar",)
 
 
 # --- google, with the browser somewhere else ----------------------------------------------

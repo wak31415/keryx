@@ -635,9 +635,9 @@ documented on the branch and does not apply to anything built from `main`.
 Every key, token, and password is in `~/.config/keryx/secrets.toml` (`KERYX_HOME` moves
 it). Keryx creates the file with mode 0600 inside a 0700 directory and replaces it
 atomically, so it never exists with looser permissions. The plain settings are in
-`config.toml` beside it, along with the PIN (`pin`) and the Google client file, if you made
-a client of your own. **Keep this directory out of any dotfiles repository.** It holds
-secrets despite its name.
+`config.toml` beside it, along with the PIN (`pin`) and your Google client file, once you
+have made one. **Keep this directory out of any dotfiles repository.** It holds secrets
+despite its name.
 
 What each of those secrets can do is up to whoever issued it, and Slack's are worth
 knowing about. The Slack app that `keryx setup` has you create gives its bot token two
@@ -739,14 +739,17 @@ the answers on a call (the email, calendar and document plugins). What it leaves
   stays until that task's server exits. With no client it has no sign-in to complete, but
   it is a port another user of the machine can reach for that long, and Keryx cannot
   switch it off in that release.
-- **Keryx's own Google client, when a release ships one, is not a secret.** It is a
-  "Desktop app" client, and its client secret is a file inside the package that anyone
-  can read. Google says so of this kind of client in its own words: "In this context, the
-  client secret is obviously not treated as a secret"
-  (<https://developers.google.com/identity/protocols/oauth2>). Knowing it lets someone
-  present their own app as Keryx on a consent screen. It does not let them into your
-  account: they would still need you to approve that screen, and they cannot use a code
-  issued to you. A client of your own (`--client-file`) replaces it entirely.
+- **The OAuth client is always your own.** Keryx ships no Google client of its own and
+  never will: Google's API Terms say "Developer credentials may not be embedded in open
+  source projects" (<https://developers.google.com/terms>, section 4(b)). You make one
+  once, in a Google Cloud project of your own, and Keryx keeps the file Google downloads
+  in `KERYX_HOME/google_client_secret.json` (0600). Made in Personal mode, as
+  `keryx auth login google` suggests, it is a "Desktop app" client that only the Google
+  account that created it can sign in with. Its secret is not what protects your account:
+  Google says of this kind of client that "the client secret is obviously not treated as
+  a secret" (<https://developers.google.com/identity/protocols/oauth2>), and anyone who
+  read it would still need you to approve a consent screen, and could not use a code
+  issued to you. It is kept private all the same, like every file in that directory.
 - **What protects the exchange is PKCE, `state`, and where the answer is sent.** The
   sign-in keeps a one-time verifier on this machine and sends Google only its hash, so
   the code Google returns is useless to anyone who intercepts it. `state` ties that code
@@ -784,8 +787,9 @@ the answers on a call (the email, calendar and document plugins). What it leaves
   that exhausts the listener's process so your browser is never served. Then the only
   sign is the address the command prints. So on a machine you share with people you do
   not trust, sign in with `--headless`: there is no listener, the browser lands on an
-  address nothing listens on, and you paste that address back yourself. A client of your
-  own in Personal mode closes it too, because Google refuses every account but yours.
+  address nothing listens on, and you paste that address back yourself. A client made
+  in Personal mode, as Keryx suggests, closes it too, because Google refuses every
+  account but yours.
 - **An address pasted back is a code in your scrollback.** It is single-use, it expires in
   minutes, and it cannot be exchanged without the verifier, which waits in
   `DATA_DIR/google_signin.json` (0600) until the sign-in finishes. With `--headless` at a

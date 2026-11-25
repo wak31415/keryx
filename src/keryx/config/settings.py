@@ -539,7 +539,7 @@ class Settings(BaseSettings):
     google_oauth_client_id: str | None = setting(
         None,
         "The id of a Google OAuth client of your own. Blank: read from "
-        "`GOOGLE_CLIENT_SECRETS_FILE`, else the client Keryx publishes, when it has one.",
+        "`GOOGLE_CLIENT_SECRETS_FILE`. Keryx ships no client of its own.",
         group="google",
     )
     google_oauth_client_secret: str | None = setting(
@@ -1041,7 +1041,7 @@ class Settings(BaseSettings):
 
         The console hands out that file with the pair nested under `installed` (desktop
         clients) or `web`; either shape is accepted. None means the owner has made no
-        client, and a sign-in falls back to the one Keryx publishes, when it has one
+        client yet, and there is nothing to sign in with: Keryx ships none
         (`keryx.integrations.google.resolve_client`).
         """
         if self.google_oauth_client_id and self.google_oauth_client_secret:

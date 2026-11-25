@@ -478,12 +478,12 @@ def test_a_data_dir_that_cannot_be_read_is_reported_not_raised(healthy):
     assert (check.ok, check.severity) == (False, "soft")
 
 
-def test_google_says_who_signed_in_with_whose_client_and_what_is_connected(healthy):
+def test_google_says_who_signed_in_and_what_is_connected(healthy):
     check = by_name(run_doctor_checks(healthy))["Google"]
 
     assert (check.ok, check.severity, check.section) == (True, "soft", "google")
     assert check.detail == (
-        "signed in as sam@example.com with your own Google client; connected: Gmail, "
+        "signed in as sam@example.com; connected: Gmail, "
         "Calendar, Drive, Docs, Sheets and Slides"
     )
 
@@ -522,24 +522,6 @@ def test_google_says_when_a_client_with_no_secret_keeps_the_tools_from_agents(he
     check = by_name(run_doctor_checks(healthy))["Google"]
 
     assert "agents do not get the Google tools from a client with no secret" in check.detail
-
-
-def test_google_signed_in_with_keryxs_own_client_says_so(healthy, tmp_path, monkeypatch):
-    path = tmp_path / "google_client.json"
-    path.write_text('{"installed": {"client_id": "client-id", "client_secret": "s"},'
-                    ' "keryx_services": ["gmail", "calendar"]}')
-    monkeypatch.setattr(google, "PUBLISHED_CLIENT_FILE", path)
-    settings = healthy.model_copy(
-        update={"google_oauth_client_id": None, "google_oauth_client_secret": None}
-    )
-    sign_in(settings, ["gmail", "calendar"])
-
-    check = by_name(run_doctor_checks(settings))["Google"]
-
-    # Everything Keryx's client offers is connected: the rest is not counted against it.
-    assert check.detail == (
-        "signed in as sam@example.com with Keryx's Google app; connected: Gmail and Calendar"
-    )
 
 
 def test_a_sign_in_that_connected_nothing_is_a_failure(healthy):
@@ -770,7 +752,6 @@ def test_slack_workspaces_that_cannot_be_read_are_said_not_raised(settings, monk
     [check] = doctor.slack_workspace_checks(settings, {})
 
     assert not check.ok and check.detail == "could not be read: no"
-
 
 
 def test_a_plugin_that_is_off_is_optional_and_says_how(healthy):

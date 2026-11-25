@@ -1709,7 +1709,7 @@ def auth_login(
     google is one sign-in for Gmail, Calendar, Drive, Docs, Sheets and Slides. With a
     browser on this machine it opens the consent screen and finishes by itself; with
     --headless it prints a link for any device and asks for the address the browser lands on.
-    Until a release ships Keryx's own Google app, it needs an OAuth client of yours, given
+    Keryx ships no Google client of its own, so it needs an OAuth client of yours, given
     once with --client-file: `keryx setup` shows how to make one.
 
     slack at a terminal is one command with no options: it shows a box to tick for each

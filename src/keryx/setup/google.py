@@ -25,10 +25,11 @@ them — and writes the one token (`google.write_token`), its copy for the agent
 server, and nothing else. Saving the address and turning the agents' tools on are the
 caller's, because only the owner's commands write settings.
 
-The OAuth client is the owner's own when they have made one, else the one Keryx publishes
-(`google.resolve_client`). `guides/google.md` is how an owner makes their own, and
-`guides/google_consent.md` is what the consent screen asks; `run_section` is the wizard's
-screen, and `connect` is the part of it the `check_email` plugin's step reuses.
+The OAuth client is always the owner's own (`google.resolve_client`): Keryx ships none,
+because Google's API Terms forbid developer credentials in an open source project.
+`guides/google.md` is how an owner makes one, and `guides/google_consent.md` is what the
+consent screen asks; `run_section` is the wizard's screen, and `connect` is the part of it
+the `check_email` plugin's step reuses.
 """
 
 import base64
@@ -144,60 +145,34 @@ def install_client_file(settings: Settings, source: Path) -> Path:
 
 @dataclass(frozen=True)
 class Offer:
-    """What one sign-in will ask for, and with whose client."""
+    """What one sign-in will ask for, with the owner's client."""
 
     client: OAuthClient
     services: tuple[str, ...]
-    #: Services left out because Keryx's published client is not approved for them yet.
-    withheld: tuple[str, ...] = ()
     #: Services nobody named that are asked for again because they are connected now.
     kept: tuple[str, ...] = ()
-    #: Services connected now that this client may not ask for, and so will not be after.
-    lost: tuple[str, ...] = ()
 
     @property
     def notes(self) -> list[str]:
-        """What to say before the link, a line each: what is asked for again unasked, what
-        this sign-in will end, and what is left out. Nothing when there is nothing to say."""
-        lines = []
-        if self.kept:
-            one = len(self.kept) == 1
-            lines.append(
-                f"{labels(self.kept)} {'is' if one else 'are'} connected now and "
-                f"{'is' if one else 'are'} asked for again, so that this sign-in adds to "
-                f"{'it' if one else 'them'}; `keryx auth logout google` is how access is "
-                "taken away."
-            )
-        if self.lost:
-            one = len(self.lost) == 1
-            lines.append(
-                f"{labels(self.lost)} {'is' if one else 'are'} connected now and will not be "
-                f"after this sign-in: {self.client.whose} does not offer "
-                f"{'it' if one else 'them'}."
-            )
-        return [*lines, *([self.note] if self.note else [])]
-
-    @property
-    def note(self) -> str | None:
-        """One line on what is left out and how to get it; None when nothing is."""
-        if not self.withheld:
-            return None
-        one = len(self.withheld) == 1
-        return (
-            f"{labels(self.withheld)} {'is' if one else 'are'} not offered by Keryx's Google "
-            f"app yet: {'it needs' if one else 'they need'} your own Google client "
-            f"({own_client_hint()})."
-        )
+        """What to say before the link: what is asked for again unasked, in one line.
+        Nothing when there is nothing to say."""
+        if not self.kept:
+            return []
+        one = len(self.kept) == 1
+        return [
+            f"{labels(self.kept)} {'is' if one else 'are'} connected now and "
+            f"{'is' if one else 'are'} asked for again, so that this sign-in adds to "
+            f"{'it' if one else 'them'}; `keryx auth logout google` is how access is "
+            "taken away."
+        ]
 
 
 def offer(settings: Settings, wanted: Sequence[str] | None = None) -> Offer:
-    """What a sign-in for `wanted` asks for: every service the client offers when None.
+    """What a sign-in for `wanted` asks for: every service when None.
 
-    A sign-in replaces the token, so it also asks again for whatever is connected now and
-    the client offers: signing in for one more service adds it, and ends nothing.
-
-    Raises with what to do when there is no client at all, or when a service asked for by
-    name is one Keryx's published client may not request.
+    A sign-in replaces the token, so it also asks again for whatever is connected now:
+    signing in for one more service adds it, and ends nothing. Raises with what to do when
+    the owner has no client yet.
     """
     client = google.resolve_client(settings)
     if client is None:
@@ -205,21 +180,13 @@ def offer(settings: Settings, wanted: Sequence[str] | None = None) -> Offer:
             "there is no Google OAuth client to sign in with: make one of your own and "
             f"pass it ({own_client_hint()})"
         )
-    refused = [name for name in wanted or () if name not in client.services]
-    if refused or not client.services:
-        what = labels(refused) if refused else "any service"
-        raise GoogleSetupError(
-            f"Keryx's Google app does not offer {what} yet: that needs your own Google "
-            f"client ({own_client_hint()})"
-        )
+    if wanted is None:
+        return Offer(client, tuple(SERVICES))
     token = google.read_token(settings)
     now = token.connected if token is not None else ()
-    lost = tuple(name for name in now if name not in client.services)
-    if wanted is None:
-        return Offer(client, client.services, client.withheld, lost=lost)
-    kept = tuple(name for name in now if name in client.services and name not in wanted)
+    kept = tuple(name for name in now if name not in wanted)
     services = tuple(name for name in SERVICES if name in wanted or name in kept)
-    return Offer(client, services, kept=kept, lost=lost)
+    return Offer(client, services, kept=kept)
 
 
 # --- the consent link ---------------------------------------------------------------------
@@ -546,8 +513,6 @@ class Grant:
     token: GoogleToken
     #: The services the sign-in asked for.
     asked: tuple[str, ...]
-    #: Whose client it was signed in with, for the sentence that says so.
-    whose: str
 
     @property
     def email(self) -> str:
@@ -564,8 +529,6 @@ class SignInResult:
     #: The services asked for that were not: unticked on Google's screen.
     missing: tuple[str, ...]
     path: Path
-    #: Whose client it was signed in with, for the sentence that says so.
-    whose: str
 
 
 def _json(response: Any) -> dict[str, Any]:
@@ -760,7 +723,7 @@ def exchange(
     if refusal is not None:
         discard(settings, token, post=post)
         raise GoogleSetupError(refusal)
-    return Grant(token=token, asked=pending.services, whose=client.whose)
+    return Grant(token=token, asked=pending.services)
 
 
 def unexpected_account(settings: Settings, grant: Grant, account: str | None = None) -> str | None:
@@ -833,7 +796,6 @@ def keep(settings: Settings, grant: Grant) -> SignInResult:
         connected=connected,
         missing=tuple(name for name in grant.asked if name not in connected),
         path=path,
-        whose=grant.whose,
     )
 
 
@@ -852,19 +814,17 @@ def summary(result: SignInResult) -> list[str]:
     return lines
 
 
-#: `OAuthClient.whose` for a client the owner made, whose Cloud project is theirs to set up.
-OWN_CLIENT = "your own Google client"
 #: The services a Cloud project made by the older guide has no API enabled for.
 NEWER_APIS = ("drive", "docs", "sheets", "slides")
 
 
-def api_hint(result: SignInResult, *, published: bool) -> str | None:
-    """Where to enable the APIs, said once to an owner whose own Cloud project may predate
+def api_hint(result: SignInResult) -> str | None:
+    """Where to enable the APIs, said once to an owner whose Cloud project may predate
     them: granting a scope does not enable its API, and the older guide enabled only Gmail
-    and Calendar. Keryx's own client has every API on; nothing can be asked without a call
-    to Google, so it is said rather than detected."""
+    and Calendar. Nothing can be asked without a call to Google, so it is said rather than
+    detected."""
     newer = [name for name in NEWER_APIS if name in result.connected]
-    if published or not newer:
+    if not newer:
         return None
     return (
         f"If an agent reports that the {labels(newer)} API is not enabled, enable it in your "
@@ -912,10 +872,9 @@ def connect(ctx: "SetupContext") -> None:
     ui, settings = ctx.ui, ctx.settings
     token = google.read_token(settings)
     client = google.resolve_client(settings)
-    offered = client.services if client is not None else tuple(SERVICES)
-    done = token is not None and all(name in token.connected for name in offered)
+    done = token is not None and all(name in token.connected for name in SERVICES)
     if token is not None:
-        _show(ctx, token.connected, offered, f"Google: signed in as {token.email or 'you'}")
+        _show(ctx, token.connected, SERVICES, f"Google: signed in as {token.email or 'you'}")
         if done and not ctx.review:
             return
         if ui.select(
@@ -949,9 +908,9 @@ def connect(ctx: "SetupContext") -> None:
         ui.error(str(exc))
         return
     _keep(ctx, result)
-    ui.success(f"Google: signed in as {result.email} with {result.whose}")
+    ui.success(f"Google: signed in as {result.email}")
     _show(ctx, result.connected, [*result.connected, *result.missing])
-    if hint := api_hint(result, published=grant.whose != OWN_CLIENT):
+    if hint := api_hint(result):
         ui.note(hint)
 
 
@@ -1013,8 +972,6 @@ def _sign_in(ctx: "SetupContext") -> Grant | None:
         return None
     for line in chosen.notes:
         ui.note(line)
-    if chosen.client.published:
-        ui.markdown(guide(CONSENT_GUIDE))
     way = ELSEWHERE if ctx.probes.headless() else HERE
     try:
         while True:

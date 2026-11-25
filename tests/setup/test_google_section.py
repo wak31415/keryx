@@ -33,13 +33,6 @@ def client_file(tmp_path, body=CLIENT):
     return path
 
 
-def published(tmp_path, monkeypatch, **extra):
-    path = tmp_path / "google_client.json"
-    path.write_text(json.dumps({"installed": {"client_id": "cid", "client_secret": "csecret"},
-                                **extra}))
-    monkeypatch.setattr(account, "PUBLISHED_CLIENT_FILE", path)
-
-
 def landed(ctx, code="c"):
     """The address the browser lands on for the link the wizard has just shown."""
 
@@ -86,7 +79,7 @@ def test_every_service_gets_a_line(make_ctx, world):
 
     google.run_section(ctx)
 
-    assert "Google: signed in as sam@example.com with your own Google client" in (
+    assert "Google: signed in as sam@example.com" in (
         ctx.ui.lines("success")
     )
     assert [line for line in ctx.ui.lines("success") if line.endswith("a call")] == [
@@ -189,37 +182,6 @@ def test_a_wrong_client_file_is_refused_and_asked_again(make_ctx, world, tmp_pat
     assert any("not a Google OAuth client file" in line for line in ctx.ui.lines("error"))
     assert not (ctx.settings.config_dir / "google_client_secret.json").exists()
     assert world.calls == []
-
-
-def test_keryxs_own_client_needs_no_google_cloud_steps(make_ctx, world, tmp_path, monkeypatch):
-    published(tmp_path, monkeypatch)
-    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
-
-    google.run_section(ctx)
-
-    [consent] = ctx.ui.lines("markdown")
-    assert "Google hasn't verified this app" in consent and "Advanced" in consent
-    assert "console.cloud.google.com" not in consent
-    assert world.calls == [("google_browser", ALL)]
-    assert ctx.ui.done()
-
-
-def test_what_keryxs_client_does_not_offer_is_said_once_and_not_asked_for(
-    make_ctx, world, tmp_path, monkeypatch
-):
-    published(tmp_path, monkeypatch, keryx_services=["calendar", "drive"])
-    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
-
-    google.run_section(ctx)
-
-    assert world.calls == [("google_browser", ("calendar", "drive"))]
-    [note] = [line for line in ctx.ui.lines("note") if "not offered" in line]
-    assert note.startswith("Gmail, Docs, Sheets and Slides are not offered by Keryx's Google app")
-    assert not any("Gmail" in line for line in ctx.ui.lines("warn"))
-
-    again = make_ctx([])  # everything on offer is connected: nothing left to ask
-    google.run_section(again)
-    assert again.ui.asked == []
 
 
 # --- a browser somewhere else -------------------------------------------------------------

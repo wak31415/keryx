@@ -20,7 +20,6 @@ from keryx.integrations.google_api import (
     GoogleWriter,
     access_problem,
     failure,
-    offered,
 )
 
 NEEDS = (google.CALENDAR_READONLY,)
@@ -221,23 +220,11 @@ def test_every_failure_has_a_sentence_that_names_what_was_asked_and_the_fix():
     assert all("{" not in GoogleApiError(code).spoken("Drive") for code in MESSAGES)
 
 
-def test_a_missing_scope_does_not_send_them_to_a_sign_in_that_cannot_add_it():
-    """When Keryx's own Google app does not offer the service, signing in again asks for
-    the same things again."""
-    missing = GoogleApiError("not_connected")
+def test_a_missing_scope_sends_them_to_sign_in_again():
+    missing = failure(GoogleApiError("not_connected"), "Calendar")
 
-    usual = failure(missing, "Calendar")
-    not_offered = failure(missing, "Calendar", offered=False)
-
-    assert "`keryx auth login google` at the keyboard adds it" in usual["message"]
-    assert not_offered["status"] == "not_connected"
-    assert "keryx auth login" not in not_offered["message"]
-    assert "a Google client of their own" in not_offered["message"]
-    assert "Calendar" in not_offered["message"] and "{" not in not_offered["message"]
-    # Only that one failure is about what the client offers.
-    assert failure(GoogleApiError("signed_out"), "Calendar", offered=False) == failure(
-        GoogleApiError("signed_out"), "Calendar"
-    )
+    assert missing["status"] == "not_connected"
+    assert "`keryx auth login google` at the keyboard adds it" in missing["message"]
 
 
 # ---------------------------------------------------------------------- the sign-in
@@ -281,26 +268,6 @@ def test_holding_a_scope_is_narrower_than_a_service_being_connected():
     assert not google.holds(read_only, (google.CALENDAR_EVENTS,))
     assert "calendar" not in google.connected_services(read_only)
     assert google.holds([google.DRIVE_FULL], (google.DRIVE_READONLY,))
-
-
-def test_a_service_keryxs_own_app_does_not_offer_names_what_would_add_it(
-    settings, tmp_path, monkeypatch
-):
-    """Signing in again cannot add what the client does not ask for."""
-    client = tmp_path / "google_client.json"
-    client.write_text(json.dumps({
-        "installed": {"client_id": "keryx.apps", "client_secret": "GOCSPX-published"},
-        "keryx_services": ["gmail"],
-    }))
-    monkeypatch.setattr(google, "PUBLISHED_CLIENT_FILE", client)
-    settings.ensure_dirs()
-    sign_in(settings, ["gmail"])
-
-    problem = access_problem(settings, "calendar", NEEDS)
-
-    assert "Keryx's Google app does not offer it yet" in problem
-    assert "`keryx auth login google --client-file FILE`" in problem
-    assert not offered(settings, "calendar") and offered(settings, "gmail")
 
 
 # ---------------------------------------------------- a request with no answer, and text

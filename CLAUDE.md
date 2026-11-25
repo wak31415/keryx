@@ -608,17 +608,18 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   request — was read from that release's decorators. A tool is switched off unless the
   token holds its scope, so an agent never meets one whose only answer is "authorize again".
   Bump the pin only with that list re-read from the new source.
-- **Two clients, and whose it is gets said.** `resolve_client`: the owner's own
-  (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`, or the client file) wins; else the one Keryx
-  publishes, which is a packaged data file (`keryx/data/google_client.json`, the console's
-  JSON plus an optional `keryx_services` list of what Google has approved it for) and may
-  not be there. No release has shipped one yet (0.3.0 did not: it waits on Google's
-  verification), so today every sign-in is on the owner's own client, and the docs and
-  the setup guide say so; change them in the release that adds the file. A published
-  client is limited to its list; the owner's own offers
-  everything. Its secret ships in the wheel and is not a secret (SECURITY.md): PKCE,
-  `state` and a loopback-only redirect are what protect the exchange. A client with no
-  secret sends none, never an empty one.
+- **One client, the owner's, and Keryx never ships one.** Google's API Terms, §4(b):
+  "Developer credentials may not be embedded in open source projects"
+  (<https://developers.google.com/terms>). So `resolve_client` is the owner's own
+  (`GOOGLE_OAUTH_CLIENT_ID`/`SECRET`, or the client file) or None, and there is no
+  packaged client, no list of what one was approved for, and no sentence about a service
+  "Keryx's app" does not offer: a client the owner made offers everything. Do not add a
+  published client back, in the wheel or anywhere else in the repository. The way an
+  owner gets one is Google's Personal mode (a Desktop client only the account that made it
+  can use: no unverified warning, no user cap, no seven-day expiry), made from one console
+  page that `keryx auth login google` opens for them. PKCE, `state` and a loopback-only
+  redirect are what protect the exchange. A client with no secret sends none, never an
+  empty one.
 - **Two ways to finish, chosen before the link is made.** With a browser on this machine, a
   listener on `127.0.0.1` on a port the OS picks takes the redirect: one request that
   carries this sign-in's `state`, nothing logged (the request line holds the code), every
@@ -687,9 +688,7 @@ and `add_calendar_event` (`integrations/calendar.py`), and `find_document`
 - **A failure is a code and a sentence that names the fix.** `GoogleApiError`:
   `not_signed_in`, `not_connected` and `signed_out` name `keryx auth login google`;
   `api_disabled` says that signing in again will not help, because the API is off in the
-  Cloud project. So does `not_connected` when Keryx's own Google app does not offer the
-  service (`failure(..., offered=False)`, asked of the client on this machine when the
-  tool loads): the sentence names a client of the owner's own and no sign-in. Never an exception to the model, and never a response body anywhere: a
+  Cloud project. Never an exception to the model, and never a response body anywhere: a
   log line carries the status, one of a short list of Google's own reasons, and the kind of
   thing asked for, never which calendar or file (an id is somebody's address).
 - **What Google returns is somebody else's text.** An invitation puts a title on the
