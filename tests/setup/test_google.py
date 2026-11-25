@@ -547,6 +547,10 @@ def test_no_access_token_and_no_id_token_asks_nobody(client):
         ({"state": None}, "different sign-in"),
         ({"code": None}, "no code"),
         ({"error": "access_denied"}, "Google said: access_denied"),
+        # Google shows this on its own page, by its documentation; should it ever come
+        # back, it is said as what it is, and not as something to try again.
+        ({"error": "admin_policy_enforced"},
+         "organization blocks apps it has not approved: only its administrators"),
     ],
 )
 def test_a_redirect_that_does_not_fit_is_refused(client, change, says):
@@ -987,6 +991,40 @@ def test_a_path_can_start_with_a_tilde(settings):
     path, picked = google.take_client(settings, "~/c.json", paste=lambda: "")
 
     assert picked is None and json.loads(path.read_text())["installed"]["client_id"] == "i"
+
+
+def test_the_other_way_turns_on_one_api_for_each_service_in_one_link():
+    """Calendar's API id is `calendar-json`; the rest are the service's own name."""
+    from urllib.parse import parse_qs, urlparse
+
+    url = urlparse(google.ENABLE_APIS_URL)
+    ids = parse_qs(url.query)["apiid"][0].split(",")
+
+    assert (url.netloc, url.path) == ("console.cloud.google.com", "/apis/enableflow")
+    assert [one.split(".")[0].removesuffix("-json") for one in ids] == list(ALL)
+    assert all(one.endswith(".googleapis.com") for one in ids)
+
+
+def test_the_other_way_publishes_the_app_and_never_asks_for_test_users():
+    steps = " ".join(step for step, _ in google.OTHER_STEPS)
+
+    assert "External" in steps and "Publish app" in steps and "7 days" in steps
+    assert "No test users" in steps and "Desktop app" in steps and "Advanced" in steps
+    assert [link for _, link in google.OTHER_STEPS] == [
+        "https://console.cloud.google.com/projectcreate",
+        google.ENABLE_APIS_URL,
+        "https://console.cloud.google.com/auth/overview",
+        "https://console.cloud.google.com/auth/audience",
+        "https://console.cloud.google.com/auth/clients",
+        None,
+    ]
+
+
+def test_the_guide_has_the_links_the_terminal_shows():
+    text = google.guide()
+
+    assert google.PERSONAL_MODE_URL in text
+    assert all(link in text for _, link in google.OTHER_STEPS if link)
 
 
 def test_a_guide_reads_as_plain_text_on_a_terminal():

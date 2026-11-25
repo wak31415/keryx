@@ -169,9 +169,65 @@ ELSEWHERE_NOTE = (
 PATH_QUESTION = "Path to the file you downloaded"
 PASTE_QUESTION = "Paste what is in the file (hidden)"
 
+# The other way, for an account that cannot create a Cloud project (many work and school
+# accounts cannot), which Personal mode cannot serve: it admits only the account that made
+# it. The app is made with an account that can, External and published (In production,
+# unverified), and the owner signs in to it with the account Keryx acts as. Published,
+# because in Testing every sign-in ends after seven days.
 
-def fallback_note() -> str:
-    return f"If that page is not offered to your account, the longer way is in {guide_path()}."
+#: Typed at the path question instead of a path, for the other way's steps. Never a
+#: wrong answer: the same question is asked again after them.
+OTHER = "other"
+#: Said under the Personal mode steps.
+NO_PROJECT_NOTE = (
+    "Can't create a project with this account, or that page is not offered to it? Many work "
+    f"and school accounts can't. Type {OTHER} at the question below for the way round it."
+)
+#: The six APIs Keryx's tools use, by the ids the console knows them by.
+API_IDS = (
+    "gmail.googleapis.com",
+    "calendar-json.googleapis.com",
+    "drive.googleapis.com",
+    "docs.googleapis.com",
+    "sheets.googleapis.com",
+    "slides.googleapis.com",
+)
+#: The console's page that turns on every API it is given, in one click.
+ENABLE_APIS_URL = "https://console.cloud.google.com/apis/enableflow?apiid=" + ",".join(API_IDS)
+OTHER_INTRO = (
+    "The way round it: make the app with a personal Google account, then sign in to it with "
+    "this one."
+)
+#: The other way's steps, each with the page it happens on (None: on this terminal).
+OTHER_STEPS: tuple[tuple[str, str | None], ...] = (
+    ("In a browser signed in to a personal Google account (any account that can create "
+     "projects), create a project.", "https://console.cloud.google.com/projectcreate"),
+    ("With that project selected at the top of the page, turn on the six APIs Keryx uses, "
+     "in one click.", ENABLE_APIS_URL),
+    ("Set up the app: choose Get started. Any name, your email for support, Audience "
+     "External, a contact email, then agree and Create.",
+     "https://console.cloud.google.com/auth/overview"),
+    ("Publish it: under Audience, choose Publish app, so it is In production. In Testing "
+     "every sign-in ends after 7 days. No test users are needed.",
+     "https://console.cloud.google.com/auth/audience"),
+    ("Make the client: Create client, Desktop app, any name, Create, then Download JSON "
+     "straight away.", "https://console.cloud.google.com/auth/clients"),
+    ("Give that file at the question below, then sign in with the account Keryx should act "
+     "as. Google says it hasn't verified the app: choose Advanced, then Go to the app's "
+     "name.", None),
+)
+#: Said while the browser is out: an organization that blocks unapproved apps shows its
+#: refusal on Google's own page and never sends the browser back.
+BLOCKED_NOTE = (
+    "If Google says your organization blocks the app or has to approve it, only its "
+    "administrators can allow it: nothing on this machine can get past that."
+)
+#: Google's error for that, should it ever reach the redirect, and the sentence for it.
+ADMIN_BLOCKED = "admin_policy_enforced"
+ADMIN_BLOCKED_SENTENCE = (
+    "your account's organization blocks apps it has not approved: only its administrators "
+    "can allow this one, and nothing on this machine can get past that"
+)
 
 
 def steps_text() -> str:
@@ -182,7 +238,8 @@ def own_client_hint() -> str:
     """How to make a client without a terminal to ask at: the page, then `--client-file`."""
     return (
         f"make one at {PERSONAL_MODE_URL} and choose Download JSON, then run `keryx auth "
-        f"login google --client-file FILE`; the steps are in {guide_path()}"
+        f"login google --client-file FILE`; the steps, and the way for an account that "
+        f"cannot create projects, are in {guide_path()}"
     )
 
 
@@ -799,6 +856,8 @@ def exchange(
             f"nothing was saved; run {SIGN_IN} again, or with --headless to paste the "
             "address back instead"
         )
+    if answer.get("error") == ADMIN_BLOCKED:
+        raise GoogleSetupError(ADMIN_BLOCKED_SENTENCE)
     if answer.get("error"):
         raise GoogleSetupError(f"Google said: {_plain(answer['error'])}")
     if not _same_state(answer.get("state", ""), pending.state):
@@ -1082,13 +1141,20 @@ def _own_client(ctx: "SetupContext") -> bool:
     opened = not headless and ctx.probes.open_browser(PERSONAL_MODE_URL)
     ui.panel("Make your Google sign-in app", f"{opening(opened)}\n\n{steps_text()}")
     ui.link(PERSONAL_MODE_URL)
-    for line in ([ELSEWHERE_NOTE] if headless else []) + [fallback_note()]:
+    for line in [NO_PROJECT_NOTE, *([ELSEWHERE_NOTE] if headless else [])]:
         ui.note(line)
     default = suggested_client_file()
     while True:
         raw = ui.text(f"{PATH_QUESTION} (blank to stop here)", default=default)
         if not raw:
             return False
+        if raw.strip().lower() == OTHER:
+            ui.note(OTHER_INTRO)
+            for number, (step, url) in enumerate(OTHER_STEPS, 1):
+                ui.note(f"{number}. {step}")
+                if url:
+                    ui.link(url)
+            continue
         try:
             path, picked = take_client(
                 ctx.settings, raw, paste=lambda: ui.secret(PASTE_QUESTION)
@@ -1136,7 +1202,7 @@ def _sign_in(ctx: "SetupContext") -> Grant | None:
                 ui.panel(
                     "Sign in to Google — open this on any device",
                     "Open the link below and approve it. The page you land on will not "
-                    "load: copy its whole address and paste it below.",
+                    f"load: copy its whole address and paste it below.\n\n{BLOCKED_NOTE}",
                 )
                 ui.link(url)
                 address = ui.text(
@@ -1191,7 +1257,7 @@ def _announcer(ctx: "SetupContext") -> Announce:
             "Sign in to Google",
             ("Your browser is opening the link below" if opened else "Open the link below "
              "in a browser on this machine")
-            + ". Waiting for you to finish there. Ctrl-C stops waiting.",
+            + f". Waiting for you to finish there. Ctrl-C stops waiting.\n\n{BLOCKED_NOTE}",
         )
         ctx.ui.link(url)
 

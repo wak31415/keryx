@@ -17,6 +17,14 @@ the version starts with 0.
   hidden, for a browser on another machine. Then it signs in as before. `keryx setup` asks
   the same. Without a terminal, `--client-file FILE` is still how the file is given, and
   the refusal names the page.
+- **A second way for an account that cannot create a Google Cloud project**, as many work
+  and school accounts cannot. Type `other` at that question for the steps, each with its
+  link: make the app with a personal Google account, turn on the six APIs in one click,
+  publish it so sign-ins do not expire after seven days, download a Desktop client, and
+  sign in with the work account past one "unverified app" warning. The guide replaces its
+  old External-app steps with these.
+- **While the browser is out, Keryx says what an organization's block means**: if Google
+  says your organization blocks the app, only its administrators can allow it.
 
 ### Removed
 

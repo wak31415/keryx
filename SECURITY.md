@@ -745,7 +745,11 @@ the answers on a call (the email, calendar and document plugins). What it leaves
   once, in a Google Cloud project of your own, and Keryx keeps the file Google downloads
   in `KERYX_HOME/google_client_secret.json` (0600). Made in Personal mode, as
   `keryx auth login google` suggests, it is a "Desktop app" client that only the Google
-  account that created it can sign in with. Its secret is not what protects your account:
+  account that created it can sign in with. Made the second way, for an account that
+  cannot create a project, it is a published External app in a project of your personal
+  account, which any Google account could be shown a consent screen for; the shared-machine
+  risk below is then not closed by the client, and `--headless` is the way to close it.
+  Its secret is not what protects your account:
   Google says of this kind of client that "the client secret is obviously not treated as
   a secret" (<https://developers.google.com/identity/protocols/oauth2>), and anyone who
   read it would still need you to approve a consent screen, and could not use a code

@@ -60,7 +60,9 @@ credentials may not be embedded in open source projects"
 Google sign-in key, and you make your own. `keryx auth login google` (or `keryx setup`)
 opens Google's Personal mode page, which makes it in a few clicks, then asks where the file
 it downloads went. A Personal mode key works only for your own account, so there is no
-"unverified app" warning and no expiry.
+"unverified app" warning and no expiry. Many work and school accounts cannot create one:
+type `other` at that question for the way round it, an app made with a personal Google
+account that you then sign in to with the work one.
 
 ## What it does
 

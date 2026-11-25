@@ -452,6 +452,41 @@ def test_a_page_that_does_not_open_says_to_open_the_link(settings, browser, monk
     assert "Open the link below in a browser, on any device." in lines
 
 
+def test_other_shows_the_way_for_an_account_that_cannot_create_a_project(
+    settings, browser, page
+):
+    lines, asked = at_a_terminal(settings, ["other", str(downloaded())])
+
+    assert google.NO_PROJECT_NOTE in lines  # said under the Personal mode steps
+    text = "\n".join(lines)
+    assert google.OTHER_INTRO in text
+    assert "2. With that project selected" in text
+    assert f"   {google.ENABLE_APIS_URL}" in text
+    assert "4. Publish it: under Audience, choose Publish app" in text
+    assert len(asked) == 2 and asked[0] == asked[1]  # the same question, asked again
+    assert saved_client(settings) == CLIENT_JSON
+
+
+def test_other_is_never_a_wrong_answer(settings, browser, page, tmp_path):
+    gone = str(tmp_path / "gone.json")
+
+    at_a_terminal(settings, ["other", gone, "other", gone, "other", str(downloaded())])
+
+    assert saved_client(settings) == CLIENT_JSON
+
+
+def test_the_wait_says_what_an_organization_that_blocks_the_app_means(client, browser):
+    lines = login("google", client)
+
+    assert google.BLOCKED_NOTE in lines
+
+
+def test_the_paste_back_says_it_too(client, monkeypatch):
+    lines = login("google", client, headless=True)
+
+    assert google.BLOCKED_NOTE in "\n".join(lines)
+
+
 def test_with_nothing_to_paste_into_a_path_is_asked_again(settings, browser, page):
     lines, _ = at_a_terminal(settings, ["paste", str(downloaded())], secrets=None)
 
@@ -499,6 +534,7 @@ def test_no_client_and_no_terminal_is_an_auth_error_that_names_the_page(settings
 
     assert google.PERSONAL_MODE_URL in str(raised.value)
     assert "Download JSON" in str(raised.value)
+    assert "the way for an account that cannot create projects, are in" in str(raised.value)
 
 
 def test_a_google_sign_in_that_fails_is_an_auth_error(client, monkeypatch):

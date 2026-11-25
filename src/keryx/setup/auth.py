@@ -374,6 +374,7 @@ def _google(
         else:
             echo("Open this link on any device and approve it:\n")
             echo(google.start_signin(settings, chosen))
+            echo("\n" + google.BLOCKED_NOTE)
             landed = "\nYou will land on a page that does not load. "
             if ask is None:
                 echo(
@@ -429,9 +430,9 @@ def _make_client(
     echo(google.opening(opened))
     echo(url)
     echo("\n" + google.steps_text() + "\n")
+    echo(google.NO_PROJECT_NOTE)
     if options.headless:
         echo(google.ELSEWHERE_NOTE)
-    echo(google.fallback_note())
 
     def paste() -> str:
         if ask_secret is None:
@@ -442,8 +443,17 @@ def _make_client(
             raise google.GoogleStopped(_CLIENT_STOPPED) from None
 
     default = google.suggested_client_file()
-    for _ in range(google.MAX_WRONG):
+    wrong = 0
+    while wrong < google.MAX_WRONG:
         answer = ask("\n" + google.PATH_QUESTION, default=default)
+        if answer.strip().lower() == google.OTHER:
+            # The way for an account that cannot create a project: steps, never a wrong
+            # answer, and the same question again after them.
+            echo("\n" + google.OTHER_INTRO + "\n")
+            for number, (step, link) in enumerate(google.OTHER_STEPS, 1):
+                echo(f"{number}. {step}" + (f"\n   {link}" if link else ""))
+            continue
+        wrong += 1
         try:
             path, picked = google.take_client(settings, answer, paste=paste)
         except google.GoogleStopped:
@@ -475,6 +485,7 @@ def _announcer(echo: Echo) -> Callable[[str, bool], None]:
         echo(url)
         echo("\nWaiting for you to finish there (Ctrl-C stops; --headless is for a browser "
              "on another machine).")
+        echo(google.BLOCKED_NOTE)
 
     return announce
 

@@ -20,8 +20,10 @@ prints JSON or exits with a code; nothing needs a terminal UI. Settings live in
    of the person's own, since Google's terms do not let an open-source app ship one. The
    easiest way is theirs: run at a terminal with no client on file,
    `keryx auth login google` opens Google's Personal mode page, shows the clicks and asks
-   for the downloaded file, so offer that first. Without a terminal it refuses and names
-   that page: relay it (the steps: `{google_guide}`), and when they give you the path of
+   for the downloaded file, so offer that first; an account that cannot create a Google
+   Cloud project (many work and school accounts cannot) types `other` there for a second
+   way. Without a terminal it refuses and names that page: relay it (the steps, both ways:
+   `{google_guide}`), and when they give you the path of
    the file Google downloads, pass it once with `--client-file PATH` on the first command
    below.
    `keryx auth login google --headless` prints a link: relay it; the person approves it

@@ -85,7 +85,10 @@ source projects", [section 4(b)](https://developers.google.com/terms)), so you m
 once, and `keryx auth login google` does that with you: it opens Google's Personal mode
 page, which makes a client only your own Google account can use, with nothing for Google
 to review, and then asks for the path of the file Google downloads (Enter takes the newest
-one in `~/Downloads`). `keryx setup` asks the same. Without a terminal, give the file with
+one in `~/Downloads`). An account that cannot create a Google Cloud project, as many work
+and school accounts cannot, types `other` there for the second way: an app made with a
+personal Google account, published so that sign-ins do not expire, and signed in to with
+the work account. `keryx setup` asks the same. Without a terminal, give the file with
 `keryx auth login google --client-file FILE`.
 
 **The calendar is two plugins, so reading can be on without writing.** Both run on the one

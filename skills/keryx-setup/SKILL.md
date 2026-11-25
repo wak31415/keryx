@@ -102,7 +102,11 @@ in on standard input, never into the command). That sign-in first needs a Google
 client of their own, because Google's terms do not let an open-source app ship one. The
 best way is theirs to run at a terminal: `keryx auth login google` with no client on file
 opens Google's Personal mode page, shows the clicks and asks them for the downloaded file.
-Without a terminal, relay the page (the refusal names it), and once they give you the path
+If their account cannot create a Google Cloud project (many work and school accounts
+cannot), `other` at that question shows the second way: an app made with a personal
+Google account, published, and signed in to with the work one. Without a terminal, relay
+the page (the refusal names it, and the guide it names has the second way), and once they
+give you the path
 of the file Google downloaded, pass it with `--client-file`. A plugin installed before its
 service is connected is refused with the
 reason, and loads by itself once the sign-in includes it.

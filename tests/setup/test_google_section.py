@@ -279,6 +279,46 @@ def test_with_no_client_to_hand_skipping_is_the_default_unless_codex_needs_it(ma
     assert codex.ui.done() and world.calls == [("open", google.PERSONAL_MODE_URL)]
 
 
+def test_other_shows_the_way_for_an_account_that_cannot_create_a_project(make_ctx, world):
+    ctx = make_ctx([
+        ("Sign in to Google?", "signin"),
+        ("Path to the file you downloaded", "other"),
+        ("Path to the file you downloaded", str(downloaded())),
+    ])
+
+    google.run_section(ctx)
+
+    assert ctx.ui.done() and not ctx.ui.lines("error")
+    notes = ctx.ui.lines("note")
+    assert google.NO_PROJECT_NOTE in notes and google.OTHER_INTRO in notes
+    assert [line for line in notes if line[:2] in {f"{n}." for n in range(1, 7)}] == [
+        f"{number}. {step}" for number, (step, _) in enumerate(google.OTHER_STEPS, 1)
+    ]
+    # Each link on a line of its own, whole: inside a note it would be wrapped.
+    assert ctx.ui.lines("link")[1:6] == [link for _, link in google.OTHER_STEPS if link]
+    assert json.loads(installed(ctx).read_text()) == CLIENT
+    assert world.calls == [("open", google.PERSONAL_MODE_URL), ("google_browser", ALL)]
+
+
+def test_the_wait_says_what_an_organization_that_blocks_the_app_means(make_ctx, world):
+    own_client()
+    ctx = make_ctx([("Sign in to Google?", DEFAULT)])
+
+    google.run_section(ctx)
+
+    assert google.BLOCKED_NOTE in ctx.ui.lines("panel")[0]
+
+
+def test_the_paste_back_says_it_too(make_ctx, world):
+    own_client()
+    world.headless = True
+    ctx = make_ctx([("Sign in to Google?", DEFAULT), ("address you landed on", "")])
+
+    google.run_section(ctx)
+
+    assert google.BLOCKED_NOTE in ctx.ui.lines("panel")[0]
+
+
 def test_going_back_from_the_path_question_does_not_open_the_page_again(make_ctx, world):
     """The page is opened by a probe: going back replays it from the record, and only
     choosing to sign in again opens it again."""
