@@ -7,6 +7,26 @@ the version starts with 0.
 
 ## [Unreleased]
 
+### Changed
+
+- **`keryx auth login google` makes your Google client with you, in the same command.**
+  With none on file, it says in a sentence why you need one, opens Google's Personal mode
+  page (or prints it for a browser on another machine), shows the three clicks, and asks
+  where the file it downloads went: Enter takes the newest `client_secret_*.json` in
+  `~/Downloads`, a folder takes the newest one in it, and `paste` takes what is in the file,
+  hidden, for a browser on another machine. Then it signs in as before. `keryx setup` asks
+  the same. Without a terminal, `--client-file FILE` is still how the file is given, and
+  the refusal names the page.
+
+### Removed
+
+- **Keryx will not ship a Google client of its own.** Google's API Terms say "Developer
+  credentials may not be embedded in open source projects"
+  ([section 4(b)](https://developers.google.com/terms)), so every owner signs in with a
+  client they made. The code that waited for a packaged client, and the sentences about
+  services "Keryx's Google app" did not offer yet, are gone, and the roadmap no longer
+  waits on Google's verification.
+
 ## [0.3.0] - 2026-11-24
 
 Keryx reaches your Google account and your Slack. One Google sign-in lets the assistant

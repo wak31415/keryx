@@ -79,12 +79,14 @@ read nothing of yours. `slack_report` writes to you, `slack_message` writes as y
 `slack_read`, `check_email`, `check_calendar` and `find_document` read what is yours, and
 `add_calendar_event` changes it, so all seven wait for it.
 
-**The Google plugins need a Google OAuth client of your own, for now.** Keryx does not
-ship a Google app of its own yet, so `keryx auth login google` signs in through a client
-you make once in Google Cloud. `keryx setup` shows the steps and asks for the file Google
-gives you; from the command line, `keryx auth login google --client-file FILE`. The
-quickest way is Google's Personal mode, a client only your own Google account can use,
-with nothing for Google to review.
+**The Google plugins need a Google OAuth client of your own.** Google's API Terms do not
+let an open-source project ship one ("Developer credentials may not be embedded in open
+source projects", [section 4(b)](https://developers.google.com/terms)), so you make it
+once, and `keryx auth login google` does that with you: it opens Google's Personal mode
+page, which makes a client only your own Google account can use, with nothing for Google
+to review, and then asks for the path of the file Google downloads (Enter takes the newest
+one in `~/Downloads`). `keryx setup` asks the same. Without a terminal, give the file with
+`keryx auth login google --client-file FILE`.
 
 **The calendar is two plugins, so reading can be on without writing.** Both run on the one
 Google sign-in (`keryx auth login google`, with Calendar ticked) and answer inside the call,
