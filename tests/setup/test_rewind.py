@@ -36,6 +36,20 @@ def test_a_replay_answers_from_the_record_and_offers_the_next_answer():
     assert recorder.log == [one("Name", "Ada"), one("Surname", "Lovelace")]
 
 
+def test_what_was_held_is_shown_as_soon_as_a_replayed_probe_ends_the_script():
+    """A section that says something, replays a probe as the last thing on record, then
+    says more: the first is shown before the rest, not after it."""
+    ui = ScriptedPrompter()
+    recorder = Recorder(ui, [Entry(PROBE, "open_browser", value=True)])
+    probes = recorder.probes(Probes(open_browser=lambda url: pytest.fail("not run again")))
+
+    recorder.note("why")
+    assert probes.open_browser("https://example.com") is True
+    recorder.panel("steps", "1. 2. 3.")
+
+    assert ui.said == [("note", "why"), ("panel", "steps\n1. 2. 3.")]
+
+
 def test_a_replay_passes_over_what_the_section_no_longer_asks():
     ui = ScriptedPrompter()
     recorder = Recorder(ui, [one("Name", "Ada"), one("Numbers", "+1"), one("PIN", "yes")])
