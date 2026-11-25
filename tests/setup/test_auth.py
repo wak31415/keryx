@@ -687,7 +687,7 @@ def test_a_client_given_last_time_is_asked_about_and_yes_signs_in_with_it(settin
 
     assert asked == [(
         f"You gave another client last time that has not signed in yet (Client ID {ID}). "
-        "Sign in with it? No keeps the one on file.", True)]
+        "Sign in with it? No keeps the one on file and forgets the one you gave.", True)]
     assert browser[0].client.client_id == ID
     assert json.loads(old.read_text())["installed"]["client_id"] == ID  # replaced, it worked
     assert not google.staged_client_path(settings).exists()
@@ -758,7 +758,7 @@ def test_a_code_refused_while_signing_in_with_a_given_client_says_it_is_offered_
     monkeypatch.setattr(google, "browser_signin", signin)
 
     with pytest.raises(AuthError, match="start again with `keryx auth login google`, which "
-                                        "offers the client you gave first"):
+                                        "asks about the client you gave"):
         at_a_terminal(settings, [ID], secrets=[SECRET])
 
     assert google.staged_offer(settings) is not None

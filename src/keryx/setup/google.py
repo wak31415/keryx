@@ -578,7 +578,7 @@ def staged_question(client_id: str) -> str:
     """Asked before a sign-in when a client given last time waits beside the one on file."""
     return (
         f"You gave another client last time that has not signed in yet (Client ID "
-        f"{client_id}). Sign in with it? No keeps the one on file."
+        f"{client_id}). Sign in with it? No keeps the one on file and forgets the one you gave."
     )
 
 
@@ -1192,7 +1192,7 @@ def exchange(
         raise GoogleSetupError(
             f"Google refused the code ({_plain(body.get('error', response.status_code))}); "
             f"start again with {SIGN_IN}"
-            + (", which offers the client you gave first" if is_staged(settings) else "")
+            + (", which asks about the client you gave" if is_staged(settings) else "")
         )
     discard_pending(settings)
     # Only what the token endpoint says it granted is believed. Granular consent can make
