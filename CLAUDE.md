@@ -653,7 +653,8 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   blocks unapproved apps shows `admin_policy_enforced` on Google's own page and never
   redirects, so the wait says what that means (`BLOCKED_NOTE`), and the sentence for it
   is there should the error ever reach the redirect. **A client given in this run is
-  kept only once a sign-in with it works** (the owner's ruling of 2026-11-25): until then
+  kept only once a sign-in with it works**, because a wrong client typed in must not get
+  stuck on file, where no later login would ask for it again: until then
   it is `KERYX_HOME/google_client_secret.new.json` (0600, `stage_client`), the sign-in is
   made with settings pointing at it, `adopt_client` makes it the client file after the
   sign-in is kept, and anything else drops it, in the command and the wizard alike. So a
