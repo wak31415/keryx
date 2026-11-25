@@ -87,6 +87,7 @@ from keryx.setup import slack as slack_setup
 from keryx.setup.agents import is_headless
 from keryx.setup.context import SetupContext, run_command
 from keryx.setup.sections import repo_root
+from keryx.setup.terminal import read_hidden_paste
 from keryx.setup.ui import Aborted
 from keryx.setup.wizard import agent_instructions, run_wizard
 from keryx.tasks.manager import install_default_executor
@@ -1795,10 +1796,13 @@ def auth_login(
             ask=_ask_line if sys.stdin.isatty() else None,
             ask_secret=_ask_hidden if sys.stdin.isatty() else None,
             choose=_ask_boxes if sys.stdin.isatty() else None,
+            ask_paste=read_hidden_paste if sys.stdin.isatty() else None,
         )
     except auth_flow.AuthStopped as error:
         message = str(error)
-        typer.echo(message[0].upper() + message[1:] + ".", err=True)
+        # A sentence gets its stop; one that ends on a path on a line of its own does not.
+        stop = "" if message.endswith(".") or "\n" in message else "."
+        typer.echo(message[0].upper() + message[1:] + stop, err=True)
         raise typer.Exit(1) from None
     except auth_flow.AuthError as error:
         typer.echo(f"{name} sign-in failed: {error}", err=True)

@@ -18,6 +18,10 @@ the version starts with 0.
   for a browser on another machine, and `skip` leaves it for later. Then it signs in as
   before. `keryx setup` asks the same. Without a terminal, `--client-file FILE` is still how
   the file is given, and the refusal names the page.
+- **A Google client given at the sign-in is kept only once the sign-in with it works.** A
+  mistyped Client ID or a cut secret is never saved, so the next `keryx auth login google`
+  asks for the client again. A client that Google refuses and that was on file before is
+  left in place, and the message names the command that replaces it.
 - **A second way for an account that cannot create a Google Cloud project**, as many work
   and school accounts cannot. Type `other` at that question for the steps, each with its
   link: make the app with a personal Google account, turn on the six APIs in one click,

@@ -225,6 +225,10 @@ class RichPrompter:
             _bind_back(question.application)
         try:
             answer = question.ask()
+        except EOFError:
+            # Ctrl-D, which questionary leaves to the caller where it catches Ctrl-C: the
+            # same stop, said the same way, rather than click's bare "Aborted".
+            raise Aborted from None
         finally:
             self._screen = []
         if answer is None:

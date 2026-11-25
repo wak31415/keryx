@@ -36,18 +36,59 @@ def test_a_replay_answers_from_the_record_and_offers_the_next_answer():
     assert recorder.log == [one("Name", "Ada"), one("Surname", "Lovelace")]
 
 
-def test_what_was_held_is_shown_as_soon_as_a_replayed_probe_ends_the_script():
+def test_a_replay_that_ends_on_a_probe_shows_everything_in_order_at_the_next_question():
     """A section that says something, replays a probe as the last thing on record, then
-    says more: the first is shown before the rest, not after it."""
-    ui = ScriptedPrompter()
+    says more and asks: all of it is shown, the first first, ahead of the question."""
+    ui = ScriptedPrompter([("Path", "x")])
     recorder = Recorder(ui, [Entry(PROBE, "open_browser", value=True)])
     probes = recorder.probes(Probes(open_browser=lambda url: pytest.fail("not run again")))
 
     recorder.note("why")
     assert probes.open_browser("https://example.com") is True
     recorder.panel("steps", "1. 2. 3.")
+    assert ui.said == []  # nothing yet: this may be a section Tab passes over
+    recorder.text("Path")
 
     assert ui.said == [("note", "why"), ("panel", "steps\n1. 2. 3.")]
+
+
+def test_a_section_tab_passes_over_says_nothing_even_after_its_record_runs_out():
+    ui = ScriptedPrompter()
+    recorder = Recorder(ui, [one("Name", "Ada"), Entry(PROBE, "open_browser", value=True)])
+    probes = recorder.probes(Probes(open_browser=lambda url: pytest.fail("not run again")))
+
+    recorder.text("Name")
+    probes.open_browser("https://example.com")
+    recorder.success("client saved")
+    recorder.markdown("the consent guide")
+
+    assert ui.said == []
+
+
+def test_a_probe_run_live_shows_what_was_held_first():
+    ui = ScriptedPrompter()
+    recorder = Recorder(ui, [one("Name", "Ada")])
+    probes = recorder.probes(Probes(open_browser=lambda url: ui.note("opened") or True))
+
+    recorder.text("Name")
+    recorder.note("why")
+    probes.open_browser("https://example.com")
+
+    assert ui.said == [("note", "why"), ("note", "opened")]
+
+
+def test_an_answer_withheld_is_replayed_but_never_offered_back():
+    ui = ScriptedPrompter([("Path", "x"), ("Path", DEFAULT)])
+    first = Recorder(ui)
+    first.text("Path")
+    first.withhold_last()
+    first.withhold_last(0)  # nothing more
+
+    again = Recorder(ui, [], first.record())
+    assert again.text("Path", default="") == ""  # Enter: nothing offered
+
+    replay = Recorder(ScriptedPrompter(), first.record())
+    assert replay.text("Path") == "x"  # a replay still gives it
 
 
 def test_a_replay_passes_over_what_the_section_no_longer_asks():

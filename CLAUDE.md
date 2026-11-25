@@ -45,11 +45,16 @@ wake-word channel is developed on `feat/local-wakeword` and is not part of
   and secret, and may offer no file): Enter takes the newest Desktop `client_secret_*.json`
   in `~/Downloads` (else the folder), a folder takes its newest, a Client ID asks for its
   secret hidden and is kept as the same client JSON a download is, `paste` takes the
-  file's contents hidden on one line, and nothing typed that may hold a secret is ever
+  file's contents hidden (the command reads every line of it with the echo off, `setup.terminal.read_hidden_paste`; the wizard takes one line), and nothing typed that may hold a secret is ever
   said back. `other` is never a wrong answer: it prints the second way, for an account
   that cannot create a project (the owner's ruling of 2026-11-25), and asks again.
   `skip` stops. **The command takes three wrong answers at most; the wizard asks until
-  the owner stops**, and keeps the steps on screen above each refusal. Without a
+  the owner stops**, and keeps the steps on screen above each refusal. A Client Secret
+  is checked for shape (not a Client ID, no spaces, not too short; `GOCSPX-` is not
+  required, older secrets lack it), and an answer is quoted back only when it looks like a
+  path and holds nothing of a client file. After every hidden question and every refused
+  answer, what is left of a paste is drained and dropped (`setup.terminal`), and the
+  wizard never offers a refused answer back on Esc (`Recorder.withhold_last`). Without a
   terminal the refusal is short, names nothing as failed, and gives the page,
   `--client-file` and the guide that has the second way. The wizard's Google section asks
   the same questions, from the same constants, with nothing put in the answer box.
@@ -256,7 +261,9 @@ remember:
   rich/questionary one, one question to a screen; `ask_checkbox` is its list of boxes
   for a command that is not the wizard), `rewind` (Esc goes back a question and
   Tab skips to the first unanswered one, both by running the section again from a record
-  of its answers and probe results, so no probe runs twice; a section that saves before
+  of its answers and probe results, so no probe runs twice; what a replay says is held
+  until a question or a probe is live, so a section Tab passes over says nothing and one
+  that stops says it all, in order; a section that saves before
   its last answer has to be safe to run again, which the Slack step's untick is: see
   "Slack runs both ways"), `auth`, and `guides/*.md`, which the wizard renders and the wiki links, so
   each set of instructions is written once.
@@ -645,7 +652,18 @@ and `keryx/setup/google.py` is the flow. Seven rulings:
   guide carries the same links, and a test holds them together. An organization that
   blocks unapproved apps shows `admin_policy_enforced` on Google's own page and never
   redirects, so the wait says what that means (`BLOCKED_NOTE`), and the sentence for it
-  is there should the error ever reach the redirect. PKCE, `state` and a loopback-only
+  is there should the error ever reach the redirect. **A client given in this run is
+  kept only once a sign-in with it works** (the owner's ruling of 2026-11-25): until then
+  it is `KERYX_HOME/google_client_secret.new.json` (0600, `stage_client`), the sign-in is
+  made with settings pointing at it, `adopt_client` makes it the client file after the
+  sign-in is kept, and anything else drops it, in the command and the wizard alike. So a
+  mistyped Client ID or a cut secret is never on file, and the next login asks again; a
+  wrong ID shows `invalid_client` on Google's own page, and the wait says what that means.
+  The one exception is the first of the two commands of a pasted-back sign-in without a
+  terminal, whose second reads the client from file: it is put there at once
+  (`Pending.installed_client`), and an `invalid_client`/`unauthorized_client` exchange
+  forgets it (`ClientRefused`). A client that was on file before is never removed unasked:
+  the refusal names the command that replaces it. PKCE, `state` and a loopback-only
   redirect are what protect the exchange. A client with no secret sends none, never an
   empty one.
 - **Two ways to finish, chosen before the link is made.** With a browser on this machine, a

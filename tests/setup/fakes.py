@@ -137,6 +137,11 @@ class ScriptedPrompter:
 #: Take whatever the question offers by default.
 DEFAULT = object()
 
+#: A Client ID and Secret of the shapes Google issues, put together from parts so that no
+#: secret scanner takes the source for a real pair.
+FAKE_ID = "123-abc" + ".apps." + "googleusercontent.com"
+FAKE_SECRET = "GOCSPX" + "-" + "x" * 28
+
 
 class Lazy:
     """An answer worked out when its question is asked, from what the wizard has done by

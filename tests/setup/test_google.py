@@ -988,9 +988,30 @@ def test_a_path_can_start_with_a_tilde(settings):
     (Path.home()).mkdir(parents=True, exist_ok=True)
     (Path.home() / "c.json").write_text('{"installed": {"client_id": "i"}}')
 
-    path, picked = google.take_client(settings, "~/c.json", paste=lambda: "", secret=lambda: "")
+    text, picked = google.client_from("~/c.json", paste=lambda: "", secret=lambda cid: "")
 
-    assert picked is None and json.loads(path.read_text())["installed"]["client_id"] == "i"
+    assert picked is None and json.loads(text)["installed"]["client_id"] == "i"
+    assert not (settings.config_dir / "google_client_secret.json").exists()  # nothing saved
+
+
+def test_a_staged_client_signs_in_and_is_adopted_or_dropped(settings):
+    from keryx.integrations import google as account
+
+    text = google.client_json("1-a.apps.googleusercontent.com", "s" * 24)
+    signing = google.stage_client(settings, text)
+
+    assert google.is_staged(signing) and not google.is_staged(settings)
+    assert account.resolve_client(signing).client_id == "1-a.apps.googleusercontent.com"
+    assert account.resolve_client(settings) is None
+    assert stat.S_IMODE(google.staged_client_path(settings).stat().st_mode) == 0o600
+
+    path = google.adopt_client(settings)
+    assert json.loads(path.read_text()) == json.loads(text)
+    assert not google.staged_client_path(settings).exists()
+
+    google.stage_client(settings, text)
+    google.drop_staged_client(settings)
+    assert not google.staged_client_path(settings).exists()
 
 
 def test_the_other_way_turns_on_one_api_for_each_service_in_one_link():
